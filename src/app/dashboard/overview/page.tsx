@@ -40,6 +40,7 @@ import ChannelSourceCard from './ChannelCard'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
+import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
   TrendUp, TrendDown, Lightbulb, ArrowRight,
@@ -85,6 +86,10 @@ type GhlRow    = {
 type GbpRow    = { date: string; call_clicks: number; direction_clicks: number }
 type Ga4Row    = { date: string; channel_group: string | null; sessions: number; conversions: number | null }
 type AhrefsRow = { date: string; domain_rating: number | null; referring_domains: number | null }
+type KeywordRow = {
+  keyword: string; current_position: number | null; previous_position: number | null
+  position_delta: number | null; search_volume: number | null
+}
 
 interface Connected {
   google: boolean; meta: boolean; ghl: boolean; gbp: boolean; ga4: boolean; ahrefs: boolean
@@ -119,7 +124,7 @@ const _getOverviewData = unstable_cache(
     const [
       gRes, gPriorRes, mRes, mPriorRes, gAssignRes, mAssignRes,
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
-      ga4Res, ga4PriorRes, ahrefsRes,
+      ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
     ] = await Promise.all([
       has.google
         ? db.from('google_ads_metrics').select(GOOGLE_COLS)
@@ -184,6 +189,12 @@ const _getOverviewData = unstable_cache(
         ? db.from('ahrefs_metrics').select('date,domain_rating,referring_domains')
             .eq('client_id', clientId).order('date', { ascending: false }).limit(2)
         : none,
+
+      // Tracked keyword positions from the rank tracker (a view over seo_rankings), this client only.
+      db.from('seo_keyword_current')
+        .select('keyword,current_position,previous_position,position_delta,search_volume')
+        .eq('client_id', clientId).eq('is_tracked', true)
+        .order('current_position', { ascending: true, nullsFirst: false }).limit(50),
     ])
 
     return {
@@ -203,9 +214,10 @@ const _getOverviewData = unstable_cache(
       ga4:         (ga4Res.data      ?? []) as Ga4Row[],
       ga4Prior:    (ga4PriorRes.data ?? []) as Ga4Row[],
       ahrefs:      (ahrefsRes.data   ?? []) as AhrefsRow[],
+      keywords:    (keywordsRes.data ?? []) as KeywordRow[],
     }
   },
-  ['dashboard-overview-v2'],
+  ['dashboard-overview-v3'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -214,12 +226,13 @@ const _getOverviewData = unstable_cache(
 const _getOverviewGSC = unstable_cache(
   async (connectionId: string, from: string, to: string, priorFrom: string | null, priorTo: string | null) => {
     const [curr, prior] = await Promise.all([
-      fetchGSCLiveData(connectionId, from, to, 1),
-      priorFrom && priorTo ? fetchGSCLiveData(connectionId, priorFrom, priorTo, 1) : Promise.resolve(null),
+      fetchGSCLiveData(connectionId, from, to, 100),
+      // The prior period keeps 500 searches so a search is only "new" when it genuinely wasn't there.
+      priorFrom && priorTo ? fetchGSCLiveData(connectionId, priorFrom, priorTo, 500) : Promise.resolve(null),
     ])
     return { curr, prior }
   },
-  ['dashboard-overview-gsc'],
+  ['dashboard-overview-gsc-v2'],
   { revalidate: 900, tags: ['client-metrics'] },
 )
 
@@ -490,11 +503,6 @@ export default async function OverviewPage({
 
   // ── Deltas — only when a comparison is on, and only when there is a base ───
   const delta = (curr: number, prior: number) => (showCompare ? calcDelta(curr, prior) : undefined)
-  /** For metrics where smaller is better (cost, search position): report the improvement. */
-  const deltaLowerIsBetter = (curr: number, prior: number) => {
-    const d = delta(curr, prior)
-    return d === undefined ? undefined : -d
-  }
 
   const qs = new URLSearchParams({ from: iso(fromDate), to: iso(toDate) })
   if (compare !== 'none') qs.set('compare', compare)
@@ -714,6 +722,33 @@ export default async function OverviewPage({
     })
   }
 
+  // ── Keywords ──────────────────────────────────────────────────────────────
+  // Two views of "are we being found for the right searches?": the terms the agency tracks (rank
+  // tracker), and what people actually typed (Search Console).
+  const tracked       = data.keywords
+  const trackedRanked = tracked.filter(k => k.current_position != null)
+  const inBand = (lo: number, hi: number) => trackedRanked.filter(k => k.current_position! > lo && k.current_position! <= hi).length
+  const kwBands = [
+    { label: 'Top 3',        value: inBand(0, 3),   tone: 'top' },
+    { label: 'Page one',     value: inBand(3, 10),  tone: 'page1' },
+    { label: 'Page two',     value: inBand(10, 20), tone: 'page2' },
+    { label: 'Further back', value: tracked.length - inBand(0, 20), tone: 'rest' },
+  ]
+  const trackedShown = [...tracked]
+    .sort((a, b) => (a.current_position ?? 999) - (b.current_position ?? 999))
+    .slice(0, 6)
+  const priorQueryPos = new Map((gscPrior?.queries ?? []).map(q => [q.query, q.position] as [string, number]))
+  const topSearches = hasGscData && gscCurr
+    ? gscCurr.queries.slice(0, 6).map(q => ({
+        query: q.query, clicks: q.clicks, position: q.position,
+        // undefined: no comparison. null: not searched in the comparison period.
+        change: showCompare && gscPrior
+          ? (priorQueryPos.has(q.query) ? priorQueryPos.get(q.query)! - q.position : null)
+          : undefined,
+      }))
+    : []
+  const showKeywords = tracked.length > 0 || topSearches.length > 0
+
   // ── Search & local (detail lives on the SEO page) ─────────────────────────
   const localCards: ReactNode[] = []
   if (hasGbpData) {
@@ -724,20 +759,6 @@ export default async function OverviewPage({
         metrics={[
           { label: 'Calls',      value: fmtInt(gbp.calls),      delta: delta(gbp.calls, gbpPrior.calls) },
           { label: 'Directions', value: fmtInt(gbp.directions), delta: delta(gbp.directions, gbpPrior.directions) },
-        ]}
-      />,
-    )
-  }
-  if (hasGscData && gscCurr) {
-    localCards.push(
-      <ChannelSourceCard
-        key="gsc" title="Google Search" color="var(--ov-teal)" href={link('/dashboard/seo')}
-        icon={<ConnectorLogo type="google_search_console" size={16} aria-hidden />}
-        metrics={[
-          { label: 'Visits from search', value: fmtInt(gscCurr.totals.clicks),
-            delta: gscPrior ? delta(gscCurr.totals.clicks, gscPrior.totals.clicks) : undefined },
-          { label: 'Avg. position',      value: gscCurr.totals.position > 0 ? gscCurr.totals.position.toFixed(1) : '—',
-            delta: gscPrior ? deltaLowerIsBetter(gscCurr.totals.position, gscPrior.totals.position) : undefined },
         ]}
       />,
     )
@@ -944,6 +965,66 @@ export default async function OverviewPage({
                 <SpendChart data={leadTrend} spendLabel="Phone calls" conversionsLabel="Web forms" variant="count" />
               </section>
             ) : null}
+
+            {showKeywords && (
+              <div className={tracked.length > 0 && topSearches.length > 0 ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
+                {tracked.length > 0 && (
+                  <section className="card ov2-card" aria-labelledby="ov2-kw-title">
+                    <div className="ov2-card-head ov2-card-head--split">
+                      <div>
+                        <h2 id="ov2-kw-title" className="section-title">Keywords we track</h2>
+                        <p className="section-desc">Where you rank on Google for the terms we&apos;re working on</p>
+                      </div>
+                      <a className="ov2-link ov2-head-link" href={link('/dashboard/seo')}>All keywords</a>
+                    </div>
+                    <div className="kw-bands">
+                      {kwBands.map(b => (
+                        <div key={b.label} className={`kw-band kw-band--${b.tone}`}>
+                          <span className="kw-band__value">{b.value}</span>
+                          <span className="kw-band__label">{b.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <ul className="kw-list">
+                      {trackedShown.map(k => (
+                        <li key={k.keyword} className="kw-list__row">
+                          <span className="kw-list__term" title={k.keyword}>{k.keyword}</span>
+                          <span className="kw-list__meta">{k.search_volume != null ? `${fmtInt(k.search_volume)} searches/mo` : ''}</span>
+                          <span className="kw-list__change"><RankChange change={k.position_delta} /></span>
+                          <PositionPill position={k.current_position} />
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {topSearches.length > 0 && (
+                  <section className="card ov2-card" aria-labelledby="ov2-searches-title">
+                    <div className="ov2-card-head ov2-card-head--split">
+                      <div>
+                        <h2 id="ov2-searches-title" className="section-title">Top searches on Google</h2>
+                        <p className="section-desc">
+                          {showCompare && gscPrior
+                            ? `What people searched to find you, and how each position moved ${compareNoun}`
+                            : 'What people searched to find you, by clicks'}
+                        </p>
+                      </div>
+                      <a className="ov2-link ov2-head-link" href={link('/dashboard/seo')}>All searches</a>
+                    </div>
+                    <ul className="kw-list">
+                      {topSearches.map(q => (
+                        <li key={q.query} className="kw-list__row">
+                          <span className="kw-list__term" title={q.query}>{q.query}</span>
+                          <span className="kw-list__meta">{fmtInt(q.clicks)} {q.clicks === 1 ? 'click' : 'clicks'}</span>
+                          <span className="kw-list__change"><RankChange change={q.change} decimals={1} newWhenNull /></span>
+                          <PositionPill position={q.position} />
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </div>
+            )}
 
             {(showFunnel || showChanges) && (
               <div className={showFunnel && showChanges ? 'ov2-row ov2-row--halves' : 'ov2-row'}>

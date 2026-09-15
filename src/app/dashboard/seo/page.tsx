@@ -29,8 +29,9 @@ import SpendChart            from '@/components/SpendChart'
 import GscTrendChart         from './search-console/GscTrendChart'
 import type { GscDailyPoint } from './search-console/GscTrendChart'
 import { GscQueriesTable, GscPagesTable } from './search-console/GscSortableTable'
+import { PositionPill } from '@/components/dashboard/KeywordRank'
 import {
-  MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold,
+  MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold, Key,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -45,14 +46,16 @@ const _getCachedGSCLive = unstable_cache(
     showCompare: boolean,
   ) => {
     const [curr, comp] = await Promise.all([
-      fetchGSCLiveData(connectionId, from, to, 25),
+      // The current period keeps its top 100 searches for movement; the tables show 25. The
+      // comparison keeps 500, so a search is only called "new" when it genuinely wasn't there.
+      fetchGSCLiveData(connectionId, from, to, 100),
       showCompare && compFrom && compTo
-        ? fetchGSCLiveData(connectionId, compFrom, compTo, 25)
+        ? fetchGSCLiveData(connectionId, compFrom, compTo, 500)
         : Promise.resolve(null),
     ])
     return { curr, comp }
   },
-  ['dashboard-seo-gsc-live'],
+  ['dashboard-seo-gsc-live-v2'],
   { revalidate: 900, tags: ['client-metrics'] }
 )
 
@@ -149,6 +152,16 @@ function Move({ delta }: { delta: number | null }) {
   return (
     <span className={delta > 0 ? 'seo-move seo-move--up' : 'seo-move seo-move--down'}>
       {delta > 0 ? `▲ ${delta}` : `▼ ${Math.abs(delta)}`}
+    </span>
+  )
+}
+
+/** Change in an averaged Search Console position. Positive = moved toward #1. */
+function GscMove({ change }: { change: number }) {
+  if (Math.abs(change) < 0.05) return <span className="seo-move seo-move--flat">—</span>
+  return (
+    <span className={change > 0 ? 'kw-change kw-change--up' : 'kw-change kw-change--down'}>
+      {change > 0 ? '▲' : '▼'} {Math.abs(change).toFixed(1)}
     </span>
   )
 }
@@ -389,14 +402,34 @@ export default async function SeoPage({
   for (const q of gscComp?.queries ?? []) if (q.query) compQueryPos.set(q.query, q.position)
   for (const p of gscComp?.pages   ?? []) if (p.page)  compPagePos.set(p.page, p.position)
 
-  const topQueries = (gscCurr?.queries ?? []).map(q => ({
+  const topQueries = (gscCurr?.queries ?? []).slice(0, 25).map(q => ({
     query: q.query ?? '', clicks: q.clicks, impressions: q.impressions, ctr: q.ctr, position: q.position,
     positionDelta: showCompare && q.query && compQueryPos.has(q.query) ? q.position - compQueryPos.get(q.query)! : null,
+    isNew: showCompare && !!gscComp && !!q.query && !compQueryPos.has(q.query),
   }))
-  const topPages = (gscCurr?.pages ?? []).map(p => ({
+  const topPages = (gscCurr?.pages ?? []).slice(0, 25).map(p => ({
     page: p.page ?? '', clicks: p.clicks, impressions: p.impressions, ctr: p.ctr, position: p.position,
     positionDelta: showCompare && p.page && compPagePos.has(p.page) ? p.position - compPagePos.get(p.page)! : undefined,
   }))
+
+  // ── Keyword movement on Google (Search Console; needs a comparison) ────────
+  // A search only counts when it had real exposure in both periods, so one stray impression at
+  // position 80 can't read as a dramatic climb.
+  const MIN_IMPRESSIONS = 10
+  const compQueryImpr = new Map<string, number>()
+  for (const q of gscComp?.queries ?? []) if (q.query) compQueryImpr.set(q.query, q.impressions)
+  const gscMovers = showCompare && gscComp
+    ? (gscCurr?.queries ?? [])
+        .filter(q => q.query && q.impressions >= MIN_IMPRESSIONS && (compQueryImpr.get(q.query) ?? 0) >= MIN_IMPRESSIONS)
+        .map(q => ({ query: q.query, position: q.position, change: compQueryPos.get(q.query)! - q.position }))
+    : []
+  const kwImproved = gscMovers.filter(m => m.change >= 0.5)
+  const kwDropped  = gscMovers.filter(m => m.change <= -0.5)
+  const kwNew      = showCompare && gscComp
+    ? (gscCurr?.queries ?? []).filter(q => q.query && q.impressions >= MIN_IMPRESSIONS && !compQueryPos.has(q.query)).length
+    : 0
+  const gscGainers = [...kwImproved].sort((a, b) => b.change - a.change).slice(0, 5)
+  const gscLosers  = [...kwDropped].sort((a, b) => a.change - b.change).slice(0, 5)
 
   // ── Business Profile ───────────────────────────────────────────────────────
   const gbpRows     = (gbpData     ?? []) as GbpRow[]
@@ -602,6 +635,201 @@ export default async function SeoPage({
           </section>
         )}
 
+        {/* ── Keywords: what people search for, and where you rank ───────────── */}
+        {(gscHasData || hasRanks) && (
+          <section className="seo-section">
+            <SectionHead
+              icon={<Key size={17} weight="duotone" />}
+              tint="var(--blue)" tintBg="var(--blue-subtle)"
+              title="Your keywords"
+              desc={showCompare
+                ? `The searches that find you and where you rank, against ${compare === 'last_year' ? 'the same dates last year' : 'the period before'}`
+                : 'The searches that find you on Google, and where you rank for the terms we target'}
+              meta={gscHasData && !showCompare ? <span className="seo-note">Choose a comparison above to see how positions moved</span> : undefined}
+            />
+
+            {gscHasData && showCompare && gscComp && (
+              <>
+                <div className="stat-grid">
+                  <div className="card seo-stat">
+                    <p className="metric-label">Keywords that moved up</p>
+                    <p className="metric-row__value" style={kwImproved.length > 0 ? { color: 'var(--green)' } : undefined}>{fmtNum(kwImproved.length)}</p>
+                  </div>
+                  <div className="card seo-stat">
+                    <p className="metric-label">Keywords that slipped</p>
+                    <p className="metric-row__value" style={kwDropped.length > 0 ? { color: 'var(--red)' } : undefined}>{fmtNum(kwDropped.length)}</p>
+                  </div>
+                  <div className="card seo-stat">
+                    <p className="metric-label">New keywords</p>
+                    <p className="metric-row__value">{fmtNum(kwNew)}</p>
+                  </div>
+                  <div className="card seo-stat">
+                    <p className="metric-label">Average position</p>
+                    <p className="metric-row__value">{gscPosition > 0 ? fmtPos(gscPosition) : '—'}</p>
+                    {gscComp.totals.position > 0 && Math.abs(gscComp.totals.position - gscPosition) >= 0.05 && (
+                      <p className="seo-move" style={{ color: gscPosition < gscComp.totals.position ? 'var(--green)' : 'var(--red)' }}>
+                        {gscPosition < gscComp.totals.position ? '▲' : '▼'} {Math.abs(gscComp.totals.position - gscPosition).toFixed(1)} {compare === 'last_year' ? 'vs last year' : 'vs the period before'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="seo-split">
+                  <Panel title="Moving up on Google" desc="The biggest gains in position">
+                    {gscGainers.length > 0 ? (
+                      <div className="seo-movers">
+                        {gscGainers.map(m => (
+                          <div key={`up-${m.query}`} className="seo-mover">
+                            <span className="seo-mover__kw" title={m.query}>{m.query}</span>
+                            <span className="seo-mover__right"><GscMove change={m.change} /><PositionPill position={m.position} /></span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="seo-note">No keyword climbed by half a position or more.</p>
+                    )}
+                  </Panel>
+                  <Panel title="Slipping on Google" desc="The biggest drops in position">
+                    {gscLosers.length > 0 ? (
+                      <div className="seo-movers">
+                        {gscLosers.map(m => (
+                          <div key={`down-${m.query}`} className="seo-mover">
+                            <span className="seo-mover__kw" title={m.query}>{m.query}</span>
+                            <span className="seo-mover__right"><GscMove change={m.change} /><PositionPill position={m.position} /></span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="seo-note">No keyword dropped by half a position or more.</p>
+                    )}
+                  </Panel>
+                </div>
+              </>
+            )}
+
+            {gscHasData && topQueries.length > 0 && (
+              <Panel
+                title="What people searched for"
+                desc={showCompare
+                  ? `Top ${topQueries.length} searches by clicks, with how each position moved`
+                  : `Top ${topQueries.length} searches by clicks · tap a heading to sort`}
+                flush
+              >
+                <div className="table-scroll">
+                  <GscQueriesTable rows={topQueries} showCompare={showCompare} />
+                </div>
+              </Panel>
+            )}
+
+            {hasRanks && (
+              <>
+                <h3 className="seo-subhead">Terms we&apos;re working on</h3>
+            <div className="stat-grid">
+              <div className="card seo-stat">
+                <p className="metric-label">Terms tracked</p>
+                <p className="metric-row__value">{fmtNum(rankRows.length)}</p>
+              </div>
+              <div className="card seo-stat">
+                <p className="metric-label">In the top 3</p>
+                <p className="metric-row__value" style={inTop3 > 0 ? { color: 'var(--green)' } : undefined}>{fmtNum(inTop3)}</p>
+              </div>
+              <div className="card seo-stat">
+                <p className="metric-label">On page one</p>
+                <p className="metric-row__value">{fmtNum(onPage1)}</p>
+              </div>
+              <div className="card seo-stat">
+                <p className="metric-label">Average position</p>
+                <p className="metric-row__value">{avgRank > 0 ? fmtPos(avgRank) : '—'}</p>
+                {prevAvgRank > 0 && Math.abs(prevAvgRank - avgRank) >= 0.05 && (
+                  <p className="seo-move" style={{ color: avgRank < prevAvgRank ? 'var(--green)' : 'var(--red)' }}>
+                    {avgRank < prevAvgRank ? '▲' : '▼'} {Math.abs(prevAvgRank - avgRank).toFixed(1)} since the last check
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="seo-split seo-split--aside">
+              <Panel title="Your tracked terms" desc={ranked.length === rankRows.length ? 'Position on Google today' : `${ranked.length} of ${rankRows.length} currently ranking`} flush>
+                <div className="table-scroll">
+                  {/* Phones drop the volume column rather than pushing the change off-screen. */}
+                  <table className="data-table seo-table--tight" style={{ minWidth: 340 }}>
+                    <thead>
+                      <tr>
+                        <th>Search term</th>
+                        <th style={{ textAlign: 'center' }}>Position</th>
+                        <th style={{ textAlign: 'center' }}>Change</th>
+                        <th className="hide-sm" style={{ textAlign: 'right' }}>Searches / month</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rankRows.map(r => (
+                        <tr key={r.keyword}>
+                          <td className="seo-cell-term" style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>
+                            <span className="block truncate" title={r.current_url ? `${r.keyword} — ${pathOf(r.current_url)}` : r.keyword}>{r.keyword}</span>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            {r.current_position !== null
+                              ? <span className={positionClass(r.current_position)}>{r.current_position}</span>
+                              : <span style={{ color: 'var(--text-faint)' }}>Not yet</span>}
+                          </td>
+                          <td style={{ textAlign: 'center' }}><Move delta={r.position_delta} /></td>
+                          <td className="hide-sm" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                            {r.search_volume != null ? fmtNum(r.search_volume) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="How the tracked terms sit" desc="Across all terms we're working on">
+                <div className="seo-bars">
+                  {rankBands.map(b => (
+                    <Bar key={b.label} label={b.label} value={b.value} total={rankRows.length} tint={b.tint} />
+                  ))}
+                </div>
+              </Panel>
+            </div>
+
+            {(rankHistory.length > 1 || gainers.length > 0 || losers.length > 0) && (
+              <div className="seo-split">
+                {rankHistory.length > 1 && (
+                  <Panel title="Average position over time" desc="All tracked terms combined">
+                    <PositionTrend points={rankHistory} />
+                  </Panel>
+                )}
+                {(gainers.length > 0 || losers.length > 0) && (
+                  <Panel title="Biggest moves" desc="Since the previous check">
+                    <div className="seo-movers">
+                      {gainers.map(g => (
+                        <div key={`up-${g.keyword}`} className="seo-mover">
+                          <span className="seo-mover__kw" title={g.keyword}>{g.keyword}</span>
+                          <span className="seo-mover__right">
+                            <Move delta={g.position_delta} />
+                            <span className={positionClass(g.current_position ?? 99)}>{g.current_position}</span>
+                          </span>
+                        </div>
+                      ))}
+                      {losers.map(l => (
+                        <div key={`down-${l.keyword}`} className="seo-mover">
+                          <span className="seo-mover__kw" title={l.keyword}>{l.keyword}</span>
+                          <span className="seo-mover__right">
+                            <Move delta={l.position_delta} />
+                            <span className={positionClass(l.current_position ?? 99)}>{l.current_position}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                )}
+              </div>
+            )}
+              </>
+            )}
+          </section>
+        )}
+
         {/* ── Search results (Search Console) ───────────────────────────── */}
         <section className="seo-section">
           <SectionHead
@@ -658,14 +886,7 @@ export default async function SeoPage({
                 </Panel>
               </div>
 
-              <div className="seo-split">
-                {topQueries.length > 0 && (
-                  <Panel title="What people searched for" desc={`Top ${topQueries.length} searches by clicks · tap a heading to sort`} flush>
-                    <div className="table-scroll">
-                      <GscQueriesTable rows={topQueries} showCompare={showCompare} />
-                    </div>
-                  </Panel>
-                )}
+              <div>
                 {topPages.length > 0 && (
                   <Panel title="Pages people landed on" desc={`Top ${topPages.length} pages by clicks · tap a heading to sort`} flush>
                     <div className="table-scroll">
@@ -838,120 +1059,6 @@ export default async function SeoPage({
             </p>
           )}
         </section>
-
-        {/* ── Tracked search terms (DataForSEO) ─────────────────────────── */}
-        {hasRanks && (
-          <section className="seo-section">
-            <SectionHead
-              icon={<ChartLineUp size={17} weight="duotone" />}
-              tint="var(--text-secondary)" tintBg="var(--bg-subtle)"
-              title="Search terms we're working on"
-              desc="Where your site ranks on Google for the terms we target, and how those positions are moving"
-            />
-
-            <div className="stat-grid">
-              <div className="card seo-stat">
-                <p className="metric-label">Terms tracked</p>
-                <p className="metric-row__value">{fmtNum(rankRows.length)}</p>
-              </div>
-              <div className="card seo-stat">
-                <p className="metric-label">In the top 3</p>
-                <p className="metric-row__value" style={inTop3 > 0 ? { color: 'var(--green)' } : undefined}>{fmtNum(inTop3)}</p>
-              </div>
-              <div className="card seo-stat">
-                <p className="metric-label">On page one</p>
-                <p className="metric-row__value">{fmtNum(onPage1)}</p>
-              </div>
-              <div className="card seo-stat">
-                <p className="metric-label">Average position</p>
-                <p className="metric-row__value">{avgRank > 0 ? fmtPos(avgRank) : '—'}</p>
-                {prevAvgRank > 0 && Math.abs(prevAvgRank - avgRank) >= 0.05 && (
-                  <p className="seo-move" style={{ color: avgRank < prevAvgRank ? 'var(--green)' : 'var(--red)' }}>
-                    {avgRank < prevAvgRank ? '▲' : '▼'} {Math.abs(prevAvgRank - avgRank).toFixed(1)} since the last check
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="seo-split seo-split--aside">
-              <Panel title="Your tracked terms" desc={ranked.length === rankRows.length ? 'Position on Google today' : `${ranked.length} of ${rankRows.length} currently ranking`} flush>
-                <div className="table-scroll">
-                  {/* Phones drop the volume column rather than pushing the change off-screen. */}
-                  <table className="data-table seo-table--tight" style={{ minWidth: 340 }}>
-                    <thead>
-                      <tr>
-                        <th>Search term</th>
-                        <th style={{ textAlign: 'center' }}>Position</th>
-                        <th style={{ textAlign: 'center' }}>Change</th>
-                        <th className="hide-sm" style={{ textAlign: 'right' }}>Searches / month</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankRows.map(r => (
-                        <tr key={r.keyword}>
-                          <td className="seo-cell-term" style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>
-                            <span className="block truncate" title={r.current_url ? `${r.keyword} — ${pathOf(r.current_url)}` : r.keyword}>{r.keyword}</span>
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            {r.current_position !== null
-                              ? <span className={positionClass(r.current_position)}>{r.current_position}</span>
-                              : <span style={{ color: 'var(--text-faint)' }}>Not yet</span>}
-                          </td>
-                          <td style={{ textAlign: 'center' }}><Move delta={r.position_delta} /></td>
-                          <td className="hide-sm" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                            {r.search_volume != null ? fmtNum(r.search_volume) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
-
-              <Panel title="How the tracked terms sit" desc="Across all terms we're working on">
-                <div className="seo-bars">
-                  {rankBands.map(b => (
-                    <Bar key={b.label} label={b.label} value={b.value} total={rankRows.length} tint={b.tint} />
-                  ))}
-                </div>
-              </Panel>
-            </div>
-
-            {(rankHistory.length > 1 || gainers.length > 0 || losers.length > 0) && (
-              <div className="seo-split">
-                {rankHistory.length > 1 && (
-                  <Panel title="Average position over time" desc="All tracked terms combined">
-                    <PositionTrend points={rankHistory} />
-                  </Panel>
-                )}
-                {(gainers.length > 0 || losers.length > 0) && (
-                  <Panel title="Biggest moves" desc="Since the previous check">
-                    <div className="seo-movers">
-                      {gainers.map(g => (
-                        <div key={`up-${g.keyword}`} className="seo-mover">
-                          <span className="seo-mover__kw" title={g.keyword}>{g.keyword}</span>
-                          <span className="seo-mover__right">
-                            <Move delta={g.position_delta} />
-                            <span className={positionClass(g.current_position ?? 99)}>{g.current_position}</span>
-                          </span>
-                        </div>
-                      ))}
-                      {losers.map(l => (
-                        <div key={`down-${l.keyword}`} className="seo-mover">
-                          <span className="seo-mover__kw" title={l.keyword}>{l.keyword}</span>
-                          <span className="seo-mover__right">
-                            <Move delta={l.position_delta} />
-                            <span className={positionClass(l.current_position ?? 99)}>{l.current_position}</span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </Panel>
-                )}
-              </div>
-            )}
-          </section>
-        )}
 
         {/* ── Authority (Ahrefs) ────────────────────────────────────────── */}
         <section className="seo-section">

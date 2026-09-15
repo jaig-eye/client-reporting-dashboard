@@ -22,6 +22,8 @@ export interface GscQueryRow {
   ctr:           number
   position:      number
   positionDelta: number | null
+  /** Searched for in this period but not in the comparison period. */
+  isNew?:        boolean
 }
 
 type QuerySortCol = 'clicks' | 'impressions' | 'ctr' | 'position' | 'positionDelta'
@@ -110,11 +112,16 @@ export function GscQueriesTable({
             {showCompare && (
               <td style={{ textAlign: 'right' }}>
                 {q.positionDelta != null && Math.abs(q.positionDelta) >= 0.05 ? (
-                  <span style={{ color: q.positionDelta < 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                  <span
+                    className={q.positionDelta < 0 ? 'kw-change kw-change--up' : 'kw-change kw-change--down'}
+                    title={`Position ${q.positionDelta < 0 ? 'improved' : 'dropped'} by ${Math.abs(q.positionDelta).toFixed(1)}`}
+                  >
                     {q.positionDelta < 0 ? '▲' : '▼'} {Math.abs(q.positionDelta).toFixed(1)}
                   </span>
+                ) : q.isNew ? (
+                  <span className="kw-new" title="Not searched in the comparison period">New</span>
                 ) : (
-                  <span style={{ color: 'var(--text-faint)' }}>—</span>
+                  <span className="kw-change kw-change--flat">—</span>
                 )}
               </td>
             )}
