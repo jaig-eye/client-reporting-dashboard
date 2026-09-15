@@ -1,19 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Client Overview — /dashboard/overview   (dashboard v2)
 //
-// The cross-channel answer to "how is my marketing doing?" for a local service
-// business. Leads lead: the KPI row counts the people who got in touch, and the
-// channels underneath are read as streams that fed those leads — paid ads first,
-// then everything the business earns without paying per click.
+// The cross-channel answer to "how is my marketing doing?" for a local service business.
+// It reads top to bottom: what happened (headline + KPIs) → which channels did it
+// (performance table + lead mix) → what it cost day to day → what became work (funnel)
+// and what moved → how the phones were handled → the longer trend → search & local.
 //
-// Opt-in per client via clients.dashboard_v2. The original Summary page
-// (/dashboard) is untouched and still serves every client without the flag.
+// Visuals only: every figure comes from tables the sync already fills. Leads from organic,
+// direct and referral traffic are GA4 conversions, because the CRM does not yet record where
+// a contact came from. GA4's own paid channels are left out whenever ads are connected, so
+// an ad lead is never counted twice.
 //
-// A card is rendered only when its connector is connected AND has data for the
-// window; a stream band with no surviving cards is omitted entirely, so a client
-// with only Google Ads sees a page about Google Ads rather than a wall of dashes.
+// Opt-in per client via clients.dashboard_v2. The original Summary page (/dashboard) is
+// untouched and still serves every client without the flag.
+//
+// Every section renders only when its source is connected AND has data for the window, so a
+// client with only Google Ads sees a page about Google Ads rather than a wall of dashes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { isDashboardV2 } from '@/lib/dashboardVersion'
@@ -28,20 +33,37 @@ import type { Client, ClientConnection, Connector, MetaAction, DailyMetric } fro
 import PageHeader from '@/components/dashboard/PageHeader'
 import EmptyState from '@/components/dashboard/EmptyState'
 import SparkMetricCard from '@/components/SparkMetricCard'
-import ChannelSourceCard from './ChannelCard'
+import Sparkline from '@/components/Sparkline'
 import SpendChart from '@/components/SpendChart'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import { Compass, MapPin, LinkSimple } from '@phosphor-icons/react/dist/ssr'
+import ChannelSourceCard from './ChannelCard'
+import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
+import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
+import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
+import {
+  Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
+  TrendUp, TrendDown, Lightbulb, ArrowRight,
+} from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
 /** Row caps. Every query is bounded so one noisy account can't stall the page. */
-const MAX_ROWS = 10_000
+const MAX_ROWS      = 10_000
 const ROLLING_WEEKS = 12
+/** Named GA4 channels shown in the table before the rest fold into "Other". */
+const MAX_GA4_ROWS  = 4
+/** GA4 channels that are ad traffic — dropped when the ad platforms report those leads directly. */
+const PAID_GA4      = /^(Paid |Display$|Cross-network$)/
 
 function iso(d: Date) { return d.toISOString().split('T')[0] }
 function addDays(d: Date, days: number) { return new Date(d.getTime() + days * 86_400_000) }
 function fmtInt(n: number) { return Math.round(n).toLocaleString('en-US') }
+function fmtShortDate(d: string) {
+  return new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+function fmtPct(n: number) { return `${n >= 100 ? Math.round(n) : n.toFixed(1)}%` }
+/** Whole dollars for table cells, where cents on a month of spend are noise. */
+function fmtWholeDollars(n: number) { return `$${Math.round(n).toLocaleString('en-US')}` }
 
 /** Drop rows sharing a logical key — two connections to the same ad account double-count. */
 function dedupeBy<T>(rows: T[], key: (r: T) => string): T[] {
@@ -55,11 +77,14 @@ type MetaAdRow = {
   ad_id: string; campaign_id: string; date: string; spend: number; clicks: number
   actions: MetaAction[] | null; action_values: MetaAction[] | null
 }
-type AssignRow  = { campaign_id: string; display_mode: string; hidden: boolean }
-type GhlRow     = { date: string; contacts_created: number; spam_leads: number; total_calls: number; forms_submitted: number }
-type GbpRow     = { date: string; call_clicks: number; direction_clicks: number }
-type Ga4Row     = { date: string; channel_group: string | null; sessions: number; engaged_sessions: number | null; bounce_rate: number | null }
-type AhrefsRow  = { date: string; domain_rating: number | null; referring_domains: number | null }
+type AssignRow = { campaign_id: string; display_mode: string; hidden: boolean }
+type GhlRow    = {
+  date: string; contacts_created: number; spam_leads: number; total_calls: number; incoming_calls: number
+  missed_calls: number; forms_submitted: number; new_opportunities: number; won_opportunities: number; won_value: number
+}
+type GbpRow    = { date: string; call_clicks: number; direction_clicks: number }
+type Ga4Row    = { date: string; channel_group: string | null; sessions: number; conversions: number | null }
+type AhrefsRow = { date: string; domain_rating: number | null; referring_domains: number | null }
 
 interface Connected {
   google: boolean; meta: boolean; ghl: boolean; gbp: boolean; ga4: boolean; ahrefs: boolean
@@ -81,9 +106,9 @@ const _getOverviewData = unstable_cache(
 
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
-    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,forms_submitted'
+    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value'
     const GBP_COLS    = 'date,call_clicks,direction_clicks'
-    const GA4_COLS    = 'date,channel_group,sessions,engaged_sessions,bounce_rate'
+    const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
     const ga4Query = (a: string, b: string) => {
       const q = db.from('ga4_metrics').select(GA4_COLS)
@@ -151,7 +176,7 @@ const _getOverviewData = unstable_cache(
             .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo).limit(MAX_ROWS)
         : none,
 
-      has.ga4 ? ga4Query(from, to)            : none,
+      has.ga4 ? ga4Query(from, to)                           : none,
       has.ga4 && showCompare ? ga4Query(priorFrom, priorTo) : none,
 
       // Ahrefs is a weekly snapshot, so the two most recent rows give value + movement.
@@ -180,12 +205,12 @@ const _getOverviewData = unstable_cache(
       ahrefs:      (ahrefsRes.data   ?? []) as AhrefsRow[],
     }
   },
-  ['dashboard-overview'],
+  ['dashboard-overview-v2'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
 // Search Console has no synced table — it is read live from the API, so it gets its
-// own longer cache window (same as the Search Console page).
+// own longer cache window (same as the SEO page).
 const _getOverviewGSC = unstable_cache(
   async (connectionId: string, from: string, to: string, priorFrom: string | null, priorTo: string | null) => {
     const [curr, prior] = await Promise.all([
@@ -223,6 +248,7 @@ export default async function OverviewPage({
   // opens on the previous period. Picking "No comparison" still turns the deltas off.
   const compare     = params.compare ?? 'prior_period'
   const showCompare = compare !== 'none'
+  const compareNoun = compare === 'last_year' ? 'vs last year' : 'vs the previous period'
 
   const periodMs = toDate.getTime() - fromDate.getTime()
   let priorFrom: Date
@@ -237,6 +263,16 @@ export default async function OverviewPage({
   // Snapped to midnight UTC: the default range end carries the current time of day, and a
   // fractional start would push days into the wrong week bucket below.
   const rollingFrom = new Date(iso(addDays(toDate, -(ROLLING_WEEKS * 7 - 1))) + 'T00:00:00Z')
+
+  // Every calendar day in the window, so sparklines and the daily chart show quiet days as zero
+  // instead of silently closing the gap.
+  const allDays: string[] = []
+  {
+    const end = new Date(iso(toDate) + 'T00:00:00Z').getTime()
+    for (let t = new Date(iso(fromDate) + 'T00:00:00Z').getTime(); t <= end && allDays.length < 400; t += 86_400_000) {
+      allDays.push(iso(new Date(t)))
+    }
+  }
 
   const [settings, connectionsRes] = await Promise.all([
     getAgencySettings(),
@@ -290,9 +326,9 @@ export default async function OverviewPage({
   ])
 
   // ── Ad spend is always shown the way the client is billed for it ───────────
-  const rawMode  = cookieStore.get('admin_raw_mode')?.value === '1'
+  const rawMode   = cookieStore.get('admin_raw_mode')?.value === '1'
   const adFuelCut = rawMode ? 0 : (client.ad_fuel_cut != null ? client.ad_fuel_cut : settings.ad_fuel_cut ?? 0)
-  const billed = (raw: number) => (adFuelCut > 0 ? applyAdFuel(raw, adFuelCut) : raw)
+  const billed    = (raw: number) => (adFuelCut > 0 ? applyAdFuel(raw, adFuelCut) : raw)
 
   const assignmentMap = new Map(data.assignments.map(a => [a.campaign_id, a]))
 
@@ -356,26 +392,35 @@ export default async function OverviewPage({
 
   const hasGoogleData = google.spend > 0 || google.leads > 0
   const hasMetaData   = meta.spend   > 0 || meta.leads   > 0
+  const hasPaidData   = hasGoogleData || hasMetaData
 
-  // ── CRM: who actually got in touch ────────────────────────────────────────
+  // ── CRM: who actually got in touch, and what became work ──────────────────
+  type CrmDay = { leads: number; calls: number; forms: number; incoming: number; missed: number; won: number }
   function sumGhl(rows: GhlRow[]) {
-    let leads = 0, calls = 0, forms = 0
-    const byDate = new Map<string, { leads: number; calls: number; forms: number }>()
+    const t = { leads: 0, calls: 0, forms: 0, incoming: 0, missed: 0, newOpps: 0, won: 0, wonValue: 0 }
+    const byDate = new Map<string, CrmDay>()
     for (const r of rows) {
       // Spam is excluded from lead counts — GHL's own reporting does the same.
-      const l = Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0))
-      const c = Number(r.total_calls)     || 0
-      const f = Number(r.forms_submitted) || 0
-      leads += l; calls += c; forms += f
-      const day = byDate.get(r.date) ?? { leads: 0, calls: 0, forms: 0 }
-      day.leads += l; day.calls += c; day.forms += f
+      const l   = Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0))
+      const c   = Number(r.total_calls)       || 0
+      const f   = Number(r.forms_submitted)   || 0
+      const inc = Number(r.incoming_calls)    || 0
+      // missed_calls counts incoming calls nobody picked up (migration 114).
+      const m   = Number(r.missed_calls)      || 0
+      const w   = Number(r.won_opportunities) || 0
+      t.leads += l; t.calls += c; t.forms += f; t.incoming += inc; t.missed += m
+      t.newOpps  += Number(r.new_opportunities) || 0
+      t.won      += w
+      t.wonValue += Number(r.won_value) || 0
+      const day = byDate.get(r.date) ?? { leads: 0, calls: 0, forms: 0, incoming: 0, missed: 0, won: 0 }
+      day.leads += l; day.calls += c; day.forms += f; day.incoming += inc; day.missed += m; day.won += w
       byDate.set(r.date, day)
     }
-    return { leads, calls, forms, byDate }
+    return { ...t, byDate }
   }
 
-  const crm      = sumGhl(data.ghl)
-  const crmPrior = sumGhl(data.ghlPrior)
+  const crm        = sumGhl(data.ghl)
+  const crmPrior   = sumGhl(data.ghlPrior)
   const hasCrmData = data.ghl.length > 0 && (crm.leads > 0 || crm.calls > 0 || crm.forms > 0)
 
   const crmDays = Array.from(crm.byDate.entries()).sort(([a], [b]) => a.localeCompare(b))
@@ -383,20 +428,20 @@ export default async function OverviewPage({
     date, spend: v.calls, conversions: v.forms, clicks: 0, roas: 0,
   }))
 
-  // 12 weeks of leads, bucketed to the Monday-agnostic week that ends on the range end.
+  // 12 weeks of leads, bucketed into 7-day weeks that end on the range end.
   const rolling = sumGhl(data.ghlRolling)
-  const weekBuckets = new Map<string, { leads: number; calls: number }>()
+  const weekBuckets = new Map<string, { leads: number; calls: number; forms: number }>()
   for (const [date, v] of Array.from(rolling.byDate.entries())) {
     const offset = Math.floor((new Date(date + 'T00:00:00Z').getTime() - rollingFrom.getTime()) / 86_400_000)
     if (offset < 0) continue
     const weekStart = iso(addDays(rollingFrom, Math.floor(offset / 7) * 7))
-    const bucket = weekBuckets.get(weekStart) ?? { leads: 0, calls: 0 }
-    bucket.leads += v.leads; bucket.calls += v.calls
+    const bucket = weekBuckets.get(weekStart) ?? { leads: 0, calls: 0, forms: 0 }
+    bucket.leads += v.leads; bucket.calls += v.calls; bucket.forms += v.forms
     weekBuckets.set(weekStart, bucket)
   }
-  const rollingTrend: DailyMetric[] = Array.from(weekBuckets.entries())
+  const weekly: WeekPoint[] = Array.from(weekBuckets.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, v]) => ({ date, spend: v.leads, conversions: v.calls, clicks: 0, roas: 0 }))
+    .map(([week, v]) => ({ week, label: fmtShortDate(week), ...v }))
 
   // ── Local: Business Profile ───────────────────────────────────────────────
   const sumGbp = (rows: GbpRow[]) => rows.reduce(
@@ -406,45 +451,41 @@ export default async function OverviewPage({
     }),
     { calls: 0, directions: 0 },
   )
-  const gbp      = sumGbp(data.gbp)
-  const gbpPrior = sumGbp(data.gbpPrior)
+  const gbp        = sumGbp(data.gbp)
+  const gbpPrior   = sumGbp(data.gbpPrior)
   const hasGbpData = data.gbp.length > 0 && (gbp.calls > 0 || gbp.directions > 0)
 
-  // ── Local: GA4 ────────────────────────────────────────────────────────────
+  // ── Website: GA4 by channel ───────────────────────────────────────────────
   // Rows with an empty channel_group are unattributed sessions GA4 itself leaves out
   // of Traffic Acquisition — including them would not reconcile with the GA4 UI.
+  type Ga4Channel = { sessions: number; conversions: number; byDate: Map<string, number> }
   function sumGa4(rows: Ga4Row[]) {
-    let sessions = 0, engaged = 0, bounceWeighted = 0
-    const byChannel = new Map<string, number>()
+    let sessions = 0
+    const byChannel = new Map<string, Ga4Channel>()
     for (const r of rows) {
       if (!r.channel_group) continue
-      const s = Number(r.sessions) || 0
-      sessions       += s
-      engaged        += Number(r.engaged_sessions) || 0
-      bounceWeighted += (Number(r.bounce_rate) || 0) * s
-      byChannel.set(r.channel_group, (byChannel.get(r.channel_group) ?? 0) + s)
+      const s    = Number(r.sessions)    || 0
+      const conv = Number(r.conversions) || 0
+      sessions += s
+      const ch = byChannel.get(r.channel_group) ?? { sessions: 0, conversions: 0, byDate: new Map<string, number>() }
+      ch.sessions    += s
+      ch.conversions += conv
+      ch.byDate.set(r.date, (ch.byDate.get(r.date) ?? 0) + conv)
+      byChannel.set(r.channel_group, ch)
     }
-    const engagement = sessions === 0 ? 0
-      : engaged > 0 ? engaged / sessions
-      : 1 - bounceWeighted / sessions
-    return { sessions, engagement, byChannel }
+    return { sessions, byChannel }
   }
-  const ga4      = sumGa4(data.ga4)
-  const ga4Prior = sumGa4(data.ga4Prior)
+  const ga4        = sumGa4(data.ga4)
+  const ga4Prior   = sumGa4(data.ga4Prior)
   const hasGa4Data = ga4.sessions > 0
 
-  const channelRows = Array.from(ga4.byChannel.entries())
-    .map(([name, sessions]) => ({ name, sessions, share: ga4.sessions > 0 ? sessions / ga4.sessions : 0 }))
-    .sort((a, b) => b.sessions - a.sessions)
-    .slice(0, 6)
-
-  // ── Local: Search Console (live) + Ahrefs (weekly snapshot) ───────────────
-  const gscCurr  = gsc.curr  as GSCSummaryResult | null
-  const gscPrior = gsc.prior as GSCSummaryResult | null
+  // ── Search Console (live) + Ahrefs (weekly snapshot) ──────────────────────
+  const gscCurr    = gsc.curr  as GSCSummaryResult | null
+  const gscPrior   = gsc.prior as GSCSummaryResult | null
   const hasGscData = !!gscCurr && gscCurr.totals.impressions > 0
 
-  const ahrefsLatest = data.ahrefs[0]
-  const ahrefsPrev   = data.ahrefs[1]
+  const ahrefsLatest  = data.ahrefs[0]
+  const ahrefsPrev    = data.ahrefs[1]
   const hasAhrefsData = !!ahrefsLatest && (ahrefsLatest.referring_domains != null || ahrefsLatest.domain_rating != null)
 
   // ── Deltas — only when a comparison is on, and only when there is a base ───
@@ -459,70 +500,226 @@ export default async function OverviewPage({
   if (compare !== 'none') qs.set('compare', compare)
   const link = (path: string) => `${path}?${qs.toString()}`
 
-  const dayCount = Math.max(1, Math.round(periodMs / 86_400_000) + 1)
+  const dayCount    = Math.max(1, Math.round(periodMs / 86_400_000) + 1)
   const periodLabel = dayCount === 1 ? 'today' : `the last ${dayCount} days`
 
-  // ── Stream bands ──────────────────────────────────────────────────────────
-  const paidCards: React.ReactNode[] = []
+  // Ahrefs is a standing snapshot rather than activity inside the window, so it alone is not
+  // evidence that there is anything to report — otherwise a client who picks a range from
+  // before they joined lands on a single lonely card with nothing to explain it.
+  const noDataForWindow = !hasCrmData && !hasPaidData && !hasGbpData && !hasGa4Data && !hasGscData
+
+  // ── Performance by channel ────────────────────────────────────────────────
+  interface ChannelRow {
+    key: string; name: string; icon: ReactNode; color: string
+    /** null = this channel is not paid for per click. */
+    cost: number | null
+    visits: number
+    leads: number
+    trend: { v: number }[]
+  }
+
+  const GA4_LABEL: Record<string, string> = {
+    'Organic Search': 'Organic search', 'Direct': 'Direct', 'Referral': 'Referral sites',
+    'Organic Social': 'Organic social', 'Organic Maps': 'Google Maps', 'Organic Video': 'Organic video',
+    'Organic Shopping': 'Organic shopping', 'Email': 'Email', 'Unassigned': 'Unassigned',
+    'Paid Search': 'Paid search', 'Paid Social': 'Paid social',
+  }
+  const GA4_COLOR: Record<string, string> = {
+    'Organic Search': 'var(--green)', 'Direct': 'var(--ov-violet)', 'Referral': 'var(--ov-teal)',
+    'Organic Social': 'var(--amber)', 'Organic Maps': 'var(--ov-teal)', 'Email': 'var(--amber)',
+    'Paid Search': 'var(--blue)', 'Paid Social': 'var(--ov-indigo)',
+  }
+  const FALLBACK_COLORS = ['var(--ov-teal)', 'var(--amber)', 'var(--ov-violet)', 'var(--green)']
+  const ga4Icon = (name: string): ReactNode => {
+    if (name === 'Organic Search') return <MagnifyingGlass size={15} weight="bold" aria-hidden />
+    if (name === 'Direct')         return <CursorClick size={15} weight="bold" aria-hidden />
+    if (name === 'Referral')       return <LinkSimple size={15} weight="bold" aria-hidden />
+    if (name === 'Organic Maps')   return <MapPin size={15} weight="bold" aria-hidden />
+    if (name === 'Email')          return <EnvelopeSimple size={15} weight="bold" aria-hidden />
+    if (/Social/.test(name))       return <UsersThree size={15} weight="bold" aria-hidden />
+    return <Globe size={15} weight="bold" aria-hidden />
+  }
+
+  const channels: ChannelRow[] = []
   if (hasGoogleData) {
-    paidCards.push(
-      <ChannelSourceCard
-        key="google_ads"
-        title="Google Ads"
-        color="var(--blue)"
-        href={link('/dashboard/google-ads')}
-        icon={<ConnectorLogo type="google_ads" size={16} aria-hidden />}
-        metrics={[
-          { label: 'Spend',         value: fmt$(google.spend),  delta: delta(google.spend, googlePrior.spend) },
-          { label: 'Leads',         value: fmtInt(google.leads), delta: delta(google.leads, googlePrior.leads) },
-          { label: 'Cost per lead', value: google.leads > 0 ? fmtCurrency(google.spend / google.leads) : '—',
-            delta: deltaLowerIsBetter(
-              google.leads > 0 ? google.spend / google.leads : 0,
-              googlePrior.leads > 0 ? googlePrior.spend / googlePrior.leads : 0,
-            ) },
-          { label: 'Conv. rate',    value: google.clicks > 0 ? `${((google.leads / google.clicks) * 100).toFixed(1)}%` : '—',
-            delta: delta(
-              google.clicks > 0 ? google.leads / google.clicks : 0,
-              googlePrior.clicks > 0 ? googlePrior.leads / googlePrior.clicks : 0,
-            ) },
-        ]}
-      />,
-    )
+    channels.push({
+      key: 'google', name: 'Google Ads', color: 'var(--blue)',
+      icon: <ConnectorLogo type="google_ads" size={16} aria-hidden />,
+      cost: google.spend, visits: google.clicks, leads: google.leads,
+      trend: allDays.map(d => ({ v: google.byDate.get(d)?.leads ?? 0 })),
+    })
   }
   if (hasMetaData) {
-    paidCards.push(
-      <ChannelSourceCard
-        key="meta_ads"
-        title="Meta Ads"
-        color="var(--ov-indigo)"
-        href={link('/dashboard/meta-ads')}
-        icon={<ConnectorLogo type="meta_ads" size={16} aria-hidden />}
-        metrics={[
-          { label: 'Spend',         value: fmt$(meta.spend),  delta: delta(meta.spend, metaPrior.spend) },
-          { label: 'Leads',         value: fmtInt(meta.leads), delta: delta(meta.leads, metaPrior.leads) },
-          { label: 'Cost per lead', value: meta.leads > 0 ? fmtCurrency(meta.spend / meta.leads) : '—',
-            delta: deltaLowerIsBetter(
-              meta.leads > 0 ? meta.spend / meta.leads : 0,
-              metaPrior.leads > 0 ? metaPrior.spend / metaPrior.leads : 0,
-            ) },
-          { label: 'Conv. rate',    value: meta.clicks > 0 ? `${((meta.leads / meta.clicks) * 100).toFixed(1)}%` : '—',
-            delta: delta(
-              meta.clicks > 0 ? meta.leads / meta.clicks : 0,
-              metaPrior.clicks > 0 ? metaPrior.leads / metaPrior.clicks : 0,
-            ) },
-        ]}
-      />,
+    channels.push({
+      key: 'meta', name: 'Meta Ads', color: 'var(--ov-indigo)',
+      icon: <ConnectorLogo type="meta_ads" size={16} aria-hidden />,
+      cost: meta.spend, visits: meta.clicks, leads: meta.leads,
+      trend: allDays.map(d => ({ v: meta.byDate.get(d)?.leads ?? 0 })),
+    })
+  }
+
+  const excludedPaidGa4 = hasPaidData && Array.from(ga4.byChannel.keys()).some(n => PAID_GA4.test(n))
+  const ga4Channels = Array.from(ga4.byChannel.entries())
+    .filter(([name, v]) => v.sessions > 0 && !(hasPaidData && PAID_GA4.test(name)))
+    .sort(([, a], [, b]) => b.conversions - a.conversions || b.sessions - a.sessions)
+  ga4Channels.slice(0, MAX_GA4_ROWS).forEach(([name, v], i) => {
+    channels.push({
+      key: `ga4:${name}`, name: GA4_LABEL[name] ?? name, icon: ga4Icon(name),
+      color: GA4_COLOR[name] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+      cost: null, visits: v.sessions, leads: v.conversions,
+      trend: allDays.map(d => ({ v: v.byDate.get(d) ?? 0 })),
+    })
+  })
+  const otherGa4 = ga4Channels.slice(MAX_GA4_ROWS)
+  if (otherGa4.length > 0) {
+    channels.push({
+      key: 'ga4:other', name: 'Other', color: 'var(--text-faint)', icon: <Globe size={15} weight="bold" aria-hidden />,
+      cost: null,
+      visits: otherGa4.reduce((s, [, v]) => s + v.sessions, 0),
+      leads:  otherGa4.reduce((s, [, v]) => s + v.conversions, 0),
+      trend:  allDays.map(d => ({ v: otherGa4.reduce((s, [, v]) => s + (v.byDate.get(d) ?? 0), 0) })),
+    })
+  }
+
+  const totals = channels.reduce(
+    (acc, c) => ({ cost: acc.cost + (c.cost ?? 0), visits: acc.visits + c.visits, leads: acc.leads + c.leads }),
+    { cost: 0, visits: 0, leads: 0 },
+  )
+  const totalTrend = allDays.map((_, i) => ({ v: channels.reduce((s, c) => s + (c.trend[i]?.v ?? 0), 0) }))
+  const showChannels = channels.length > 0 && (totals.leads > 0 || totals.visits > 0)
+  const mixSlices: MixSlice[] = channels
+    .filter(c => Math.round(c.leads) > 0)
+    .map(c => ({ name: c.name, value: Math.round(c.leads), color: c.color }))
+  const mixTotal = mixSlices.reduce((s, c) => s + c.value, 0)
+
+  // Conversions are counted by each source, not by the CRM, so this table's total can be higher
+  // than the lead count in the headline. Say so beside the numbers, not somewhere else.
+  const channelFootnote = [
+    hasPaidData && hasGa4Data
+      ? 'Conversions are counted by each source: Google and Meta for ads, Google Analytics for everything else. They can add up to more than the leads your CRM recorded.'
+      : hasPaidData
+        ? 'Conversions are the ones Google and Meta report, so they can add up to more than the leads your CRM recorded.'
+        : 'Conversions are the ones Google Analytics recorded, so they can differ from the leads your CRM recorded.',
+    excludedPaidGa4 && "Google Analytics' own paid channels are left out so no ad conversion is counted twice.",
+    'Visits are ad clicks for paid channels and website sessions for the rest.',
+  ].filter(Boolean).join(' ')
+
+  // ── Cost vs leads by day ──────────────────────────────────────────────────
+  const lastCrmDate = crmDays.length > 0 ? crmDays[crmDays.length - 1][0] : null
+  const costLeads: CostLeadsDay[] = allDays.map(d => ({
+    date:   d,
+    google: google.byDate.get(d)?.spend ?? 0,
+    meta:   meta.byDate.get(d)?.spend ?? 0,
+    // Days after the CRM's last synced day have no figure yet: a gap reads truer than a drop to zero.
+    leads:  hasCrmData
+      ? (lastCrmDate && d > lastCrmDate ? null : (crm.byDate.get(d)?.leads ?? 0))
+      : (google.byDate.get(d)?.leads ?? 0) + (meta.byDate.get(d)?.leads ?? 0),
+  }))
+
+  // ── From lead to job ──────────────────────────────────────────────────────
+  const showFunnel = hasCrmData && (crm.newOpps > 0 || crm.won > 0)
+  const funnel = [
+    { label: 'Leads', value: crm.leads, tone: 'blue' },
+    ...(crm.newOpps > 0 ? [{ label: 'Opportunities', value: crm.newOpps, tone: 'violet' }] : []),
+    { label: 'Jobs won', value: crm.won, tone: 'green' },
+  ]
+
+  // ── Phones ────────────────────────────────────────────────────────────────
+  const showCalls       = hasCrmData && crm.incoming > 0
+  const answered        = Math.max(0, crm.incoming - crm.missed)
+  const answerRate      = crm.incoming > 0 ? answered / crm.incoming : 0
+  const answerRatePrior = crmPrior.incoming > 0 ? Math.max(0, crmPrior.incoming - crmPrior.missed) / crmPrior.incoming : null
+  const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const byWeekday = WEEKDAYS.map(() => ({ answered: 0, missed: 0 }))
+  for (const [date, v] of crmDays) {
+    const dow = (new Date(date + 'T00:00:00Z').getUTCDay() + 6) % 7
+    byWeekday[dow].answered += Math.max(0, v.incoming - v.missed)
+    byWeekday[dow].missed   += v.missed
+  }
+  const weekdayMax = Math.max(1, ...byWeekday.map(d => Math.max(d.answered, d.missed)))
+
+  /** A small "▲ 4% vs the previous period" line for the big-number tiles. */
+  const tileDelta = (cur: number, prior: number | null, opts: { lowerIsBetter?: boolean; points?: boolean } = {}) => {
+    if (!showCompare || prior == null) return null
+    const diff = opts.points ? (cur - prior) * 100 : prior > 0 ? ((cur - prior) / prior) * 100 : null
+    if (diff == null || Math.abs(diff) < 0.5) return null
+    const up   = diff > 0
+    const good = opts.lowerIsBetter ? !up : up
+    return (
+      <span className={`ov2-bigstat__delta ov2-tone--${good ? 'good' : 'bad'}`}>
+        {up ? <TrendUp size={12} weight="bold" aria-hidden /> : <TrendDown size={12} weight="bold" aria-hidden />}
+        {opts.points ? `${Math.abs(diff).toFixed(1)} pts` : fmtPct(Math.abs(diff))} {compareNoun}
+      </span>
     )
   }
 
-  const localCards: React.ReactNode[] = []
+  // ── What changed ──────────────────────────────────────────────────────────
+  type Change = { key: string; kind: 'up' | 'down' | 'fact'; tone: 'good' | 'bad' | 'neutral'; text: string; detail: string; weight: number }
+  const moves: Change[] = []
+  const addMove = (key: string, noun: string, cur: number, prior: number, higherIsGood: boolean | null, fmt: (n: number) => string) => {
+    if (!showCompare || prior <= 0) return
+    const pct = ((cur - prior) / prior) * 100
+    if (Math.abs(pct) < 5) return
+    const up = pct > 0
+    moves.push({
+      key, kind: up ? 'up' : 'down',
+      tone: higherIsGood == null ? 'neutral' : up === higherIsGood ? 'good' : 'bad',
+      text: `${noun} ${up ? 'up' : 'down'} ${fmtPct(Math.abs(pct))}`,
+      detail: `${fmt(cur)} vs ${fmt(prior)}`,
+      weight: Math.abs(pct),
+    })
+  }
+  if (hasCrmData) {
+    addMove('leads', 'Leads', crm.leads, crmPrior.leads, true, fmtInt)
+    addMove('calls', 'Phone calls', crm.calls, crmPrior.calls, true, fmtInt)
+    addMove('forms', 'Web forms', crm.forms, crmPrior.forms, true, fmtInt)
+    addMove('won', 'Jobs won', crm.won, crmPrior.won, true, fmtInt)
+  }
+  if (hasPaidData) {
+    addMove('spend', 'Ad spend', adSpend, adSpendPrior, null, fmt$)
+    if (adLeads > 0 && adLeadsPrior > 0) addMove('cpl', 'Cost per ad lead', adCpl, adCplPrior, false, fmtCurrency)
+  }
+  const organicNow   = ga4.byChannel.get('Organic Search')
+  const organicPrior = ga4Prior.byChannel.get('Organic Search')
+  if (organicNow && organicPrior) {
+    addMove('organic', 'Organic search leads', organicNow.conversions, organicPrior.conversions, true, fmtInt)
+  }
+  if (showCalls && answerRatePrior != null && showCompare) {
+    const pts = (answerRate - answerRatePrior) * 100
+    if (Math.abs(pts) >= 3) {
+      moves.push({
+        key: 'answer', kind: pts > 0 ? 'up' : 'down', tone: pts > 0 ? 'good' : 'bad',
+        text: `Answer rate ${pts > 0 ? 'up' : 'down'} ${Math.abs(pts).toFixed(1)} pts`,
+        detail: `${Math.round(answerRate * 100)}% vs ${Math.round(answerRatePrior * 100)}%`,
+        weight: Math.abs(pts) * 2,
+      })
+    }
+  }
+  const changes: Change[] = moves.sort((a, b) => b.weight - a.weight).slice(0, 4)
+
+  const paidWithLeads = channels.filter(c => c.cost != null && c.leads >= 1)
+  if (paidWithLeads.length >= 2) {
+    const best = paidWithLeads.reduce((a, b) => (a.cost! / a.leads <= b.cost! / b.leads ? a : b))
+    changes.push({
+      key: 'best-cpl', kind: 'fact', tone: 'neutral', weight: 0,
+      text: `${best.name} had the lowest cost per lead`, detail: fmtCurrency(best.cost! / best.leads),
+    })
+  }
+  const organicRow = channels.find(c => c.key === 'ga4:Organic Search')
+  if (organicRow && totals.leads > 0 && organicRow.leads >= 1 && changes.length < 6) {
+    changes.push({
+      key: 'organic-share', kind: 'fact', tone: 'neutral', weight: 0,
+      text: `Organic search brought ${Math.round((organicRow.leads / totals.leads) * 100)}% of conversions`,
+      detail: `${fmtInt(organicRow.leads)} conversions`,
+    })
+  }
+
+  // ── Search & local (detail lives on the SEO page) ─────────────────────────
+  const localCards: ReactNode[] = []
   if (hasGbpData) {
     localCards.push(
       <ChannelSourceCard
-        key="gbp"
-        title="Business Profile"
-        color="var(--green)"
-        href={link('/dashboard/seo/gbp')}
+        key="gbp" title="Business Profile" color="var(--green)" href={link('/dashboard/seo')}
         icon={<MapPin size={16} weight="fill" aria-hidden />}
         metrics={[
           { label: 'Calls',      value: fmtInt(gbp.calls),      delta: delta(gbp.calls, gbpPrior.calls) },
@@ -534,10 +731,7 @@ export default async function OverviewPage({
   if (hasGscData && gscCurr) {
     localCards.push(
       <ChannelSourceCard
-        key="gsc"
-        title="Google Search"
-        color="var(--ov-teal)"
-        href={link('/dashboard/seo/search-console')}
+        key="gsc" title="Google Search" color="var(--ov-teal)" href={link('/dashboard/seo')}
         icon={<ConnectorLogo type="google_search_console" size={16} aria-hidden />}
         metrics={[
           { label: 'Visits from search', value: fmtInt(gscCurr.totals.clicks),
@@ -548,28 +742,10 @@ export default async function OverviewPage({
       />,
     )
   }
-  if (hasGa4Data) {
-    localCards.push(
-      <ChannelSourceCard
-        key="ga4"
-        title="Website"
-        color="var(--amber)"
-        href={link('/dashboard/analytics')}
-        icon={<ConnectorLogo type="google_analytics" size={16} aria-hidden />}
-        metrics={[
-          { label: 'Sessions', value: fmtInt(ga4.sessions), delta: delta(ga4.sessions, ga4Prior.sessions) },
-          { label: 'Engaged',  value: `${(ga4.engagement * 100).toFixed(0)}%`, delta: delta(ga4.engagement, ga4Prior.engagement) },
-        ]}
-      />,
-    )
-  }
   if (hasAhrefsData && ahrefsLatest) {
     localCards.push(
       <ChannelSourceCard
-        key="ahrefs"
-        title="Search visibility"
-        color="var(--ov-violet)"
-        href={link('/dashboard/seo/authority')}
+        key="ahrefs" title="Search visibility" color="var(--ov-violet)" href={link('/dashboard/seo')}
         icon={<LinkSimple size={16} weight="bold" aria-hidden />}
         metrics={[
           { label: 'Linking sites', value: ahrefsLatest.referring_domains != null ? fmtInt(ahrefsLatest.referring_domains) : '—',
@@ -581,26 +757,9 @@ export default async function OverviewPage({
     )
   }
 
-  // Ahrefs is a standing snapshot rather than activity inside the window, so it alone is not
-  // evidence that there is anything to report — otherwise a client who picks a range from
-  // before they joined lands on a single lonely card with nothing to explain it.
-  const noDataForWindow = !hasCrmData && !hasGoogleData && !hasMetaData
-    && !hasGbpData && !hasGa4Data && !hasGscData
-
-  // Channel swatches: named channels keep a stable hue, anything else rotates.
-  const CHANNEL_COLOR: Record<string, string> = {
-    'Organic Search': 'var(--green)',
-    'Paid Search':    'var(--blue)',
-    'Paid Social':    'var(--ov-indigo)',
-    'Direct':         'var(--ov-violet)',
-    'Referral':       'var(--ov-teal)',
-    'Organic Social': 'var(--amber)',
-    'Email':          'var(--ov-teal)',
-  }
-  const FALLBACK_COLORS = ['var(--blue)', 'var(--green)', 'var(--amber)', 'var(--ov-violet)', 'var(--ov-teal)', 'var(--text-faint)']
-
   // ── KPI row ───────────────────────────────────────────────────────────────
-  const kpis: React.ReactNode[] = []
+  const paidDays = allDays
+  const kpis: ReactNode[] = []
   if (hasCrmData) {
     kpis.push(
       <SparkMetricCard
@@ -620,45 +779,56 @@ export default async function OverviewPage({
       />,
     )
   }
-  if (hasGoogleData || hasMetaData) {
-    const paidDays = Array.from(new Set(
-      [...Array.from(google.byDate.keys()), ...Array.from(meta.byDate.keys())],
-    )).sort()
+  if (hasPaidData) {
     kpis.push(
       <SparkMetricCard
-        key="ad-leads" label="Leads from ads" value={fmtInt(adLeads)}
-        // Ad platforms count a conversion their own way, so the paid figure can exceed the
-        // CRM's contact count. Claiming "121% of all leads" would just look broken.
-        sub={hasCrmData && crm.leads > 0 && adLeads <= crm.leads
-          ? `${Math.round((adLeads / crm.leads) * 100)}% of all leads`
-          : 'Google + Meta conversions'}
-        delta={delta(adLeads, adLeadsPrior)} delay={3}
-        sparkData={paidDays.map(d => ({ v: (google.byDate.get(d)?.leads ?? 0) + (meta.byDate.get(d)?.leads ?? 0) }))}
+        key="ad-spend" label="Ad spend" value={fmt$(adSpend)}
+        sub={`${fmtInt(adLeads)} ${Math.round(adLeads) === 1 ? 'lead' : 'leads'} from ads`}
+        delta={delta(adSpend, adSpendPrior)} delay={3}
+        sparkData={paidDays.map(d => ({ v: (google.byDate.get(d)?.spend ?? 0) + (meta.byDate.get(d)?.spend ?? 0) }))}
         sparkColor="var(--amber)"
       />,
       <SparkMetricCard
         key="ad-cpl" label="Cost per ad lead" value={adLeads > 0 ? fmtCurrency(adCpl) : '—'}
-        sub={`from ${fmt$(adSpend)} of ad spend`}
+        sub={hasGoogleData && hasMetaData ? 'across Google and Meta' : hasGoogleData ? 'on Google Ads' : 'on Meta Ads'}
         delta={delta(adCpl, adCplPrior)} invertDelta delay={4}
-        sparkData={paidDays.map(d => ({ v: (google.byDate.get(d)?.spend ?? 0) + (meta.byDate.get(d)?.spend ?? 0) }))}
+        sparkData={paidDays.map(d => {
+          const s = (google.byDate.get(d)?.spend ?? 0) + (meta.byDate.get(d)?.spend ?? 0)
+          const l = (google.byDate.get(d)?.leads ?? 0) + (meta.byDate.get(d)?.leads ?? 0)
+          return { v: l > 0 ? s / l : 0 }
+        })}
         sparkColor="var(--ov-teal)"
+      />,
+    )
+  }
+  if (hasCrmData && crm.won > 0) {
+    kpis.push(
+      <SparkMetricCard
+        key="won" label="Jobs won" value={fmtInt(crm.won)}
+        sub={crm.wonValue > 0 ? `worth ${fmt$(crm.wonValue)}` : 'opportunities marked won'}
+        delta={delta(crm.won, crmPrior.won)} delay={5}
+        sparkData={crmDays.map(([, v]) => ({ v: v.won }))} sparkColor="var(--green)"
       />,
     )
   }
 
   // ── The sentence a business owner reads first ─────────────────────────────
-  const headline: React.ReactNode = hasCrmData ? (
+  const headline: ReactNode = hasCrmData ? (
     <>
       You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}
       {crm.calls + crm.forms > 0 && <> — <b>{fmtInt(crm.calls)}</b> by phone and <b>{fmtInt(crm.forms)}</b> through the website</>}.
-      {adLeads > 0 && <> Ads brought in <b>{fmtInt(adLeads)}</b> of them at <b>{fmtCurrency(adCpl)}</b> each.</>}
+      {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
+      {adLeads > 0 && <> Ads brought in <b>{fmtInt(adLeads)}</b> leads at <b>{fmtCurrency(adCpl)}</b> each.</>}
     </>
   ) : adLeads > 0 ? (
     <>
-      Your ads brought in <b>{fmtInt(adLeads)} {adLeads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}, at <b>{fmtCurrency(adCpl)}</b> each
+      Your ads brought in <b>{fmtInt(adLeads)} {Math.round(adLeads) === 1 ? 'lead' : 'leads'}</b> over {periodLabel}, at <b>{fmtCurrency(adCpl)}</b> each
       on <b>{fmt$(adSpend)}</b> of spend.
     </>
   ) : null
+
+  const showDailyChart = hasPaidData && allDays.length > 1
+  const showChanges    = changes.length > 0
 
   return (
     <div className="ov-scope" style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
@@ -675,90 +845,237 @@ export default async function OverviewPage({
           <>
             {headline && <p className="ov-headline">{headline}</p>}
 
-            {kpis.length > 0 && <div className="stat-grid">{kpis}</div>}
+            {kpis.length > 0 && <div className="stat-grid ov2-kpis" data-count={kpis.length}>{kpis}</div>}
 
-            {(paidCards.length > 0 || localCards.length > 0) && (
-              <div className="ov-bands">
-                {paidCards.length > 0 && (
-                  <section className="ov-band">
-                    <div className="ov-band__head">
-                      <span className="ov-band__dot" style={{ background: 'var(--blue)' }} aria-hidden />
-                      <h2 className="section-label" style={{ color: 'var(--text-secondary)', margin: 0 }}>Paid ads</h2>
-                      <span className="ov-band__rule" aria-hidden />
-                      <span className="ov-band__note">{fmt$(adSpend)} spent</span>
-                    </div>
-                    <div className="ov-band__cards">{paidCards}</div>
-                  </section>
-                )}
+            {showChannels && (
+              <div className={mixTotal > 0 ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
+                <section className="card ov2-card ov2-channels" aria-labelledby="ov2-channels-title">
+                  <div className="ov2-card-head">
+                    <h2 id="ov2-channels-title" className="section-title">Performance by channel</h2>
+                    <p className="section-desc">Where this period&apos;s visits and conversions came from</p>
+                  </div>
+                  <div className="table-scroll">
+                    <table className="data-table ov2-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Channel</th>
+                          <th scope="col" className="num">Cost</th>
+                          <th scope="col" className="num ov2-col-visits">Visits</th>
+                          <th scope="col" className="num"><span className="ov2-th-long">Conversions</span><span className="ov2-th-short">Conv.</span></th>
+                          <th scope="col" className="num"><span className="ov2-th-long">Cost per conv.</span><span className="ov2-th-short">Per conv.</span></th>
+                          <th scope="col" className="ov2-trend-col">Trend</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {channels.map(c => (
+                          <tr key={c.key}>
+                            <th scope="row">
+                              <span className="ov2-chan">
+                                <span className="ov2-chan__icon" style={{ color: c.color }}>{c.icon}</span>
+                                {c.name}
+                              </span>
+                            </th>
+                            <td className="num">{c.cost == null ? <span className="ov2-muted">—</span> : fmtWholeDollars(c.cost)}</td>
+                            <td className="num ov2-col-visits">{fmtInt(c.visits)}</td>
+                            <td className="num ov2-strong">{fmtInt(c.leads)}</td>
+                            <td className="num">
+                              {c.cost != null && c.leads >= 1 ? fmtCurrency(c.cost / c.leads) : <span className="ov2-muted">—</span>}
+                            </td>
+                            <td className="ov2-trend-col">
+                              <div className="ov2-spark"><Sparkline data={c.trend} color={c.color} height={28} /></div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {channels.length > 1 && (
+                        <tfoot>
+                          <tr>
+                            <th scope="row">All channels</th>
+                            <td className="num">{totals.cost > 0 ? fmtWholeDollars(totals.cost) : '—'}</td>
+                            <td className="num ov2-col-visits">{fmtInt(totals.visits)}</td>
+                            <td className="num">{fmtInt(totals.leads)}</td>
+                            <td className="num">{totals.cost > 0 && totals.leads >= 1 ? fmtCurrency(totals.cost / totals.leads) : '—'}</td>
+                            <td className="ov2-trend-col">
+                              <div className="ov2-spark"><Sparkline data={totalTrend} color="var(--text-secondary)" height={28} /></div>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                  <p className="ov2-foot">{channelFootnote}</p>
+                </section>
 
-                {localCards.length > 0 && (
-                  <section className="ov-band">
-                    <div className="ov-band__head">
-                      <span className="ov-band__dot" style={{ background: 'var(--green)' }} aria-hidden />
-                      <h2 className="section-label" style={{ color: 'var(--text-secondary)', margin: 0 }}>Local &amp; organic</h2>
-                      <span className="ov-band__rule" aria-hidden />
-                      <span className="ov-band__note">nothing paid per click</span>
+                {mixTotal > 0 && (
+                  <section className="card ov2-card" aria-labelledby="ov2-mix-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov2-mix-title" className="section-title">Conversion mix</h2>
+                      <p className="section-desc">Share of reported conversions by channel</p>
                     </div>
-                    <div className="ov-band__cards">{localCards}</div>
+                    <LeadMixDonut slices={mixSlices} total={mixTotal} centerLabel={mixTotal === 1 ? 'conversion' : 'conversions'} />
                   </section>
                 )}
               </div>
             )}
 
-            {(leadTrend.length > 1 || channelRows.length > 0) && (
-              <div className="ov-split">
-                {leadTrend.length > 1 && (
-                  <section className="card" style={{ padding: '1.25rem' }}>
-                    <div className="ov-chart-head">
-                      <h2 className="section-title">Leads day by day</h2>
-                      <p className="section-desc">Phone calls and web forms, {iso(fromDate)} – {iso(toDate)}</p>
-                    </div>
-                    <SpendChart
-                      data={leadTrend}
-                      spendLabel="Phone calls"
-                      conversionsLabel="Web forms"
-                      variant="count"
-                    />
-                  </section>
-                )}
+            {showDailyChart ? (
+              <section className="card ov2-card" aria-labelledby="ov2-daily-title">
+                <div className="ov2-card-head">
+                  <h2 id="ov2-daily-title" className="section-title">Cost vs leads by day</h2>
+                  <p className="section-desc">
+                    {hasCrmData
+                      ? 'Ad spend by platform, with every lead the CRM recorded that day'
+                      : 'Ad spend by platform, with the leads the ads reported that day'}
+                  </p>
+                </div>
+                <CostLeadsChart
+                  data={costLeads}
+                  leadsLabel={hasCrmData ? 'All leads' : 'Leads from ads'}
+                  showGoogle={hasGoogleData}
+                  showMeta={hasMetaData}
+                />
+              </section>
+            ) : hasCrmData && leadTrend.length > 1 ? (
+              <section className="card ov2-card" aria-labelledby="ov2-daily-title">
+                <div className="ov2-card-head">
+                  <h2 id="ov2-daily-title" className="section-title">Leads day by day</h2>
+                  <p className="section-desc">Phone calls and web forms, {fmtShortDate(iso(fromDate))} – {fmtShortDate(iso(toDate))}</p>
+                </div>
+                <SpendChart data={leadTrend} spendLabel="Phone calls" conversionsLabel="Web forms" variant="count" />
+              </section>
+            ) : null}
 
-                {channelRows.length > 0 && (
-                  <section className="card ov-panel" style={{ padding: '1.25rem' }}>
-                    <div className="ov-chart-head">
-                      <h2 className="section-title">Where visitors come from</h2>
-                      <p className="section-desc">{fmtInt(ga4.sessions)} website sessions this period</p>
+            {(showFunnel || showChanges) && (
+              <div className={showFunnel && showChanges ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
+                {showFunnel && (
+                  <section className="card ov2-card" aria-labelledby="ov2-funnel-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov2-funnel-title" className="section-title">From lead to job</h2>
+                      <p className="section-desc">Leads, opportunities opened and jobs won over {periodLabel}</p>
                     </div>
-                    <ul className="ov-share">
-                      {channelRows.map((c, i) => {
-                        const color = CHANNEL_COLOR[c.name] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length]
+                    <ol className="ov2-funnel">
+                      {funnel.map((s, i) => {
+                        const prev = i > 0 ? funnel[i - 1].value : 0
+                        const rate = i > 0 && prev > 0 && s.value <= prev ? Math.round((s.value / prev) * 100) : null
                         return (
-                          <li key={c.name} className="ov-share__row">
-                            <span className="ov-share__name">{c.name}</span>
-                            <span className="ov-share__val">{(c.share * 100).toFixed(0)}%</span>
-                            <span className="ov-share__track">
-                              <span className="ov-share__fill" style={{ width: `${Math.max(2, c.share * 100)}%`, background: color }} />
-                            </span>
+                          <li key={s.label} className="ov2-funnel__step">
+                            {i > 0 && (
+                              <span className="ov2-funnel__rate" aria-label={rate != null ? `${rate}% of ${funnel[i - 1].label.toLowerCase()}` : undefined}>
+                                {rate != null && <span>{rate}%</span>}
+                                <ArrowRight size={14} weight="bold" aria-hidden />
+                              </span>
+                            )}
+                            <div className={`ov2-funnel__stage ov2-funnel__stage--${s.tone}`}>
+                              <span className="ov2-funnel__label">{s.label}</span>
+                              <span className="ov2-funnel__value">{fmtInt(s.value)}</span>
+                            </div>
                           </li>
                         )
                       })}
+                    </ol>
+                    {crm.won > 0 && crm.wonValue > 0 && (
+                      <p className="ov2-funnel__money">
+                        Jobs won are worth <b>{fmt$(crm.wonValue)}</b>, about <b>{fmt$(crm.wonValue / crm.won)}</b> each.
+                      </p>
+                    )}
+                  </section>
+                )}
+
+                {showChanges && (
+                  <section className="card ov2-card" aria-labelledby="ov2-changes-title">
+                    <div className="ov2-card-head">
+                      <h2 id="ov2-changes-title" className="section-title">What changed</h2>
+                      <p className="section-desc">{showCompare ? `The biggest moves ${compareNoun}` : 'Worth knowing about this period'}</p>
+                    </div>
+                    <ul className="ov2-changes">
+                      {changes.map(c => (
+                        <li key={c.key} className="ov2-changes__row">
+                          <span className={`ov2-changes__icon ov2-tone--${c.tone}`}>
+                            {c.kind === 'up'
+                              ? <TrendUp size={15} weight="bold" aria-hidden />
+                              : c.kind === 'down'
+                                ? <TrendDown size={15} weight="bold" aria-hidden />
+                                : <Lightbulb size={15} weight="bold" aria-hidden />}
+                          </span>
+                          <span className="ov2-changes__text">{c.text}</span>
+                          <span className="ov2-changes__detail">{c.detail}</span>
+                        </li>
+                      ))}
                     </ul>
                   </section>
                 )}
               </div>
             )}
 
-            {rollingTrend.length > 1 && (
-              <section className="card" style={{ padding: '1.25rem' }}>
-                <div className="ov-chart-head">
-                  <h2 className="section-title">Leads week by week</h2>
+            {showCalls && (
+              <div className="ov2-row ov2-row--wide">
+                <section className="card ov2-card" aria-labelledby="ov2-calls-title">
+                  <div className="ov2-card-head">
+                    <h2 id="ov2-calls-title" className="section-title">Answered vs missed, by day of the week</h2>
+                    <p className="section-desc">Incoming calls over {periodLabel}</p>
+                  </div>
+                  <div className="ov2-legend">
+                    <span className="ov2-legend__item"><span className="ov2-legend__bar" style={{ background: 'var(--green)' }} />Answered</span>
+                    <span className="ov2-legend__item"><span className="ov2-legend__bar" style={{ background: 'var(--red)' }} />Missed</span>
+                  </div>
+                  <div
+                    className="ov2-week ov2-week-wrap" role="img"
+                    aria-label={byWeekday.map((d, i) => `${WEEKDAYS[i]}: ${d.answered} answered, ${d.missed} missed`).join('; ')}
+                  >
+                    {byWeekday.map((d, i) => (
+                      <div key={WEEKDAYS[i]} className="ov2-week__day">
+                        <div className="ov2-week__bars">
+                          <span className="ov2-week__bar ov2-week__bar--answered" style={{ height: `${(d.answered / weekdayMax) * 100}%` }}>
+                            {d.answered > 0 && <span className="ov2-week__val">{d.answered}</span>}
+                          </span>
+                          <span className="ov2-week__bar ov2-week__bar--missed" style={{ height: `${(d.missed / weekdayMax) * 100}%` }}>
+                            {d.missed > 0 && <span className="ov2-week__val">{d.missed}</span>}
+                          </span>
+                        </div>
+                        <span className="ov2-week__label">{WEEKDAYS[i]}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <div className="ov2-tiles">
+                  <section className="card ov2-bigstat" aria-label="Answer rate">
+                    <span className="ov2-bigstat__label">Answer rate</span>
+                    <span className={`ov2-bigstat__value ov2-tone--${answerRate >= 0.9 ? 'good' : answerRate >= 0.75 ? 'warn' : 'bad'}`}>
+                      {Math.round(answerRate * 100)}%
+                    </span>
+                    <span className="ov2-bigstat__sub">{fmtInt(answered)} of {fmtInt(crm.incoming)} incoming calls answered</span>
+                    {tileDelta(answerRate, answerRatePrior, { points: true })}
+                  </section>
+                  <section className="card ov2-bigstat" aria-label="Missed calls">
+                    <span className="ov2-bigstat__label">Missed calls</span>
+                    <span className={`ov2-bigstat__value ov2-tone--${crm.missed === 0 ? 'good' : 'bad'}`}>{fmtInt(crm.missed)}</span>
+                    <span className="ov2-bigstat__sub">incoming calls nobody picked up</span>
+                    {tileDelta(crm.missed, crmPrior.incoming > 0 ? crmPrior.missed : null, { lowerIsBetter: true })}
+                  </section>
+                </div>
+              </div>
+            )}
+
+            {weekly.length > 1 && (
+              <section className="card ov2-card" aria-labelledby="ov2-weekly-title">
+                <div className="ov2-card-head">
+                  <h2 id="ov2-weekly-title" className="section-title">Leads week by week</h2>
                   <p className="section-desc">The last {ROLLING_WEEKS} weeks, whatever date range is selected above</p>
                 </div>
-                <SpendChart
-                  data={rollingTrend}
-                  spendLabel="Leads that week"
-                  conversionsLabel="Phone calls"
-                  variant="count"
-                />
+                <WeeklyTrendChart data={weekly} />
+              </section>
+            )}
+
+            {localCards.length > 0 && (
+              <section className="ov-band" aria-labelledby="ov2-local-title">
+                <div className="ov-band__head">
+                  <span className="ov-band__dot" style={{ background: 'var(--green)' }} aria-hidden />
+                  <h2 id="ov2-local-title" className="section-label" style={{ color: 'var(--text-secondary)', margin: 0 }}>Search &amp; local</h2>
+                  <span className="ov-band__rule" aria-hidden />
+                  <a className="ov-band__note ov2-link" href={link('/dashboard/seo')}>Full SEO report</a>
+                </div>
+                <div className="ov-band__cards">{localCards}</div>
               </section>
             )}
           </>

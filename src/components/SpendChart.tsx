@@ -16,7 +16,7 @@ import type { TooltipProps } from 'recharts'
 import type { DailyMetric } from '@/lib/types'
 
 /** True below the 640px (Tailwind `sm`) breakpoint. SSR / first paint assume desktop. */
-function useIsNarrow(query = '(max-width: 639px)') {
+export function useIsNarrow(query = '(max-width: 639px)') {
   const [narrow, setNarrow] = useState(false)
   useEffect(() => {
     const mql = window.matchMedia(query)
@@ -29,7 +29,7 @@ function useIsNarrow(query = '(max-width: 639px)') {
 }
 
 /** 1234 -> 1.2k, 1500000 -> 1.5M — keeps the y-axis narrow on phones. */
-function compactNum(v: number) {
+export function compactNum(v: number) {
   const abs = Math.abs(v)
   if (abs >= 1_000_000) return `${+(v / 1_000_000).toFixed(1)}M`
   if (abs >= 1_000)     return `${+(v / 1_000).toFixed(1)}k`
@@ -41,7 +41,7 @@ function compactNum(v: number) {
  * `intervals` steps. Both axes share an interval count so the left and right
  * scales produce the same horizontal gridlines.
  */
-function niceTicks(max: number, intervals: number): number[] {
+export function niceTicks(max: number, intervals: number): number[] {
   const MULTIPLIERS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
   const target = Math.max(max, 0) * 1.04
   if (target <= 0) return Array.from({ length: intervals + 1 }, (_, i) => i)
@@ -63,7 +63,7 @@ function niceTicks(max: number, intervals: number): number[] {
  * Prefers a label count that divides the range exactly (uniform spacing, no
  * trailing gap); otherwise spreads labels as evenly as rounding allows.
  */
-function evenTickIndices(n: number, maxLabels: number): number[] {
+export function evenTickIndices(n: number, maxLabels: number): number[] {
   if (n <= maxLabels) return Array.from({ length: n }, (_, i) => i)
   const span = n - 1
   for (let labels = maxLabels; labels >= 4; labels--) {

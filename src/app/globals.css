@@ -4365,3 +4365,268 @@ select.note-field__input { cursor: pointer; }
   .site-row__menu { margin-top: 0.375rem; }
   .site-row__slot { display: none; }
 }
+
+/* ── Overview (dashboard v2): channel table, lead mix, cost vs leads, funnel, calls ──
+   Layout follows the Marketing Overview reference: summary first, then which channels did it,
+   then what it cost, what became work, and how the phones were handled. Tokens only. */
+.ov2-row { display: grid; gap: 1rem; align-items: stretch; }
+.ov2-row--wide   { grid-template-columns: minmax(0, 1.9fr) minmax(17rem, 1fr); }
+.ov2-row--halves { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ov2-card { padding: 1.25rem; display: flex; flex-direction: column; min-width: 0; }
+.ov2-card-head { margin-bottom: 0.875rem; }
+.ov2-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.ov2-link:hover { text-decoration: underline; }
+.ov2-tone--good    { color: var(--green); }
+.ov2-tone--bad     { color: var(--red); }
+.ov2-tone--warn    { color: var(--amber); }
+.ov2-tone--neutral { color: var(--blue); }
+
+/* Performance by channel */
+.ov2-channels { padding-inline: 0; padding-bottom: 0.875rem; }
+.ov2-channels .ov2-card-head,
+.ov2-channels .ov2-foot { padding-inline: 1.25rem; }
+.ov2-table th.num, .ov2-table td.num { text-align: right; }
+.ov2-table thead th.ov2-trend-col { text-align: right; }
+.ov2-table tbody th,
+.ov2-table tfoot th {
+  padding: 0.625rem 1rem;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ov2-table thead th:first-child,
+.ov2-table tbody th,
+.ov2-table tfoot th { padding-left: 1.25rem; }
+.ov2-table thead th:last-child,
+.ov2-table tbody td:last-child,
+.ov2-table tfoot td:last-child { padding-right: 1.25rem; }
+.ov2-table tbody tr:hover th { background: var(--bg-subtle); }
+.ov2-table tfoot th,
+.ov2-table tfoot td {
+  padding-block: 0.625rem;
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.ov2-table tfoot td { padding-inline: 1rem; }
+.ov2-table td.ov2-strong { color: var(--text-primary); font-weight: 600; }
+.ov2-muted { color: var(--text-faint); }
+.ov2-chan { display: inline-flex; align-items: center; gap: 0.625rem; white-space: nowrap; }
+.ov2-chan__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+}
+.ov2-trend-col { width: 7.5rem; }
+.ov2-spark { width: 6rem; height: 28px; margin-left: auto; }
+.ov2-foot { margin: 0.75rem 0 0; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
+
+/* Lead mix */
+.ov2-mix { display: flex; align-items: center; gap: 1.25rem; flex: 1 1 auto; }
+.ov2-mix__ring { width: 9.5rem; height: 9.5rem; flex-shrink: 0; }
+.ov2-mix__total { font-size: 15px; font-weight: 700; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ov2-mix__caption { font-size: 7px; fill: var(--text-muted); }
+.ov2-mix__legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.625rem; flex: 1 1 auto; min-width: 0; }
+.ov2-mix__item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 0.5rem; align-items: baseline; font-size: 0.8125rem; }
+.ov2-mix__swatch { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+.ov2-mix__name { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov2-mix__pct { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ov2-mix__count { grid-column: 2 / 4; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Chart legend + tooltip shared by the Overview charts */
+.ov2-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 0.5rem; font-size: 0.75rem; color: var(--text-muted); }
+.ov2-legend__item { display: inline-flex; align-items: center; gap: 0.375rem; }
+.ov2-legend__bar { width: 10px; height: 10px; border-radius: 2px; }
+.ov2-legend__line { width: 16px; height: 3px; border-radius: 2px; }
+.ov2-legend__line--dashed { height: 0; border-radius: 0; border-top: 2px dashed currentColor; }
+.ov2-tip {
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text-primary) 12%, transparent);
+  font-size: 12px;
+}
+.ov2-tip__date { font-weight: 600; margin-bottom: 4px; }
+.ov2-tip__row { display: flex; align-items: center; gap: 6px; line-height: 18px; }
+.ov2-tip__swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.ov2-tip__name { color: var(--text-muted); }
+.ov2-tip__val { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+
+/* From lead to job */
+.ov2-funnel { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; flex: 1 1 auto; }
+.ov2-funnel__step { display: flex; align-items: center; flex: 1 1 0; min-width: 0; }
+.ov2-funnel__rate {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding-inline: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ov2-funnel__stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 1rem 0.5rem;
+  border-radius: 12px;
+  text-align: center;
+}
+.ov2-funnel__stage--blue   { background: var(--blue-subtle); }
+.ov2-funnel__stage--violet { background: color-mix(in srgb, var(--ov-violet) 12%, transparent); }
+.ov2-funnel__stage--green  { background: var(--green-subtle); }
+.ov2-funnel__label { font-size: 0.75rem; color: var(--text-secondary); }
+.ov2-funnel__value { font-size: 1.75rem; line-height: 1.1; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ov2-funnel__money { margin: 0.875rem 0 0; font-size: 0.8125rem; color: var(--text-secondary); }
+.ov2-funnel__money b { color: var(--text-primary); font-weight: 600; }
+
+/* What changed */
+.ov2-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ov2-changes__row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding-block: 0.625rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.ov2-changes__row:first-child { border-top: 0; padding-top: 0; }
+.ov2-changes__icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-subtle); }
+.ov2-changes__icon.ov2-tone--good    { background: var(--green-subtle); }
+.ov2-changes__icon.ov2-tone--bad     { background: var(--red-subtle); }
+.ov2-changes__icon.ov2-tone--neutral { background: var(--blue-subtle); }
+.ov2-changes__text { font-size: 0.875rem; color: var(--text-primary); }
+.ov2-changes__detail { font-size: 0.8125rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Answered vs missed by weekday */
+.ov2-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5rem; }
+.ov2-week__day { display: flex; flex-direction: column; min-width: 0; }
+.ov2-week__bars {
+  height: 10rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.ov2-week__bar { position: relative; width: min(1.5rem, 40%); min-height: 2px; border-radius: 4px 4px 0 0; }
+.ov2-week__bar--answered { background: var(--green); }
+.ov2-week__bar--missed   { background: var(--red); opacity: 0.85; }
+.ov2-week__val {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 2px;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ov2-week__label { margin-top: 0.375rem; text-align: center; font-size: 0.75rem; color: var(--text-muted); }
+.ov2-week-wrap { padding-top: 1.25rem; }
+
+/* Big single-number tiles */
+.ov2-tiles { display: grid; gap: 1rem; grid-template-rows: 1fr 1fr; }
+.ov2-bigstat { padding: 1.25rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.25rem; text-align: center; }
+.ov2-bigstat__label { font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+.ov2-bigstat__value { font-size: 2.5rem; line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ov2-bigstat__sub { font-size: 0.8125rem; color: var(--text-muted); }
+.ov2-bigstat__delta { display: inline-flex; align-items: center; gap: 4px; margin-top: 0.25rem; font-size: 0.75rem; font-weight: 600; }
+
+@media (max-width: 1023px) {
+  .ov2-row--wide, .ov2-row--halves { grid-template-columns: minmax(0, 1fr); }
+  .ov2-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; }
+}
+@media (max-width: 639px) {
+  .ov2-card { padding: 1rem; }
+  .ov2-channels { padding-inline: 0; }
+  .ov2-channels .ov2-card-head,
+  .ov2-channels .ov2-foot { padding-inline: 1rem; }
+  .ov2-table thead th:first-child,
+  .ov2-table tbody th,
+  .ov2-table tfoot th { padding-left: 1rem; }
+  .ov2-mix { flex-direction: column; align-items: stretch; }
+  .ov2-mix__ring { align-self: center; }
+  .ov2-funnel { flex-direction: column; }
+  .ov2-funnel__step { flex-direction: column; align-items: stretch; }
+  .ov2-funnel__rate { flex-direction: row; justify-content: center; padding-block: 0.375rem; }
+  .ov2-funnel__rate svg { transform: rotate(90deg); }
+  .ov2-funnel__value { font-size: 1.5rem; }
+  .ov2-changes__row { grid-template-columns: 28px minmax(0, 1fr); }
+  .ov2-changes__detail { grid-column: 2; white-space: normal; }
+  .ov2-week { gap: 0.25rem; }
+  .ov2-week__val { display: none; }
+  .ov2-tiles { grid-template-columns: minmax(0, 1fr); }
+  .ov2-bigstat__value { font-size: 2rem; }
+}
+
+/* Overview KPI row: three across until the screen is wide enough for six, so labels and change
+   pills never wrap into each other. Two or four cards sit in pairs. */
+.stat-grid.ov2-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stat-grid.ov2-kpis[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.stat-grid.ov2-kpis[data-count="2"],
+.stat-grid.ov2-kpis[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1700px) {
+  .stat-grid.ov2-kpis[data-count="5"],
+  .stat-grid.ov2-kpis[data-count="6"] { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+}
+@media (max-width: 639px) {
+  .stat-grid.ov2-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* Phones keep the four columns that answer "what did each channel bring in, and at what cost". */
+  .ov2-table .ov2-col-visits,
+  .ov2-table .ov2-trend-col { display: none; }
+  .table-scroll > table.ov2-table { min-width: 0; }
+  .ov2-table thead th,
+  .ov2-table tbody td,
+  .ov2-table tfoot td { padding-inline: 0.5rem; }
+  .ov2-table thead th:nth-last-child(2),
+  .ov2-table tbody td:nth-last-child(2),
+  .ov2-table tfoot td:nth-last-child(2) { padding-right: 1rem; }
+  .ov2-table thead th { white-space: nowrap; letter-spacing: 0.04em; }
+  .ov2-chan { gap: 0.5rem; }
+  .ov2-chan__icon { width: 24px; height: 24px; }
+}
+
+/* Overview on phones: short column headers and a colour dot in place of the icon tile, so the
+   channel table fits 390px; KPI change pills sit under their label so labels don't wrap. */
+.ov2-th-short { display: none; }
+@media (max-width: 639px) {
+  .ov2-th-long  { display: none; }
+  .ov2-th-short { display: inline; }
+  .ov2-table tbody th,
+  .ov2-table tfoot th { font-size: 0.8125rem; }
+  .ov2-chan { gap: 0.375rem; }
+  .ov2-chan__icon { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .ov2-chan__icon > * { display: none; }
+  /* SparkMetricCard sets its padding inline, so only !important can tighten it here. */
+  .ov2-kpis > .card { padding: 1rem !important; }
+  .ov2-kpis > .card > div:first-child { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+}
+/* Overview on the narrowest phones (≤380px): channel names may wrap, so the table still fits. */
+@media (max-width: 380px) {
+  .ov2-chan { white-space: normal; align-items: flex-start; }
+  .ov2-chan__icon { margin-top: 0.3125rem; }
+}
