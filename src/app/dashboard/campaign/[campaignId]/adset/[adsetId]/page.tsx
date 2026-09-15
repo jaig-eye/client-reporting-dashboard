@@ -3,7 +3,7 @@
 // Bottom of the drill-down: shows individual ad cards within one ad group/set.
 // Navigation: Platforms → Platform → Campaign → Ad Group (here) → Ads
 
-import React, { Suspense } from 'react'
+import React from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
@@ -18,7 +18,11 @@ import PMaxAssetSlider from '@/components/PMaxAssetSlider'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
 import SearchAdCopy, { type SearchAdCopyRow } from '@/components/SearchAdCopy'
 import NegativeKeywordList, { type NegativeKeywordRow } from '@/components/NegativeKeywordList'
-import DateRangePicker from '@/components/DateRangePicker'
+import PageHeader from '@/components/dashboard/PageHeader'
+import StatusPill, { statusTone } from '@/components/dashboard/StatusPill'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
+import { dedupeAdDays, AD_GROUP_PLACEHOLDER } from '@/lib/adRows'
+import { fetchAllRows } from '@/lib/fetchAllRows'
 import SpendChart from '@/components/SpendChart'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import MetricCard from '@/components/MetricCard'
@@ -116,6 +120,7 @@ export default async function AdSetDetailPage({
     final_url: string | null; image_url: string | null
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number
+    date: string
   }
   type MetaAdRow = {
     ad_id: string; ad_name: string; adset_name: string | null
@@ -169,14 +174,15 @@ export default async function AdSetDetailPage({
   let priorAvgImprShare: number | null = null
 
   if (isGoogleAds) {
-    const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }, { data: isData }, { data: priorIsData }] = await Promise.all([
-      db.from('google_ads_ad_metrics')
+    const [{ data: rows }, { data: campRow }, { data: assetRows }, { data: priorRows }, { data: isData }, { data: priorIsData }, { data: adMetaRows }] = await Promise.all([
+      fetchAllRows((from, to) => db.from('google_ads_ad_metrics')
         .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,spend,impressions,clicks,conversions,conversions_value,date')
         .eq('client_id', client.id)
         .eq('campaign_id', campaignId)
         .eq('ad_group_id', adsetId)
         .gte('date', dateFrom)
-        .lte('date', dateTo),
+        .lte('date', dateTo)
+        .order('id').range(from, to)).then(data => ({ data })),
       db.from('google_ads_metrics')
         .select('campaign_name,campaign_type').eq('client_id', client.id).eq('campaign_id', campaignId).limit(1).maybeSingle(),
       db.from('google_ads_asset_group_assets')
@@ -184,13 +190,14 @@ export default async function AdSetDetailPage({
         .eq('client_id', client.id)
         .eq('asset_group_id', adsetId),
       showCompare
-        ? db.from('google_ads_ad_metrics')
-            .select('date,spend,impressions,clicks,conversions,conversions_value')
+        ? fetchAllRows((from, to) => db.from('google_ads_ad_metrics')
+            .select('ad_id,ad_type,date,spend,impressions,clicks,conversions,conversions_value')
             .eq('client_id', client.id)
             .eq('campaign_id', campaignId)
             .eq('ad_group_id', adsetId)
             .gte('date', priorFrom)
             .lte('date', priorTo)
+            .order('id').range(from, to)).then(data => ({ data: data as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }))
         : Promise.resolve({ data: [] as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[] }),
       // Campaign-level impression share for this adset's parent campaign
       db.from('google_ads_metrics')
@@ -207,6 +214,16 @@ export default async function AdSetDetailPage({
             .gte('date', priorFrom)
             .lte('date', priorTo)
         : Promise.resolve({ data: [] as { search_impression_share: number | null }[] }),
+      // Every ad in this ad group from the last 90 days, newest first, so paused ads with nothing
+      // in the chosen dates still appear with their latest status and ad copy.
+      db.from('google_ads_ad_metrics')
+        .select('ad_id,ad_name,ad_type,ad_group_name,ad_status,ad_strength,headlines,descriptions,final_url,image_url,date')
+        .eq('client_id', client.id)
+        .eq('campaign_id', campaignId)
+        .eq('ad_group_id', adsetId)
+        .gte('date', new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10))
+        .order('date', { ascending: false }).order('id')
+        .range(0, 9999),
     ])
     // Fall back to the raw campaign id only when the campaign row carries no name.
     const campName = (campRow as { campaign_name: string | null } | null)?.campaign_name
@@ -215,7 +232,36 @@ export default async function AdSetDetailPage({
     isPMaxGroup = (rows ?? []).some((r: Record<string, unknown>) => r.ad_type === 'ASSET_GROUP')
     pMaxAssets = (assetRows ?? []) as PMaxAsset[]
 
-    for (const r of (rows ?? []) as GoogleAdRow[]) {
+    // Latest details per ad from the last 90 days, whatever dates are picked. A paused ad's $0
+    // placeholder row carries its status but no copy, so copy comes from the newest row that has it.
+    type GoogleAdMeta = Omit<GoogleAdRow, 'spend' | 'impressions' | 'clicks' | 'conversions' | 'conversions_value'>
+    const latestAdMeta = new Map<string, GoogleAdMeta>()
+    for (const m of (adMetaRows ?? []) as GoogleAdMeta[]) {
+      if (!m.ad_id || m.ad_type === AD_GROUP_PLACEHOLDER) continue
+      const ex = latestAdMeta.get(m.ad_id)
+      if (!ex) { latestAdMeta.set(m.ad_id, { ...m }); continue }
+      if (!ex.ad_name && m.ad_name) ex.ad_name = m.ad_name
+      if (!ex.ad_type && m.ad_type) ex.ad_type = m.ad_type
+      if (!ex.ad_strength && m.ad_strength) ex.ad_strength = m.ad_strength
+      if (!ex.headlines?.length && m.headlines?.length) ex.headlines = m.headlines
+      if (!ex.descriptions?.length && m.descriptions?.length) ex.descriptions = m.descriptions
+      if (!ex.final_url && m.final_url) ex.final_url = m.final_url
+      if (!ex.image_url && m.image_url) ex.image_url = m.image_url
+    }
+    for (const m of Array.from(latestAdMeta.values())) {
+      if (m.ad_group_name) groupName = m.ad_group_name
+      upsertAd({
+        ad_id: m.ad_id, ad_name: m.ad_name, ad_type: m.ad_type, ad_status: m.ad_status, ad_strength: m.ad_strength,
+        thumbnail_url: null, image_url: m.image_url, video_id: null, video_thumb_url: null,
+        creative_body: null, creative_title: null,
+        headlines: m.headlines, descriptions: m.descriptions, final_url: m.final_url,
+        spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0,
+        roas: 0, cpl: 0, ctr: 0, adFuelSpend: 0,
+      })
+    }
+
+    // One row per ad per day (two connections to one account store each ad twice), no placeholders.
+    for (const r of dedupeAdDays((rows ?? []) as GoogleAdRow[])) {
       if (r.ad_group_name) groupName = r.ad_group_name
       const sp = Number(r.spend) || 0
       const cv = Number(r.conversions_value) || 0
@@ -245,7 +291,7 @@ export default async function AdSetDetailPage({
         adFuelSpend:     afs,
       })
     }
-    for (const r of (priorRows ?? []) as { date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[]) {
+    for (const r of dedupeAdDays((priorRows ?? []) as { ad_id?: string; ad_type?: string | null; date: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number }[])) {
       priorTotals.spend           += Number(r.spend)             || 0
       priorTotals.impressions     += Number(r.impressions)       || 0
       priorTotals.clicks          += Number(r.clicks)            || 0
@@ -253,9 +299,9 @@ export default async function AdSetDetailPage({
       priorTotals.conversionValue += Number(r.conversions_value) || 0
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dailyTrend = getDailyTrend((rows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
+    dailyTrend = getDailyTrend(dedupeAdDays((rows ?? []) as GoogleAdRow[]).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    priorDailyTrend = getDailyTrend((priorRows ?? []).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
+    priorDailyTrend = getDailyTrend(dedupeAdDays((priorRows ?? []) as { ad_id?: string; date?: string }[]).map((r: any) => ({ ...r, conversion_value: r.conversions_value })))
     // Compute impression share from campaign-level data (IS is not available at ad group level)
     const isFiltered = (isData ?? []).filter(r => r.search_impression_share !== null)
     avgImprShare = isFiltered.length > 0
@@ -459,6 +505,10 @@ export default async function AdSetDetailPage({
   }
 
   const adCardList = Array.from(adMap.values()).sort((a, b) => b.spend - a.spend)
+  // The ad group reads Active while any of its ads is live, and Paused once none are.
+  const groupStatus = adCardList.some(a => statusTone(a.ad_status) === 'active') ? 'ACTIVE'
+    : adCardList.some(a => statusTone(a.ad_status) === 'paused') ? 'PAUSED'
+    : null
 
   // ── Keyword data (Google Search only) ────────────────────────────────────
   type KwDbRow = {
@@ -751,78 +801,19 @@ export default async function AdSetDetailPage({
   if (compare) dateQsObj.compare = compare
   const dateQs    = new URLSearchParams(dateQsObj)
   const campHref  = `/dashboard/campaign/${encodeURIComponent(campaignId)}?${dateQs}`
-  const platHref  = `/dashboard?${dateQs}`
-  const rootHref  = `/dashboard?${dateQs}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      {/* ── Header ──────────────────────────────────────────── */}
-      <header
-        className="sticky top-0 z-10 border-b"
-        style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            {settings.agency_logo_url && (
-              <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain flex-shrink-0" />
-            )}
-            <span className="hidden sm:block text-sm flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
-            <span style={{ color: 'var(--border)' }}>|</span>
-            <div className="flex items-center gap-2 min-w-0">
-              {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain flex-shrink-0" />}
-              <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
-            </div>
-          </div>
-          <div className="flex-shrink-0">
-            <Suspense fallback={null}>
-              <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
-            </Suspense>
-          </div>
-        </div>
-      </header>
+      <PageHeader title={groupName} accent="var(--accent)" fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
+        <Link href={campHref} className="dash-page-header__back">← {campaignName}</Link>
+        <span className="dash-page-header__source">
+          <ConnectorLogo type={isGoogleAds ? 'google_ads' : 'meta_ads'} size={14} aria-hidden />
+          {groupLabel}
+        </span>
+        {groupStatus && <StatusPill status={groupStatus} />}
+      </PageHeader>
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-
-        {/* ── Back + Breadcrumb ──────────────────────────────── */}
-        <div>
-          <Link
-            href={campHref}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none', padding: '0.3rem 0.75rem 0.3rem 0.5rem', borderRadius: '0.5rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', marginBottom: '0.75rem' }}
-          >
-            ← {campaignName}
-          </Link>
-          <div className="flex items-center gap-1.5 text-xs mb-3 flex-wrap" style={{ color: 'var(--text-faint)' }}>
-            <Link href={rootHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Platforms</Link>
-            <span>/</span>
-            <Link href={platHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>{isGoogleAds ? 'Google Ads' : 'Meta Ads'}</Link>
-            <span>/</span>
-            <Link href={campHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>{campaignName}</Link>
-            <span>/</span>
-            <span style={{ color: 'var(--text-secondary)' }}>{groupName}</span>
-          </div>
-
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-faint)', letterSpacing: '0.06em' }}>{groupLabel}</p>
-              <h1 className="page-title">{groupName}</h1>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className="badge"
-                  style={{
-                    background: isGoogleAds ? '#eff6ff' : '#f5f3ff',
-                    color:      isGoogleAds ? '#2563eb' : '#7c3aed',
-                    border:     isGoogleAds ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
-                  }}
-                >
-                  {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
-                </span>
-                <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                  {dateFrom} – {dateTo}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* ── Group KPI summary (layout-driven) ──────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

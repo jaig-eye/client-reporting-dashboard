@@ -6,7 +6,7 @@
 //
 // Navigation: Platforms → Platform → Campaign (here) → Ad Group → Ads
 
-import React, { Suspense } from 'react'
+import React from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import Link from 'next/link'
@@ -20,7 +20,12 @@ import { AdGroupTable, type AdGroupRow } from '@/components/AdTable'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import MetricCard from '@/components/MetricCard'
 import KeywordTable, { type KeywordRow } from '@/components/KeywordTable'
-import DateRangePicker from '@/components/DateRangePicker'
+import PageHeader from '@/components/dashboard/PageHeader'
+import StatusPill from '@/components/dashboard/StatusPill'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
+import { dedupeAdDays, AD_GROUP_PLACEHOLDER } from '@/lib/adRows'
+import { fetchAllRows } from '@/lib/fetchAllRows'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
 import {
   resolvePaidAdsLayout, resolvePlatformLayout, resolveMetaMediaLayout, resolveGoogleSearchLayout,
@@ -31,33 +36,44 @@ export const dynamic = 'force-dynamic'
 
 // Cache campaign metrics for 5 minutes. Busted by revalidateTag('client-metrics') in sync cron.
 const _getCachedGoogleCampaignMetrics = unstable_cache(
-  async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean) => {
+  async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean, statusFrom: string) => {
     const db = createAdminClient()
-    const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }] = await Promise.all([
-      db.from('google_ads_ad_metrics')
-        .select('ad_id,ad_group_id,ad_group_name,ad_status,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
+    const [{ data: rows }, { data: campRow }, { data: priorRows }, { data: priorIsRows }, { data: statusRows }] = await Promise.all([
+      // Paged: a busy campaign has well over the API's 1000-row limit of ad rows in a month, and a
+      // capped read silently under-counted every ad group's cost in the table.
+      fetchAllRows((from, to) => db.from('google_ads_ad_metrics')
+        .select('ad_id,ad_type,ad_group_id,ad_group_name,ad_status,spend,impressions,clicks,conversions,conversions_value,all_conversions_value,date')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
-        .gte('date', dateFrom).lte('date', dateTo),
+        .gte('date', dateFrom).lte('date', dateTo)
+        .order('id').range(from, to)).then(data => ({ data })),
       db.from('google_ads_metrics')
-        .select('campaign_name,campaign_type,search_impression_share,campaign_start_date,spend,conversions,conversions_value')
+        .select('campaign_name,campaign_type,campaign_status,search_impression_share,campaign_start_date,spend,conversions,conversions_value,date')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
         .gte('date', dateFrom).lte('date', dateTo),
       showCompare
-        ? db.from('google_ads_ad_metrics')
-            .select('spend,impressions,clicks,conversions,conversions_value,all_conversions_value')
+        ? fetchAllRows((from, to) => db.from('google_ads_ad_metrics')
+            .select('ad_id,ad_type,date,spend,impressions,clicks,conversions,conversions_value,all_conversions_value')
             .eq('client_id', clientId).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(from, to)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
       showCompare
         ? db.from('google_ads_metrics')
-            .select('search_impression_share')
+            .select('search_impression_share,spend,conversions,conversions_value,date')
             .eq('client_id', clientId).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
         : Promise.resolve({ data: [] as unknown[] }),
+      // Current status of every ad and ad group, whatever dates are picked: newest rows first.
+      fetchAllRows((from, to) => db.from('google_ads_ad_metrics')
+        .select('ad_id,ad_type,ad_group_id,ad_group_name,ad_status,date')
+        .eq('client_id', clientId).eq('campaign_id', campaignId)
+        .gte('date', statusFrom)
+        .order('date', { ascending: false }).order('id')
+        .range(from, to)).then(data => ({ data })),
     ])
-    return { rows: rows ?? [], campRow: campRow ?? [], priorRows: priorRows ?? [], priorIsRows: priorIsRows ?? [] }
+    return { rows: rows ?? [], campRow: campRow ?? [], priorRows: priorRows ?? [], priorIsRows: priorIsRows ?? [], statusRows: statusRows ?? [] }
   },
-  ['campaign-google'],
+  ['campaign-google-v3'],
   { revalidate: 300, tags: ['client-metrics'] }
 )
 
@@ -65,25 +81,30 @@ const _getCachedMetaCampaignMetrics = unstable_cache(
   async (clientId: string, campaignId: string, dateFrom: string, dateTo: string, priorFrom: string, priorTo: string, showCompare: boolean, adsetMetaFrom: string) => {
     const db = createAdminClient()
     const [{ data: campRows }, { data: rows }, { data: priorCampRows }, { data: priorRows }, { data: adsetMetaRows }] = await Promise.all([
-      db.from('meta_ads_ad_metrics')
+      // All four ad-level reads are paged — see the Google reads above.
+      fetchAllRows((from, to) => db.from('meta_ads_ad_metrics')
         .select('campaign_name,date,spend,impressions,clicks,conversions,conversion_value,actions,action_values')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
-        .gte('date', dateFrom).lte('date', dateTo),
-      db.from('meta_ads_ad_metrics')
+        .gte('date', dateFrom).lte('date', dateTo)
+        .order('id').range(from, to)).then(data => ({ data })),
+      fetchAllRows((from, to) => db.from('meta_ads_ad_metrics')
         .select('ad_id,adset_id,adset_name,ad_status,adset_daily_budget,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
         .eq('client_id', clientId).eq('campaign_id', campaignId)
-        .gte('date', dateFrom).lte('date', dateTo),
+        .gte('date', dateFrom).lte('date', dateTo)
+        .order('id').range(from, to)).then(data => ({ data })),
       showCompare
-        ? db.from('meta_ads_ad_metrics')
+        ? fetchAllRows((from, to) => db.from('meta_ads_ad_metrics')
             .select('spend,impressions,clicks,conversions,conversion_value,actions,action_values')
             .eq('client_id', clientId).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(from, to)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
       showCompare
-        ? db.from('meta_ads_ad_metrics')
+        ? fetchAllRows((from, to) => db.from('meta_ads_ad_metrics')
             .select('ad_id,adset_id,adset_name,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
             .eq('client_id', clientId).eq('campaign_id', campaignId)
             .gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(from, to)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
       db.rpc('get_adset_budgets_for_campaign', {
         p_campaign_id: campaignId,
@@ -99,7 +120,7 @@ const _getCachedMetaCampaignMetrics = unstable_cache(
       adsetMetaRows: adsetMetaRows ?? [],
     }
   },
-  ['campaign-meta'],
+  ['campaign-meta-v2'],
   { revalidate: 300, tags: ['client-metrics'] }
 )
 
@@ -199,10 +220,11 @@ export default async function CampaignDetailPage({
 
   // ── Fetch ad-level metrics ─────────────────────────────────────────────────
   type GoogleAdRow = {
-    ad_id: string; ad_group_id: string; ad_group_name: string; ad_status?: string | null; date: string
+    ad_id: string; ad_type?: string | null; ad_group_id: string; ad_group_name: string; ad_status?: string | null; date: string
     spend: number; impressions: number; clicks: number
     conversions: number; conversions_value: number; all_conversions_value?: number | null
   }
+  type GoogleStatusRow = { ad_id: string; ad_type: string | null; ad_group_id: string; ad_group_name: string; ad_status: string | null; date: string }
   type MetaAdRow = {
     ad_id: string; adset_id: string | null; adset_name: string | null; ad_status: string | null; date: string
     adset_daily_budget?: number | null
@@ -254,6 +276,7 @@ export default async function CampaignDetailPage({
   let priorAvgImprShare: number | null = null
   let campTypeRaw       = ''
   let campaignStartDate: string | null = null
+  let campaignStatus:    string | null = null
 
   // Daily series for sparklines
   type DayAgg = { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }
@@ -276,10 +299,11 @@ export default async function CampaignDetailPage({
   let googleCampConvValue:    number | null = null
 
   if (isGoogleAds) {
-    const { rows, campRow, priorRows, priorIsRows } = await _getCachedGoogleCampaignMetrics(
-      client.id, campaignId, dateFrom, dateTo, priorFrom, priorTo, showCompare
+    const statusFrom = new Date(Date.now() - 35 * 86_400_000).toISOString().slice(0, 10)
+    const { rows, campRow, priorRows, priorIsRows, statusRows } = await _getCachedGoogleCampaignMetrics(
+      client.id, campaignId, dateFrom, dateTo, priorFrom, priorTo, showCompare, statusFrom
     )
-    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; search_impression_share: number | null; campaign_start_date?: string | null; spend?: number | null; conversions?: number | null; conversions_value?: number | null; date?: string }[] | null) ?? []
+    const campRows = (campRow as { campaign_name: string; campaign_type: string | null; campaign_status?: string | null; search_impression_share: number | null; campaign_start_date?: string | null; spend?: number | null; conversions?: number | null; conversions_value?: number | null; date?: string }[] | null) ?? []
     // Sort desc by date so the most-recent row's name/type is used — not the oldest
     const sortedRows = [...campRows].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
     const firstCamp  = sortedRows[0] ?? null
@@ -298,13 +322,50 @@ export default async function CampaignDetailPage({
       : null
     campTypeRaw       = (firstCamp?.campaign_type ?? '').toUpperCase()
     campaignStartDate = firstCamp?.campaign_start_date ?? null
-    for (const r of (rows ?? []) as GoogleAdRow[]) {
+    campaignStatus    = firstCamp?.campaign_status ?? null
+    // One row per ad per day (two connections to one account store each ad twice), no placeholders.
+    for (const r of dedupeAdDays((rows ?? []) as GoogleAdRow[])) {
       const sp = Number(r.spend)||0, im = Number(r.impressions)||0, cl = Number(r.clicks)||0
       const co = Number(r.conversions)||0
       const cv = Number(r.conversions_value) || 0
       upsertSet(r.ad_group_id, r.ad_group_name, r.ad_id, r.ad_status ?? null, r.date, sp, im, cl, co, cv)
       upsertDay(r.date, sp, im, cl, co, cv)
     }
+    // ── Ad group status ───────────────────────────────────────────────────
+    // Google gives each ad a status but we don't store an active ad group's own status. The old
+    // rule took whichever rows landed on the group's latest date, so a quiet day (live ads with no
+    // impressions, only a paused ad's $0 placeholder) turned the whole group Paused. Now each ad
+    // contributes its most recent status and a group is Active if any of its ads is. A paused-group
+    // placeholder that is the group's newest row still marks it Paused.
+    const latestAd = new Map<string, GoogleStatusRow>()
+    for (const s of (statusRows ?? []) as GoogleStatusRow[]) {   // newest first
+      if (s.ad_id && !latestAd.has(s.ad_id)) latestAd.set(s.ad_id, s)
+    }
+    type GroupState = { name: string; anyActive: boolean; anyStatus: string | null; newestAd: string; newestPlaceholder: string; placeholderStatus: string | null }
+    const groups = new Map<string, GroupState>()
+    for (const a of Array.from(latestAd.values())) {
+      const g = groups.get(a.ad_group_id) ?? { name: a.ad_group_name, anyActive: false, anyStatus: null, newestAd: '', newestPlaceholder: '', placeholderStatus: null }
+      const status = normalizeMetaAdStatus(a.ad_status)
+      if (a.ad_type === AD_GROUP_PLACEHOLDER) {
+        if (a.date > g.newestPlaceholder) { g.newestPlaceholder = a.date; g.placeholderStatus = status }
+      } else {
+        if (a.date > g.newestAd) g.newestAd = a.date
+        if (status === 'ACTIVE') g.anyActive = true
+        else if (status && !g.anyStatus) g.anyStatus = status
+      }
+      if (!g.name && a.ad_group_name) g.name = a.ad_group_name
+      groups.set(a.ad_group_id, g)
+    }
+    for (const [groupId, g] of Array.from(groups)) {
+      const status = g.newestPlaceholder && g.newestPlaceholder >= g.newestAd
+        ? (g.placeholderStatus ?? 'PAUSED')
+        : g.anyActive ? 'ACTIVE' : g.anyStatus
+      const ex = setMap.get(groupId)
+      if (ex) { if (status) ex.status = status }
+      // Ad groups with nothing in the chosen dates (mostly paused ones) still appear, at $0.
+      else if (g.name) setMap.set(groupId, { setName: g.name, status, latestDate: '', adsetBudget: null, spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0, adIds: new Set() })
+    }
+
     // Build campaign-level spend/conversions/value by date from google_ads_metrics (no
     // impressions filter). Override the spend values written to dailyMap by ad-level rows so
     // that sparklines and KPI totals reflect the same number the Google Ads UI shows.
@@ -312,9 +373,12 @@ export default async function CampaignDetailPage({
     let campConvAcc = 0
     let campConvValAcc = 0
     let hasCampConvData = false
+    const seenCampDay = new Set<string>()
     for (const r of campRows) {
       const d = r.date ?? ''
-      if (!d) continue
+      // One row per day: a second connection to the same account would double the spend.
+      if (!d || seenCampDay.has(d)) continue
+      seenCampDay.add(d)
       hasCampConvData = true
       campSpendByDate.set(d, (campSpendByDate.get(d) ?? 0) + (Number(r.spend) || 0))
       campConvAcc    += Number(r.conversions)       || 0
@@ -329,12 +393,25 @@ export default async function CampaignDetailPage({
     googleCampConversions = hasCampConvData ? campConvAcc    : null
     googleCampConvValue   = hasCampConvData ? campConvValAcc : null
 
-    for (const r of (priorRows ?? []) as { spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[]) {
+    for (const r of dedupeAdDays((priorRows ?? []) as { ad_id?: string; ad_type?: string | null; date?: string; spend: number; impressions: number; clicks: number; conversions: number; conversions_value: number; all_conversions_value?: number | null }[])) {
       priorTotals.spend           += Number(r.spend)            || 0
       priorTotals.impressions     += Number(r.impressions)      || 0
       priorTotals.clicks          += Number(r.clicks)           || 0
       priorTotals.conversions     += Number(r.conversions)      || 0
       priorTotals.conversionValue += Number(r.conversions_value) || 0
+    }
+    // The previous period's spend, conversions and value come from the same campaign-level source
+    // as the current period, so the change figures compare like with like.
+    const priorCampByDay = new Map<string, { spend: number; conversions: number; value: number }>()
+    for (const p of (priorIsRows ?? []) as { date?: string; spend?: number | null; conversions?: number | null; conversions_value?: number | null }[]) {
+      if (!p.date || priorCampByDay.has(p.date)) continue
+      priorCampByDay.set(p.date, { spend: Number(p.spend) || 0, conversions: Number(p.conversions) || 0, value: Number(p.conversions_value) || 0 })
+    }
+    if (priorCampByDay.size > 0) {
+      const days = Array.from(priorCampByDay.values())
+      priorTotals.spend           = days.reduce((t, v) => t + v.spend, 0)
+      priorTotals.conversions     = days.reduce((t, v) => t + v.conversions, 0)
+      priorTotals.conversionValue = days.reduce((t, v) => t + v.value, 0)
     }
   } else {
     // Fetch campaign-level rows for KPI totals/sparklines (matches dashboard source)
@@ -561,7 +638,9 @@ export default async function CampaignDetailPage({
     .filter(g => !isMetaDefaultName(g.setName))
     // Merge entries with the same name (handles null adset_id rows creating duplicate buckets)
     .reduce((acc: AdGroupRow[], g: AdGroupRow) => {
-      const existing = acc.find((x: AdGroupRow) => x.setName.toLowerCase() === g.setName.toLowerCase())
+      // Meta only: rows with a null adset_id land in a bucket keyed by name, so merge those. Google
+      // ad groups sharing a name are different ad groups and must stay separate rows.
+      const existing = isGoogleAds ? undefined : acc.find((x: AdGroupRow) => x.setName.toLowerCase() === g.setName.toLowerCase())
       if (existing) {
         existing.spend           += g.spend
         existing.impressions     += g.impressions
@@ -721,86 +800,35 @@ export default async function CampaignDetailPage({
   const dateQsObj: Record<string, string> = { source, from: dateFrom, to: dateTo }
   if (compare) dateQsObj.compare = compare
   const dateQs   = new URLSearchParams(dateQsObj)
-  const backHref = `/dashboard?${dateQs}`
+  const CAMPAIGN_TYPES: Record<string, string> = {
+    SEARCH: 'Search', PERFORMANCE_MAX: 'Performance Max', DISPLAY: 'Display', VIDEO: 'Video', SHOPPING: 'Shopping',
+    DEMAND_GEN: 'Demand Gen', DISCOVERY: 'Demand Gen', LOCAL_SERVICES: 'Local Services', SMART: 'Smart',
+  }
+  const campaignTypeLabel = campTypeRaw
+    ? (CAMPAIGN_TYPES[campTypeRaw] ?? campTypeRaw.replace(/_/g, ' ').toLowerCase().replace(/^\w/, ch => ch.toUpperCase()))
+    : null
+
+  // Back to the platform view it was opened from — under Paid Ads on the rebuilt dashboard.
+  const backHref = `${isDashboardV2(client, cookieStore) ? '/dashboard/paid-ads' : '/dashboard'}?${dateQs}`
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      {/* ── Header ──────────────────────────────────────────── */}
-      <header
-        className="sticky top-0 z-10 border-b"
-        style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            {settings.agency_logo_url && (
-              <img src={settings.agency_logo_url} alt={settings.agency_name} className="max-h-7 max-w-[140px] object-contain flex-shrink-0" />
-            )}
-            <span className="hidden sm:block text-sm flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{settings.agency_name}</span>
-            <span style={{ color: 'var(--border)' }}>|</span>
-            <div className="flex items-center gap-2 min-w-0">
-              {client.logo_url && <img src={client.logo_url} alt={client.name} className="h-5 object-contain flex-shrink-0" />}
-              <span className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</span>
-            </div>
-          </div>
-          <div className="flex-shrink-0">
-            <Suspense fallback={null}>
-              <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
-            </Suspense>
-          </div>
-        </div>
-      </header>
+      <PageHeader title={campaignName} accent="var(--accent)" fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
+        <Link href={backHref} className="dash-page-header__back">← {isGoogleAds ? 'Google Ads' : 'Meta Ads'}</Link>
+        <span className="dash-page-header__source">
+          <ConnectorLogo type={isGoogleAds ? 'google_ads' : 'meta_ads'} size={14} aria-hidden />
+          {isGoogleAds ? (campaignTypeLabel ? `${campaignTypeLabel} campaign` : 'Google Ads') : 'Meta Ads'}
+        </span>
+        {campaignStatus && <StatusPill status={campaignStatus} />}
+        <span className={`badge ${displayMode === 'ecommerce' ? 'badge-blue' : 'badge-green'}`}>{displayMode === 'ecommerce' ? 'Ecommerce' : 'Lead Gen'}</span>
+        {campaignStartDate && (
+          <span className="dash-page-header__meta">
+            Started {new Date(campaignStartDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+        )}
+      </PageHeader>
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-
-        {/* ── Back + Breadcrumb ──────────────────────────────── */}
-        <div>
-          <Link
-            href={backHref}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', textDecoration: 'none', padding: '0.3rem 0.75rem 0.3rem 0.5rem', borderRadius: '0.5rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', marginBottom: '0.75rem' }}
-          >
-            ← {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
-          </Link>
-          <div className="flex items-center gap-1.5 text-xs mb-3" style={{ color: 'var(--text-faint)' }}>
-            <Link href={`/dashboard?${dateQs}`} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-              Platforms
-            </Link>
-            <span>/</span>
-            <Link href={backHref} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-              {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
-            </Link>
-            <span>/</span>
-            <span style={{ color: 'var(--text-secondary)' }}>{campaignName}</span>
-          </div>
-
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="page-title">{campaignName}</h1>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className="badge"
-                  style={{
-                    background: isGoogleAds ? '#eff6ff' : '#f5f3ff',
-                    color:      isGoogleAds ? '#2563eb' : '#7c3aed',
-                    border:     isGoogleAds ? '1px solid #bfdbfe' : '1px solid #ddd6fe',
-                  }}
-                >
-                  {isGoogleAds ? 'Google Ads' : 'Meta Ads'}
-                </span>
-                <span className={`badge ${displayMode === 'ecommerce' ? 'badge-blue' : 'badge-green'}`}>
-                  {displayMode === 'ecommerce' ? 'Ecommerce' : 'Lead Gen'}
-                </span>
-                {campaignStartDate && (
-                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                    Started {new Date(campaignStartDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </span>
-                )}
-                <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                  {dateFrom} – {dateTo}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* ── Campaign KPI summary (layout-driven) ───────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

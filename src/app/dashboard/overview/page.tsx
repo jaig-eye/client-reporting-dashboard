@@ -22,6 +22,7 @@ import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { isDashboardV2 } from '@/lib/dashboardVersion'
+import { fetchAllRows } from '@/lib/fetchAllRows'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDashboardRange } from '@/lib/dateRange'
@@ -126,24 +127,29 @@ const _getOverviewData = unstable_cache(
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
     ] = await Promise.all([
+      // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
-        ? db.from('google_ads_metrics').select(GOOGLE_COLS)
-            .eq('client_id', clientId).gte('date', from).lte('date', to).limit(MAX_ROWS)
+        ? fetchAllRows((a, b) => db.from('google_ads_metrics').select(GOOGLE_COLS)
+            .eq('client_id', clientId).gte('date', from).lte('date', to)
+            .order('date').order('campaign_id').order('connection_id').range(a, b), { maxRows: MAX_ROWS * 5 }).then(data => ({ data }))
         : none,
       has.google && showCompare
-        ? db.from('google_ads_metrics').select(GOOGLE_COLS)
-            .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo).limit(MAX_ROWS)
+        ? fetchAllRows((a, b) => db.from('google_ads_metrics').select(GOOGLE_COLS)
+            .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo)
+            .order('date').order('campaign_id').order('connection_id').range(a, b), { maxRows: MAX_ROWS * 5 }).then(data => ({ data }))
         : none,
 
       // Meta spend and conversions both come from the ad-level table — campaign-level
       // meta_ads_metrics lags and must never be summed for totals.
       has.meta
-        ? db.from('meta_ads_ad_metrics').select(META_COLS)
-            .eq('client_id', clientId).gte('date', from).lte('date', to).limit(MAX_ROWS)
+        ? fetchAllRows((a, b) => db.from('meta_ads_ad_metrics').select(META_COLS)
+            .eq('client_id', clientId).gte('date', from).lte('date', to)
+            .order('id').range(a, b), { maxRows: MAX_ROWS * 5 }).then(data => ({ data }))
         : none,
       has.meta && showCompare
-        ? db.from('meta_ads_ad_metrics').select(META_COLS)
-            .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo).limit(MAX_ROWS)
+        ? fetchAllRows((a, b) => db.from('meta_ads_ad_metrics').select(META_COLS)
+            .eq('client_id', clientId).gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(a, b), { maxRows: MAX_ROWS * 5 }).then(data => ({ data }))
         : none,
 
       has.google
@@ -217,7 +223,7 @@ const _getOverviewData = unstable_cache(
       keywords:    (keywordsRes.data ?? []) as KeywordRow[],
     }
   },
-  ['dashboard-overview-v3'],
+  ['dashboard-overview-v4'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 

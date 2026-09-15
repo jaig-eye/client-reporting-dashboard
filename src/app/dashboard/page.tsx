@@ -24,6 +24,7 @@ import { ConnectorLogo } from '@/components/ConnectorLogo'
 import { resolveLayout, resolvePaidAdsLayout, DEFAULT_METRIC_LAYOUTS, METRIC_LABELS, PLATFORM_CARD_LABELS } from '@/lib/metric-layouts'
 import type { MetricLayouts, MetricKey } from '@/lib/metric-layouts'
 import CampaignTable from '@/components/CampaignTable'
+import { fetchAllRows } from '@/lib/fetchAllRows'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,28 +51,34 @@ const _getCachedDashboardMetrics = unstable_cache(
   ) => {
     const db = createAdminClient()
     const [gRes, mRes, gPriorRes, mPriorRes, gAssignRes, mAssignRes, mAdSpendRes, gBudgetRes, mBudgetRes] = await Promise.all([
+      // Every read below that can pass the API's 1000-row limit is paged — campaigns x days and
+      // ads x days both do on busy accounts, and a capped read silently under-counts spend.
       hasGoogle
-        ? db.from('google_ads_metrics').select('*').eq('client_id', clientId)
+        ? fetchAllRows((a, b) => db.from('google_ads_metrics').select('*').eq('client_id', clientId)
             .gte('date', from).lte('date', to)
+            .order('date').order('campaign_id').order('connection_id').range(a, b)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
 
       hasMeta
-        ? db.from('meta_ads_metrics').select('*').eq('client_id', clientId)
+        ? fetchAllRows((a, b) => db.from('meta_ads_metrics').select('*').eq('client_id', clientId)
             .gte('date', from).lte('date', to)
+            .order('date').order('campaign_id').order('connection_id').range(a, b)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
 
       showCompare && hasGoogle
-        ? db.from('google_ads_ad_metrics')
+        ? fetchAllRows((a, b) => db.from('google_ads_ad_metrics')
             .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversions_value,date')
             .eq('client_id', clientId)
             .gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(a, b)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
 
       showCompare && hasMeta
-        ? db.from('meta_ads_ad_metrics')
+        ? fetchAllRows((a, b) => db.from('meta_ads_ad_metrics')
             .select('ad_id,campaign_id,spend,impressions,clicks,conversions,conversion_value,actions,action_values,date')
             .eq('client_id', clientId)
             .gte('date', priorFrom).lte('date', priorTo)
+            .order('id').range(a, b)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
 
       hasGoogle
@@ -85,10 +92,11 @@ const _getCachedDashboardMetrics = unstable_cache(
         : Promise.resolve({ data: [] as unknown[] }),
 
       hasMeta
-        ? db.from('meta_ads_ad_metrics')
+        ? fetchAllRows((a, b) => db.from('meta_ads_ad_metrics')
             .select('ad_id, campaign_id, date, spend, impressions, clicks')
             .eq('client_id', clientId)
             .gte('date', from).lte('date', to)
+            .order('id').range(a, b)).then(data => ({ data }))
         : Promise.resolve({ data: [] as unknown[] }),
 
       hasGoogle
@@ -121,7 +129,7 @@ const _getCachedDashboardMetrics = unstable_cache(
       mBudgetData:  mBudgetRes.data ?? [],
     }
   },
-  ['dashboard-main'],
+  ['dashboard-main-v2'],
   { revalidate: 300, tags: ['client-metrics'] }
 )
 
