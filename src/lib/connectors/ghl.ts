@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
-import { classifyContact, classifyLead, contactAttribution, groupOf, type LeadSourceCounts } from '../leadSources'
+import { attributionLabel, classifyContact, classifyLead, contactAttribution, groupOf, type LeadSourceCounts } from '../leadSources'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
@@ -183,8 +183,10 @@ async function searchContactsByDate(
       page,
       pageLimit: 100,
       filters: [
-        { field: 'dateAdded', operator: '>=', value: new Date(dateFrom + 'T00:00:00Z').toISOString() },
-        { field: 'dateAdded', operator: '<=', value: new Date(dateTo   + 'T23:59:59Z').toISOString() },
+        // GHL's search accepts gte / lte (not >= / <=). With the wrong operators it answered 422 and
+        // every sync fell back to paging the whole account.
+        { field: 'dateAdded', operator: 'gte', value: new Date(dateFrom + 'T00:00:00Z').toISOString() },
+        { field: 'dateAdded', operator: 'lte', value: new Date(dateTo   + 'T23:59:59Z').toISOString() },
       ],
       sort: [{ field: 'dateAdded', direction: 'asc' }],
     })
@@ -273,10 +275,13 @@ async function fetchContacts(
   const attrValues  = new Map<string, Map<string, number>>()
   const sourceTally = new Map<string, number>()
   let adFromLatestVisit = 0
+  let inRange = 0
+  const unsortedLabels = new Map<string, number>()
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
     if (c.archived === true || c.deleted === true) continue
+    inRange++
     const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {} }
     ex.count++
     const tags = (c.tags as string[]) ?? []
@@ -287,6 +292,10 @@ async function fetchContacts(
       // One channel per lead: an ad on either of GHL's two attributions wins, otherwise the first visit.
       const key = classifyLead(c)
       if (groupOf(key) === 'paid' && groupOf(classifyContact(c, 'first')) !== 'paid') adFromLatestVisit++
+      if (groupOf(key) === 'untracked') {
+        const label = `${key}: first ${attributionLabel(c, 'first')} | latest ${attributionLabel(c, 'last')}`
+        unsortedLabels.set(label, (unsortedLabels.get(label) ?? 0) + 1)
+      }
       ex.sources[key] = (ex.sources[key] ?? 0) + 1
       sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
       const attrs = [contactAttribution(c, 'first'), contactAttribution(c, 'last')]
@@ -307,9 +316,11 @@ async function fetchContacts(
   }
   if (contacts.length > 0) {
     const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
-    console.log(`[ghl] attribution: ${withAttr}/${contacts.length} contacts have it; fields ${fields || 'none'}`)
+    console.log(`[ghl] attribution: ${withAttr}/${inRange} contacts in range have it (${contacts.length} fetched); fields ${fields || 'none'}`)
     console.log(`[ghl] lead sources: ${Array.from(sourceTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}`)
     console.log(`[ghl] counted as ad leads because of their latest visit: ${adFromLatestVisit}`)
+    const unsorted = Array.from(unsortedLabels).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([l, n]) => `${n}× ${l}`)
+    if (unsorted.length > 0) console.log(`[ghl] leads with no clear source, by label:\n  ${unsorted.join('\n  ')}`)
     for (const [field, counts] of Array.from(attrValues)) {
       const top = Array.from(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`).join(', ')
       console.log(`[ghl] attribution ${field}: ${top}`)

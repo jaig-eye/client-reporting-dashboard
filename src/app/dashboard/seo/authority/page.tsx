@@ -214,7 +214,7 @@ export default async function AuthorityPage() {
                 <div className="stat-grid stat-grid--wide">
                   <SparkMetricCard
                     label="What that traffic is worth"
-                    value={tv != null ? `$${tv.toLocaleString()}` : '—'}
+                    value={tv != null ? `${Math.round(Number(tv) / 100).toLocaleString()}` : '—'}  /* Ahrefs org_cost is USD cents */
                     sub="what you'd pay in ads for the same visitors"
                     sparkData={tvTrend}
                   />

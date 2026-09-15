@@ -14,8 +14,8 @@ export type LeadSourceGroup = 'paid' | 'organic' | 'untracked'
 
 export type LeadSourceKey =
   | 'google_ads' | 'meta_ads' | 'other_paid'
-  | 'organic_search' | 'google_business' | 'social' | 'referral' | 'direct'
-  | 'other' | 'untracked'
+  | 'organic_search' | 'google_business' | 'ai_assistant' | 'social' | 'referral' | 'direct'
+  | 'call_or_message' | 'other' | 'untracked'
 
 /**
  * Which of GHL's two attributions to read.
@@ -35,11 +35,15 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   { key: 'other_paid',      label: 'Other ads',                  group: 'paid' },
   { key: 'organic_search',  label: 'Search engines',             group: 'organic' },
   { key: 'google_business', label: 'Google Business Profile',    group: 'organic' },
+  { key: 'ai_assistant',    label: 'ChatGPT and other AI assistants', group: 'organic' },
   { key: 'social',          label: 'Social media',               group: 'organic' },
   { key: 'referral',        label: 'Other websites',             group: 'organic' },
   { key: 'direct',          label: 'Came straight to your site', group: 'organic' },
   // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
   // counted as organic: it sits with "no source" until a rule is added for it.
+  // A call, text or chat that reached the CRM without a website visit, so nothing says what
+  // prompted it: it could have come from the listing, an ad's call button, or a business card.
+  { key: 'call_or_message', label: 'Calls and messages',         group: 'untracked' },
   { key: 'other',           label: 'Other sources',              group: 'untracked' },
   { key: 'untracked',       label: 'No source recorded',         group: 'untracked' },
 ]
@@ -85,10 +89,16 @@ export function contactAttribution(contact: Record<string, unknown>, touch: Touc
 const PAID_MEDIUM   = /^(cpc|ppc|paid|paid[_ -]?(search|social|media)|cpm|cpv|display|ads?|sem|retargeting|remarketing)$/
 const GOOGLE_SRC    = /(^|[^a-z])(google|adwords|youtube)([^a-z]|$)/
 const META_SRC      = /(facebook|instagram|meta|^fb$|^ig$|messenger)/
+const META_AD_SRC   = /^(fb|facebook|ig|instagram|meta)[_ -]?ads?$/
+const AI_SRC        = /(chatgpt|openai|perplexity|gemini\.google|copilot\.microsoft|claude\.ai)/
+// GHL's medium when a contact arrived by phone, text or chat rather than a web form.
+const CONVERSATION_MEDIUM = /^(conversation|call|phone|sms|chat|chat_widget|messaging)$/
 const GBP_SRC       = /^(gmb|gbp|google[_ -]?(my[_ -]?business|business([_ -]?profile)?|maps)|maps)$/
 const SEARCH_REF    = /(^|\.)(google|bing|yahoo|duckduckgo|ecosia|yandex|baidu|search\.brave)\./
 const SOCIAL_REF    = /(facebook|instagram|fb\.com|(^|\.)t\.co$|twitter|x\.com|linkedin|lnkd\.in|tiktok|pinterest|youtube|reddit|nextdoor)/
-const INTERNAL_SESS = /^(crm ui|crm|third party|mobile app|api|import|zapier|workflow)$/
+// Session sources that say nothing about how the person found the business. "other" is GHL's own
+// label for a contact with no recorded website session.
+const INTERNAL_SESS = /^(crm ui|crm|third party|mobile app|api|import|zapier|workflow|other)$/
 
 function hostOf(url: string): string {
   if (!url) return ''
@@ -119,6 +129,7 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
   // fbclid is added to organic Facebook link clicks too, so on its own it means social, not ads.
   if (fbclid && (paidMed || adIds)) return 'meta_ads'
   if (paidMed && META_SRC.test(utmSrc)) return 'meta_ads'
+  if (META_AD_SRC.test(utmSrc)) return 'meta_ads'
   if (otherClk) return 'other_paid'
   if (session === 'paid search') return !utmSrc || GOOGLE_SRC.test(utmSrc) ? 'google_ads' : 'other_paid'
   if (session === 'paid social') return !utmSrc || META_SRC.test(utmSrc) ? 'meta_ads' : 'other_paid'
@@ -126,13 +137,15 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
 
   // ── Organic ─────────────────────────────────────────────────────────────
   if (GBP_SRC.test(utmSrc) || /^(business|maps)\.google\./.test(referrer)) return 'google_business'
+  if (AI_SRC.test(utmSrc) || AI_SRC.test(referrer)) return 'ai_assistant'
   if (session === 'organic search' || SEARCH_REF.test(`.${referrer}`)) return 'organic_search'
   if (fbclid || session === 'social media' || session === 'social' || SOCIAL_REF.test(referrer) || META_SRC.test(utmSrc)) return 'social'
   if (session === 'referral' || referrer) return 'referral'
   if (session === 'direct traffic' || session === 'direct') return 'direct'
 
-  // Added inside the CRM, imported, or pushed in by another tool: nothing says how they found you.
-  if (INTERNAL_SESS.test(session)) return 'untracked'
+  // No website session behind it: a call, text or chat, or a contact added some other way.
+  if ((!session || INTERNAL_SESS.test(session)) && !utmSrc && CONVERSATION_MEDIUM.test(ghlMedium)) return 'call_or_message'
+  if (INTERNAL_SESS.test(session) && !utmSrc) return 'untracked'
   if (session || utmSrc) return 'other'
   return 'untracked'
 }
@@ -151,8 +164,24 @@ export function classifyLead(contact: Record<string, unknown>): LeadSourceKey {
   if (groupOf(first) === 'paid')    return first
   if (groupOf(first) === 'organic') return first
   if (groupOf(last) === 'organic')  return last
-  // Neither is usable: a recorded-but-unrecognised source says more than none at all.
-  return first === 'other' || last !== 'other' ? first : last
+  // Neither points anywhere: keep whichever says the most, an unrecognised label, then a call or
+  // message, then nothing at all.
+  const unclear: Partial<Record<LeadSourceKey, number>> = { other: 2, call_or_message: 1, untracked: 0 }
+  return (unclear[last] ?? 0) > (unclear[first] ?? 0) ? last : first
+}
+
+/**
+ * The labels on one attribution, for logs: session source, GHL medium, and whether a UTM source or
+ * referrer is present. Labels only, never the URL, referrer or any personal detail.
+ */
+export function attributionLabel(contact: Record<string, unknown>, touch: Touch = 'first'): string {
+  const a = contactAttribution(contact, touch)
+  if (!a) return 'none'
+  const session = pick(a, 'sessionSource', 'utmSessionSource') || '-'
+  const medium  = pick(a, 'medium') || '-'
+  const utm     = pick(a, 'utmSource', 'utm_source') ? 'utm' : 'no-utm'
+  const ref     = pick(a, 'referrer', 'referer') ? 'referrer' : 'no-referrer'
+  return `${session} / ${medium} / ${utm} / ${ref}`
 }
 
 export function groupOf(key: LeadSourceKey): LeadSourceGroup {

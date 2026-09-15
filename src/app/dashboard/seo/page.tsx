@@ -1170,7 +1170,7 @@ export default async function SeoPage({
                 {ahValueNow.value != null && (
                   <SparkMetricCard
                     label="What that traffic is worth"
-                    value={`$${fmtNum(ahValueNow.value)}`}
+                    value={`$${fmtNum(ahValueNow.value / 100)}`}
                     sub={`what you'd pay in ads for the same visitors${asOf(ahValueNow.date)}`}
                     delta={ahValueNow.delta}
                     sparkData={spark(r => r.traffic_value)}

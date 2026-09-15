@@ -116,8 +116,9 @@ export async function fetchAhrefsPages(
     const data = await ahrefsGet('/site-explorer/top-pages', apiKey, {
       target:   domain,
       date,
-      select:   'url,traffic,keywords',
-      order_by: 'traffic:desc',
+      // Ahrefs renamed this column to sum_traffic; asking for "traffic" fails the whole request.
+      select:   'url,sum_traffic,keywords',
+      order_by: 'sum_traffic:desc',
       limit:    '50',
     })
     const items = (data.pages ?? data.top_pages ?? data) as Record<string, unknown>[]
@@ -126,7 +127,7 @@ export async function fetchAhrefsPages(
     return items.map(p => ({
       date,
       url:              String(p.url ?? ''),
-      organic_traffic:  typeof p.traffic  === 'number' ? p.traffic  : null,
+      organic_traffic:  typeof p.sum_traffic === 'number' ? p.sum_traffic : typeof p.traffic === 'number' ? p.traffic : null,
       organic_keywords: typeof p.keywords === 'number' ? p.keywords : null,
     })).filter(p => p.url)
   } catch (e) {
@@ -166,14 +167,16 @@ export const ahrefsConnector: ConnectorAdapter = {
         history_grouping: 'weekly',
       })
       console.log('[ahrefs] DR history sample:', JSON.stringify(drHistory).slice(0, 400))
-      drPoints = (drHistory.domain_rating ?? drHistory) as typeof drPoints
+      // The response key is domain_ratings (plural); reading domain_rating found nothing, so every
+      // sync fell back to a single snapshot and the weekly history was never stored.
+      drPoints = (drHistory.domain_ratings ?? drHistory.domain_rating ?? drHistory) as typeof drPoints
       if (!Array.isArray(drPoints)) drPoints = []
     } catch (e) {
       console.error(`[ahrefs] DR history failed for ${domain}:`, e)
     }
 
-    // ── Metrics history (weekly snapshots — backlinks, ref domains, organic)
-    // Ahrefs API v3 uses `all_backlinks` as the field name in metrics-history; `backlinks` kept as fallback
+    // ── Organic traffic history (weekly). metrics-history now carries traffic and its value only;
+    // asking it for link columns fails the whole request. Links come from the two calls below.
     let metricsPoints: { date: string; all_backlinks?: number; backlinks?: number; refdomains?: number; org_keywords?: number; org_traffic?: number; org_cost?: number; paid_keywords?: number; paid_traffic?: number; new_backlinks?: number; lost_backlinks?: number; new_referring_domains?: number; lost_referring_domains?: number }[] = []
     try {
       const metricsHistory = await ahrefsGet('/site-explorer/metrics-history', apiKey, {
@@ -181,66 +184,58 @@ export const ahrefsConnector: ConnectorAdapter = {
         date_from:        dateFrom,
         date_to:          dateTo,
         history_grouping: 'weekly',
-        select:           'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic,new_backlinks,lost_backlinks,new_referring_domains,lost_referring_domains',
+        select:           'date,org_traffic,org_cost,paid_traffic',
       })
-      console.log('[ahrefs] metrics-history keys:', Object.keys(metricsHistory ?? {}))
-      console.log('[ahrefs] metrics-history sample:', JSON.stringify(metricsHistory).slice(0, 600))
-      // Try multiple response key paths — Ahrefs v3 uses .metrics but may differ
-      const rawMetrics = metricsHistory.metrics ?? metricsHistory.history ?? metricsHistory.data ?? metricsHistory.results
-      metricsPoints = Array.isArray(rawMetrics) ? rawMetrics
-                    : Array.isArray(metricsHistory) ? metricsHistory
-                    : []
+      const rawMetrics = metricsHistory.metrics ?? metricsHistory.history ?? metricsHistory.data
+      metricsPoints = Array.isArray(rawMetrics) ? rawMetrics as typeof metricsPoints : []
     } catch (e) {
       console.error(`[ahrefs] Metrics history failed for ${domain}:`, e)
     }
 
-    // If history endpoint returned nothing OR backlinks are all null, supplement with a
-    // single-snapshot metrics call so the most-recent row has backlinks/refdomains.
-    const backlinksAllNull = metricsPoints.length > 0 &&
-      metricsPoints.every(m => typeof m.all_backlinks !== 'number' && typeof m.backlinks !== 'number')
-    if ((metricsPoints.length === 0 || backlinksAllNull) && drPoints.length > 0) {
-      console.warn('[ahrefs] metrics-history missing backlinks — supplementing with single-snapshot for', dateTo)
-      try {
-        const mSnap = await ahrefsGet('/site-explorer/metrics', apiKey, {
-          target: domain, date: dateTo,
-          select: 'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
-        })
-        const mData = (mSnap.metrics as Record<string, unknown> | null) ?? mSnap
-        const snapBl  = typeof mData.all_backlinks  === 'number' ? mData.all_backlinks  :
-                        typeof mData.backlinks       === 'number' ? mData.backlinks       : null
-        const snapRd  = typeof mData.refdomains    === 'number' ? mData.refdomains    : null
-        const snapKw  = typeof mData.org_keywords  === 'number' ? mData.org_keywords  : null
-        const snapTr  = typeof mData.org_traffic   === 'number' ? mData.org_traffic   : null
-        const snapOc  = typeof mData.org_cost      === 'number' ? mData.org_cost      : null
-        const snapPk  = typeof mData.paid_keywords === 'number' ? mData.paid_keywords : null
-        const snapPt  = typeof mData.paid_traffic  === 'number' ? mData.paid_traffic  : null
-        if (snapBl !== null || snapRd !== null) {
-          if (metricsPoints.length === 0) {
-            metricsPoints = [{
-              date:          dateTo,
-              all_backlinks: snapBl  ?? undefined,
-              refdomains:    snapRd  ?? undefined,
-              org_keywords:  snapKw  ?? undefined,
-              org_traffic:   snapTr  ?? undefined,
-              org_cost:      snapOc  ?? undefined,
-              paid_keywords: snapPk  ?? undefined,
-              paid_traffic:  snapPt  ?? undefined,
-            }]
-          } else {
-            // backlinks missing from history — inject into the most-recent existing entry
-            const mostRecentIdx = metricsPoints.reduce((bi, m, i) =>
-              m.date > metricsPoints[bi].date ? i : bi, 0)
-            metricsPoints[mostRecentIdx] = {
-              ...metricsPoints[mostRecentIdx],
-              all_backlinks: snapBl ?? undefined,
-              refdomains:    snapRd ?? metricsPoints[mostRecentIdx].refdomains,
-            }
-          }
-          console.log('[ahrefs] supplemental snapshot metrics:', { backlinks: snapBl, refdomains: snapRd })
-        }
-      } catch (e) {
-        console.error('[ahrefs] supplemental snapshot metrics failed:', e)
+    const nearestPoint = (date: string) => {
+      const ms = new Date(date).getTime()
+      let best: (typeof metricsPoints)[0] | undefined
+      let bestDiff = Infinity
+      for (const m of metricsPoints) {
+        const diff = Math.abs(new Date(m.date).getTime() - ms)
+        if (diff < bestDiff && diff <= 3 * 86_400_000) { best = m; bestDiff = diff }
       }
+      return best
+    }
+
+    // ── Referring domains history (weekly)
+    try {
+      const rdHistory = await ahrefsGet('/site-explorer/refdomains-history', apiKey, {
+        target:           domain,
+        date_from:        dateFrom,
+        date_to:          dateTo,
+        history_grouping: 'weekly',
+      })
+      const points = (Array.isArray(rdHistory.refdomains) ? rdHistory.refdomains : []) as { date: string; refdomains?: number }[]
+      for (const p of points) {
+        if (typeof p.refdomains !== 'number') continue
+        const near = nearestPoint(p.date)
+        if (near) near.refdomains = p.refdomains
+        else metricsPoints.push({ date: p.date, refdomains: p.refdomains })
+      }
+    } catch (e) {
+      console.error(`[ahrefs] Refdomains history failed for ${domain}:`, e)
+    }
+
+    // ── Live link counts, for the newest row (there is no backlinks history endpoint)
+    try {
+      const stats = await ahrefsGet('/site-explorer/backlinks-stats', apiKey, { target: domain, date: dateTo })
+      const m = ((stats.metrics as Record<string, unknown> | undefined) ?? stats) as Record<string, unknown>
+      const live   = typeof m.live            === 'number' ? m.live            : null
+      const liveRd = typeof m.live_refdomains === 'number' ? m.live_refdomains : null
+      if (live !== null || liveRd !== null) {
+        if (metricsPoints.length === 0) metricsPoints.push({ date: dateTo })
+        const newest = metricsPoints.reduce((a, b) => (b.date > a.date ? b : a))
+        if (live !== null) newest.all_backlinks = live
+        if (liveRd !== null && typeof newest.refdomains !== 'number') newest.refdomains = liveRd
+      }
+    } catch (e) {
+      console.error(`[ahrefs] Backlinks stats failed for ${domain}:`, e)
     }
 
     // ── Merge DR + metrics by date (nearest-date within ±3 days to handle weekly offset)
@@ -300,7 +295,7 @@ export const ahrefsConnector: ConnectorAdapter = {
 
       try {
         const mData = await ahrefsGet('/site-explorer/metrics', apiKey, {
-          target: domain, date: dateTo, select: 'all_backlinks,refdomains,org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
+          target: domain, date: dateTo, select: 'org_keywords,org_traffic,org_cost,paid_keywords,paid_traffic',
         })
         const m = (mData.metrics as Record<string, unknown> | null) ?? mData
         backlinks       = typeof m.all_backlinks === 'number' ? m.all_backlinks :
@@ -313,6 +308,15 @@ export const ahrefsConnector: ConnectorAdapter = {
         paidTraffic     = typeof m.paid_traffic  === 'number' ? m.paid_traffic  : null
       } catch (e) {
         console.error(`[ahrefs] Metrics fallback failed for ${domain}:`, e)
+      }
+
+      try {
+        const stats = await ahrefsGet('/site-explorer/backlinks-stats', apiKey, { target: domain, date: dateTo })
+        const s = ((stats.metrics as Record<string, unknown> | undefined) ?? stats) as Record<string, unknown>
+        if (typeof s.live === 'number') backlinks = s.live
+        if (typeof s.live_refdomains === 'number') referringDoms = s.live_refdomains
+      } catch (e) {
+        console.error(`[ahrefs] Backlinks stats fallback failed for ${domain}:`, e)
       }
 
       if (domainRating !== null || backlinks !== null) {
