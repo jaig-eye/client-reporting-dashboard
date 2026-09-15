@@ -17,7 +17,16 @@ export type LeadSourceKey =
   | 'organic_search' | 'google_business' | 'social' | 'referral' | 'direct'
   | 'other' | 'untracked'
 
-/** Daily counts per channel, stored at ghl_metrics.raw_data.lead_sources. */
+/**
+ * Which of GHL's two attributions to sort by.
+ *   first: how the person originally found the business (GHL's "First Attribution")
+ *   last:  their most recent visit before they became a lead (GHL's "Latest Attribution")
+ * A contact with one visit has the same answer for both.
+ */
+export type Touch = 'first' | 'last'
+
+/** Daily counts per channel, stored at ghl_metrics.raw_data.lead_sources (first touch)
+ *  and raw_data.lead_sources_last (last touch). */
 export type LeadSourceCounts = Partial<Record<LeadSourceKey, number>>
 
 export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourceGroup }[] = [
@@ -55,18 +64,22 @@ function pick(a: Attr, ...names: string[]): string {
 }
 
 /**
- * The attribution to classify by. First touch wins, because that is how the person found
- * the business. /contacts/search returns an `attributions` array flagged isFirst/isLast;
- * /contacts/{id} returns attributionSource and lastAttributionSource objects.
+ * The attribution to classify by. /contacts/search returns an `attributions` array flagged
+ * isFirst/isLast; /contacts/{id} returns attributionSource (first) and lastAttributionSource
+ * (latest). When only one is filled, the person had one recorded visit, so it answers both.
  */
-export function contactAttribution(contact: Record<string, unknown>): Attr | null {
+export function contactAttribution(contact: Record<string, unknown>, touch: Touch = 'first'): Attr | null {
   const list = Array.isArray(contact.attributions) ? (contact.attributions as unknown[]).filter(isObj) : []
   if (list.length > 0) {
-    return list.find(a => a.isFirst === true) ?? list.find(a => a.isLast === true) ?? list[0]
+    const first = list.find(a => a.isFirst === true)
+    const last  = list.find(a => a.isLast === true)
+    return touch === 'first'
+      ? first ?? last ?? list[0]
+      : last ?? first ?? list[list.length - 1]
   }
-  if (isObj(contact.attributionSource))     return contact.attributionSource
-  if (isObj(contact.lastAttributionSource)) return contact.lastAttributionSource
-  return null
+  const first = isObj(contact.attributionSource)     ? contact.attributionSource     : null
+  const last  = isObj(contact.lastAttributionSource) ? contact.lastAttributionSource : null
+  return touch === 'first' ? first ?? last : last ?? first
 }
 
 const PAID_MEDIUM   = /^(cpc|ppc|paid|paid[_ -]?(search|social|media)|cpm|cpv|display|ads?|sem|retargeting|remarketing)$/
@@ -83,8 +96,8 @@ function hostOf(url: string): string {
 }
 
 /** One contact's channel. Pure, so it can be tested without GHL. */
-export function classifyContact(contact: Record<string, unknown>): LeadSourceKey {
-  const a = contactAttribution(contact)
+export function classifyContact(contact: Record<string, unknown>, touch: Touch = 'first'): LeadSourceKey {
+  const a = contactAttribution(contact, touch)
   if (!a) return 'untracked'
 
   const session   = pick(a, 'sessionSource', 'utmSessionSource')

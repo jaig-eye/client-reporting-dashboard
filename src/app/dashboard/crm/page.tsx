@@ -23,7 +23,11 @@ import EmptyState from '@/components/dashboard/EmptyState'
 import SparkMetricCard from '@/components/SparkMetricCard'
 import SpendChart from '@/components/SpendChart'
 import { UsersThree } from '@phosphor-icons/react/dist/ssr'
-import { addLeadSources, summariseLeadSources, type LeadSourceCounts, type LeadSourceGroup } from '@/lib/leadSources'
+import TabContainer from '@/components/TabContainer'
+import {
+  addLeadSources, summariseLeadSources,
+  type LeadSourceCounts, type LeadSourceGroup, type LeadSourceSummary, type Touch,
+} from '@/lib/leadSources'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,7 +106,7 @@ type GhlRow = {
   won_opportunities:  number
   lost_opportunities: number
   won_value:          number | string
-  raw_data:           { form_breakdown?: FormBreakdownItem[]; lead_sources?: LeadSourceCounts } | null
+  raw_data:           { form_breakdown?: FormBreakdownItem[]; lead_sources?: LeadSourceCounts; lead_sources_last?: LeadSourceCounts } | null
 }
 
 /** Spam is excluded from the lead count the same way the CRM's own report excludes it. */
@@ -212,24 +216,25 @@ export default async function CrmPage({
   const formList = Array.from(formAgg, ([id, v]) => ({ id, ...v })).sort((a, b) => b.count - a.count)
   const formListTotal = formList.reduce((s, f) => s + f.count, 0)
 
-  // Lead sources, from how each contact first reached the business. Days synced before
-  // sources were recorded have no lead_sources key and are left out rather than counted as zero.
-  const sourceCounts: LeadSourceCounts = {}
-  const sourceDates: string[] = []
-  for (const row of data) {
-    if (row.raw_data?.lead_sources && typeof row.raw_data.lead_sources === 'object') {
-      sourceDates.push(row.date)
-      addLeadSources(sourceCounts, row.raw_data.lead_sources)
+  // Lead sources by GHL's two attributions: the visit where each lead first found the business,
+  // and their last visit before getting in touch. Days synced before one was recorded have no key
+  // for it and are left out rather than counted as zero.
+  function sourcesFor(field: 'lead_sources' | 'lead_sources_last') {
+    const counts: LeadSourceCounts = {}
+    const dates: string[] = []
+    for (const row of data) {
+      const value = row.raw_data?.[field]
+      if (value && typeof value === 'object') {
+        dates.push(row.date)
+        addLeadSources(counts, value)
+      }
     }
+    return { summary: summariseLeadSources(counts), dates, complete: dates.length === data.length }
   }
-  const sources         = summariseLeadSources(sourceCounts)
-  const hasSources      = sources.total > 0
-  const sourcesComplete = sourceDates.length === data.length
-  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', untracked: 'No clear source' }
-  const sourceGroups = (['paid', 'organic', 'untracked'] as const)
-    .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
-    .filter(g => g.count > 0)
-  const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
+  const firstTouch     = sourcesFor('lead_sources')
+  const lastTouch      = sourcesFor('lead_sources_last')
+  const hasSources     = firstTouch.summary.total > 0
+  const hasLastSources = lastTouch.summary.total > 0
 
   // Trend: new leads as bars, phone calls as the line, on the shared chart. When the client
   // has picked a comparison the previous period rides along behind it, named after the window
@@ -354,76 +359,30 @@ export default async function CrmPage({
         {hasSources && (
           <section className="card p-4 sm:p-6" aria-labelledby="crm-sources-title">
             <h2 id="crm-sources-title" className="section-title">Where your leads came from</h2>
-            <p className="section-desc">
-              {sources.paid > 0
-                ? `${fmtNum(sources.paid)} of ${fmtNum(sources.total)} ${leadWord(sources.total)} clicked one of your ads first. `
-                : `None of these ${fmtNum(sources.total)} ${leadWord(sources.total)} came from an ad. `}
-              {sources.organic > 0 && `${fmtNum(sources.organic)} found you on their own.`}
-            </p>
-
-            <div className="lead-src-split" role="img"
-              aria-label={sourceGroups.map(g => `${g.label}: ${fmtNum(g.count)}`).join(', ')}>
-              {sourceGroups.map(g => (
-                <span key={g.key} className={`lead-src-split__seg lead-src--${g.key}`} style={{ flexGrow: g.count }} />
-              ))}
-            </div>
-
-            <ul className="lead-src-groups">
-              {sourceGroups.map(g => (
-                <li key={g.key} className="lead-src-group">
-                  <span className="lead-src-group__label"><span className={`lead-src-dot lead-src--${g.key}`} aria-hidden />{g.label}</span>
-                  <span className="lead-src-group__value">{fmtNum(g.count)}</span>
-                  <span className="lead-src-group__pct">{share(g.count, sources.total).toFixed(0)}% of tracked leads</span>
-                </li>
-              ))}
-            </ul>
-
-            <div className="table-scroll crm-table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Source</th>
-                    <th className="lead-src-col-type" style={{ textAlign: 'left' }}>Type</th>
-                    <th style={{ textAlign: 'right' }}>Leads</th>
-                    <th className="crm-col-share" style={{ textAlign: 'right' }}>Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sources.channels.map(c => (
-                    <tr key={c.key}>
-                      <td style={{ fontWeight: 500 }}>
-                        <span className="lead-src-name"><span className={`lead-src-dot lead-src-dot--inline lead-src--${c.group}`} aria-hidden />{c.label}</span>
-                      </td>
-                      <td className="lead-src-col-type">
-                        <span className="lead-src-type"><span className={`lead-src-dot lead-src--${c.group}`} aria-hidden />{c.group === 'paid' ? 'Ad' : c.group === 'organic' ? 'Organic' : 'Unknown'}</span>
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtNum(c.count)}</td>
-                      <td className="crm-col-share" style={{ textAlign: 'right' }}>
-                        <span className="crm-share">
-                          <span className="crm-share__track">
-                            <span className={`crm-share__fill lead-src--${c.group}`} style={{ width: `${share(c.count, sources.total)}%` }} />
-                          </span>
-                          <span className="crm-share__num">{share(c.count, sources.total).toFixed(0)}%</span>
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {share(sources.untracked, sources.total) >= 40 && (
-              <p className="crm-insight crm-insight--warn">
-                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track or we can't sort yet.`}
-              </p>
-            )}
-            {!sourcesComplete && (
-              <p className="crm-insight">
-                {`Sources were first recorded on ${prettyDate(sourceDates[0])}, so earlier leads in this range aren't included here.`}
-              </p>
+            {hasLastSources ? (
+              <>
+                <p className="section-desc">
+                  {firstTouch.summary.paid !== lastTouch.summary.paid
+                    ? `Ads were how ${fmtNum(firstTouch.summary.paid)} ${leadWord(firstTouch.summary.paid)} first found you, and the last step for ${fmtNum(lastTouch.summary.paid)} before getting in touch.`
+                    : 'Count each lead by the visit where they first found you, or by their last visit before getting in touch.'}
+                </p>
+                <div className="lead-src-tabs">
+                  <TabContainer
+                    label="Which visit to count"
+                    tabs={[{ label: 'First visit' }, { label: 'Last visit' }]}
+                    panels={[
+                      <LeadSourcesBody key="first" touch="first" {...firstTouch} crmName={crmName} />,
+                      <LeadSourcesBody key="last"  touch="last"  {...lastTouch}  crmName={crmName} />,
+                    ]}
+                  />
+                </div>
+              </>
+            ) : (
+              <LeadSourcesBody touch="first" {...firstTouch} crmName={crmName} />
             )}
           </section>
         )}
+
 
         {/* ── Trend ─────────────────────────────────────────────────────── */}
         <section className="card p-4 sm:p-6">
@@ -668,5 +627,107 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
       <p className="metric-row__value" style={color ? { color } : undefined}>{value}</p>
       {sub && <p className="crm-stat__sub">{sub}</p>}
     </div>
+  )
+}
+
+const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
+
+const GROUP_LABEL: Record<Touch, Record<LeadSourceGroup, string>> = {
+  first: { paid: 'Clicked an ad',   organic: 'Found you on their own', untracked: 'No clear source' },
+  last:  { paid: 'Came from an ad', organic: 'Came on their own',      untracked: 'No clear source' },
+}
+
+/** One view of the lead sources: counted by the first visit, or by the last one before getting in touch. */
+function LeadSourcesBody({ touch, summary, dates, complete, crmName }: {
+  touch: Touch
+  summary: LeadSourceSummary
+  dates: string[]
+  complete: boolean
+  crmName: string
+}) {
+  const groups = (['paid', 'organic', 'untracked'] as const)
+    .map(g => ({ key: g, label: GROUP_LABEL[touch][g], count: summary[g] }))
+    .filter(g => g.count > 0)
+  if (summary.total === 0) {
+    return <p className="crm-insight">No leads with a recorded source in this range yet.</p>
+  }
+
+  return (
+    <>
+      <p className="section-desc">
+        {touch === 'first'
+          ? (summary.paid > 0
+              ? `${fmtNum(summary.paid)} of ${fmtNum(summary.total)} ${leadWord(summary.total)} first found you through one of your ads. `
+              : `None of these ${fmtNum(summary.total)} ${leadWord(summary.total)} first found you through an ad. `)
+          : (summary.paid > 0
+              ? `${fmtNum(summary.paid)} of ${fmtNum(summary.total)} ${leadWord(summary.total)} came from one of your ads on their last visit before getting in touch. `
+              : `None of these ${fmtNum(summary.total)} ${leadWord(summary.total)} came from an ad on their last visit. `)}
+        {summary.organic > 0 && (touch === 'first'
+          ? `${fmtNum(summary.organic)} found you on their own.`
+          : `${fmtNum(summary.organic)} came on their own.`)}
+      </p>
+
+      <div className="lead-src-split" role="img"
+        aria-label={groups.map(g => `${g.label}: ${fmtNum(g.count)}`).join(', ')}>
+        {groups.map(g => (
+          <span key={g.key} className={`lead-src-split__seg lead-src--${g.key}`} style={{ flexGrow: g.count }} />
+        ))}
+      </div>
+
+      <ul className="lead-src-groups">
+        {groups.map(g => (
+          <li key={g.key} className="lead-src-group">
+            <span className="lead-src-group__label"><span className={`lead-src-dot lead-src--${g.key}`} aria-hidden />{g.label}</span>
+            <span className="lead-src-group__value">{fmtNum(g.count)}</span>
+            <span className="lead-src-group__pct">{share(g.count, summary.total).toFixed(0)}% of tracked leads</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="table-scroll crm-table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left' }}>Source</th>
+              <th className="lead-src-col-type" style={{ textAlign: 'left' }}>Type</th>
+              <th style={{ textAlign: 'right' }}>Leads</th>
+              <th className="crm-col-share" style={{ textAlign: 'right' }}>Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summary.channels.map(c => (
+              <tr key={c.key}>
+                <td style={{ fontWeight: 500 }}>
+                  <span className="lead-src-name"><span className={`lead-src-dot lead-src-dot--inline lead-src--${c.group}`} aria-hidden />{c.label}</span>
+                </td>
+                <td className="lead-src-col-type">
+                  <span className="lead-src-type"><span className={`lead-src-dot lead-src--${c.group}`} aria-hidden />{c.group === 'paid' ? 'Ad' : c.group === 'organic' ? 'Organic' : 'Unknown'}</span>
+                </td>
+                <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtNum(c.count)}</td>
+                <td className="crm-col-share" style={{ textAlign: 'right' }}>
+                  <span className="crm-share">
+                    <span className="crm-share__track">
+                      <span className={`crm-share__fill lead-src--${c.group}`} style={{ width: `${share(c.count, summary.total)}%` }} />
+                    </span>
+                    <span className="crm-share__num">{share(c.count, summary.total).toFixed(0)}%</span>
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {share(summary.untracked, summary.total) >= 40 && (
+        <p className="crm-insight crm-insight--warn">
+          {`${share(summary.untracked, summary.total).toFixed(0)}% of leads have no clear source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track or we can't sort yet.`}
+        </p>
+      )}
+      {!complete && dates.length > 0 && (
+        <p className="crm-insight">
+          {`${touch === 'first' ? 'Sources were' : 'Last visits were'} first recorded on ${prettyDate(dates[0])}, so earlier leads in this range aren't included here.`}
+        </p>
+      )}
+    </>
   )
 }
