@@ -1,7 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// GA4 Analytics Page — /dashboard/analytics
-// Shows sessions, users, engagement rate, avg session duration, and conversions
-// from Google Analytics 4, broken down by channel group.
+// Website traffic — /dashboard/analytics
+//
+// The client-facing audience report. It answers, in the order a business owner
+// asks them: how many people came, how that compares to last period, how it
+// moved day to day, where they came from, what they did once they arrived, and
+// whether they were new or coming back.
+//
+// Everything below is read from two tables and nothing is inferred beyond the
+// arithmetic noted at each step:
+//   ga4_metrics        date, channel_group, sessions, users, new_users,
+//                      page_views, conversions, engaged_sessions,
+//                      bounce_rate, avg_session_duration
+//   ga4_source_metrics date, source, medium, campaign, sessions, conversions,
+//                      engaged_sessions
+//
+// Neither table carries a landing-page or device dimension, so this page has no
+// "top pages" and no "desktop vs mobile" section — either would have to be
+// invented. Add the columns and the sections can follow.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cookies } from 'next/headers'
@@ -19,6 +34,12 @@ import { ChartLine } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
+/** Concrete colours, only where a chart component's API needs a real value.
+ *  Page chrome uses theme tokens so it follows light and dark. */
+const SERIES_VISITS      = '#3b82f6'
+const SERIES_CONVERSIONS = '#059669'
+const GA4_ACCENT         = '#e37400'
+
 // Cache GA4 metric queries for 10 minutes. Busted by revalidateTag('client-metrics') in sync cron.
 const _getCachedGA4Metrics = unstable_cache(
   async (
@@ -29,15 +50,16 @@ const _getCachedGA4Metrics = unstable_cache(
     showCompare: boolean,
   ) => {
     const db = createAdminClient()
-    const currQ = db.from('ga4_metrics').select('*')
+    const COLS = 'date,channel_group,sessions,users,new_users,page_views,conversions,engaged_sessions,bounce_rate,avg_session_duration'
+    const currQ = db.from('ga4_metrics').select(COLS)
       .eq('client_id', clientId)
       .gte('date', from).lte('date', to)
       .order('date', { ascending: true })
       .limit(10000)
-    const priorQ = db.from('ga4_metrics')
-      .select('date,channel_group,sessions,users,new_users,page_views,avg_session_duration,conversions,bounce_rate')
+    const priorQ = db.from('ga4_metrics').select(COLS)
       .eq('client_id', clientId)
       .gte('date', priorFrom).lte('date', priorTo)
+      .order('date', { ascending: true })
       .limit(10000)
     const srcQ = db.from('ga4_source_metrics')
       .select('source,medium,campaign,sessions,conversions,engaged_sessions')
@@ -57,27 +79,99 @@ const _getCachedGA4Metrics = unstable_cache(
   { revalidate: 600, tags: ['client-metrics'] }
 )
 
+// ── Formatting ───────────────────────────────────────────────────────────────
+
+const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0)) || 0
+
 function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
-function fmtNum(n: number) { return n.toLocaleString() }
+function fmtNum(n: number) { return Math.round(n).toLocaleString() }
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%` }
 function fmtSec(n: number) {
   const m = Math.floor(n / 60)
   const s = Math.round(n % 60)
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
+/** "Aug 15" — a date in words rather than ISO, which no client reads. */
+function fmtDay(d: Date) {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+function fmtRange(from: Date, to: Date) { return `${fmtDay(from)} – ${fmtDay(to)}` }
 
-const CHANNEL_COLORS: Record<string, string> = {
-  'Organic Search': '#10b981',
-  'Paid Search':    '#3b82f6',
-  'Direct':         '#6366f1',
-  'Organic Social': '#f59e0b',
-  'Paid Social':    '#ec4899',
-  'Email':          '#14b8a6',
-  'Referral':       '#8b5cf6',
-  'Unassigned':     '#9ca3af',
+function pctChange(curr: number, prev: number): number | null {
+  if (!prev) return null
+  return ((curr - prev) / Math.abs(prev)) * 100
 }
 
-export default async function GA4Page({
+// ── Row shapes — every field below is a real column on these tables ──────────
+
+type Ga4Row = {
+  date: string
+  channel_group: string | null
+  sessions: number | null
+  users: number | null
+  new_users: number | null
+  page_views: number | null
+  conversions: number | null
+  engaged_sessions: number | null
+  bounce_rate: number | null
+  avg_session_duration: number | null
+}
+
+type SourceRow = {
+  source?: string | null
+  medium?: string | null
+  campaign?: string | null
+  sessions?: number | null
+  conversions?: number | null
+  engaged_sessions?: number | null
+}
+
+/**
+ * Roll a set of daily channel rows up into one period.
+ *
+ * Engagement rate is engaged_sessions / sessions — GA4's own definition. Where a
+ * property predates that column and only bounce_rate is filled, it falls back to
+ * 1 − bounce_rate, which answers the same question. Averages are weighted by
+ * sessions: a day with 200 visits should not count the same as a day with three.
+ */
+function rollUp(rows: Ga4Row[]) {
+  let sessions = 0, users = 0, newUsers = 0, pageViews = 0, conversions = 0
+  let engaged = 0, durationWeighted = 0, bounceWeighted = 0
+  for (const r of rows) {
+    const s = num(r.sessions)
+    sessions         += s
+    users            += num(r.users)
+    newUsers         += num(r.new_users)
+    pageViews        += num(r.page_views)
+    conversions      += num(r.conversions)
+    engaged          += num(r.engaged_sessions)
+    durationWeighted += num(r.avg_session_duration) * s
+    bounceWeighted   += num(r.bounce_rate) * s
+  }
+  const per = (n: number) => (sessions > 0 ? n / sessions : 0)
+  return {
+    sessions, users, newUsers, pageViews, conversions, engaged,
+    returningUsers: Math.max(0, users - newUsers),
+    engagementRate: engaged > 0 ? per(engaged) : sessions > 0 ? 1 - per(bounceWeighted) : 0,
+    avgDuration:    per(durationWeighted),
+    pagesPerVisit:  per(pageViews),
+    convRate:       per(conversions),
+  }
+}
+
+/** Bar widths: never let a non-zero share render as an invisible sliver. */
+const barWidth = (share: number) => `${share > 0 ? Math.max(share * 100, 2) : 0}%`
+
+function Delta({ value }: { value: number | null }) {
+  if (value == null) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  return (
+    <span className={`an-delta ${value >= 0 ? 'an-delta--up' : 'an-delta--down'}`}>
+      {value >= 0 ? '▲' : '▼'} {Math.abs(value).toFixed(1)}%
+    </span>
+  )
+}
+
+export default async function AnalyticsPage({
   searchParams,
 }: {
   searchParams: Promise<{ from?: string; to?: string; compare?: string }>
@@ -89,16 +183,16 @@ export default async function GA4Page({
   const token = cookieStore.get('client_token')?.value
   if (!token) redirect('/access')
 
-  const { data: clientData } = await db.from('clients').select('*').eq('dashboard_token', token).single()
+  const { data: clientData } = await db.from('clients').select('*').eq('dashboard_token', token).maybeSingle()
   const client = clientData as Client | null
   if (!client) redirect('/access')
 
-  // Default end to yesterday — today is a partial day and inflates totals vs GA4 dashboard
+  // The window ends yesterday — today is a partial day and would read as a collapse.
   const { fromDate, toDate } = resolveDashboardRange(params)
-  const compare  = params.compare ?? 'none'
-
+  const compare     = params.compare ?? 'none'
   const showCompare = compare !== 'none'
-  const periodMs    = toDate.getTime() - fromDate.getTime()
+
+  const periodMs = toDate.getTime() - fromDate.getTime()
   let priorTo:   Date
   let priorFrom: Date
   if (compare === 'last_year') {
@@ -108,8 +202,9 @@ export default async function GA4Page({
     priorTo   = new Date(fromDate.getTime() - 86400000)
     priorFrom = new Date(priorTo.getTime() - periodMs)
   }
+  const priorWord  = compare === 'last_year' ? 'same period last year' : 'previous period'
+  const priorShort = compare === 'last_year' ? 'last year' : 'last period'
 
-  // Find active GA4 connections
   const { data: connData } = await db
     .from('client_connections')
     .select('*, connector:connectors(id, type, label)')
@@ -117,30 +212,31 @@ export default async function GA4Page({
     .eq('status', 'active')
 
   const connections = (connData ?? []) as (ClientConnection & { connector: Pick<Connector, 'id' | 'type' | 'label'> })[]
-  // Pick the most-recently-synced GA4 connection as the primary source.
-  // A client may have multiple GA4 connections (e.g., old + reconnected new) — querying
-  // without connection_id would sum both, inflating sessions vs the real GA4 dashboard.
+  // A client can end up with two GA4 connections (an old one plus a reconnected
+  // one). Querying without a connection_id would sum both and show double the
+  // traffic they actually had, so only the most recently synced one counts.
   const ga4Connections = connections
     .filter(c => c.connector.type === 'google_analytics')
     .sort((a, b) => (b.last_synced_at ?? '').localeCompare(a.last_synced_at ?? ''))
   const primaryGa4Id = ga4Connections[0]?.id
 
+  const shell = (children: React.ReactNode) => (
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
+      <PageHeader title="Website Traffic" accent={GA4_ACCENT} fromDate={fromDate} toDate={toDate} compare={compare} />
+      <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">{children}</main>
+    </div>
+  )
+
   if (ga4Connections.length === 0) {
-    return (
-      <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="Analytics — GA4" accent="#e37400" fromDate={fromDate} toDate={toDate} compare={compare} />
-        <main className="max-w-7xl mx-auto px-6 py-8">
-          <EmptyState
-            title="Google Analytics not connected"
-            description="Ask your account manager to connect your GA4 property to start seeing traffic data here."
-            icon={<ChartLine size={22} />}
-          />
-        </main>
-      </div>
+    return shell(
+      <EmptyState
+        title="Your website analytics aren't connected yet"
+        description="Once your Google Analytics property is linked, this page shows how many people visit your website, where they come from, and what they do once they arrive. Your account manager can set that up."
+        icon={<ChartLine size={22} />}
+      />
     )
   }
 
-  // Fetch GA4 metrics (cached 10 min, busted by sync cron via revalidateTag).
   const { rows, priorRows, srcRows } = await _getCachedGA4Metrics(
     client.id,
     primaryGa4Id,
@@ -149,300 +245,384 @@ export default async function GA4Page({
     showCompare,
   )
 
-  const ga4Rows = (rows ?? []) as {
-    date: string; channel_group: string | null;
-    sessions: number; users: number; new_users: number;
-    page_views: number; conversions: number;
-    bounce_rate: number; avg_session_duration: number;
-    engaged_sessions?: number;
-  }[]
+  // GA4 returns an empty channel_group for sessions it could not attribute, and
+  // its own Traffic Acquisition report leaves those out of the total. Mapping
+  // them to Direct (what this page used to do) quietly inflated that bucket.
+  const named      = (rows as Ga4Row[]).filter(r => r.channel_group && r.channel_group !== '')
+  const priorNamed = ((priorRows ?? []) as Ga4Row[]).filter(r => r.channel_group && r.channel_group !== '')
 
-  type SourceRow = { source?: string | null; medium?: string | null; campaign?: string | null; sessions?: number; conversions?: number; engaged_sessions?: number }
-  const utmRows = (srcRows ?? []) as SourceRow[]
+  if (named.length === 0) {
+    return shell(
+      <EmptyState
+        title="No website visits recorded in this period"
+        description={`Nothing was tracked between ${fmtRange(fromDate, toDate)}. Try a wider date range — and if a whole month comes back empty, your account manager can check that tracking is still running on the site.`}
+        icon={<ChartLine size={22} />}
+      />
+    )
+  }
 
-  // Exclude rows with no channel group — GA4 returns empty-string channel_group for
-  // unattributed sessions that don't belong to any named channel group. The GA4 dashboard
-  // shows these as "(not set)" and excludes them from the Traffic Acquisition total.
-  // Previously these were mapped to 'Direct' via || 'Direct', inflating that bucket.
-  const ga4RowsFiltered = ga4Rows.filter(r => r.channel_group && r.channel_group !== '')
+  const now   = rollUp(named)
+  const prior = rollUp(priorNamed)
 
-  // Aggregate totals (all channels combined)
-  const totals = ga4RowsFiltered.reduce(
-    (acc, r) => ({
-      sessions:             acc.sessions             + (r.sessions             ?? 0),
-      users:                acc.users                + (r.users                ?? 0),
-      new_users:            acc.new_users            + (r.new_users            ?? 0),
-      page_views:           acc.page_views           + (r.page_views           ?? 0),
-      conversions:          acc.conversions          + (r.conversions          ?? 0),
-      engaged_sessions:     acc.engaged_sessions     + (r.engaged_sessions     ?? 0),
-      bounce_rate_sum:      acc.bounce_rate_sum      + (r.bounce_rate          ?? 0) * (r.sessions ?? 0),
-      duration_sum:         acc.duration_sum         + (r.avg_session_duration ?? 0) * (r.sessions ?? 0),
-    }),
-    { sessions: 0, users: 0, new_users: 0, page_views: 0, conversions: 0, engaged_sessions: 0, bounce_rate_sum: 0, duration_sum: 0 }
+  // ── Day by day ─────────────────────────────────────────────────────────────
+  const byDay = new Map<string, { sessions: number; users: number; pageViews: number; conversions: number }>()
+  for (const r of named) {
+    const key = r.date.split('T')[0]
+    const ex  = byDay.get(key) ?? { sessions: 0, users: 0, pageViews: 0, conversions: 0 }
+    ex.sessions    += num(r.sessions)
+    ex.users       += num(r.users)
+    ex.pageViews   += num(r.page_views)
+    ex.conversions += num(r.conversions)
+    byDay.set(key, ex)
+  }
+  const days = Array.from(byDay.entries()).sort(([a], [b]) => a.localeCompare(b))
+
+  const dailyTrend    = days.map(([date, v]) => ({ date, spend: v.sessions, conversions: v.conversions, clicks: 0, roas: 0 }))
+  const visitorsSpark = days.map(([, v]) => ({ v: v.users }))
+  const visitsSpark   = days.map(([, v]) => ({ v: v.sessions }))
+  const pagesSpark    = days.map(([, v]) => ({ v: v.pageViews }))
+  const convSpark     = days.map(([, v]) => ({ v: v.conversions }))
+
+  const busiest = days.reduce<[string, number] | null>(
+    (best, [date, v]) => (!best || v.sessions > best[1] ? [date, v.sessions] : best),
+    null,
   )
-  const avgBounceRate  = totals.sessions > 0 ? totals.bounce_rate_sum / totals.sessions : 0
-  const avgDuration    = totals.sessions > 0 ? totals.duration_sum   / totals.sessions : 0
-  const engagementRate = 1 - avgBounceRate
 
-  // Prior period aggregation (also filter empty channel_group)
-  type PriorRow = { sessions?: number; users?: number; new_users?: number; page_views?: number; avg_session_duration?: number; conversions?: number; bounce_rate?: number; channel_group?: string | null }
-  const priorData = ((priorRows ?? []) as PriorRow[]).filter(r => r.channel_group && r.channel_group !== '')
-  const priorTotals = priorData.reduce<{ sessions: number; users: number; new_users: number; page_views: number; conversions: number; bounce_rate_sum: number; duration_sum: number }>(
-    (acc, r) => ({
-      sessions:        acc.sessions        + (r.sessions             ?? 0),
-      users:           acc.users           + (r.users                ?? 0),
-      new_users:       acc.new_users       + (r.new_users            ?? 0),
-      page_views:      acc.page_views      + (r.page_views           ?? 0),
-      conversions:     acc.conversions     + (r.conversions          ?? 0),
-      bounce_rate_sum: acc.bounce_rate_sum + (r.bounce_rate          ?? 0) * (r.sessions ?? 0),
-      duration_sum:    acc.duration_sum    + (r.avg_session_duration ?? 0) * (r.sessions ?? 0),
-    }),
-    { sessions: 0, users: 0, new_users: 0, page_views: 0, conversions: 0, bounce_rate_sum: 0, duration_sum: 0 }
-  )
-  const priorEngagement  = priorTotals.sessions > 0 ? 1 - (priorTotals.bounce_rate_sum / priorTotals.sessions) : 0
-  const priorAvgDuration = priorTotals.sessions > 0 ? priorTotals.duration_sum / priorTotals.sessions : 0
-  const priorConvRate    = priorTotals.sessions > 0 ? priorTotals.conversions  / priorTotals.sessions : 0
-
-  function calcDelta(curr: number, prev: number): number | null {
-    if (prev === 0) return null
-    return ((curr - prev) / Math.abs(prev)) * 100
+  // ── Channels ───────────────────────────────────────────────────────────────
+  const byChannel = new Map<string, Ga4Row[]>()
+  for (const r of named) {
+    const key = r.channel_group as string
+    const ex  = byChannel.get(key)
+    if (ex) ex.push(r)
+    else byChannel.set(key, [r])
+  }
+  const priorByChannel = new Map<string, number>()
+  for (const r of priorNamed) {
+    const key = r.channel_group as string
+    priorByChannel.set(key, (priorByChannel.get(key) ?? 0) + num(r.sessions))
   }
 
-  const convRate = totals.sessions > 0 ? totals.conversions / totals.sessions : 0
-
-  const deltaSessions    = showCompare ? calcDelta(totals.sessions,   priorTotals.sessions)   : null
-  const deltaUsers       = showCompare ? calcDelta(totals.users,       priorTotals.users)       : null
-  const deltaNewUsers    = showCompare ? calcDelta(totals.new_users,   priorTotals.new_users)   : null
-  const deltaPageViews   = showCompare ? calcDelta(totals.page_views,  priorTotals.page_views)  : null
-  const deltaConversions = showCompare ? calcDelta(totals.conversions, priorTotals.conversions) : null
-  const deltaEngagement  = showCompare ? calcDelta(engagementRate,     priorEngagement)         : null
-  const deltaAvgDuration = showCompare ? calcDelta(avgDuration,        priorAvgDuration)        : null
-  const deltaConvRate    = showCompare ? calcDelta(convRate,           priorConvRate)           : null
-
-  // Prior channel map for Δ Sessions column (priorData already filtered above)
-  const priorChannelMap = new Map<string, number>()
-  for (const r of priorData) {
-    const ch = r.channel_group ?? 'Unassigned'
-    priorChannelMap.set(ch, (priorChannelMap.get(ch) ?? 0) + (r.sessions ?? 0))
-  }
-
-  // Daily trend for chart and sparklines (use filtered rows)
-  const dailyByDate = new Map<string, { sessions: number; conversions: number; users: number; new_users: number; page_views: number }>()
-  for (const r of ga4RowsFiltered) {
-    const d = r.date.split('T')[0]
-    const ex = dailyByDate.get(d)
-    if (ex) {
-      ex.sessions    += r.sessions
-      ex.conversions += r.conversions
-      ex.users       += r.users
-      ex.new_users   += r.new_users
-      ex.page_views  += r.page_views
-    } else {
-      dailyByDate.set(d, { sessions: r.sessions, conversions: r.conversions, users: r.users, new_users: r.new_users, page_views: r.page_views })
-    }
-  }
-  const sortedDailyEntries = Array.from(dailyByDate.entries()).sort(([a], [b]) => a.localeCompare(b))
-  const dailyTrend = sortedDailyEntries.map(([date, v]) => ({ date, spend: v.sessions, conversions: v.conversions, clicks: 0, roas: 0 }))
-
-  // Sparkline data for KPI cards
-  const sessionsSpark  = sortedDailyEntries.map(([, v]) => ({ v: v.sessions }))
-  const usersSpark     = sortedDailyEntries.map(([, v]) => ({ v: v.users }))
-  const newUsersSpark  = sortedDailyEntries.map(([, v]) => ({ v: v.new_users }))
-  const pageViewsSpark = sortedDailyEntries.map(([, v]) => ({ v: v.page_views }))
-  const convSpark      = sortedDailyEntries.map(([, v]) => ({ v: v.conversions }))
-
-  // Channel breakdown (use filtered rows — empty channel_group excluded)
-  const channelMap = new Map<string, { sessions: number; users: number; conversions: number; bounce_rate_sum: number }>()
-  for (const r of ga4RowsFiltered) {
-    const ch = r.channel_group ?? 'Unassigned'
-    const ex = channelMap.get(ch)
-    if (ex) {
-      ex.sessions += r.sessions; ex.users += r.users; ex.conversions += r.conversions
-      ex.bounce_rate_sum += (r.bounce_rate ?? 0) * (r.sessions ?? 0)
-    } else {
-      channelMap.set(ch, { sessions: r.sessions, users: r.users, conversions: r.conversions, bounce_rate_sum: (r.bounce_rate ?? 0) * (r.sessions ?? 0) })
-    }
-  }
-  const channels = Array.from(channelMap.entries())
-    .map(([name, v]) => ({ name, ...v, bounce_rate: v.sessions > 0 ? v.bounce_rate_sum / v.sessions : 0 }))
+  const channels = Array.from(byChannel.entries())
+    .map(([name, channelRows]) => {
+      const c = rollUp(channelRows)
+      return {
+        name,
+        sessions:       c.sessions,
+        conversions:    c.conversions,
+        engagementRate: c.engagementRate,
+        convRate:       c.convRate,
+        share:          now.sessions > 0 ? c.sessions / now.sessions : 0,
+        delta:          showCompare ? pctChange(c.sessions, priorByChannel.get(name) ?? 0) : null,
+      }
+    })
     .sort((a, b) => b.sessions - a.sessions)
 
-  // UTM source/medium breakdown (top 20 by sessions)
-  type UtmAgg = { sessions: number; conversions: number; engaged_sessions: number }
-  const utmMap = new Map<string, UtmAgg>()
-  for (const r of utmRows) {
-    const src  = r.source   ?? '(direct)'
-    const med  = r.medium   ?? '(none)'
-    const camp = r.campaign ?? '(not set)'
-    const key  = `${src}|||${med}|||${camp}`
-    const ex   = utmMap.get(key)
-    if (ex) {
-      ex.sessions         += r.sessions         ?? 0
-      ex.conversions      += r.conversions      ?? 0
-      ex.engaged_sessions += r.engaged_sessions ?? 0
-    } else {
-      utmMap.set(key, { sessions: r.sessions ?? 0, conversions: r.conversions ?? 0, engaged_sessions: r.engaged_sessions ?? 0 })
-    }
+  const topChannel = channels[0]
+  // Which channel actually converts — a 100% rate off four visits is noise, so a
+  // channel needs a floor of traffic before it can be called the best.
+  const bestConverting = channels
+    .filter(c => c.conversions > 0 && c.sessions >= 30)
+    .sort((a, b) => b.convRate - a.convRate)[0]
+
+  // ── Source / medium / campaign ─────────────────────────────────────────────
+  type SourceAgg = { source: string; medium: string; campaign: string; sessions: number; conversions: number; engaged_sessions: number }
+  const sourceMap = new Map<string, SourceAgg>()
+  for (const r of (srcRows ?? []) as SourceRow[]) {
+    const source   = r.source   || '(direct)'
+    const medium   = r.medium   || '(none)'
+    const campaign = r.campaign || '(not set)'
+    const key = `${source}|||${medium}|||${campaign}`
+    const ex  = sourceMap.get(key) ?? { source, medium, campaign, sessions: 0, conversions: 0, engaged_sessions: 0 }
+    ex.sessions         += num(r.sessions)
+    ex.conversions      += num(r.conversions)
+    ex.engaged_sessions += num(r.engaged_sessions)
+    sourceMap.set(key, ex)
   }
-  // Cap at 200 unique combos for RSC serialization — client component handles display (top 20).
-  // DB query already limits raw rows to 10K; this prevents serializing thousands of combos.
-  const utmRowsAll = Array.from(utmMap.entries())
-    .map(([key, v]) => { const [source, medium, campaign] = key.split('|||'); return { source, medium, campaign, ...v } })
-    .sort((a, b) => b.sessions - a.sessions)
-    .slice(0, 200)
+  // Capped: a busy property would otherwise serialise thousands of combinations
+  // into the client bundle for a table that shows twenty at a time.
+  const allSources  = Array.from(sourceMap.values()).sort((a, b) => b.sessions - a.sessions).slice(0, 200)
+  const sourceTotal = allSources.reduce((s, r) => s + r.sessions, 0)
+  const topSources  = allSources.slice(0, 6)
 
-  const secondaryCards = [
-    { label: 'Avg. Session',     value: fmtSec(avgDuration)           },
-    { label: 'Engagement Rate',  value: fmtPct(engagementRate)        },
-    { label: 'Conv. Rate',       value: fmtPct(convRate)              },
-  ]
+  // ── New vs returning ───────────────────────────────────────────────────────
+  // new_users is a column; returning is the remainder. GA4 counts a visitor once
+  // per channel, so treat these as the split rather than a unique headcount.
+  const newShare            = now.users > 0 ? now.newUsers / now.users : 0
+  const returningShare      = now.users > 0 ? now.returningUsers / now.users : 0
+  const priorReturningShare = prior.users > 0 ? prior.returningUsers / prior.users : 0
 
-  return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="Analytics — GA4" accent="#e37400" fromDate={fromDate} toDate={toDate} compare={compare} />
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
+  const visitorsDelta = showCompare ? pctChange(now.users, prior.users) : null
+  const since = (value: number, unit: string) =>
+    showCompare ? `${fmtNum(value)} ${unit} ${priorShort}` : undefined
 
-        {ga4Rows.length === 0 ? (
-          <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<ChartLine size={22} />} />
-        ) : (
-          <>
-            {/* KPI spark cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              <SparkMetricCard label="Sessions"    value={fmtNum(totals.sessions)}    sparkData={sessionsSpark}  sparkColor="#3b82f6" delay={0} delta={deltaSessions    ?? undefined} />
-              <SparkMetricCard label="Users"       value={fmtNum(totals.users)}       sparkData={usersSpark}     sparkColor="#10b981" delay={1} delta={deltaUsers       ?? undefined} />
-              <SparkMetricCard label="New Users"   value={fmtNum(totals.new_users)}   sparkData={newUsersSpark}  sparkColor="#6366f1" delay={2} delta={deltaNewUsers    ?? undefined} />
-              <SparkMetricCard label="Page Views"  value={fmtNum(totals.page_views)}  sparkData={pageViewsSpark} sparkColor="#f59e0b" delay={3} delta={deltaPageViews   ?? undefined} />
-              <SparkMetricCard label="Conversions" value={fmtNum(totals.conversions)} sparkData={convSpark}      sparkColor="#ec4899" delay={4} delta={deltaConversions ?? undefined} />
-            </div>
+  return shell(
+    <>
+      {/* The answer in a sentence, before any chart. */}
+      <section className="card an-lede">
+        <p className="an-lede__line">
+          <strong className="an-lede__figure">{fmtNum(now.users)}</strong> people visited your website between{' '}
+          <strong>{fmtRange(fromDate, toDate)}</strong>
+          {visitorsDelta != null && (
+            <>
+              {' — '}
+              <strong style={{ color: visitorsDelta >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {visitorsDelta >= 0 ? 'up' : 'down'} {Math.abs(visitorsDelta).toFixed(0)}%
+              </strong>
+              {' '}on the {priorWord}
+            </>
+          )}
+          .
+        </p>
+        <p className="an-lede__sub">
+          {topChannel && <>Most arrived through <strong>{topChannel.name}</strong>, {fmtPct(topChannel.share)} of all visits. </>}
+          {now.conversions > 0
+            ? <>They completed <strong>{fmtNum(now.conversions)}</strong> {now.conversions === 1 ? 'conversion' : 'conversions'} — {fmtPct(now.convRate)} of visits ended in one.</>
+            : <>No conversions were tracked on the site in this period.</>}
+        </p>
+      </section>
 
-            {/* Secondary compact cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="card" style={{ padding: '1rem 1.25rem' }}>
-                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Avg. Session</p>
-                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtSec(avgDuration)}</p>
-                {deltaAvgDuration != null && (
-                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deltaAvgDuration >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                    {deltaAvgDuration >= 0 ? '▲' : '▼'} {Math.abs(deltaAvgDuration).toFixed(1)}%
-                  </span>
-                )}
+      {/* How many came, and how that compares. */}
+      <div className="stat-grid stat-grid--wide an-kpis">
+        <SparkMetricCard
+          label="Visitors" value={fmtNum(now.users)} sub={since(prior.users, 'visitors')}
+          sparkData={visitorsSpark} sparkColor={SERIES_VISITS} delay={0}
+          delta={visitorsDelta ?? undefined}
+        />
+        <SparkMetricCard
+          label="Visits" value={fmtNum(now.sessions)} sub={since(prior.sessions, 'visits')}
+          sparkData={visitsSpark} sparkColor={SERIES_VISITS} delay={1}
+          delta={(showCompare ? pctChange(now.sessions, prior.sessions) : null) ?? undefined}
+        />
+        <SparkMetricCard
+          label="Pages viewed" value={fmtNum(now.pageViews)} sub={since(prior.pageViews, 'views')}
+          sparkData={pagesSpark} sparkColor={SERIES_VISITS} delay={2}
+          delta={(showCompare ? pctChange(now.pageViews, prior.pageViews) : null) ?? undefined}
+        />
+        <SparkMetricCard
+          label="Conversions" value={fmtNum(now.conversions)} sub={since(prior.conversions, 'conversions')}
+          sparkData={convSpark} sparkColor={SERIES_CONVERSIONS} delay={3}
+          delta={(showCompare ? pctChange(now.conversions, prior.conversions) : null) ?? undefined}
+        />
+      </div>
+
+      {/* The trend over time. */}
+      <section className="card p-4 sm:p-6">
+        <div className="an-head">
+          <div>
+            <h2 className="section-title">Visits over time</h2>
+            <p className="section-desc">
+              Every day from {fmtRange(fromDate, toDate)}
+              {busiest && <> · busiest day was {fmtDay(new Date(busiest[0]))} with {fmtNum(busiest[1])} visits</>}
+            </p>
+          </div>
+          {showCompare && (
+            <p className="an-head__aside">
+              {priorWord}: <strong>{fmtNum(prior.sessions)}</strong> visits, <strong>{fmtNum(prior.conversions)}</strong> conversions
+            </p>
+          )}
+        </div>
+        <SpendChart
+          data={dailyTrend}
+          colorSpend={SERIES_VISITS}
+          colorConversions={SERIES_CONVERSIONS}
+          spendLabel="Visits"
+          conversionsLabel="Conversions"
+          variant="count"
+        />
+      </section>
+
+      {/* What they did once they arrived. */}
+      <section className="card an-band">
+        <div className="an-band__item">
+          <p className="metric-label">Engagement rate <span className="an-hint">engaged visits</span></p>
+          <p className="an-band__value">{fmtPct(now.engagementRate)}</p>
+          <p className="an-band__sub">
+            {showCompare
+              ? <><Delta value={pctChange(now.engagementRate, prior.engagementRate)} /> from {fmtPct(prior.engagementRate)} {priorShort}</>
+              : 'Visits that lasted, browsed on, or converted'}
+          </p>
+        </div>
+        <div className="an-band__item">
+          <p className="metric-label">Time on site <span className="an-hint">per visit</span></p>
+          <p className="an-band__value">{fmtSec(now.avgDuration)}</p>
+          <p className="an-band__sub">
+            {showCompare
+              ? <><Delta value={pctChange(now.avgDuration, prior.avgDuration)} /> from {fmtSec(prior.avgDuration)} {priorShort}</>
+              : 'How long an average visit lasts'}
+          </p>
+        </div>
+        <div className="an-band__item">
+          <p className="metric-label">Pages per visit</p>
+          <p className="an-band__value">{now.pagesPerVisit.toFixed(1)}</p>
+          <p className="an-band__sub">
+            {showCompare
+              ? <><Delta value={pctChange(now.pagesPerVisit, prior.pagesPerVisit)} /> from {prior.pagesPerVisit.toFixed(1)} {priorShort}</>
+              : 'How far into the site people go'}
+          </p>
+        </div>
+        <div className="an-band__item">
+          <p className="metric-label">Conversion rate</p>
+          <p className="an-band__value">{fmtPct(now.convRate)}</p>
+          <p className="an-band__sub">
+            {showCompare
+              ? <><Delta value={pctChange(now.convRate, prior.convRate)} /> from {fmtPct(prior.convRate)} {priorShort}</>
+              : 'Share of visits that ended in a conversion'}
+          </p>
+        </div>
+      </section>
+
+      {/* Where they came from, and who they were. */}
+      <div className="an-panels">
+        <section className="card p-4 sm:p-6">
+          <div className="mb-4">
+            <h2 className="section-title">Top sources</h2>
+            <p className="section-desc">
+              {topSources.length > 0
+                ? `The named places your visits came from, as a share of the ${fmtNum(sourceTotal)} visits that can be traced to one`
+                : 'Where visits came from'}
+            </p>
+          </div>
+          {topSources.length > 0 ? (
+            <ul className="an-bars">
+              {topSources.map(s => {
+                const share = sourceTotal > 0 ? s.sessions / sourceTotal : 0
+                return (
+                  <li key={`${s.source}|${s.medium}|${s.campaign}`} className="an-bar">
+                    <span className="an-bar__track">
+                      <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
+                      <span className="an-bar__name">
+                        {s.source}
+                        <span className="an-bar__medium">{s.medium}</span>
+                      </span>
+                    </span>
+                    <span className="an-bar__value">{fmtNum(s.sessions)}</span>
+                    <span className="an-bar__pct">{fmtPct(share)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="an-note">
+              Visits are being recorded, but the referral detail behind them hasn&rsquo;t come through for these dates.
+              The channel breakdown below still covers the whole period.
+            </p>
+          )}
+        </section>
+
+        <section className="card p-4 sm:p-6">
+          <div className="mb-4">
+            <h2 className="section-title">New vs returning</h2>
+            <p className="section-desc">Whether people are finding you for the first time or coming back</p>
+          </div>
+          {now.users > 0 ? (
+            <>
+              <div
+                className="an-split"
+                role="img"
+                aria-label={`${fmtPct(newShare)} new visitors, ${fmtPct(returningShare)} returning`}
+              >
+                <span className="an-split__seg an-split__seg--new" style={{ width: barWidth(newShare) }} />
+                <span className="an-split__seg an-split__seg--ret" style={{ width: barWidth(returningShare) }} />
               </div>
-              <div className="card" style={{ padding: '1rem 1.25rem' }}>
-                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Engagement Rate</p>
-                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtPct(engagementRate)}</p>
-                {deltaEngagement != null && (
-                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deltaEngagement >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                    {deltaEngagement >= 0 ? '▲' : '▼'} {Math.abs(deltaEngagement).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-              <div className="card" style={{ padding: '1rem 1.25rem' }}>
-                <p className="metric-label" style={{ marginBottom: '0.25rem' }}>Conv. Rate</p>
-                <p className="metric-value" style={{ fontSize: '1.5rem', lineHeight: 1.2 }}>{fmtPct(convRate)}</p>
-                {deltaConvRate != null && (
-                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deltaConvRate >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                    {deltaConvRate >= 0 ? '▲' : '▼'} {Math.abs(deltaConvRate).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Sessions trend chart */}
-            <div className="card p-4 sm:p-6">
-              <div className="mb-4">
-                <h2 className="section-title">Sessions & Conversions Over Time</h2>
-                <p className="section-desc">{fmtDate(fromDate)} – {fmtDate(toDate)}</p>
-              </div>
-              <SpendChart
-                data={dailyTrend}
-                colorSpend="#3b82f6"
-                colorConversions="#10b981"
-                spendLabel="Sessions"
-                conversionsLabel="Conversions"
-                variant="count"
-              />
-            </div>
-
-            {/* Channel breakdown table */}
-            {channels.length > 0 && (
-              <div className="card p-6">
-                <div className="mb-4">
-                  <h2 className="section-title">Traffic by Channel</h2>
-                  <p className="section-desc">{channels.length} channels</p>
+              <dl className="an-legend">
+                <div className="an-legend__row">
+                  <dt><span className="an-dot an-dot--new" aria-hidden /> New visitors</dt>
+                  <dd><strong>{fmtNum(now.newUsers)}</strong><span>{fmtPct(newShare)}</span></dd>
                 </div>
-                <div className="table-scroll">
-                  <table className="data-table" style={{ minWidth: 600 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: 'left' }}>Channel</th>
-                        <th style={{ textAlign: 'right' }}>Sessions</th>
-                        {showCompare && <th style={{ textAlign: 'right' }}>Δ Sessions</th>}
-                        <th style={{ textAlign: 'right' }}>Users</th>
-                        <th style={{ textAlign: 'right' }}>Conversions</th>
-                        <th style={{ textAlign: 'right' }}>Engagement Rate</th>
-                        <th style={{ textAlign: 'right' }}>Share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {channels.map(ch => (
-                        <tr key={ch.name}>
-                          <td style={{ fontWeight: 500 }}>
-                            <span style={{
-                              display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                              background: CHANNEL_COLORS[ch.name] ?? '#9ca3af', marginRight: 6, verticalAlign: 'middle'
-                            }} />
-                            {ch.name}
-                          </td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(ch.sessions)}</td>
-                          {showCompare && (() => {
-                            const prev = priorChannelMap.get(ch.name) ?? 0
-                            const delta = prev > 0 ? ((ch.sessions - prev) / prev) * 100 : null
-                            return (
-                              <td style={{ textAlign: 'right' }}>
-                                {delta != null
-                                  ? <span style={{ fontSize: '0.8rem', fontWeight: 600, color: delta >= 0 ? 'var(--green)' : 'var(--red)' }}>{delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%</span>
-                                  : <span style={{ color: 'var(--text-faint)' }}>—</span>
-                                }
-                              </td>
-                            )
-                          })()}
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtNum(ch.users)}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{ch.conversions > 0 ? fmtNum(ch.conversions) : '—'}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(1 - ch.bounce_rate)}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                            {totals.sessions > 0 ? `${((ch.sessions / totals.sessions) * 100).toFixed(1)}%` : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ fontWeight: 600, borderTop: '2px solid var(--border)' }}>
-                        <td>Total</td>
-                        <td style={{ textAlign: 'right' }}>{fmtNum(totals.sessions)}</td>
-                        {showCompare && <td />}
-                        <td style={{ textAlign: 'right' }}>{fmtNum(totals.users)}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtNum(totals.conversions)}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtPct(engagementRate)}</td>
-                        <td style={{ textAlign: 'right' }}>100%</td>
-                      </tr>
-                    </tfoot>
-                  </table>
+                <div className="an-legend__row">
+                  <dt><span className="an-dot an-dot--ret" aria-hidden /> Returning visitors</dt>
+                  <dd><strong>{fmtNum(now.returningUsers)}</strong><span>{fmtPct(returningShare)}</span></dd>
                 </div>
-              </div>
-            )}
+              </dl>
+              <p className="an-note">
+                {returningShare >= 0.35
+                  ? 'A healthy share of people are coming back, so the site is earning more than a single look.'
+                  : 'Most of this traffic is people finding you for the first time.'}
+                {showCompare && prior.users > 0 && <> {priorShort === 'last year' ? 'Last year' : 'Last period'} it was {fmtPct(priorReturningShare)} returning.</>}
+              </p>
+            </>
+          ) : (
+            <p className="an-note">No visitor counts were recorded for these dates.</p>
+          )}
+        </section>
+      </div>
 
-            {/* UTM source / medium breakdown */}
-            <div className="card p-6">
-              <div className="mb-4">
-                <h2 className="section-title">Traffic by Source / Medium</h2>
-                <p className="section-desc">
-                  {utmRowsAll.length > 0 ? `${utmRowsAll.length} source/medium combinations` : 'No UTM/source data synced yet — run a sync to populate.'}
-                </p>
-              </div>
-              <TrafficBySourceTable rows={utmRowsAll} />
-            </div>
-          </>
-        )}
-      </main>
-    </div>
+      {/* Which channels actually convert. */}
+      <section className="card p-4 sm:p-6">
+        <div className="mb-4">
+          <h2 className="section-title">How each channel performed</h2>
+          <p className="section-desc">
+            {bestConverting
+              ? <>{channels.length} channels brought visits. <strong>{bestConverting.name}</strong> converts best, at {fmtPct(bestConverting.convRate)} of its visits.</>
+              : <>{channels.length} channels brought visits in this period.</>}
+          </p>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table an-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Channel</th>
+                <th style={{ textAlign: 'right' }}>Visits</th>
+                <th style={{ textAlign: 'right' }}>Share</th>
+                {showCompare && <th style={{ textAlign: 'right' }}>vs {priorShort}</th>}
+                <th style={{ textAlign: 'right' }}>Engagement</th>
+                <th style={{ textAlign: 'right' }}>Conversions</th>
+                <th style={{ textAlign: 'right' }}>Conv. rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map(ch => (
+                <tr key={ch.name}>
+                  <td className="an-table__name">
+                    <span className="an-table__bar" style={{ width: barWidth(ch.share) }} aria-hidden />
+                    <span className="an-table__label">{ch.name}</span>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{fmtNum(ch.sessions)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(ch.share)}</td>
+                  {showCompare && <td style={{ textAlign: 'right' }}><Delta value={ch.delta} /></td>}
+                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(ch.engagementRate)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{ch.conversions > 0 ? fmtNum(ch.conversions) : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {ch.conversions > 0
+                      ? <span className={bestConverting?.name === ch.name ? 'an-best' : undefined}>{fmtPct(ch.convRate)}</span>
+                      : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td className="an-table__name"><span className="an-table__label">All channels</span></td>
+                <td style={{ textAlign: 'right' }}>{fmtNum(now.sessions)}</td>
+                <td style={{ textAlign: 'right' }}>100.0%</td>
+                {showCompare && <td style={{ textAlign: 'right' }}><Delta value={pctChange(now.sessions, prior.sessions)} /></td>}
+                <td style={{ textAlign: 'right' }}>{fmtPct(now.engagementRate)}</td>
+                <td style={{ textAlign: 'right' }}>{fmtNum(now.conversions)}</td>
+                <td style={{ textAlign: 'right' }}>{fmtPct(now.convRate)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      {/* The full source / medium / campaign detail. */}
+      {allSources.length > 0 ? (
+        <section className="card p-4 sm:p-6">
+          <div className="mb-4">
+            <h2 className="section-title">Every source and campaign</h2>
+            <p className="section-desc">
+              {allSources.length} source and campaign combinations — filter to find a specific one
+            </p>
+          </div>
+          <TrafficBySourceTable rows={allSources} />
+        </section>
+      ) : (
+        <EmptyState
+          title="No source detail for these dates"
+          description="This is the line-by-line view of every website, search engine and campaign that sent you a visit. It fills in as soon as referral detail is recorded — the channel breakdown above already covers the whole period."
+          icon={<ChartLine size={22} />}
+        />
+      )}
+    </>
   )
 }

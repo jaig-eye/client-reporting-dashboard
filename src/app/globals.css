@@ -3569,3 +3569,680 @@ select.note-field__input { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .site-row__caret, .site-switch__track, .site-switch__knob { transition: none; }
 }
+
+/* Per-client "new dashboard" switch on the client record. */
+.client-dashv2 { display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; }
+.client-dashv2 input { margin-top: 0.2rem; width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer; }
+.client-dashv2__title { display: flex; align-items: center; gap: 0.4rem; font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+.client-dashv2__hint { display: block; margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   CRM report — /dashboard/crm
+   Series colours live here rather than in the page so light and dark each get a
+   value that holds up against their own background; the page only ever names a
+   token. Scoped to .crm-report so nothing else inherits them.
+───────────────────────────────────────────────────────────────────────────── */
+.crm-report {
+  --crm-lead:        #2563eb;
+  --crm-lead-soft:   #93c5fd;
+  --crm-call:        #0891b2;
+  --crm-form:        #7c3aed;
+  --crm-won:         #16a34a;
+  --crm-missed:      #d97706;
+  --crm-lost:        #cbd5e1;
+  --crm-track:       var(--bg-subtle);
+}
+[data-theme="dark"] .crm-report {
+  --crm-lead:        #60a5fa;
+  --crm-lead-soft:   #3b82f6;
+  --crm-call:        #22d3ee;
+  --crm-form:        #a78bfa;
+  --crm-won:         #4ade80;
+  --crm-missed:      #fbbf24;
+  --crm-lost:        #475569;
+}
+
+/* The answer card: the number the client came for, plus the three facts that
+   qualify it. Facts drop under the figure before they get squeezed. */
+.crm-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+  padding: 1.5rem;
+}
+.crm-headline__main { min-width: 0; flex: 1 1 16rem; }
+.crm-headline__figure {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0.5rem 0 0.375rem;
+}
+.crm-headline__value {
+  font-size: 2.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+.crm-headline__sub {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 34rem;
+  text-wrap: pretty;
+}
+.crm-headline__facts {
+  display: flex;
+  gap: 1.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 0 1 auto;
+}
+.crm-headline__facts > li { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.crm-fact__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.crm-fact__value {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Calls and pipeline read as a pair on a wide screen and stack on a phone. */
+.crm-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+}
+
+/* Answered / missed, won / lost — one bar so the split is seen, not computed. */
+.crm-bar {
+  display: flex;
+  height: 0.625rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--crm-track);
+  margin: 1rem 0 0.625rem;
+}
+.crm-bar__seg { display: block; height: 100%; }
+.crm-bar__seg--good { background: var(--crm-won); }
+.crm-bar__seg--bad  { background: var(--crm-missed); }
+.crm-bar__seg--won  { background: var(--crm-won); }
+.crm-bar__seg--lost { background: var(--crm-lost); }
+
+.crm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.crm-legend > span { display: inline-flex; align-items: center; gap: 0.375rem; }
+.crm-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; flex-shrink: 0; }
+.crm-dot--good { background: var(--crm-won); }
+.crm-dot--bad  { background: var(--crm-missed); }
+.crm-dot--won  { background: var(--crm-won); }
+.crm-dot--lost { background: var(--crm-lost); }
+
+.crm-stats { margin-top: 1.125rem; }
+.crm-stats .metric-row__value { font-size: 1.375rem; }
+.crm-stat__sub { font-size: 0.75rem; color: var(--text-faint); margin-top: 0.25rem; }
+
+/* A sentence the client can act on, sitting under the numbers that prompted it. */
+.crm-insight {
+  margin-top: 1rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  text-wrap: pretty;
+}
+.crm-insight--warn {
+  color: var(--crm-missed);
+  background: var(--amber-subtle);
+  border-color: transparent;
+}
+
+.crm-table-wrap { margin-top: 1rem; }
+.crm-report .data-table tfoot td {
+  border-top: 2px solid var(--border);
+  color: var(--text-primary);
+  padding-top: 0.625rem;
+}
+
+/* Share of submissions: bar and figure on one baseline, right-aligned. */
+.crm-share { display: inline-flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
+.crm-share__track {
+  width: 4.5rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--crm-track);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.crm-share__fill { display: block; height: 100%; border-radius: 999px; background: var(--crm-form); }
+.crm-share__num { min-width: 2.25rem; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.crm-footnote {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  text-align: center;
+  padding: 0.5rem 0 0.25rem;
+  text-wrap: pretty;
+}
+
+@media (max-width: 640px) {
+  .crm-headline { padding: 1.25rem; gap: 1rem; }
+  .crm-headline__value { font-size: 2.25rem; }
+  .crm-headline__facts {
+    width: 100%;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .crm-fact__value { font-size: 1.125rem; }
+  .crm-stats .metric-row__value { font-size: 1.125rem; }
+  .crm-col-share { display: none; }
+}
+
+/* Website Traffic page (/dashboard/analytics) ─────────────────────────────────
+   A client-facing audience report: a plain-language lede, a KPI row, the daily
+   trend, an engagement band, and share-bar panels. Everything is expressed in
+   theme tokens so it follows light and dark; the only concrete colours on the
+   page are the two chart series, which Recharts needs as real values.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.an-lede {
+  padding: 1.25rem 1.5rem;
+  border-color: var(--blue-border);
+  background: linear-gradient(180deg, var(--blue-subtle), var(--bg-surface) 70%);
+}
+.an-lede__line {
+  margin: 0;
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+.an-lede__line strong { color: var(--text-primary); font-weight: 600; }
+.an-lede__figure {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.15rem;
+}
+.an-lede__sub {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+.an-lede__sub strong { color: var(--text-secondary); font-weight: 600; }
+
+/* Card heading with a comparison note pushed to the far edge. */
+.an-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.an-head__aside {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.an-head__aside strong { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+/* Engagement band: four figures sharing one card, divided rather than boxed. */
+.an-band {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
+  overflow: hidden;
+}
+.an-band__item {
+  padding: 1.125rem 1.25rem;
+  border-left: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+.an-band__item:first-child { border-left: none; }
+.an-band__value {
+  margin: 0.4rem 0 0.35rem;
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.an-band__sub {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+/* The GA4 term, kept quiet next to the plain-language label. */
+.an-hint {
+  margin-left: 0.3rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
+
+.an-delta { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.an-delta--up   { color: var(--green); }
+.an-delta--down { color: var(--red); }
+
+/* Two panels side by side, stacked once they'd be too narrow to read. */
+.an-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Ranked list where the bar sits behind the name, so a row is one line tall. */
+.an-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.an-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+.an-bar__track {
+  position: relative;
+  display: block;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.375rem;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.an-bar__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--blue-border);
+  border-right: 2px solid var(--blue);
+  border-radius: 0.375rem 0 0 0.375rem;
+}
+.an-bar__name {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.an-bar__medium { font-size: 0.6875rem; font-weight: 400; color: var(--text-muted); }
+.an-bar__value {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.an-bar__pct {
+  min-width: 3rem;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* New vs returning: one bar, two segments, then the numbers underneath. */
+.an-split {
+  display: flex;
+  height: 0.625rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+.an-split__seg--new { background: var(--blue); }
+.an-split__seg--ret { background: var(--blue-border); }
+
+.an-legend { margin: 1rem 0 0; display: grid; gap: 0.5rem; }
+.an-legend__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+}
+.an-legend__row dt {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.an-legend__row dd {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.an-legend__row dd strong { color: var(--text-primary); font-weight: 600; }
+.an-legend__row dd span   { color: var(--text-muted); min-width: 3rem; text-align: right; }
+
+.an-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
+.an-dot--new { background: var(--blue); }
+.an-dot--ret { background: var(--blue-border); }
+
+.an-note {
+  margin: 1rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+/* Channel table: the share bar lives behind the channel name. */
+.an-table { min-width: 44rem; }
+.an-table__name { position: relative; font-weight: 500; min-width: 11rem; }
+.an-table__bar {
+  position: absolute;
+  left: 0;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  background: var(--blue-border);
+  opacity: 0.55;
+  border-radius: 0.25rem;
+}
+.an-table__label { position: relative; padding-left: 0.4rem; }
+.an-table tfoot tr {
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+  background: var(--bg-subtle);
+}
+.an-best { color: var(--green); font-weight: 600; }
+
+@media (max-width: 1023px) {
+  .an-panels { grid-template-columns: minmax(0, 1fr); }
+  .an-band   { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .an-band__item:nth-child(odd)  { border-left: none; }
+  .an-band__item:nth-child(n+3)  { border-top: 1px solid var(--border-subtle); }
+}
+
+@media (max-width: 639px) {
+  .an-lede { padding: 1rem; }
+  .an-lede__line   { font-size: 0.9375rem; }
+  .an-lede__figure { font-size: 1.5rem; }
+
+  .an-head { gap: 0.5rem; }
+  .an-head__aside { white-space: normal; }
+
+  .an-band__item  { padding: 0.875rem 1rem; }
+  .an-band__value { font-size: 1.375rem; }
+
+  .an-bar { grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.625rem; }
+  .an-bar__track { grid-row: 1 / 3; }
+  .an-bar__value { align-self: end; }
+  .an-bar__pct { grid-column: 2; align-self: start; min-width: 0; }
+  .an-bar__track { padding: 0.5rem; }
+
+  .an-table { min-width: 36rem; }
+  .an-table__name { min-width: 8.5rem; }
+}
+
+/* The KPI row keeps two cards per line on a phone — four stacked full-width
+   cards push the trend chart a whole screen down. */
+@media (max-width: 639px) {
+  .stat-grid.an-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CLIENT SEO REPORT — /dashboard/seo
+
+   One page replaced four sub-pages, so it needs a rhythm a long page can hold:
+   a titled section, then cards, then a wide panel beside a narrow one. Panels
+   carry their own header so a table can run edge to edge underneath it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Series colours live here, not in the page, so light and dark each get a value
+   that holds against their own background; the page only ever names a token. */
+.seo-report {
+  --seo-search:      #2563eb;
+  --seo-search-soft: #93c5fd;
+  --seo-local:       #16a34a;
+  --seo-authority:   #d97706;
+  --seo-neutral:     #94a3b8;
+}
+[data-theme="dark"] .seo-report {
+  --seo-search:      #60a5fa;
+  --seo-search-soft: #3b82f6;
+  --seo-local:       #4ade80;
+  --seo-authority:   #fbbf24;
+  --seo-neutral:     #64748b;
+}
+
+.seo-page { display: flex; flex-direction: column; gap: 2rem; }
+
+.seo-section { display: flex; flex-direction: column; gap: 0.875rem; }
+.seo-section__head { display: flex; align-items: center; gap: 0.625rem; flex-wrap: wrap; }
+.seo-section__icon {
+  width: 2rem; height: 2rem; border-radius: 0.625rem; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.seo-section__title { margin: 0; font-size: 1rem; font-weight: 650; color: var(--text-primary); text-wrap: balance; }
+.seo-section__desc  { margin: 0.125rem 0 0; font-size: 0.8125rem; color: var(--text-muted); text-wrap: pretty; }
+.seo-section__meta  { margin-left: auto; display: inline-flex; align-items: center; gap: 0.375rem; flex-shrink: 0; }
+
+/* Two panels that stack the moment they'd have to squeeze a table. */
+.seo-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); gap: 1rem; align-items: start; }
+.seo-split--aside { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+.seo-stack { display: flex; flex-direction: column; gap: 1rem; }
+
+.seo-panel { padding: 0; overflow: hidden; }
+.seo-panel__head { padding: 1rem 1.25rem 0.875rem; border-bottom: 1px solid var(--border-subtle); }
+.seo-panel__body { padding: 1.125rem 1.25rem 1.25rem; }
+/* A table supplies its own padding; the body only keeps it off the header rule. */
+.seo-panel__body--flush { padding: 0.25rem 0 0.5rem; }
+
+.seo-stat { padding: 1rem 1.125rem; display: flex; flex-direction: column; gap: 0.375rem; }
+.seo-velocity { padding: 1.125rem 1.25rem; display: flex; flex-direction: column; gap: 0.875rem; }
+
+/* Labelled proportional bars — rank bands, and search versus maps. */
+.seo-bars { display: flex; flex-direction: column; gap: 0.75rem; }
+.seo-bar  { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 0.75rem; align-items: baseline; }
+.seo-bar__label { font-size: 0.8125rem; color: var(--text-secondary); }
+.seo-bar__value { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
+.seo-bar__pct   { margin-left: 0.4rem; font-weight: 500; color: var(--text-faint); }
+.seo-bar__track { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--bg-subtle); overflow: hidden; }
+.seo-bar__fill  { display: block; height: 100%; border-radius: 999px; }
+
+/* A ranking position, coloured by how good it is. */
+.seo-pos {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.9rem; padding: 0.125rem 0.4rem; border-radius: 0.5rem;
+  font-size: 0.8125rem; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.seo-pos--top   { background: var(--green-subtle); color: var(--green); }
+.seo-pos--page1 { background: var(--amber-subtle); color: var(--amber); }
+.seo-pos--rest  { background: var(--bg-subtle);    color: var(--text-muted); }
+
+.seo-move { font-size: 0.75rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.seo-move--up   { color: var(--green); }
+.seo-move--down { color: var(--red); }
+.seo-move--flat { color: var(--text-faint); }
+
+.seo-movers { display: flex; flex-direction: column; gap: 0.625rem; }
+.seo-mover  { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.seo-mover__kw    { font-size: 0.8125rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seo-mover__right { display: inline-flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+.seo-reviews { margin-top: 1.125rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); }
+.seo-reviews__line  { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+.seo-reviews__score { font-size: 1.75rem; font-weight: 700; line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.seo-stars { display: inline-flex; gap: 1px; font-size: 0.9375rem; line-height: 1; }
+.seo-rating-chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0.625rem; border-radius: 999px;
+  background: var(--bg-subtle); color: var(--text-secondary);
+  font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+}
+
+/* Average position over time. Drawn top-down, so up the page is up the rankings. */
+.seo-trend { width: 100%; height: 5rem; display: block; }
+.seo-trend__axis {
+  display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.5rem;
+  font-size: 0.6875rem; color: var(--text-faint);
+}
+.seo-trend__axis > :nth-child(2) { text-align: center; }
+
+.seo-embed { display: block; width: 100%; height: 32rem; border: none; }
+
+/* The search term itself: as wide as the panel allows, truncated rather than wrapped. */
+.seo-cell-term { max-width: 15rem; }
+
+.seo-note { font-size: 0.75rem; color: var(--text-faint); line-height: 1.5; }
+.seo-footnote { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+@media (max-width: 1023px) {
+  .seo-split--aside { grid-template-columns: minmax(0, 1fr); }
+  .seo-trend__axis > :nth-child(2) { display: none; }
+}
+@media (max-width: 639px) {
+  .seo-page  { gap: 1.5rem; }
+  .seo-split { grid-template-columns: minmax(0, 1fr); }
+  .seo-panel__head { padding: 0.875rem 1rem 0.75rem; }
+  .seo-panel__body { padding: 1rem; }
+  .seo-panel__body--flush { padding: 0.25rem 0 0.5rem; }
+  .seo-section__meta { margin-left: 0; }
+  .seo-embed { height: 24rem; }
+  /* Room for the term itself once the volume column is dropped. */
+  .data-table.seo-table--tight th,
+  .data-table.seo-table--tight td { padding-inline: 0.75rem; }
+  .seo-cell-term { max-width: 8.5rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Client Overview (dashboard v2) — /dashboard/overview
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Two extra hues, scoped to the page. The Overview shows up to six sources at
+   once and the status palette only carries four distinguishable ones; these sit
+   in the same role and are re-picked for dark so they stay legible on it. */
+.ov-scope { --ov-violet: #7c3aed; --ov-teal: #0d9488; --ov-indigo: #4f46e5; }
+[data-theme="dark"] .ov-scope { --ov-violet: #a78bfa; --ov-teal: #2dd4bf; --ov-indigo: #818cf8; }
+
+.ov-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-block: 1.25rem 3rem;
+}
+
+/* The sentence the owner reads before any number: plain language, one line of
+   thought, the figures picked out rather than shouted. */
+.ov-headline {
+  margin: 0;
+  max-width: 68ch;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+.ov-headline b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Stream band — one ribbon per way of getting found, so the cards inside read as
+   a group rather than as six unrelated tiles. */
+.ov-bands {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.ov-band {
+  /* No fill: in dark --bg-secondary equals --bg-surface, so a filled band and the cards
+     inside it become the same colour. Letting the page show through keeps the cards raised
+     in both themes and leaves the band reading as a ribbon rather than a box. */
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  background: transparent;
+  padding: 0.875rem;
+  min-width: 0;
+}
+.ov-band__head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.ov-band__dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ov-band__rule { flex: 1 1 auto; height: 1px; background: var(--border-subtle); min-width: 0.5rem; }
+.ov-band__note { font-size: 0.6875rem; color: var(--text-faint); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.ov-band__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+/* Chart + breakdown side by side, stacked once the chart would be squeezed. */
+.ov-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+/* The breakdown beside the chart is shorter than it; stretching it and spreading its rows
+   fills the column instead of leaving a hole under it. */
+.ov-panel { display: flex; flex-direction: column; }
+.ov-panel .ov-share { flex: 1 1 auto; justify-content: space-evenly; }
+
+.ov-chart-head { margin-bottom: 0.875rem; }
+
+/* Traffic share — a ranked list with its own bar, which survives a 390px screen
+   where a donut and its legend do not. */
+.ov-share { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.ov-share__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.3rem 0.75rem;
+  align-items: baseline;
+}
+.ov-share__name { font-size: 0.8125rem; color: var(--text-secondary); min-width: 0; overflow-wrap: anywhere; }
+.ov-share__val  { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ov-share__track {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.ov-share__fill { display: block; height: 100%; border-radius: 999px; }
+
+@media (max-width: 1023px) {
+  .ov-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 639px) {
+  .ov-main { gap: 1rem; padding-block: 1rem 2.5rem; }
+  .ov-headline { font-size: 0.875rem; }
+  .ov-band { padding: 0.75rem; }
+  .ov-band__cards { grid-template-columns: minmax(0, 1fr); }
+}
