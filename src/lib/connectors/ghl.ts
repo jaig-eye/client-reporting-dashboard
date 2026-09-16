@@ -9,7 +9,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
-import { attributionLabel, classifyContact, classifyLead, contactAttribution, groupOf, type LeadSourceCounts } from '../leadSources'
+import {
+  attributionLabel, classifyContact, classifyLead, contactAttribution, groupOf, trackingNumberSource,
+  type LeadSourceCounts, type LeadSourceKey,
+} from '../leadSources'
 
 const BASE_URL = 'https://services.leadconnectorhq.com'
 
@@ -20,6 +23,15 @@ const BASE_URL = 'https://services.leadconnectorhq.com'
 const VOICE_CALL_MSG_TYPES = new Set([
   'TYPE_CALL', 'TYPE_MISSED_CALL', 'TYPE_IVR_CALL', 'TYPE_CUSTOM_CALL', 'TYPE_CAMPAIGN_CALL',
 ])
+// Conversation channel for a phone thread. Calls and texts both live here, so it picks the
+// threads worth opening for call detail, not the calls themselves.
+const PHONE_CONV_TYPE = 'TYPE_PHONE'
+
+// Opening a conversation costs a request each, so only the callers we cannot already place are
+// worth opening, and never more than this many in one sync.
+const MAX_CALL_LOOKUPS        = 400
+const CALL_LOOKUP_CONCURRENCY = 6
+
 const EMAIL_TYPES = new Set([
   'TYPE_EMAIL', 'TYPE_CUSTOM_EMAIL', 'TYPE_CAMPAIGN_EMAIL', 'TYPE_CUSTOM_PROVIDER_EMAIL',
 ])
@@ -249,16 +261,149 @@ async function paginateContacts(
   })
 }
 
+/** Last ten digits, so +1 (321) 555-0100 and 3215550100 are the same number. */
+function numberKey(raw: unknown): string {
+  const digits = String(raw ?? '').replace(/\D/g, '')
+  return digits.length >= 10 ? digits.slice(-10) : ''
+}
+
+export interface TrackingNumber {
+  /** The name the number carries in the phone system — what says which channel it stands for. */
+  name:   string
+  inPool: boolean
+}
+
+/**
+ * Every number this location owns, by last ten digits, with the name it carries and whether it
+ * belongs to a pool.
+ *
+ * This doubles as the privacy guard for call detail: a number is only ever read off a message when
+ * it is one of these, so a caller's own number can never be picked up. When the token has no phone
+ * system scope this comes back empty and the call lookup is skipped entirely.
+ */
+async function fetchTrackingNumbers(apiKey: string, locationId: string): Promise<Map<string, TrackingNumber>> {
+  const numbers = new Map<string, TrackingNumber>()
+
+  // Pool numbers first, so a number listed in both is remembered as pooled.
+  try {
+    const data  = await ghlGet('/phone-system/number-pools', apiKey, { locationId }, 2, 'v3')
+    const inner = data.data as Record<string, unknown> | undefined
+    const pools = ((inner?.numberPools ?? inner?.pools ?? data.numberPools ?? data.pools) ?? []) as Record<string, unknown>[]
+    for (const pool of pools) {
+      const poolName = String(pool.name ?? pool.friendlyName ?? 'Website pool')
+      for (const n of (pool.numbers ?? pool.phoneNumbers ?? []) as unknown[]) {
+        const raw = typeof n === 'string' ? n : (n as Record<string, unknown>)?.phoneNumber
+        const key = numberKey(raw)
+        if (key) numbers.set(key, { name: poolName, inPool: true })
+      }
+    }
+    console.log(`[ghl] number pools: ${pools.length}, pooled numbers ${numbers.size}`)
+  } catch (e) {
+    console.log(`[ghl] number pools unavailable (needs the phone system scope): ${String(e).slice(0, 200)}`)
+  }
+
+  try {
+    const data  = await ghlGet(
+      `/phone-system/numbers/location/${locationId}`, apiKey,
+      { pageSize: '1000', page: '0', skipNumberPool: 'false' }, 2, 'v3')
+    const inner = data.data as Record<string, unknown> | undefined
+    const list  = ((inner?.numbers ?? data.numbers) ?? []) as Record<string, unknown>[]
+    for (const n of list) {
+      const key = numberKey(n.phoneNumber ?? n.number)
+      if (!key || numbers.has(key)) continue
+      numbers.set(key, { name: String(n.friendlyName ?? n.name ?? ''), inPool: false })
+    }
+  } catch (e) {
+    console.log(`[ghl] number list unavailable (needs the phone system scope): ${String(e).slice(0, 200)}`)
+  }
+
+  if (numbers.size > 0) {
+    // Names only — never the numbers themselves.
+    const named = Array.from(numbers.values()).map(v => `${v.name || '(unnamed)'}${v.inPool ? ' [pool]' : ''}`)
+    console.log(`[ghl] tracking numbers: ${numbers.size} — ${named.join(', ')}`)
+  }
+  return numbers
+}
+
+export interface DialledCall {
+  date:      string
+  contactId: string
+  /** Last ten digits of the number the caller dialled. Always one of the location's own. */
+  dialled:   string
+}
+
+/**
+ * Which of the business's numbers each caller dialled.
+ *
+ * Only inbound call messages are read, and only `to` — the business's own end. The caller's number
+ * sits in `from` and is never touched, and anything that is not already a known tracking number is
+ * dropped, so a consumer's number cannot reach this list even if GHL fills a field unexpectedly.
+ */
+async function fetchDialledNumbers(
+  apiKey: string,
+  conversations: { id: string; contactId: string }[],
+  ownNumbers: Map<string, TrackingNumber>,
+  dateFrom: string,
+  dateTo: string,
+): Promise<DialledCall[]> {
+  if (ownNumbers.size === 0 || conversations.length === 0) return []
+
+  const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
+  const wanted = conversations.slice(0, MAX_CALL_LOOKUPS)
+  if (conversations.length > wanted.length) {
+    console.log(`[ghl] call detail: ${conversations.length} threads to open, capped at ${MAX_CALL_LOOKUPS}`)
+  }
+
+  const calls: DialledCall[] = []
+  let failed = 0
+  for (let i = 0; i < wanted.length; i += CALL_LOOKUP_CONCURRENCY) {
+    await Promise.allSettled(wanted.slice(i, i + CALL_LOOKUP_CONCURRENCY).map(async (conv) => {
+      let data: Record<string, unknown>
+      try {
+        data = await ghlGet(`/conversations/${conv.id}/messages`, apiKey, { limit: '100' }, 2, '2021-04-15')
+      } catch { failed++; return }
+      const envelope = data.messages as unknown
+      const list = (Array.isArray(envelope)
+        ? envelope
+        : (envelope as Record<string, unknown> | undefined)?.messages) as Record<string, unknown>[] | undefined
+      for (const msg of list ?? []) {
+        if (String(msg.direction ?? '').toLowerCase() !== 'inbound') continue
+        if (!VOICE_CALL_MSG_TYPES.has(String(msg.messageType ?? '').toUpperCase())) continue
+        const parsed = parseGhlDate(msg.dateAdded ?? msg.dateUpdated)
+        if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
+        // `to` on an inbound call is the business's end. Keep it only if we already know it.
+        const dialled = numberKey(msg.to)
+        if (!dialled || !ownNumbers.has(dialled)) continue
+        calls.push({ date: parsed.date, contactId: conv.contactId, dialled })
+      }
+    }))
+  }
+  if (failed > 0) console.log(`[ghl] call detail: ${failed} of ${wanted.length} threads could not be opened`)
+  console.log(`[ghl] call detail: ${calls.length} inbound calls matched to one of your numbers`)
+  return calls
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Metrics fetching
 // ─────────────────────────────────────────────────────────────────────────────
+
+export interface ContactDay {
+  date:    string
+  count:   number
+  spam:    number
+  sources: LeadSourceCounts
+  /** The leads behind those counts, so a call to a tracking number can re-place one. Held in
+   *  memory for the length of the sync only — contact ids are never written anywhere. */
+  leads:   { id: string; key: LeadSourceKey }[]
+}
 
 async function fetchContacts(
   apiKey: string,
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; count: number; spam: number; sources: LeadSourceCounts }[]> {
+): Promise<ContactDay[]> {
   let contacts: Record<string, unknown>[]
   try {
     contacts = await searchContactsByDate(apiKey, locationId, dateFrom, dateTo)
@@ -271,7 +416,7 @@ async function fetchContacts(
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
 
-  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts }>()
+  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts; leads: { id: string; key: LeadSourceKey }[] }>()
   // Which attribution fields GHL actually sent, by name only, so the logs show whether the
   // classifier has something to work with without ever printing a contact's details.
   const attrKeys = new Map<string, number>()
@@ -292,7 +437,7 @@ async function fetchContacts(
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
     if (c.archived === true || c.deleted === true) continue
     inRange++
-    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {} }
+    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {}, leads: [] }
     ex.count++
     const tags = (c.tags as string[]) ?? []
     if (tags.some(t => t.toLowerCase().includes('spam'))) {
@@ -309,6 +454,8 @@ async function fetchContacts(
         if (!src.includes('@')) sourceValues.set(src, (sourceValues.get(src) ?? 0) + 1)
       }
       ex.sources[key] = (ex.sources[key] ?? 0) + 1
+      const contactId = String(c.id ?? c.contactId ?? '')
+      if (contactId) ex.leads.push({ id: contactId, key })
       sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
       const attrs = [contactAttribution(c, 'first'), contactAttribution(c, 'last')]
         .filter((a, i, all): a is Record<string, unknown> => !!a && all.indexOf(a) === i)
@@ -344,57 +491,77 @@ async function fetchContacts(
   return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
 }
 
+export interface ConversationResult {
+  daily: {
+    date: string; totalCalls: number; incomingCalls: number; outgoingCalls: number
+    missedCalls: number; emailsSent: number; smsSent: number
+  }[]
+  /** In-range phone threads, so call detail can be looked up for the callers who need it. */
+  phoneThreads: { id: string; contactId: string; date: string }[]
+}
+
+/** One pass of /conversations/search, newest first, back as far as `fromMs`. */
+async function pageConversations(
+  apiKey: string,
+  locationId: string,
+  fromMs: number,
+  extra: Record<string, string> = {},
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  let startAfterDate: string | undefined
+
+  for (let page = 0; page < 100; page++) {
+    const p: Record<string, string> = {
+      locationId,
+      limit:  '100',
+      sortBy: 'last_message_date',
+      sort:   'desc',
+      ...extra,
+    }
+    if (startAfterDate) p.startAfterDate = startAfterDate
+
+    const data  = await ghlGet('/conversations/search', apiKey, p, 4, '2021-04-15')
+    const items = (data.conversations as Record<string, unknown>[]) ?? []
+    all.push(...items)
+    if (items.length === 0) break
+
+    const oldest       = items[items.length - 1]
+    const oldestParsed = parseGhlDate(oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded)
+    if (oldestParsed && oldestParsed.ts < fromMs) break
+    if (items.length < 100) break
+
+    const rawCursor = oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded
+    startAfterDate  = rawCursor != null ? String(rawCursor) : ''
+    if (!startAfterDate) break
+  }
+  return all
+}
+
 async function fetchConversations(
   apiKey: string,
   locationId: string,
   dateFrom: string,
   dateTo: string
-): Promise<{ date: string; totalCalls: number; incomingCalls: number; outgoingCalls: number; missedCalls: number; emailsSent: number; smsSent: number }[]> {
-  const all: Record<string, unknown>[] = []
-  let startAfterDate: string | undefined
+): Promise<ConversationResult> {
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
+  let all: Record<string, unknown>[] = []
+  // A conversation carries no direction of its own, so the same search is run again filtered to
+  // inbound and the ids remembered. Without this every call read as outgoing.
+  let inboundIds = new Set<string>()
 
   try {
-    for (let page = 0; page < 100; page++) {
-      const p: Record<string, string> = {
-        locationId,
-        limit:  '100',
-        sortBy: 'last_message_date',
-        sort:   'desc',
-      }
-      if (startAfterDate) p.startAfterDate = startAfterDate
-
-      const data  = await ghlGet('/conversations/search', apiKey, p, 4, '2021-04-15')
-      const items = (data.conversations as Record<string, unknown>[]) ?? []
-      all.push(...items)
-
-      console.log(`[ghl] conversations page ${page + 1}: ${items.length} items (total ${all.length})`)
-      if (page === 0 && items.length > 0) {
-        const sample = items[0] as Record<string, unknown>
-        console.log('[ghl] sample conversation fields:', {
-          type: sample.type,
-          lastMessageDate: sample.lastMessageDate,
-          dateAdded: sample.dateAdded,
-          direction: sample.direction,
-          lastMessageType: sample.lastMessageType,
-          unreadCount: sample.unreadCount,
-        })
-      }
-
-      if (items.length === 0) break
-
-      const oldest       = items[items.length - 1] as Record<string, unknown>
-      const oldestParsed = parseGhlDate(oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded)
-      if (oldestParsed && oldestParsed.ts < fromMs) break
-      if (items.length < 100) break
-
-      const rawCursor = oldest.lastMessageDate ?? oldest.dateUpdated ?? oldest.dateAdded
-      startAfterDate  = rawCursor != null ? String(rawCursor) : ''
-      if (!startAfterDate) break
-    }
+    const [everything, inbound] = await Promise.all([
+      pageConversations(apiKey, locationId, fromMs),
+      pageConversations(apiKey, locationId, fromMs, { lastMessageDirection: 'inbound' })
+        .catch(e => { console.log(`[ghl] inbound filter failed: ${String(e).slice(0, 160)}`); return null }),
+    ])
+    all = everything
+    if (inbound === null) inboundIds = new Set<string>()
+    else inboundIds = new Set(inbound.map(c => String(c.id ?? '')).filter(Boolean))
+    console.log(`[ghl] conversations: ${all.length} fetched, ${inboundIds.size} inbound`)
   } catch (e) {
     console.log(`[ghl] conversations/search failed: ${String(e)}`)
-    return []
+    return { daily: [], phoneThreads: [] }
   }
 
   const toMs = new Date(dateTo + 'T23:59:59Z').getTime()
@@ -402,12 +569,13 @@ async function fetchConversations(
   const typeCounts: Record<string, number> = {}
   const allTypeCounts: Record<string, number> = {}
   const byDate = new Map<string, { totalCalls: number; incomingCalls: number; outgoingCalls: number; missedCalls: number; emailsSent: number; smsSent: number }>()
+  const phoneThreads: { id: string; contactId: string; date: string }[] = []
 
   // Deduplicate by conversation ID — cursor pagination keyed on lastMessageDate can
   // return the same conversation on two pages when a message arrives mid-pagination.
   const convSeen = new Set<string>()
   const deduped = all.filter(c => {
-    const id = String((c as Record<string, unknown>).id || '')
+    const id = String(c.id || '')
     if (!id || convSeen.has(id)) return false
     convSeen.add(id)
     return true
@@ -426,6 +594,12 @@ async function fetchConversations(
     typeCounts[typ] = (typeCounts[typ] ?? 0) + 1
     const ex = byDate.get(parsed.date) ?? { totalCalls: 0, incomingCalls: 0, outgoingCalls: 0, missedCalls: 0, emailsSent: 0, smsSent: 0 }
 
+    const convId    = String(conv.id || '')
+    const contactId = String(conv.contactId || '')
+    if (typ === PHONE_CONV_TYPE && convId && contactId) {
+      phoneThreads.push({ id: convId, contactId, date: parsed.date })
+    }
+
     // Use lastMessageType to detect actual voice calls — TYPE_PHONE conversation channel
     // also covers SMS threads, so checking conv.type alone over-counts.
     const lastMsgType = String(conv.lastMessageType || '').toUpperCase()
@@ -433,8 +607,7 @@ async function fetchConversations(
     // TYPE_PHONE is a channel type (covers SMS threads too) — do not use it here.
     const isVoiceCall = VOICE_CALL_MSG_TYPES.has(lastMsgType)
     if (isVoiceCall) {
-      const direction = String(conv.direction || '').toLowerCase()
-      const isInbound = direction === 'inbound'
+      const isInbound = inboundIds.has(convId)
       ex.totalCalls++
       if (isInbound) ex.incomingCalls++
       else           ex.outgoingCalls++
@@ -450,7 +623,10 @@ async function fetchConversations(
   console.log(`[ghl] all conversation types (${all.length} total):`, allTypeCounts)
   console.log(`[ghl] in-range conversation types (${dateFrom}–${dateTo}):`, typeCounts)
 
-  return Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v }))
+  return {
+    daily: Array.from(byDate.entries()).map(([date, v]) => ({ date, ...v })),
+    phoneThreads,
+  }
 }
 
 type FormsResult = {
@@ -778,13 +954,63 @@ async function fetchReviews(
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Re-places the leads we could not source, using the number they dialled.
+ *
+ * Someone who rings the number on a Business Profile listing never lands on the website, so the
+ * CRM has no visit to attribute and the lead reads as "no clear source". The number itself is the
+ * record of where they found it. Only leads with nothing better already are touched, and the day's
+ * total never moves — one channel gives a lead up, another takes it.
+ */
+function applyCallSources(
+  contactData: ContactDay[],
+  calls: DialledCall[],
+  numbers: Map<string, TrackingNumber>,
+  overrides: Record<string, string>,
+): { moved: number; byDate: Map<string, LeadSourceCounts> } {
+  // A caller who rang more than once is placed by the first number they used.
+  const dialledBy = new Map<string, string>()
+  const byDate    = new Map<string, LeadSourceCounts>()
+  for (const call of [...calls].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (!dialledBy.has(call.contactId)) dialledBy.set(call.contactId, call.dialled)
+    const info = numbers.get(call.dialled)
+    if (!info) continue
+    const key = trackingNumberSource(info.name, info.inPool, overrides[call.dialled])
+    if (!key) continue
+    const day = byDate.get(call.date) ?? {}
+    day[key] = (day[key] ?? 0) + 1
+    byDate.set(call.date, day)
+  }
+
+  let moved = 0
+  for (const day of contactData) {
+    for (const lead of day.leads) {
+      // Anything already placed by the CRM's own attribution stays as it is.
+      if (groupOf(lead.key) !== 'untracked') continue
+      const dialled = dialledBy.get(lead.id)
+      if (!dialled) continue
+      const info = numbers.get(dialled)
+      if (!info) continue
+      const key = trackingNumberSource(info.name, info.inPool, overrides[dialled])
+      if (!key || key === lead.key) continue
+      const had = day.sources[lead.key] ?? 0
+      if (had <= 1) delete day.sources[lead.key]
+      else          day.sources[lead.key] = had - 1
+      day.sources[key] = (day.sources[key] ?? 0) + 1
+      lead.key = key
+      moved++
+    }
+  }
+  return { moved, byDate }
+}
+
 export const ghlConnector: ConnectorAdapter = {
   type: 'ghl',
 
   async fetchMetrics(
     externalId: string,
     auth: Record<string, unknown>,
-    _config: Record<string, unknown>,
+    config: Record<string, unknown>,
     dateFrom: string,
     dateTo: string
   ): Promise<SyncResult> {
@@ -799,23 +1025,49 @@ export const ghlConnector: ConnectorAdapter = {
       // All fetches are independent — run in parallel. ghlGet handles 429s with backoff.
       const [
         contactData,
-        convData,
+        convResult,
         formsResult,
         allOppResult,
         reviewData,
+        trackingNumbers,
       ] = await Promise.all([
         fetchContacts(apiKey, locationId, dateFrom, dateTo),
         fetchConversations(apiKey, locationId, dateFrom, dateTo),
         fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo),
         fetchAllOpportunities(apiKey, locationId, dateFrom, dateTo),
         fetchReviews(apiKey, locationId, dateFrom, dateTo),
+        // Best-effort: a token without the phone system scope just means no call sources.
+        fetchTrackingNumbers(apiKey, locationId).catch(() => new Map<string, TrackingNumber>()),
       ])
+      const convData = convResult.daily
+
+      // ── Place the callers the CRM couldn't ────────────────────────────────
+      // Only threads belonging to a lead we have no source for are worth a request, which keeps
+      // this to the size of the gap rather than the size of the account.
+      const unplaced = new Set<string>()
+      for (const day of contactData) {
+        for (const lead of day.leads) if (groupOf(lead.key) === 'untracked') unplaced.add(lead.id)
+      }
+      const worthOpening = convResult.phoneThreads.filter(t => unplaced.has(t.contactId))
+      let callSourceDates = new Map<string, LeadSourceCounts>()
+      if (worthOpening.length > 0 && trackingNumbers.size > 0) {
+        const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo)
+        const { moved, byDate } = applyCallSources(
+          contactData, calls, trackingNumbers,
+          (config.call_sources as Record<string, string>) ?? {},
+        )
+        callSourceDates = byDate
+        console.log(`[ghl] call sources: ${moved} of ${unplaced.size} unplaced leads named by the number they dialled`)
+      } else {
+        console.log(`[ghl] call sources: skipped (${unplaced.size} unplaced leads, ${worthOpening.length} phone threads, ${trackingNumbers.size} tracking numbers)`)
+      }
       const { oppData, closedOppData } = allOppResult
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
       console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
 
       const allDates      = dateRange(dateFrom, dateTo)
       const contactMap    = new Map(contactData.map(d       => [d.date, d]))
+      const callSourceMap = callSourceDates
       const convMap       = new Map(convData.map(d           => [d.date, d]))
       const formMap       = new Map(formsResult.rows.map(d   => [d.date, d]))
       const oppMap        = new Map(oppData.map(d            => [d.date, d]))
@@ -848,6 +1100,8 @@ export const ghlConnector: ConnectorAdapter = {
           won_value:          co?.wonValue         ?? 0,
           raw_data: {
             form_breakdown: f?.breakdown ?? [],
+            // Inbound calls by the channel the number dialled stands for. Counts only.
+            tracking_calls: callSourceMap.get(date) ?? {},
             // Always written, even when empty, so a day synced with attribution can be told
             // apart from a day synced before it existed.
             lead_sources:   c?.sources ?? {},

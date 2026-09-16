@@ -231,7 +231,8 @@ export default async function CrmPage({
   const sources         = summariseLeadSources(sourceCounts)
   const hasSources      = sources.total > 0
   const sourcesComplete = sourceDates.length === data.length
-  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', internal: 'Added by your team', untracked: 'No clear source' }
+  // Each label is literally what the CRM recorded, so we can explain any slice when a client asks.
+  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', internal: 'Imported or entered by hand', untracked: 'No clear source' }
   const sourceGroups = (['paid', 'organic', 'internal', 'untracked'] as const)
     .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
     .filter(g => g.count > 0)
@@ -430,7 +431,7 @@ export default async function CrmPage({
 
             {share(sources.untracked, sources.total) >= 40 && (
               <p className="crm-insight crm-insight--warn">
-                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. That happens when contacts are added by hand or imported into ${crmName}, or when an enquiry arrives through something ${crmName} can't track or we can't sort yet.`}
+                {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. ${crmName} records how someone reached you from their visit to your site, so an enquiry that starts with a phone call, a text or a walk-in has nothing to record.`}
               </p>
             )}
             {adCallCount > 0 && (

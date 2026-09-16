@@ -15,7 +15,7 @@ export type LeadSourceGroup = 'paid' | 'organic' | 'internal' | 'untracked'
 export type LeadSourceKey =
   | 'google_ads' | 'google_ads_call' | 'meta_ads' | 'meta_ads_call' | 'other_paid'
   | 'organic_search' | 'google_business' | 'ai_assistant' | 'social' | 'referral' | 'direct'
-  | 'call_or_message' | 'imported' | 'added_manually' | 'other' | 'untracked'
+  | 'call_or_message' | 'website_call' | 'imported' | 'added_manually' | 'other' | 'untracked'
 
 /**
  * Which of GHL's two attributions to read.
@@ -45,9 +45,13 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   // A call, text or chat that reached the CRM without a website visit, so nothing says what
   // prompted it: it could have come from the listing, an ad's call button, or a business card.
   { key: 'call_or_message', label: 'Calls and messages',              group: 'untracked' },
-  // Not marketing at all: the team put these in the CRM themselves.
-  { key: 'imported',        label: 'Imported into your CRM',          group: 'internal' },
-  { key: 'added_manually',  label: 'Added by hand',                   group: 'internal' },
+  // They dialled a number the website script swaps in, so they were on the site — but the CRM
+  // recorded no visit, so we still can't name the channel. Better than "no source", not organic.
+  { key: 'website_call',    label: 'Called a number on your website', group: 'untracked' },
+  // Not marketing. These two are the only thing the CRM tells us: it recorded the contact as
+  // arriving through a file import, or as entered by someone using the CRM. We say that and no more.
+  { key: 'imported',        label: 'Imported from a file',            group: 'internal' },
+  { key: 'added_manually',  label: 'Entered in the CRM by hand',      group: 'internal' },
   // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
   // counted as organic: it sits with "no source" until a rule is added for it.
   { key: 'other',           label: 'Other sources',                   group: 'untracked' },
@@ -113,6 +117,12 @@ const INTERNAL_SESS = /^(crm ui|crm|third party|mobile app|api|import|zapier|wor
 // GHL's medium (and its contact source) when the team added the contact rather than marketing.
 const IMPORT_MEDIUM = /(csv|bulk)?_?import|^csv|import$/
 const MANUAL_MEDIUM = /^(manual|manually|crm ui|crm|added manually)$/
+
+// What an agency calls a tracking number in the phone system, by the channel it stands for.
+const GBP_NUMBER       = /(\bgbp\b|\bgmb\b|google business|business profile|google my business|\bmaps\b|\blisting\b)/
+const GOOGLE_AD_NUMBER = /(google ads?\b|\badwords\b|\bppc\b|paid search|\bsem\b|\blsa\b|local services)/
+const META_NUMBER      = /(\bfacebook\b|\binstagram\b|\bmeta\b|\bfb\b|\big\b)/
+const ORGANIC_NUMBER   = /(\borganic\b|\bseo\b|\bsearch\b)/
 
 function hostOf(url: string): string {
   if (!url) return ''
@@ -239,6 +249,33 @@ export function attributionLabel(contact: Record<string, unknown>, touch: Touch 
   return `${session} / ${medium} / ${utm} / ${ref}`
 }
 
+/**
+ * The channel a tracking number stands for.
+ *
+ * Call tracking gives each place a business advertises its own number: one on the Business
+ * Profile, a pool the website script swaps in per visitor. The number dialled is therefore the
+ * only record of where a caller found them, and the name the number carries in the phone system
+ * says which is which — so an agency renames a number and the reporting follows.
+ *
+ * `override` is the per-client mapping in the connection config, which always wins.
+ * Returns null when the name says nothing and the number is not in a pool: we would be guessing.
+ */
+export function trackingNumberSource(
+  friendlyName: string,
+  inPool: boolean,
+  override?: string,
+): LeadSourceKey | null {
+  if (override && KEYS.has(override)) return override as LeadSourceKey
+  const name = friendlyName.trim().toLowerCase()
+  if (GBP_NUMBER.test(name))     return 'google_business'
+  if (GOOGLE_AD_NUMBER.test(name)) return 'google_ads_call'
+  if (META_NUMBER.test(name))    return 'meta_ads_call'
+  if (ORGANIC_NUMBER.test(name)) return 'organic_search'
+  // A pool number is only ever shown to someone already on the website.
+  if (inPool) return 'website_call'
+  return null
+}
+
 export function groupOf(key: LeadSourceKey): LeadSourceGroup {
   return LEAD_SOURCES.find(s => s.key === key)?.group ?? 'untracked'
 }
@@ -258,7 +295,7 @@ export interface LeadSourceSummary {
   total:     number
   paid:      number
   organic:   number
-  /** Put in the CRM by the team: imports and contacts added by hand. Not marketing. */
+  /** The CRM recorded these as a file import or as entered by hand. Not marketing. */
   internal:  number
   untracked: number
   channels:  { key: LeadSourceKey; label: string; group: LeadSourceGroup; count: number }[]

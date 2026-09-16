@@ -1363,14 +1363,14 @@ export default async function OverviewPage({
                       slices={[
                         { name: 'From ads',        value: leadSources.paid,      color: 'var(--blue)' },
                         { name: 'On their own',    value: leadSources.organic,   color: 'var(--green)' },
-                        { name: 'Added by your team', value: leadSources.internal, color: 'var(--ov-violet)' },
+                        { name: 'Imported or entered by hand', value: leadSources.internal, color: 'var(--ov-violet)' },
                         { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
                       ]}
                       total={leadSources.total}
                       centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
                     />
                     <p className="ov2-foot">
-                      {leadSources.internal > 0 && 'Added by your team means imported or typed into the CRM, not from marketing. '}
+                      {leadSources.internal > 0 && `Imported or entered by hand means ${crmLabel} recorded the contact as arriving in a file import or as typed in by someone using it, not from a visit or an ad. `}
                       {leadSources.untracked > 0 && 'No clear source means the lead reached you in a way nothing recorded — often a phone call. '}
                       {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
                     </p>
