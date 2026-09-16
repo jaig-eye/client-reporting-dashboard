@@ -1173,6 +1173,9 @@ export const ghlConnector: ConnectorAdapter = {
         numbers:        trackingNumbers.size,
         pooled:         Array.from(trackingNumbers.values()).filter(n => n.inPool).length,
         named:          Array.from(trackingNumbers.values()).filter(n => n.name.trim()).length,
+        // The names themselves, so a number that matched calls but stands for nothing we recognise
+        // can be given a rule — or renamed. Labels the agency chose, never the numbers.
+        number_names:   Array.from(trackingNumbers.values()).map(n => n.name.trim() || '(unnamed)'),
         pools_refused:  numberOutcome.refused,
         unplaced_leads: unplaced.size,
         call_threads:   worthOpening.length,
