@@ -1168,7 +1168,11 @@ export const ghlConnector: ConnectorAdapter = {
           : lookup.threads_opened === 0 ? 'threads_unreadable'
           : lookup.inbound_calls === 0  ? 'no_inbound_call_messages'
           : matchedCalls === 0          ? 'dialled_number_unknown'
-          : moved === 0                 ? 'unnamed_numbers'
+          : moved === 0
+            ? (Array.from(trackingNumbers.values()).some(n => trackingNumberSource(n.name, n.inPool) != null)
+                ? 'callers_already_sourced'   // the numbers do name channels; those leads were placed already
+                : 'unnamed_numbers')          // no number's name says what it stands for
+
           : 'ok',
         numbers:        trackingNumbers.size,
         pooled:         Array.from(trackingNumbers.values()).filter(n => n.inPool).length,
@@ -1176,6 +1180,11 @@ export const ghlConnector: ConnectorAdapter = {
         // The names themselves, so a number that matched calls but stands for nothing we recognise
         // can be given a rule — or renamed. Labels the agency chose, never the numbers.
         number_names:   Array.from(trackingNumbers.values()).map(n => n.name.trim() || '(unnamed)'),
+        // How many of those names actually stand for a channel. When this is short of the number
+        // count, the rest are lines like a main office or toll-free number — a caller could have
+        // got those anywhere, so no naming convention could attribute them.
+        numbers_that_name_a_channel: Array.from(trackingNumbers.values())
+          .filter(n => trackingNumberSource(n.name, n.inPool) != null).length,
         pools_refused:  numberOutcome.refused,
         unplaced_leads: unplaced.size,
         call_threads:   worthOpening.length,
