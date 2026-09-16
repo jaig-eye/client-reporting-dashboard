@@ -140,14 +140,35 @@ export async function syncClient(
         }
       }
 
+      // One entry per Google Ads call, filled by fetchGoogleAdsCalls. Kept so the CRM sync can
+      // match those calls to contacts by when they happened.
+      const adCallEvents: import('./connectors/google-ads').GoogleAdsCallEvent[] = []
+
       // Fetch source-specific metrics
       const onProgress = (pct: number, note: string) => {
         db.from('sync_jobs').update({ progress_pct: pct, progress_note: note }).eq('id', jobId).then(() => {})
       }
+      // The CRM can credit a caller to an ad when Google logged the same call. Google's sync
+      // wrote those down; this reads back the ones for this client and range. Before migration 220
+      // the read fails quietly and the CRM sync simply doesn't do the matching.
+      let connectorConfig = connection.connector.config
+      if (connection.connector.type === 'ghl') {
+        const { data: adCalls } = await db.from('google_ads_calls')
+          .select('started_at,duration_seconds,from_ad')
+          .eq('client_id', clientId)
+          .gte('started_at', `${resolvedFrom}T00:00:00Z`)
+          .lte('started_at', `${resolvedTo}T23:59:59Z`)
+          .limit(5000)
+        if (adCalls && adCalls.length > 0) {
+          console.log(`[sync] handing ${adCalls.length} Google Ads calls to the CRM sync for matching`)
+          connectorConfig = { ...connectorConfig, ad_calls: adCalls }
+        }
+      }
+
       const result = await adapter.fetchMetrics(
         connection.external_id,
         auth,
-        connection.connector.config,
+        connectorConfig,
         resolvedFrom,
         resolvedTo,
         onProgress
@@ -175,7 +196,7 @@ export async function syncClient(
           fetchGoogleSearchKeywords(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGoogleNegativeKeywords(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchTerms(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
-          fetchGoogleAdsCalls(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
+          fetchGoogleAdsCalls(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo, adCallEvents),
         ])
 
         if (adResult.status === 'fulfilled') {
@@ -221,6 +242,7 @@ export async function syncClient(
           const total = calls.reduce((s, r) => s + Math.max(r.phone_calls, r.calls_received + r.calls_missed), 0)
           console.log(`[sync] Google Ads calls: ${calls.length} campaign-days, ${total} calls for connection ${connection.id}`)
           await upsertGoogleAdsCallMetrics(db, connection.id, clientId, calls, resolvedFrom, resolvedTo)
+          await upsertGoogleAdsCallEvents(db, connection.id, clientId, adCallEvents, resolvedFrom, resolvedTo)
         } else {
           console.error(`[sync] Google Ads calls failed for connection ${connection.id}:`, callResult.reason)
         }
@@ -1373,6 +1395,61 @@ export async function upsertGBPReviews(
     return mapped.length
   } catch (e) {
     console.error('[sync] gbp_reviews failed:', e)
+    return 0
+  }
+}
+
+/**
+ * Stores Google's individual calls, so the CRM sync can match them to contacts by time.
+ *
+ * The range is cleared first rather than upserted: two calls can genuinely share a start second,
+ * a duration and a campaign, so there is no natural key to conflict on and no need for one.
+ */
+export async function upsertGoogleAdsCallEvents(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  events: import('./connectors/google-ads').GoogleAdsCallEvent[],
+  dateFrom: string,
+  dateTo: string
+): Promise<number> {
+  try {
+    const { error: delErr } = await db
+      .from('google_ads_calls')
+      .delete()
+      .eq('connection_id', connectionId)
+      .gte('started_at', `${dateFrom}T00:00:00Z`)
+      .lte('started_at', `${dateTo}T23:59:59Z`)
+    if (delErr) {
+      console.error('[sync] google_ads_calls pre-delete error:', delErr.message)
+      return 0
+    }
+    const valid = events.filter(e => e.started_at)
+    if (valid.length === 0) return 0
+
+    const syncedAt = new Date().toISOString()
+    const mapped = valid.map(e => ({
+      connection_id: connectionId,
+      client_id:     clientId,
+      // Google sends "YYYY-MM-DD HH:MM:SS" in the ad account's timezone. Stored as written, with a
+      // Z so Postgres will take it; the matcher works the real offset out from the data.
+      started_at:    `${e.started_at.replace(' ', 'T')}Z`,
+      duration_seconds: e.duration_seconds,
+      call_status:   e.call_status || null,
+      from_ad:       e.from_ad,
+      campaign_id:   e.campaign_id || null,
+      synced_at:     syncedAt,
+    }))
+    for (let i = 0; i < mapped.length; i += 500) {
+      const { error } = await db.from('google_ads_calls').insert(mapped.slice(i, i + 500))
+      if (error) {
+        console.error(`[sync] google_ads_calls insert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+    return mapped.length
+  } catch (e) {
+    console.error('[sync] google_ads_calls failed:', e)
     return 0
   }
 }

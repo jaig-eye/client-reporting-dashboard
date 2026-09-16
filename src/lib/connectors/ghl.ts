@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
+import { matchAdCalls, type CrmCall, type AdCall } from '../adCallMatch'
 import {
   attributionLabel, classifyContact, classifyLead, contactAttribution, groupOf, trackingNumberSource,
   type LeadSourceCounts, type LeadSourceKey,
@@ -355,9 +356,26 @@ export interface CallLookupStats {
   unknown_to:     number
   /** Inbound calls with no 'to' field at all — the shape is not what we expect. */
   missing_to:     number
+  /** Every inbound call's timing, for matching against Google's log. No numbers. */
+  crmCalls:       CrmCall[]
   out_of_range:   number
   /** Message types seen on these threads, by name and count. Names only. */
   types:          Record<string, number>
+  /**
+   * Whether the caller ID identifies an ad call on its own.
+   *
+   * Google's call extensions route through a forwarding number. If GHL records that number as the
+   * caller rather than the person, a handful of values will account for many calls — and those
+   * calls are ad calls, free of charge. If instead almost every call has its own caller, the real
+   * caller is being passed through and this route is closed.
+   *
+   * Counts only. The numbers themselves are tallied in memory and never leave it.
+   */
+  distinct_callers:    number
+  /** Calls whose caller was seen 3+ times in this range — the shape a forwarding number makes. */
+  calls_from_repeat_callers: number
+  /** How many calls the single most frequent caller accounts for. */
+  busiest_caller_calls: number
 }
 
 async function fetchDialledNumbers(
@@ -378,6 +396,9 @@ async function fetchDialledNumbers(
   }
 
   const calls: DialledCall[] = []
+  // Caller frequency, to answer whether a forwarding number is doing the calling. Lives here for
+  // the length of the sync and is reduced to counts before anything is written.
+  const callerTally = new Map<string, number>()
   let failed = 0
   for (let i = 0; i < wanted.length; i += CALL_LOOKUP_CONCURRENCY) {
     await Promise.allSettled(wanted.slice(i, i + CALL_LOOKUP_CONCURRENCY).map(async (conv) => {
@@ -400,9 +421,21 @@ async function fetchDialledNumbers(
         if (stats && isCall) stats.call_messages++
         if (String(msg.direction ?? '').toLowerCase() !== 'inbound') continue
         if (!isCall) continue
-        if (stats) stats.inbound_calls++
+        if (stats) {
+          stats.inbound_calls++
+          const caller = numberKey(msg.from)
+          if (caller) callerTally.set(caller, (callerTally.get(caller) ?? 0) + 1)
+        }
         const parsed = parseGhlDate(msg.dateAdded ?? msg.dateUpdated)
         if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) { if (stats) stats.out_of_range++; continue }
+        // Timing only, so Google's log can be matched against it. Whether we know the number
+        // dialled is a separate question, answered below.
+        const meta = msg.meta as Record<string, unknown> | undefined
+        stats?.crmCalls.push({
+          contactId:   conv.contactId,
+          startedAt:   parsed.ts,
+          durationSec: Number(meta?.callDuration ?? 0),
+        })
         // `to` on an inbound call is the business's end. Keep it only if we already know it.
         const dialled = numberKey(msg.to)
         if (!dialled) { if (stats) stats.missing_to++; continue }
@@ -410,6 +443,13 @@ async function fetchDialledNumbers(
         calls.push({ date: parsed.date, contactId: conv.contactId, dialled })
       }
     }))
+  }
+  if (stats) {
+    const counts = Array.from(callerTally.values())
+    stats.distinct_callers          = counts.length
+    stats.calls_from_repeat_callers = counts.filter(n => n >= 3).reduce((s, n) => s + n, 0)
+    stats.busiest_caller_calls      = counts.length > 0 ? Math.max(...counts) : 0
+    callerTally.clear()
   }
   if (failed > 0) console.log(`[ghl] call detail: ${failed} of ${wanted.length} threads could not be opened`)
   console.log(`[ghl] call detail: ${calls.length} inbound calls matched to one of your numbers`)
@@ -1120,16 +1160,25 @@ export const ghlConnector: ConnectorAdapter = {
       // Only threads belonging to a lead we have no source for are worth a request, which keeps
       // this to the size of the gap rather than the size of the account.
       const unplaced = new Set<string>()
+      // Leads credited to the listing are worth a look too: the Business Profile number is often
+      // the same one on an ad's call extension, and Google's call log can tell those apart.
+      const listingLeads = new Set<string>()
       for (const day of contactData) {
-        for (const lead of day.leads) if (groupOf(lead.key) === 'untracked') unplaced.add(lead.id)
+        for (const lead of day.leads) {
+          if (groupOf(lead.key) === 'untracked')      unplaced.add(lead.id)
+          else if (lead.key === 'google_business')    listingLeads.add(lead.id)
+        }
       }
-      const worthOpening = convResult.phoneThreads.filter(t => unplaced.has(t.contactId))
+      const worthOpening = convResult.phoneThreads.filter(
+        t => unplaced.has(t.contactId) || listingLeads.has(t.contactId))
       let callSourceDates = new Map<string, LeadSourceCounts>()
       let moved = 0
       let matchedCalls = 0
       const lookup: CallLookupStats = {
         threads_opened: 0, threads_failed: 0, messages: 0, call_messages: 0,
         inbound_calls: 0, unknown_to: 0, missing_to: 0, out_of_range: 0, types: {},
+        distinct_callers: 0, calls_from_repeat_callers: 0, busiest_caller_calls: 0,
+        crmCalls: [],
       }
       if (worthOpening.length > 0 && trackingNumbers.size > 0) {
         const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo, lookup)
@@ -1143,6 +1192,41 @@ export const ghlConnector: ConnectorAdapter = {
         console.log(`[ghl] call sources: ${moved} of ${unplaced.size} unplaced leads named by the number they dialled`)
       } else {
         console.log(`[ghl] call sources: skipped (${unplaced.size} unplaced leads, ${worthOpening.length} phone threads, ${trackingNumbers.size} tracking numbers)`)
+      }
+
+      /**
+       * Google's own calls, handed over by the sync. A call it logged and the CRM logged are the
+       * same call when they start together and run the same length — which credits the contact to
+       * the ad without needing a number dedicated to it.
+       */
+      const adCalls = ((config.ad_calls as Record<string, unknown>[] | undefined) ?? [])
+        .map((c): AdCall => ({
+          startedAt:   Date.parse(String(c.started_at ?? '')),
+          durationSec: Number(c.duration_seconds ?? 0),
+        }))
+        .filter(c => isFinite(c.startedAt))
+      let adMatch = { matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0, placed: 0 }
+      if (adCalls.length > 0 && lookup.crmCalls.length > 0) {
+        const m = matchAdCalls(lookup.crmCalls, adCalls)
+        let placedFromAds = 0
+        for (const day of contactData) {
+          for (const lead of day.leads) {
+            if (!m.byContact.has(lead.id)) continue
+            // Google watched the call come from the ad, which outranks both a missing source and
+            // a listing label on a number the ads also use.
+            if (groupOf(lead.key) !== 'untracked' && lead.key !== 'google_business') continue
+            if (lead.key === 'google_ads_call') continue
+            const had = day.sources[lead.key] ?? 0
+            if (had <= 1) delete day.sources[lead.key]
+            else          day.sources[lead.key] = had - 1
+            day.sources.google_ads_call = (day.sources.google_ads_call ?? 0) + 1
+            lead.key = 'google_ads_call'
+            placedFromAds++
+          }
+        }
+        adMatch = { matched: m.matched, ambiguous: m.ambiguous, offsetMinutes: m.offsetMinutes,
+                    runnerUpMatched: m.runnerUpMatched, placed: placedFromAds }
+        console.log(`[ghl] ad calls: ${m.matched} of ${adCalls.length} matched a CRM call, ${placedFromAds} leads credited to ads`)
       }
 
       /**
@@ -1190,7 +1274,9 @@ export const ghlConnector: ConnectorAdapter = {
         call_threads:   worthOpening.length,
         matched_calls:  matchedCalls,
         placed:         moved,
-        lookup,
+        // Calls Google logged that we tied to a contact by their timing.
+        ad_call_match:  adMatch,
+        lookup: { ...lookup, crmCalls: lookup.crmCalls.length },
       }
       console.log('[ghl] call tracking:', JSON.stringify(callTracking))
       const { oppData, closedOppData } = allOppResult

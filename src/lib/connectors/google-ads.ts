@@ -485,6 +485,19 @@ export interface GoogleAdsAdRawRow {
   all_conversions_value?: number
 }
 
+/**
+ * One call, as Google logs it. `started_at` is Google's own string, in the ad account's timezone
+ * — which is not recorded, because the matcher works the offset out from the data rather than
+ * trusting a configured value. No caller details: not the number, area code or country.
+ */
+export interface GoogleAdsCallEvent {
+  started_at:       string
+  duration_seconds: number
+  call_status:      string
+  from_ad:          boolean
+  campaign_id:      string
+}
+
 export interface GoogleAdsCallRawRow {
   date:            string
   campaign_id:     string
@@ -510,7 +523,9 @@ export async function fetchGoogleAdsCalls(
   auth: Record<string, unknown>,
   config: Record<string, unknown>,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  /** Filled with one entry per call, for matching those calls to CRM contacts by time. */
+  events?: GoogleAdsCallEvent[],
 ): Promise<GoogleAdsCallRawRow[]> {
   const refreshToken = auth.refresh_token as string | undefined
   const clientId     = auth.client_id     as string | undefined
@@ -583,7 +598,16 @@ export async function fetchGoogleAdsCalls(
       const placed = String(call?.callTrackingDisplayLocation || '')
       if (placed === 'AD') r.calls_from_ad++
       else if (placed === 'LANDING_PAGE') r.calls_from_site++
+
+      events?.push({
+        started_at:       String(call?.startCallDateTime || ''),
+        duration_seconds: Number(call?.callDurationSeconds || 0),
+        call_status:      status,
+        from_ad:          placed === 'AD',
+        campaign_id:      String(campaign?.id || ''),
+      })
     }
+    if (events) console.log(`[google-ads] kept ${events.length} individual calls for matching`)
   } catch (e) {
     console.warn('[google-ads] call_view query failed (call reporting may be off):', String(e).slice(0, 300))
   }
