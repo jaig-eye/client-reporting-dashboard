@@ -37,7 +37,6 @@ import SparkMetricCard from '@/components/SparkMetricCard'
 import Sparkline from '@/components/Sparkline'
 import SpendChart from '@/components/SpendChart'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import ChannelSourceCard from './ChannelCard'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
@@ -93,6 +92,7 @@ type GhlRow    = {
 }
 type GbpRow    = {
   date: string; call_clicks: number; direction_clicks: number
+  views_search?: number | null; views_maps?: number | null; website_clicks?: number | null
   location_id?: string | null; reviews_count?: number | null; reviews_avg_rating?: number | null
 }
 type Ga4Row    = { date: string; channel_group: string | null; sessions: number; conversions: number | null }
@@ -130,7 +130,7 @@ const _getOverviewData = unstable_cache(
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
     const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources'
-    const GBP_COLS    = 'date,call_clicks,direction_clicks,location_id,reviews_count,reviews_avg_rating'
+    const GBP_COLS    = 'date,call_clicks,direction_clicks,views_search,views_maps,website_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
     const ga4Query = (a: string, b: string) => {
@@ -284,7 +284,7 @@ const _getOverviewData = unstable_cache(
       adCalls:     (adCallsRes.data ?? []) as AdCallRow[],
     }
   },
-  ['dashboard-overview-v9'],
+  ['dashboard-overview-v10'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -304,6 +304,16 @@ const _getOverviewGSC = unstable_cache(
 )
 
 // ─── Page ────────────────────────────────────────────────────────────────────
+/** Percent change beside a figure, shown only when a comparison is chosen. */
+function DeltaPill({ value }: { value?: number }) {
+  if (value === undefined || !isFinite(value)) return null
+  return (
+    <span className={`badge ${value >= 0 ? 'badge-green' : 'badge-red'}`}>
+      {value >= 0 ? '▲' : '▼'} {Math.abs(value).toFixed(1)}%
+    </span>
+  )
+}
+
 export default async function OverviewPage({
   searchParams,
 }: {
@@ -545,12 +555,26 @@ export default async function OverviewPage({
     (acc, r) => ({
       calls:      acc.calls      + (Number(r.call_clicks)      || 0),
       directions: acc.directions + (Number(r.direction_clicks) || 0),
+      search:     acc.search     + (Number(r.views_search)     || 0),
+      maps:       acc.maps       + (Number(r.views_maps)       || 0),
+      website:    acc.website    + (Number(r.website_clicks)   || 0),
     }),
-    { calls: 0, directions: 0 },
+    { calls: 0, directions: 0, search: 0, maps: 0, website: 0 },
   )
-  const gbp        = sumGbp(data.gbp)
-  const gbpPrior   = sumGbp(data.gbpPrior)
-  const hasGbpData = data.gbp.length > 0 && (gbp.calls > 0 || gbp.directions > 0)
+  const gbp           = sumGbp(data.gbp)
+  const gbpPrior      = sumGbp(data.gbpPrior)
+  const gbpViews      = gbp.search + gbp.maps
+  const gbpPriorViews = gbpPrior.search + gbpPrior.maps
+  const hasGbpData    = data.gbp.length > 0 && (gbp.calls > 0 || gbp.directions > 0 || gbpViews > 0)
+  // Listing views per day, for the trend line. Google reports the listing a few days behind, so the
+  // last day with figures is named rather than letting the chart trail off to zero.
+  const gbpDaily = Array.from(
+    data.gbp.reduce((m, r) => {
+      const views = (Number(r.views_search) || 0) + (Number(r.views_maps) || 0)
+      return m.set(r.date, (m.get(r.date) ?? 0) + views)
+    }, new Map<string, number>()),
+  ).sort(([a], [b]) => a.localeCompare(b))
+  const gbpLastDay = [...gbpDaily].reverse().find(([, v]) => v > 0)?.[0] ?? null
 
   // ── Website: GA4 by channel ───────────────────────────────────────────────
   // Rows with an empty channel_group are unattributed sessions GA4 itself leaves out
@@ -1023,32 +1047,7 @@ export default async function OverviewPage({
   const showWork     = work.length > 0
   const showAdHealth = coverage.share != null || coverage.top != null || ratedAds > 0
 
-  // ── Search & local (detail lives on the SEO page) ─────────────────────────
-  const localCards: ReactNode[] = []
-  if (hasGbpData) {
-    localCards.push(
-      <ChannelSourceCard
-        key="gbp" title="Business Profile" color="var(--green)" href={link('/dashboard/seo')}
-        icon={<MapPin size={16} weight="fill" aria-hidden />}
-        metrics={[
-          { label: 'Calls',      value: fmtInt(gbp.calls),      delta: delta(gbp.calls, gbpPrior.calls) },
-          { label: 'Directions', value: fmtInt(gbp.directions), delta: delta(gbp.directions, gbpPrior.directions) },
-        ]}
-      />,
-    )
-  }
-  if (hasAhrefsData) {
-    localCards.push(
-      <ChannelSourceCard
-        key="ahrefs" title="Search visibility" color="var(--ov-violet)" href={link('/dashboard/seo')}
-        icon={<LinkSimple size={16} weight="bold" aria-hidden />}
-        metrics={[
-          { label: 'Linking sites', value: ahrefsDomains.value != null ? fmtInt(ahrefsDomains.value) : '—', delta: ahrefsDomains.delta },
-          { label: 'Site strength', value: ahrefsRating.value != null ? ahrefsRating.value.toFixed(1) : '—', delta: ahrefsRating.delta },
-        ]}
-      />,
-    )
-  }
+  const showLocal = hasGbpData || hasGscData || hasAhrefsData
 
   // ── KPI row ───────────────────────────────────────────────────────────────
   const paidDays = allDays
@@ -1624,16 +1623,116 @@ export default async function OverviewPage({
               </section>
             )}
 
-            {localCards.length > 0 && (
-              <section className="ov-band" aria-labelledby="ov2-local-title">
-                <div className="ov-band__head">
-                  <span className="ov-band__dot" style={{ background: 'var(--green)' }} aria-hidden />
-                  <h2 id="ov2-local-title" className="section-label" style={{ color: 'var(--text-secondary)', margin: 0 }}>Search &amp; local</h2>
-                  <span className="ov-band__rule" aria-hidden />
-                  <a className="ov-band__note ov2-link" href={link('/dashboard/seo')}>Full SEO report</a>
-                </div>
-                <div className="ov-band__cards">{localCards}</div>
-              </section>
+            {showLocal && (
+              <div className={hasGbpData && (hasGscData || hasAhrefsData) ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
+                {hasGbpData && (
+                  <section className="card ov2-card" aria-labelledby="ov2-local-title">
+                    <div className="ov2-card-head ov2-card-head--split">
+                      <div>
+                        <h2 id="ov2-local-title" className="section-title">Your Google listing</h2>
+                        <p className="section-desc">
+                          {gbpViews > 0
+                            ? <>Seen <b>{fmtInt(gbpViews)}</b> times on Google — {fmtInt(gbp.search)} in search results, {fmtInt(gbp.maps)} on the map</>
+                            : 'Calls and directions from people who found your listing on Google'}
+                        </p>
+                      </div>
+                      <a className="ov2-link" href={link('/dashboard/seo?tab=local')}>Listing report</a>
+                    </div>
+
+                    <ul className="ov3-local">
+                      <li className="ov3-local__stat">
+                        <span className="metric-label">Listing views</span>
+                        <span className="ov3-local__value">{fmtInt(gbpViews)}<DeltaPill value={delta(gbpViews, gbpPriorViews)} /></span>
+                        <span className="ov3-local__sub">people who saw you on Google</span>
+                      </li>
+                      <li className="ov3-local__stat">
+                        <span className="metric-label">Calls</span>
+                        <span className="ov3-local__value">{fmtInt(gbp.calls)}<DeltaPill value={delta(gbp.calls, gbpPrior.calls)} /></span>
+                        <span className="ov3-local__sub">tapped your number</span>
+                      </li>
+                      <li className="ov3-local__stat">
+                        <span className="metric-label">Directions</span>
+                        <span className="ov3-local__value">{fmtInt(gbp.directions)}<DeltaPill value={delta(gbp.directions, gbpPrior.directions)} /></span>
+                        <span className="ov3-local__sub">asked how to get to you</span>
+                      </li>
+                      <li className="ov3-local__stat">
+                        <span className="metric-label">Website visits</span>
+                        <span className="ov3-local__value">{fmtInt(gbp.website)}<DeltaPill value={delta(gbp.website, gbpPrior.website)} /></span>
+                        <span className="ov3-local__sub">came to your site from it</span>
+                      </li>
+                    </ul>
+
+                    {gbpDaily.length > 2 && (
+                      <div className="ov3-local__spark">
+                        <Sparkline data={gbpDaily.map(([, v]) => ({ v }))} color="var(--green)" height={36} />
+                      </div>
+                    )}
+
+                    {gbpViews > 0 && (
+                      <>
+                        <div className="ov3-split" role="img" aria-label={`${fmtInt(gbp.search)} views in search results, ${fmtInt(gbp.maps)} on the map`}>
+                          <span className="ov3-split__seg ov3-split__seg--search" style={{ flexGrow: Math.max(gbp.search, 1) }} />
+                          <span className="ov3-split__seg ov3-split__seg--maps"   style={{ flexGrow: Math.max(gbp.maps, 1) }} />
+                        </div>
+                        <ul className="ov3-split__legend">
+                          <li><span className="ov3-split__dot ov3-split__seg--search" aria-hidden />Google Search <b>{fmtInt(gbp.search)}</b></li>
+                          <li><span className="ov3-split__dot ov3-split__seg--maps" aria-hidden />Google Maps <b>{fmtInt(gbp.maps)}</b></li>
+                          {reviews.count > 0 && <li className="ov3-split__reviews">★ {reviews.rating.toFixed(1)} across {fmtInt(reviews.count)} reviews</li>}
+                        </ul>
+                      </>
+                    )}
+
+                    {gbpLastDay && (
+                      <p className="ov2-foot">Google reports listing activity a few days late; these figures run to {fmtShortDate(gbpLastDay)}.</p>
+                    )}
+                  </section>
+                )}
+
+                {(hasGscData || hasAhrefsData) && (
+                  <section className="card ov2-card" aria-labelledby="ov2-search-title">
+                    <div className="ov2-card-head ov2-card-head--split">
+                      <div>
+                        <h2 id="ov2-search-title" className="section-title">Found on Google</h2>
+                        <p className="section-desc">
+                          {hasGscData ? 'What people searched for, and how often they picked you' : 'How strong your site looks to Google'}
+                        </p>
+                      </div>
+                      <a className="ov2-link" href={link('/dashboard/seo')}>Full SEO report</a>
+                    </div>
+
+                    <ul className="ov3-searchstats">
+                      {hasGscData && gscCurr && (
+                        <>
+                          <li>
+                            <span className="metric-label">Clicks from search</span>
+                            <span className="ov3-local__value">{fmtInt(gscCurr.totals.clicks)}<DeltaPill value={delta(gscCurr.totals.clicks, gscPrior?.totals.clicks ?? 0)} /></span>
+                          </li>
+                          <li>
+                            <span className="metric-label">Times you appeared</span>
+                            <span className="ov3-local__value">{fmtInt(gscCurr.totals.impressions)}<DeltaPill value={delta(gscCurr.totals.impressions, gscPrior?.totals.impressions ?? 0)} /></span>
+                          </li>
+                          <li>
+                            <span className="metric-label">Average position</span>
+                            <span className="ov3-local__value">{gscCurr.totals.position > 0 ? gscCurr.totals.position.toFixed(1) : '—'}</span>
+                          </li>
+                        </>
+                      )}
+                      {hasAhrefsData && (
+                        <>
+                          <li>
+                            <span className="metric-label">Sites linking to you</span>
+                            <span className="ov3-local__value">{ahrefsDomains.value != null ? fmtInt(ahrefsDomains.value) : '—'}{ahrefsDomains.delta !== undefined && <DeltaPill value={ahrefsDomains.delta} />}</span>
+                          </li>
+                          <li>
+                            <span className="metric-label">Site strength</span>
+                            <span className="ov3-local__value">{ahrefsRating.value != null ? ahrefsRating.value.toFixed(1) : '—'}{ahrefsRating.delta !== undefined && <DeltaPill value={ahrefsRating.delta} />}</span>
+                          </li>
+                        </>
+                      )}
+                    </ul>
+                  </section>
+                )}
+              </div>
             )}
           </>
         )}
