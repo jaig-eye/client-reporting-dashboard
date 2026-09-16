@@ -40,7 +40,7 @@ import { ConnectorLogo } from '@/components/ConnectorLogo'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
-import { addLeadSources, summariseLeadSources, type LeadSourceCounts } from '@/lib/leadSources'
+import { addLeadSources, summariseLeadSources, LEAD_SOURCES, type LeadSourceCounts, type LeadSourceKey } from '@/lib/leadSources'
 import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
@@ -521,9 +521,14 @@ export default async function OverviewPage({
 
   // ── Lead sources: how each lead first found the business, from the CRM's own tracking ──
   const sourceCounts: LeadSourceCounts = {}
+  const sourcesByDate = new Map<string, LeadSourceCounts>()
   let sourceDays = 0
   for (const r of data.ghl) {
-    if (r.lead_sources && typeof r.lead_sources === 'object') { sourceDays++; addLeadSources(sourceCounts, r.lead_sources) }
+    if (r.lead_sources && typeof r.lead_sources === 'object') {
+      sourceDays++
+      addLeadSources(sourceCounts, r.lead_sources)
+      sourcesByDate.set(r.date, addLeadSources({}, r.lead_sources))
+    }
   }
   const leadSources     = summariseLeadSources(sourceCounts)
   const hasLeadSources  = sourceDays > 0 && leadSources.total > 0
@@ -640,7 +645,8 @@ export default async function OverviewPage({
     note?: string
     /** null = this channel is not paid for per click. */
     cost: number | null
-    visits: number
+    /** null = nothing counts visits for this channel, e.g. leads that arrived by phone. */
+    visits: number | null
     leads: number
     trend: { v: number }[]
   }
@@ -671,7 +677,73 @@ export default async function OverviewPage({
   }
 
   const channels: ChannelRow[] = []
-  if (hasGoogleData) {
+
+  /** Google Analytics channel whose visits belong to a CRM lead source, where one matches. */
+  const GA4_FOR_SOURCE: Partial<Record<LeadSourceKey, string>> = {
+    organic_search: 'Organic Search', direct: 'Direct', referral: 'Referral',
+    social: 'Organic Social', ai_assistant: 'AI Assistant',
+  }
+  const AD_SOURCE_KEYS: LeadSourceKey[] = ['google_ads', 'google_ads_call', 'meta_ads', 'meta_ads_call']
+  const sourceLeads = (keys: LeadSourceKey[]) => keys.reduce((s, k) => s + (sourceCounts[k] ?? 0), 0)
+  const crmLeadTrend = (keys: LeadSourceKey[]) => allDays.map(d => ({
+    v: keys.reduce((s, k) => s + (sourcesByDate.get(d)?.[k] ?? 0), 0),
+  }))
+  const sourceIcon = (key: LeadSourceKey): ReactNode => {
+    if (key === 'organic_search')  return <MagnifyingGlass size={15} weight="bold" aria-hidden />
+    if (key === 'google_business') return <MapPin size={15} weight="fill" aria-hidden />
+    if (key === 'ai_assistant')    return <Sparkle size={15} weight="bold" aria-hidden />
+    if (key === 'social')          return <UsersThree size={15} weight="bold" aria-hidden />
+    if (key === 'referral')        return <LinkSimple size={15} weight="bold" aria-hidden />
+    if (key === 'direct')          return <CursorClick size={15} weight="bold" aria-hidden />
+    return <Globe size={15} weight="bold" aria-hidden />
+  }
+  const groupColor: Record<string, string> = {
+    paid: 'var(--blue)', organic: 'var(--green)', internal: 'var(--ov-violet)', untracked: 'var(--text-faint)',
+  }
+
+  if (hasLeadSources) {
+    // The CRM knows who got in touch and where from, so the table counts leads — one per person, the
+    // same number as the headline — instead of the conversions each platform reports for itself.
+    const googleLeads = sourceLeads(['google_ads', 'google_ads_call'])
+    const metaLeads   = sourceLeads(['meta_ads', 'meta_ads_call'])
+    if (hasGoogleData || googleLeads > 0) {
+      channels.push({
+        key: 'google', name: 'Google Ads', color: 'var(--blue)',
+        icon: <ConnectorLogo type="google_ads" size={16} aria-hidden />,
+        cost: hasGoogleData ? google.spend : null,
+        visits: hasGoogleData ? google.clicks : null,
+        leads: googleLeads,
+        note: adCallCount > 0 ? `+ ${fmtInt(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} from the ad` : undefined,
+        trend: crmLeadTrend(['google_ads', 'google_ads_call']),
+      })
+    }
+    if (hasMetaData || metaLeads > 0) {
+      channels.push({
+        key: 'meta', name: 'Meta Ads', color: 'var(--ov-indigo)',
+        icon: <ConnectorLogo type="meta_ads" size={16} aria-hidden />,
+        cost: hasMetaData ? meta.spend : null,
+        visits: hasMetaData ? meta.clicks : null,
+        leads: metaLeads,
+        trend: crmLeadTrend(['meta_ads', 'meta_ads_call']),
+      })
+    }
+    LEAD_SOURCES
+      .filter(s => !AD_SOURCE_KEYS.includes(s.key))
+      .map(s => ({ ...s, count: sourceCounts[s.key] ?? 0 }))
+      .filter(s => s.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .forEach(s => {
+        const ga4Name = GA4_FOR_SOURCE[s.key]
+        channels.push({
+          key: `crm:${s.key}`, name: s.label, icon: sourceIcon(s.key),
+          color: groupColor[s.group] ?? 'var(--text-faint)',
+          cost: null,
+          visits: ga4Name ? (ga4.byChannel.get(ga4Name)?.sessions ?? null) : null,
+          leads: s.count,
+          trend: crmLeadTrend([s.key]),
+        })
+      })
+  } else if (hasGoogleData) {
     channels.push({
       key: 'google', name: 'Google Ads', color: 'var(--blue)',
       icon: <ConnectorLogo type="google_ads" size={16} aria-hidden />,
@@ -680,7 +752,7 @@ export default async function OverviewPage({
       trend: allDays.map(d => ({ v: google.byDate.get(d)?.leads ?? 0 })),
     })
   }
-  if (hasMetaData) {
+  if (!hasLeadSources && hasMetaData) {
     channels.push({
       key: 'meta', name: 'Meta Ads', color: 'var(--ov-indigo)',
       icon: <ConnectorLogo type="meta_ads" size={16} aria-hidden />,
@@ -693,7 +765,7 @@ export default async function OverviewPage({
   const ga4Channels = Array.from(ga4.byChannel.entries())
     .filter(([name, v]) => v.sessions > 0 && !(hasPaidData && PAID_GA4.test(name)))
     .sort(([, a], [, b]) => b.conversions - a.conversions || b.sessions - a.sessions)
-  ga4Channels.slice(0, MAX_GA4_ROWS).forEach(([name, v], i) => {
+  if (!hasLeadSources) ga4Channels.slice(0, MAX_GA4_ROWS).forEach(([name, v], i) => {
     channels.push({
       key: `ga4:${name}`, name: GA4_LABEL[name] ?? name, icon: ga4Icon(name),
       color: GA4_COLOR[name] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
@@ -702,7 +774,7 @@ export default async function OverviewPage({
     })
   })
   const otherGa4 = ga4Channels.slice(MAX_GA4_ROWS)
-  if (otherGa4.length > 0) {
+  if (!hasLeadSources && otherGa4.length > 0) {
     channels.push({
       key: 'ga4:other', name: 'Other', color: 'var(--text-faint)', icon: <Globe size={15} weight="bold" aria-hidden />,
       cost: null,
@@ -713,7 +785,7 @@ export default async function OverviewPage({
   }
 
   const totals = channels.reduce(
-    (acc, c) => ({ cost: acc.cost + (c.cost ?? 0), visits: acc.visits + c.visits, leads: acc.leads + c.leads }),
+    (acc, c) => ({ cost: acc.cost + (c.cost ?? 0), visits: acc.visits + (c.visits ?? 0), leads: acc.leads + c.leads }),
     { cost: 0, visits: 0, leads: 0 },
   )
   const totalTrend = allDays.map((_, i) => ({ v: channels.reduce((s, c) => s + (c.trend[i]?.v ?? 0), 0) }))
@@ -725,7 +797,14 @@ export default async function OverviewPage({
 
   // Conversions are counted by each source, not by the CRM, so this table's total can be higher
   // than the lead count in the headline. Say so beside the numbers, not somewhere else.
-  const channelFootnote = [
+  const channelFootnote = hasLeadSources ? [
+    `Leads are the people ${settings.crm_name || 'your CRM'} recorded, counted once each, so this table adds up to the ${fmtInt(leadSources.total)} leads above.`,
+    hasPaidData && adLeads > 0
+      ? `Google and Meta reported ${fmtInt(adLeads)} conversions over the same days: a conversion counts an action, so one person can count more than once.`
+      : '',
+    !sourcesComplete ? 'Some days in this range were synced before sources were tracked, so a few leads are missing from the split.' : '',
+    'Visits are ad clicks for the ad channels and website sessions where Google Analytics has a matching channel.',
+  ].filter(Boolean).join(' ') : [
     hasPaidData && hasGa4Data
       ? 'Conversions are counted by each source: Google and Meta for ads, Google Analytics for everything else. They can add up to more than the leads your CRM recorded.'
       : hasPaidData
@@ -1212,8 +1291,8 @@ export default async function OverviewPage({
               <div className={mixTotal > 0 || hasLeadSources ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
                 <section className="card ov2-card ov2-channels" aria-labelledby="ov2-channels-title">
                   <div className="ov2-card-head">
-                    <h2 id="ov2-channels-title" className="section-title">Performance by channel</h2>
-                    <p className="section-desc">Where this period&apos;s visits and conversions came from</p>
+                    <h2 id="ov2-channels-title" className="section-title">{hasLeadSources ? 'Leads by channel' : 'Performance by channel'}</h2>
+                    <p className="section-desc">{hasLeadSources ? 'Every lead your CRM recorded, and what brought them in' : <>Where this period&apos;s visits and conversions came from</>}</p>
                   </div>
                   <div className="table-scroll">
                     <table className="data-table ov2-table">
@@ -1222,8 +1301,12 @@ export default async function OverviewPage({
                           <th scope="col">Channel</th>
                           <th scope="col" className="num">Cost</th>
                           <th scope="col" className="num ov2-col-visits">Visits</th>
-                          <th scope="col" className="num"><span className="ov2-th-long">Conversions</span><span className="ov2-th-short">Conv.</span></th>
-                          <th scope="col" className="num"><span className="ov2-th-long">Cost per conv.</span><span className="ov2-th-short">Per conv.</span></th>
+                          <th scope="col" className="num">{hasLeadSources ? 'Leads' : <><span className="ov2-th-long">Conversions</span><span className="ov2-th-short">Conv.</span></>}</th>
+                          <th scope="col" className="num">
+                            {hasLeadSources
+                              ? <><span className="ov2-th-long">Cost per lead</span><span className="ov2-th-short">Per lead</span></>
+                              : <><span className="ov2-th-long">Cost per conv.</span><span className="ov2-th-short">Per conv.</span></>}
+                          </th>
                           <th scope="col" className="ov2-trend-col">Trend</th>
                         </tr>
                       </thead>
@@ -1240,7 +1323,7 @@ export default async function OverviewPage({
                               </span>
                             </th>
                             <td className="num">{c.cost == null ? <span className="ov2-muted">—</span> : fmtWholeDollars(c.cost)}</td>
-                            <td className="num ov2-col-visits">{fmtInt(c.visits)}</td>
+                            <td className="num ov2-col-visits">{c.visits == null ? <span className="ov2-muted">—</span> : fmtInt(c.visits)}</td>
                             <td className="num ov2-strong">{fmtInt(c.leads)}</td>
                             <td className="num">
                               {c.cost != null && c.leads >= 1 ? fmtCurrency(c.cost / c.leads) : <span className="ov2-muted">—</span>}
@@ -1278,15 +1361,17 @@ export default async function OverviewPage({
                     </div>
                     <LeadMixDonut
                       slices={[
-                        { name: 'From ads',     value: leadSources.paid,      color: 'var(--blue)' },
-                        { name: 'On their own', value: leadSources.organic,   color: 'var(--green)' },
+                        { name: 'From ads',        value: leadSources.paid,      color: 'var(--blue)' },
+                        { name: 'On their own',    value: leadSources.organic,   color: 'var(--green)' },
+                        { name: 'Added by your team', value: leadSources.internal, color: 'var(--ov-violet)' },
                         { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
                       ]}
                       total={leadSources.total}
                       centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
                     />
                     <p className="ov2-foot">
-                      {leadSources.untracked > 0 && 'No clear source means the lead was added by hand, imported, or tagged in a way we can\'t sort yet. '}
+                      {leadSources.internal > 0 && 'Added by your team means imported or typed into the CRM, not from marketing. '}
+                      {leadSources.untracked > 0 && 'No clear source means the lead reached you in a way nothing recorded — often a phone call. '}
                       {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
                     </p>
                   </section>

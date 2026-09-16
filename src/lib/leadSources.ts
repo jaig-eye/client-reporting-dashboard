@@ -10,12 +10,12 @@
 // stored, so nothing personal lands in ghl_metrics.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type LeadSourceGroup = 'paid' | 'organic' | 'untracked'
+export type LeadSourceGroup = 'paid' | 'organic' | 'internal' | 'untracked'
 
 export type LeadSourceKey =
   | 'google_ads' | 'google_ads_call' | 'meta_ads' | 'meta_ads_call' | 'other_paid'
   | 'organic_search' | 'google_business' | 'ai_assistant' | 'social' | 'referral' | 'direct'
-  | 'call_or_message' | 'other' | 'untracked'
+  | 'call_or_message' | 'imported' | 'added_manually' | 'other' | 'untracked'
 
 /**
  * Which of GHL's two attributions to read.
@@ -45,6 +45,9 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   // A call, text or chat that reached the CRM without a website visit, so nothing says what
   // prompted it: it could have come from the listing, an ad's call button, or a business card.
   { key: 'call_or_message', label: 'Calls and messages',              group: 'untracked' },
+  // Not marketing at all: the team put these in the CRM themselves.
+  { key: 'imported',        label: 'Imported into your CRM',          group: 'internal' },
+  { key: 'added_manually',  label: 'Added by hand',                   group: 'internal' },
   // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
   // counted as organic: it sits with "no source" until a rule is added for it.
   { key: 'other',           label: 'Other sources',                   group: 'untracked' },
@@ -107,6 +110,9 @@ const SOCIAL_REF    = /(facebook|instagram|fb\.com|(^|\.)t\.co$|twitter|x\.com|l
 // Session sources that say nothing about how the person found the business. "other" is GHL's own
 // label for a contact with no recorded website session.
 const INTERNAL_SESS = /^(crm ui|crm|third party|mobile app|api|import|zapier|workflow|other)$/
+// GHL's medium (and its contact source) when the team added the contact rather than marketing.
+const IMPORT_MEDIUM = /(csv|bulk)?_?import|^csv|import$/
+const MANUAL_MEDIUM = /^(manual|manually|crm ui|crm|added manually)$/
 
 function hostOf(url: string): string {
   if (!url) return ''
@@ -168,11 +174,30 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
   if (session === 'referral' || referrer) return 'referral'
   if (session === 'direct traffic' || session === 'direct') return 'direct'
 
+  // Put in the CRM by the team, not by marketing.
+  if (IMPORT_MEDIUM.test(ghlMedium)) return 'imported'
+  if (MANUAL_MEDIUM.test(ghlMedium)) return 'added_manually'
+
   // No website session behind it: a call, text or chat, or a contact added some other way.
   if ((!session || INTERNAL_SESS.test(session)) && !utmSrc && CONVERSATION_MEDIUM.test(ghlMedium)) return 'call_or_message'
   if (INTERNAL_SESS.test(session) && !utmSrc) return 'untracked'
   if (session || utmSrc) return 'other'
   return 'untracked'
+}
+
+/**
+ * GHL's own `source` on the contact — "form", "manual", "import", "api", "inbound call" and so on.
+ * It is the only thing many contacts carry, so it answers the ones attribution can't.
+ */
+export function sourceChannel(contact: Record<string, unknown>): LeadSourceKey | null {
+  const source = typeof contact.source === 'string' ? contact.source.trim().toLowerCase() : ''
+  if (!source) return null
+  if (/import|csv|bulk|migrat/.test(source))                       return 'imported'
+  if (/manual|by hand|crm ui|admin/.test(source))                  return 'added_manually'
+  if (/facebook lead|instagram lead|lead ad/.test(source))         return 'meta_ads'
+  if (/call|phone|sms|text|chat|message|whatsapp/.test(source))    return 'call_or_message'
+  if (/api|zapier|integration|webhook|workflow|automation|sync/.test(source)) return 'other'
+  return null
 }
 
 /**
@@ -185,6 +210,11 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
 export function classifyLead(contact: Record<string, unknown>): LeadSourceKey {
   const first = classifyContact(contact, 'first')
   const last  = classifyContact(contact, 'last')
+  // Nothing in either attribution: the contact's own source is all there is.
+  if (groupOf(first) === 'untracked' && groupOf(last) === 'untracked') {
+    const bySource = sourceChannel(contact)
+    if (bySource) return bySource
+  }
   if (groupOf(last) === 'paid')     return last
   if (groupOf(first) === 'paid')    return first
   if (groupOf(first) === 'organic') return first
@@ -228,6 +258,8 @@ export interface LeadSourceSummary {
   total:     number
   paid:      number
   organic:   number
+  /** Put in the CRM by the team: imports and contacts added by hand. Not marketing. */
+  internal:  number
   untracked: number
   channels:  { key: LeadSourceKey; label: string; group: LeadSourceGroup; count: number }[]
 }
@@ -238,6 +270,6 @@ export function summariseLeadSources(counts: LeadSourceCounts): LeadSourceSummar
     .filter(c => c.count > 0)
     .sort((a, b) => b.count - a.count)
   const sum = (g: LeadSourceGroup) => channels.filter(c => c.group === g).reduce((s, c) => s + c.count, 0)
-  const paid = sum('paid'), organic = sum('organic'), untracked = sum('untracked')
-  return { total: paid + organic + untracked, paid, organic, untracked, channels }
+  const paid = sum('paid'), organic = sum('organic'), internal = sum('internal'), untracked = sum('untracked')
+  return { total: paid + organic + internal + untracked, paid, organic, internal, untracked, channels }
 }

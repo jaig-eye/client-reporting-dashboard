@@ -231,8 +231,8 @@ export default async function CrmPage({
   const sources         = summariseLeadSources(sourceCounts)
   const hasSources      = sources.total > 0
   const sourcesComplete = sourceDates.length === data.length
-  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', untracked: 'No clear source' }
-  const sourceGroups = (['paid', 'organic', 'untracked'] as const)
+  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', internal: 'Added by your team', untracked: 'No clear source' }
+  const sourceGroups = (['paid', 'organic', 'internal', 'untracked'] as const)
     .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
     .filter(g => g.count > 0)
   const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
@@ -411,7 +411,7 @@ export default async function CrmPage({
                         <span className="lead-src-name"><span className={`lead-src-dot lead-src-dot--inline lead-src--${c.group}`} aria-hidden />{c.label}</span>
                       </td>
                       <td className="lead-src-col-type">
-                        <span className="lead-src-type"><span className={`lead-src-dot lead-src--${c.group}`} aria-hidden />{c.group === 'paid' ? 'Ad' : c.group === 'organic' ? 'Organic' : 'Unknown'}</span>
+                        <span className="lead-src-type"><span className={`lead-src-dot lead-src--${c.group}`} aria-hidden />{c.group === 'paid' ? 'Ad' : c.group === 'organic' ? 'Organic' : c.group === 'internal' ? 'Your team' : 'Unknown'}</span>
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtNum(c.count)}</td>
                       <td className="crm-col-share" style={{ textAlign: 'right' }}>

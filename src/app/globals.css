@@ -5271,3 +5271,7 @@ select.note-field__input { cursor: pointer; }
 @media (max-width: 480px) {
   .ov3-local__value { font-size: 1.125rem; }
 }
+
+/* Lead sources: contacts the team put in themselves */
+.lead-src--internal { background: var(--crm-form); }
+.crm-share__fill.lead-src--internal { background: var(--crm-form); }

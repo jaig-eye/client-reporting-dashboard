@@ -183,10 +183,17 @@ async function searchContactsByDate(
       page,
       pageLimit: 100,
       filters: [
-        // GHL's search accepts gte / lte (not >= / <=). With the wrong operators it answered 422 and
-        // every sync fell back to paging the whole account.
-        { field: 'dateAdded', operator: 'gte', value: new Date(dateFrom + 'T00:00:00Z').toISOString() },
-        { field: 'dateAdded', operator: 'lte', value: new Date(dateTo   + 'T23:59:59Z').toISOString() },
+        // A date field takes one 'range' filter with gte/lte inside it. Passing gte as the operator
+        // is refused ("Invalid Operator (gte) passed for field date_added"), and the sync then falls
+        // back to paging the whole account — 10,000 contacts for a busy one.
+        {
+          field:    'dateAdded',
+          operator: 'range',
+          value:    {
+            gte: new Date(dateFrom + 'T00:00:00Z').toISOString(),
+            lte: new Date(dateTo   + 'T23:59:59Z').toISOString(),
+          },
+        },
       ],
       sort: [{ field: 'dateAdded', direction: 'asc' }],
     })
@@ -277,6 +284,9 @@ async function fetchContacts(
   let adFromLatestVisit = 0
   let inRange = 0
   const unsortedLabels = new Map<string, number>()
+  // GHL's own source on the contact, counted by value. It names how the contact got in — a form, an
+  // import, an inbound call — for the ones attribution says nothing about.
+  const sourceValues = new Map<string, number>()
   for (const c of contacts) {
     const parsed = parseGhlDate(c.dateAdded ?? c.createdAt)
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
@@ -295,6 +305,8 @@ async function fetchContacts(
       if (groupOf(key) === 'untracked') {
         const label = `${key}: first ${attributionLabel(c, 'first')} | latest ${attributionLabel(c, 'last')}`
         unsortedLabels.set(label, (unsortedLabels.get(label) ?? 0) + 1)
+        const src = typeof c.source === 'string' ? c.source.trim().toLowerCase().slice(0, 60) : '(none)'
+        if (!src.includes('@')) sourceValues.set(src, (sourceValues.get(src) ?? 0) + 1)
       }
       ex.sources[key] = (ex.sources[key] ?? 0) + 1
       sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
@@ -321,6 +333,8 @@ async function fetchContacts(
     console.log(`[ghl] counted as ad leads because of their latest visit: ${adFromLatestVisit}`)
     const unsorted = Array.from(unsortedLabels).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([l, n]) => `${n}× ${l}`)
     if (unsorted.length > 0) console.log(`[ghl] leads with no clear source, by label:\n  ${unsorted.join('\n  ')}`)
+    const srcVals = Array.from(sourceValues).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`)
+    if (srcVals.length > 0) console.log(`[ghl] their contact.source values: ${srcVals.join(', ')}`)
     for (const [field, counts] of Array.from(attrValues)) {
       const top = Array.from(counts).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`).join(', ')
       console.log(`[ghl] attribution ${field}: ${top}`)
