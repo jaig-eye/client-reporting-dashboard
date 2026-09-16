@@ -835,7 +835,6 @@ export default async function OverviewPage({
     (acc, c) => ({ cost: acc.cost + (c.cost ?? 0), visits: acc.visits + (c.visits ?? 0), leads: acc.leads + c.leads }),
     { cost: 0, visits: 0, leads: 0 },
   )
-  const totalTrend = allDays.map((_, i) => ({ v: channels.reduce((s, c) => s + (c.trend[i]?.v ?? 0), 0) }))
   const showChannels = channels.length > 0 && (totals.leads > 0 || totals.visits > 0)
   const mixSlices: MixSlice[] = channels
     .filter(c => Math.round(c.leads) > 0)
@@ -1408,20 +1407,9 @@ export default async function OverviewPage({
                           </tr>
                         ))}
                       </tbody>
-                      {channels.length > 1 && (
-                        <tfoot>
-                          <tr>
-                            <th scope="row">All channels</th>
-                            <td className="num">{totals.cost > 0 ? fmtWholeDollars(totals.cost) : '—'}</td>
-                            <td className="num ov2-col-visits">{fmtInt(totals.visits)}</td>
-                            <td className="num">{fmtInt(totals.leads)}</td>
-                            <td className="num">{totals.cost > 0 && totals.leads >= 1 ? fmtCurrency(totals.cost / totals.leads) : '—'}</td>
-                            <td className="ov2-trend-col">
-                              <div className="ov2-spark"><Sparkline data={totalTrend} color="var(--text-secondary)" height={28} /></div>
-                            </td>
-                          </tr>
-                        </tfoot>
-                      )}
+                      {/* No totals row. Its cost per lead divided the ad spend by every lead,
+                          including the ones nothing was spent on, which made the ads read cheaper
+                          than they were. The per-channel figure above is the one that holds up. */}
                     </table>
                   </div>
                 </section>

@@ -14,7 +14,7 @@ export interface GSCSummaryResult {
   totals:       { clicks: number; impressions: number; ctr: number; position: number }
   queries:      Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>
   pages:        Array<{ page: string;  clicks: number; impressions: number; ctr: number; position: number }>
-  daily:        Array<{ date: string;  clicks: number; impressions: number }>
+  daily:        Array<{ date: string;  clicks: number; impressions: number; position: number }>
   distribution: { top3: number; page1: number; page2: number; beyond: number }
 }
 
@@ -148,7 +148,8 @@ export async function fetchGSCLiveData(
       totals: { clicks: totalClicks, impressions: totalImpressions, ctr: avgCtr, position: avgPosition },
       queries,
       pages,
-      daily: dailyRows.map(r => ({ date: r.date, clicks: r.clicks, impressions: r.impressions })),
+      // position rides along: the headline card draws it, inverted, as its sparkline.
+      daily: dailyRows.map(r => ({ date: r.date, clicks: r.clicks, impressions: r.impressions, position: r.position })),
       distribution,
     }
   } catch (err) {

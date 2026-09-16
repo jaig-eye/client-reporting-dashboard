@@ -17,6 +17,8 @@ export interface GscDailyPoint {
   clicks:      number
   impressions: number
   ctr:         number
+  /** Average position that day. Absent on older cached payloads. */
+  position?:   number
 }
 
 function fmtTick(d: string): string {

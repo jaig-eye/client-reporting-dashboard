@@ -46,12 +46,13 @@ export interface NavItem {
 // The rebuilt structure: each channel is one page that carries its whole report.
 export const NAV_V2: NavItem[] = [
   { key: 'overview',  label: 'Overview',  icon: <SquaresFour size={15} aria-hidden />,     href: '/dashboard/overview' },
+  // Straight after Overview: it answers the same question over two periods rather than one.
+  { key: 'comparison', label: 'Comparison', icon: <ArrowsLeftRight size={15} aria-hidden />, href: '/dashboard/comparison' },
   { key: 'paid_ads',  label: 'Paid Ads',  icon: <ChartBar size={15} aria-hidden />,        href: '/dashboard/paid-ads' },
   { key: 'seo',       label: 'SEO',       icon: <MagnifyingGlass size={15} aria-hidden />, href: '/dashboard/seo' },
   { key: 'analytics', label: 'Analytics', icon: <ChartLineUp size={15} aria-hidden />,     href: '/dashboard/analytics' },
   { key: 'crm',       label: 'CRM',       icon: <UsersThree size={15} aria-hidden />,      href: '/dashboard/crm' },
   { key: 'reputation', label: 'Reputation', icon: <Star size={15} aria-hidden />,          href: '/dashboard/reputation' },
-  { key: 'comparison', label: 'Comparison', icon: <ArrowsLeftRight size={15} aria-hidden />, href: '/dashboard/comparison' },
 ]
 
 export const NAV: NavItem[] = [

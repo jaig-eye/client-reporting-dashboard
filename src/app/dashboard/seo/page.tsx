@@ -395,7 +395,15 @@ export default async function SeoPage({
   const gscDaily: GscDailyPoint[] = (gscCurr?.daily ?? []).map(d => ({
     date: d.date, clicks: d.clicks, impressions: d.impressions,
     ctr: d.impressions > 0 ? d.clicks / d.impressions : 0,
+    position: d.position,
   }))
+
+  // Position improves as it falls towards 1, so a plain line would rise on bad weeks. Flipping it
+  // around the worst reading in the range makes the line climb when the ranking does.
+  const worstPos = Math.max(...gscDaily.map(d => d.position ?? 0), 0)
+  const positionSpark = gscDaily.some(d => (d.position ?? 0) > 0)
+    ? gscDaily.map(d => ({ v: d.position ? worstPos - d.position : 0 }))
+    : undefined
 
   const dist = gscCurr?.distribution ?? { top3: 0, page1: 0, page2: 0, beyond: 0 }
   const distTotal = dist.top3 + dist.page1 + dist.page2 + dist.beyond
@@ -532,8 +540,6 @@ export default async function SeoPage({
   const ahValueNow   = ahLatestOf(row => row.traffic_value)
   const ahVelocity   = ahrefsRows.find(row => row.new_referring_domains != null || row.new_backlinks != null) ?? null
   const asOf = (d: string | null) => (d && ahLatest && d !== ahLatest.date ? `, as of ${fmtDay(d)}` : '')
-  const ahTrend  = ahrefsRows.slice(0, 8).reverse()
-  const spark    = (pick: (r: AhrefsMetricRow) => number | null) => ahTrend.map(r => ({ v: pick(r) ?? 0 }))
 
   const ahKeywords = (ahrefsKwData   ?? []) as { keyword: string; position: number | null; volume: number | null; traffic: number | null }[]
   const ahPages    = (ahrefsPageData ?? []) as { url: string; organic_traffic: number | null; organic_keywords: number | null }[]
@@ -553,7 +559,8 @@ export default async function SeoPage({
       value: fmtNum(ahTrafficNow.value),
       sub:   'people arriving each month without an ad',
       delta: ahTrafficNow.delta,
-      spark: spark(r => r.organic_traffic),
+      // No sparkline: Ahrefs updates weekly, so a line through a few readings implies a daily
+      // trend that was never measured.
       color: 'var(--seo-local)',
     })
   }
@@ -580,6 +587,7 @@ export default async function SeoPage({
       sub:    'where you sit on the results page',
       delta:  showCompare ? pctDelta(gscPosition, gscComp?.totals?.position ?? 0) : undefined,
       invert: true,
+      spark:  positionSpark,
       color:  'var(--seo-neutral)',
     })
   } else if (hasRanks && avgRank > 0) {
@@ -982,8 +990,6 @@ export default async function SeoPage({
                   value={fmtNum(gbpViews)}
                   sub={`${fmtNum(gbp.search)} on Search · ${fmtNum(gbp.maps)} on Maps`}
                   delta={showCompare ? pctDelta(gbpViews, gbpPrevViews) : undefined}
-                  sparkData={gbpDaily.map(([, v]) => ({ v: v.views }))}
-                  sparkColor="var(--seo-search)"
                   delay={0}
                 />
                 <SparkMetricCard
@@ -1145,7 +1151,6 @@ export default async function SeoPage({
                   value={ahTrafficNow.value != null ? fmtNum(ahTrafficNow.value) : '—'}
                   sub={`people arriving each month without an ad${asOf(ahTrafficNow.date)}`}
                   delta={ahTrafficNow.delta}
-                  sparkData={spark(r => r.organic_traffic)}
                   sparkColor="var(--seo-local)"
                   delay={0}
                 />
@@ -1154,7 +1159,6 @@ export default async function SeoPage({
                   value={ahRatingNow.value != null ? ahRatingNow.value.toFixed(1) : '—'}
                   sub={`how Google weighs your site, 0 to 100${asOf(ahRatingNow.date)}`}
                   delta={ahRatingNow.delta}
-                  sparkData={spark(r => r.domain_rating)}
                   sparkColor="var(--seo-search)"
                   delay={1}
                 />
@@ -1163,7 +1167,6 @@ export default async function SeoPage({
                   value={ahLinksNow.value != null ? fmtNum(ahLinksNow.value) : '—'}
                   sub={`from other websites${asOf(ahLinksNow.date)}`}
                   delta={ahLinksNow.delta}
-                  sparkData={spark(r => r.backlinks)}
                   sparkColor="var(--seo-search-soft)"
                   delay={2}
                 />
@@ -1172,7 +1175,6 @@ export default async function SeoPage({
                   value={ahDomainsNow.value != null ? fmtNum(ahDomainsNow.value) : '—'}
                   sub={`how many different websites${asOf(ahDomainsNow.date)}`}
                   delta={ahDomainsNow.delta}
-                  sparkData={spark(r => r.referring_domains)}
                   sparkColor="var(--seo-neutral)"
                   delay={3}
                 />
@@ -1182,7 +1184,6 @@ export default async function SeoPage({
                     value={`$${fmtNum(ahValueNow.value / 100)}`}
                     sub={`what you'd pay in ads for the same visitors${asOf(ahValueNow.date)}`}
                     delta={ahValueNow.delta}
-                    sparkData={spark(r => r.traffic_value)}
                     sparkColor="var(--seo-local)"
                     delay={4}
                   />
