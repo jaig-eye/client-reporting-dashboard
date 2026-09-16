@@ -107,6 +107,8 @@ type KeywordRow = {
 }
 
 /** Calls Google Ads counted from its own ads (migration 218). */
+type ReviewRow = { star_rating: number; created_at: string; reply_comment: string | null }
+
 type AdCallRow = { phone_calls: number; calls_received: number; calls_missed: number; calls_from_ad: number }
 
 interface Connected {
@@ -143,7 +145,7 @@ const _getOverviewData = unstable_cache(
       gRes, gPriorRes, mRes, mPriorRes, gAssignRes, mAssignRes,
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
-      adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes, adCallsRes,
+      adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes, adCallsRes, reviewsRes,
     ] = await Promise.all([
       // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
@@ -256,6 +258,14 @@ const _getOverviewData = unstable_cache(
         ? db.from('google_ads_call_metrics').select('phone_calls,calls_received,calls_missed,calls_from_ad')
             .eq('client_id', clientId).gte('date', from).lte('date', to).limit(MAX_ROWS * 5)
         : none,
+
+      // Reviews with their replies, for the reputation card. Newest first and capped, because the
+      // card only needs the recent ones plus the reply rate; before migration 219 this read fails
+      // quietly and the card stays hidden.
+      has.gbp
+        ? db.from('gbp_reviews').select('star_rating,created_at,reply_comment')
+            .eq('client_id', clientId).order('created_at', { ascending: false }).limit(500)
+        : none,
     ])
 
     return {
@@ -282,9 +292,10 @@ const _getOverviewData = unstable_cache(
       sites:       (sitesRes.data ?? []) as SiteRow[],
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
       adCalls:     (adCallsRes.data ?? []) as AdCallRow[],
+      reviewRows:  (reviewsRes.data ?? []) as ReviewRow[],
     }
   },
-  ['dashboard-overview-v10'],
+  ['dashboard-overview-v11'],
   { revalidate: 300, tags: ['client-metrics'] },
 )
 
@@ -994,6 +1005,25 @@ export default async function OverviewPage({
   const ratedAds = strengthCounts.reduce((t, st) => t + st.value, 0)
   const goodAds  = strengthCounts[0].value + strengthCounts[1].value
 
+  // Reputation: the reviews themselves, which carry the one thing the counts can't — whether
+  // anybody replied. Hidden entirely until reviews are actually stored (migration 219 plus a sync).
+  const reputation = (() => {
+    const all = data.reviewRows
+    if (all.length === 0) return null
+    const day      = (v: string) => String(v).split('T')[0]
+    const periodFrom = iso(fromDate), periodTo = iso(toDate)
+    const inPeriod = all.filter(r => day(r.created_at) >= periodFrom && day(r.created_at) <= periodTo)
+    const awaiting = all.filter(r => !r.reply_comment).length
+    const rated    = inPeriod.filter(r => r.star_rating > 0)
+    return {
+      total:     all.length,
+      inPeriod:  inPeriod.length,
+      awaiting,
+      replyRate: ((all.length - awaiting) / all.length) * 100,
+      periodAvg: rated.length > 0 ? rated.reduce((s, r) => s + r.star_rating, 0) / rated.length : 0,
+    }
+  })()
+
   // Google reviews: latest count and rating per location, and how many arrived during the window.
   const reviews = (() => {
     const byLocation = new Map<string, { first: GbpRow; last: GbpRow }>()
@@ -1696,6 +1726,48 @@ export default async function OverviewPage({
                   </section>
                 </div>
               </div>
+            )}
+
+            {reputation && (
+              <section className="card ov2-card" aria-labelledby="ov2-rep-title">
+                <div className="ov2-card-head ov2-card-head--split">
+                  <div>
+                    <h2 id="ov2-rep-title" className="section-title">What people say about you</h2>
+                    <p className="section-desc">
+                      {reputation.inPeriod > 0
+                        ? <>
+                            <b>{fmtInt(reputation.inPeriod)}</b> new {reputation.inPeriod === 1 ? 'review' : 'reviews'} in this period
+                            {reputation.periodAvg > 0 && <>, averaging {reputation.periodAvg.toFixed(1)} stars</>}
+                          </>
+                        : 'Your Google reviews and how quickly they get a reply'}
+                    </p>
+                  </div>
+                  <a className="ov2-link" href={link('/dashboard/reputation')}>All reviews</a>
+                </div>
+
+                <ul className="ov3-local">
+                  <li className="ov3-local__stat">
+                    <span className="metric-label">Rating</span>
+                    <span className="ov3-local__value">{reviews.count > 0 ? reviews.rating.toFixed(1) : '—'}</span>
+                    <span className="ov3-local__sub">across {fmtInt(reviews.count || reputation.total)} reviews</span>
+                  </li>
+                  <li className="ov3-local__stat">
+                    <span className="metric-label">New reviews</span>
+                    <span className="ov3-local__value">{fmtInt(reputation.inPeriod)}</span>
+                    <span className="ov3-local__sub">left in this period</span>
+                  </li>
+                  <li className="ov3-local__stat">
+                    <span className="metric-label">Replied to</span>
+                    <span className="ov3-local__value">{reputation.replyRate.toFixed(0)}%</span>
+                    <span className="ov3-local__sub">of every review</span>
+                  </li>
+                  <li className="ov3-local__stat">
+                    <span className="metric-label">Awaiting a reply</span>
+                    <span className="ov3-local__value">{fmtInt(reputation.awaiting)}</span>
+                    <span className="ov3-local__sub">{reputation.awaiting === 0 ? 'nothing outstanding' : 'still unanswered'}</span>
+                  </li>
+                </ul>
+              </section>
             )}
 
             {weekly.length > 1 && (

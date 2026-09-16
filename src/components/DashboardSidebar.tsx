@@ -12,6 +12,7 @@ import {
   Circle,
   UsersThree,
   ArrowsLeftRight,
+  Star,
 } from '@phosphor-icons/react'
 import type { ConnectorType } from '@/lib/types'
 
@@ -49,6 +50,7 @@ export const NAV_V2: NavItem[] = [
   { key: 'seo',       label: 'SEO',       icon: <MagnifyingGlass size={15} aria-hidden />, href: '/dashboard/seo' },
   { key: 'analytics', label: 'Analytics', icon: <ChartLineUp size={15} aria-hidden />,     href: '/dashboard/analytics' },
   { key: 'crm',       label: 'CRM',       icon: <UsersThree size={15} aria-hidden />,      href: '/dashboard/crm' },
+  { key: 'reputation', label: 'Reputation', icon: <Star size={15} aria-hidden />,          href: '/dashboard/reputation' },
   { key: 'comparison', label: 'Comparison', icon: <ArrowsLeftRight size={15} aria-hidden />, href: '/dashboard/comparison' },
 ]
 

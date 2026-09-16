@@ -21,6 +21,7 @@ import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
+import { fetchReviews as fetchGBPReviews } from './connectors/google-business-profile'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 import { fetchSearchAnalytics, fetchDailyTotals } from './connectors/google-search-console'
@@ -318,12 +319,31 @@ export async function syncClient(
           db, connection, auth, gscFrom, resolvedTo, clientId
         )
       } else if (connection.connector.type === 'google_business_profile') {
-        recordCount = await upsertGBPMetrics(
-          db,
-          connection.id,
-          clientId,
-          result.rows as unknown as import('./connectors/google-business-profile').GBPRawRow[]
-        )
+        const gbpRows = result.rows as unknown as import('./connectors/google-business-profile').GBPRawRow[]
+
+        // One reviews call serves both: the running total and average go on the most recent day,
+        // the reviews themselves into their own table. Best-effort — a listing that refuses
+        // reviews still syncs its views and clicks.
+        const gbpToken = String((auth as Record<string, unknown>).access_token ?? '')
+        if (gbpToken) {
+          try {
+            const reviews = await fetchGBPReviews(connection.external_id, gbpToken)
+            if (gbpRows.length > 0 && (reviews.count > 0 || reviews.reviews.length > 0)) {
+              const latest = [...gbpRows].sort((a, b) => b.date.localeCompare(a.date))[0]
+              latest.reviews_count      = reviews.count
+              latest.reviews_avg_rating = reviews.avgRating
+            }
+            if (reviews.reviews.length > 0) {
+              const stored = await upsertGBPReviews(
+                db, connection.id, clientId, connection.external_id, reviews.reviews)
+              console.log(`[sync] GBP reviews: stored ${stored} for connection ${connection.id}`)
+            }
+          } catch (e) {
+            console.error('[sync] GBP reviews failed:', e)
+          }
+        }
+
+        recordCount = await upsertGBPMetrics(db, connection.id, clientId, gbpRows)
       } else if (connection.connector.type === 'ahrefs') {
         recordCount = await upsertAhrefsMetrics(
           db,
@@ -1305,6 +1325,54 @@ export async function upsertGoogleAdsCallMetrics(
     return mapped.length
   } catch (e) {
     console.error('[sync] google_ads_call_metrics failed:', e)
+    return 0
+  }
+}
+
+/**
+ * Stores a location's reviews, replies included.
+ *
+ * Reviews are edited and replied to after the fact, so every row is upserted rather than inserted
+ * once: a reply written today lands on a review left last year. Nothing is deleted first — a
+ * review Google stops returning (page cap, or the reviewer removed it) keeps the history intact.
+ */
+export async function upsertGBPReviews(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  locationId: string,
+  reviews: import('./connectors/google-business-profile').GBPReview[]
+): Promise<number> {
+  const valid = reviews.filter(r => r.review_id && r.created_at)
+  if (valid.length === 0) return 0
+  try {
+    const syncedAt = new Date().toISOString()
+    const mapped = valid.map(r => ({
+      connection_id: connectionId,
+      client_id:     clientId,
+      location_id:   locationId,
+      review_id:     r.review_id,
+      reviewer_name: r.reviewer_name || null,
+      star_rating:   r.star_rating,
+      comment:       r.comment || null,
+      created_at:    r.created_at,
+      updated_at:    r.updated_at,
+      reply_comment: r.reply_comment,
+      replied_at:    r.replied_at,
+      synced_at:     syncedAt,
+    }))
+    for (let i = 0; i < mapped.length; i += 200) {
+      const { error } = await db
+        .from('gbp_reviews')
+        .upsert(mapped.slice(i, i + 200), { onConflict: 'connection_id,review_id', ignoreDuplicates: false })
+      if (error) {
+        console.error(`[sync] gbp_reviews upsert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+    return mapped.length
+  } catch (e) {
+    console.error('[sync] gbp_reviews failed:', e)
     return 0
   }
 }

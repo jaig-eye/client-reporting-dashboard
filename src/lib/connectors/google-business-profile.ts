@@ -196,31 +196,110 @@ async function fetchLocationMetrics(
   return Array.from(byDate.values())
 }
 
+export interface GBPReview {
+  review_id:     string
+  reviewer_name: string
+  /** 1–5. Zero when Google returns STAR_RATING_UNSPECIFIED. */
+  star_rating:   number
+  comment:       string
+  created_at:    string
+  updated_at:    string | null
+  /** The owner's public reply, when there is one. */
+  reply_comment: string | null
+  replied_at:    string | null
+}
+
+export interface GBPReviewResult {
+  count:     number
+  avgRating: number
+  reviews:   GBPReview[]
+}
+
+const STAR_WORDS: Record<string, number> = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 }
+
+// Google returns 50 reviews a page. Eight pages is every review for the businesses we report on,
+// and stops a listing with thousands from holding up a sync.
+const REVIEW_PAGE_SIZE = 50
+const MAX_REVIEW_PAGES = 8
+
+interface V4Review {
+  reviewId?:    string
+  name?:        string
+  reviewer?:    { displayName?: string; isAnonymous?: boolean }
+  starRating?:  string
+  comment?:     string
+  createTime?:  string
+  updateTime?:  string
+  reviewReply?: { comment?: string; updateTime?: string }
+}
+
 /**
- * Review count and average rating for a location, a current snapshot rather than a series.
- * The v4 reviews endpoint needs the owning account in the path, which the location name
- * doesn't carry, so try each account the user can see until one owns the location.
+ * Every review for a location, with the owner's reply where there is one, plus the running count
+ * and average Google reports alongside them.
+ *
+ * The v4 reviews endpoint needs the owning account in the path, which the location name doesn't
+ * carry, so try each account the user can see until one owns the location.
+ *
+ * Only what Google already shows publicly on the listing is read: the display name, the words and
+ * the reply. The reviewer's profile URL and anything identifying beyond the name are left behind.
  */
-async function fetchReviewSummary(
+export async function fetchReviews(
   locationName: string,
   accessToken: string
-): Promise<{ count: number; avgRating: number }> {
+): Promise<GBPReviewResult> {
+  const empty: GBPReviewResult = { count: 0, avgRating: 0, reviews: [] }
   try {
     const accounts = await listAccounts(accessToken)
     for (const account of accounts) {
-      const res = await fetch(
-        `${MYBIZ_BASE}/${account.name}/${locationName}/reviews?pageSize=1`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      )
-      if (!res.ok) continue
-      const data = await res.json() as { totalReviewCount?: number; averageRating?: number }
-      return { count: data.totalReviewCount ?? 0, avgRating: data.averageRating ?? 0 }
+      const reviews: GBPReview[] = []
+      let count = 0, avgRating = 0, pageToken: string | undefined, owned = false
+
+      for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
+        const url = new URL(`${MYBIZ_BASE}/${account.name}/${locationName}/reviews`)
+        url.searchParams.set('pageSize', String(REVIEW_PAGE_SIZE))
+        if (pageToken) url.searchParams.set('pageToken', pageToken)
+
+        const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } })
+        // Another account may own this location — try the next one.
+        if (!res.ok) break
+        owned = true
+
+        const data = await res.json() as {
+          reviews?: V4Review[]; totalReviewCount?: number; averageRating?: number; nextPageToken?: string
+        }
+        count     = data.totalReviewCount ?? count
+        avgRating = data.averageRating    ?? avgRating
+
+        for (const r of data.reviews ?? []) {
+          // reviewId is not always set; the resource name always ends with it.
+          const id = r.reviewId || (r.name ?? '').split('/').pop() || ''
+          if (!id || !r.createTime) continue
+          reviews.push({
+            review_id:     id,
+            reviewer_name: r.reviewer?.isAnonymous ? '' : (r.reviewer?.displayName ?? ''),
+            star_rating:   STAR_WORDS[String(r.starRating ?? '').toUpperCase()] ?? 0,
+            comment:       r.comment ?? '',
+            created_at:    r.createTime,
+            updated_at:    r.updateTime ?? null,
+            reply_comment: r.reviewReply?.comment ?? null,
+            replied_at:    r.reviewReply?.updateTime ?? null,
+          })
+        }
+
+        pageToken = data.nextPageToken
+        if (!pageToken) break
+      }
+
+      if (!owned) continue
+      const replied = reviews.filter(r => r.reply_comment).length
+      console.log(`[google-business-profile] reviews for ${locationName}: ${reviews.length} fetched of ${count}, ${replied} replied to`)
+      return { count, avgRating, reviews }
     }
     console.warn(`[google-business-profile] no account returned reviews for ${locationName}`)
   } catch (e) {
-    console.warn(`[google-business-profile] review summary failed for ${locationName}:`, e)
+    console.warn(`[google-business-profile] reviews failed for ${locationName}:`, e)
   }
-  return { count: 0, avgRating: 0 }
+  return empty
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,13 +333,8 @@ export const googleBusinessProfileConnector: ConnectorAdapter = {
       locationName, displayName, accessToken, dateFrom, dateTo
     )
 
-    // Reviews are a current snapshot, so they go on the most recent day.
-    if (rows.length > 0) {
-      const { count, avgRating } = await fetchReviewSummary(locationName, accessToken)
-      const latestRow = rows.sort((a, b) => b.date.localeCompare(a.date))[0]
-      latestRow.reviews_count      = count
-      latestRow.reviews_avg_rating = avgRating
-    }
+    // Reviews are fetched once by the sync, which stores them and puts the running total and
+    // average on the most recent row. Fetching them here as well would read the same pages twice.
 
     return { rows: rows as unknown as import('./types').RawMetricRow[] }
   },

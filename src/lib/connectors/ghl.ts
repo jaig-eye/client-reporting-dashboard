@@ -936,6 +936,13 @@ async function fetchReviews(
       })
       const reviews = (data.reviews as Record<string, unknown>[]) ?? []
 
+      // Field names only, from the first page, so the logs say whether the CRM records where a
+      // review came from — a request we sent, or the customer finding the listing themselves.
+      // Google itself never says, so this is the only place an answer could come from.
+      if (page === 1 && reviews.length > 0) {
+        console.log(`[ghl] review fields: ${Object.keys(reviews[0]).join(',')}`)
+      }
+
       for (const r of reviews) {
         const parsed = parseGhlDate(r.dateAdded ?? r.createdAt ?? r.date)
         if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
