@@ -15,7 +15,7 @@ export type LeadSourceGroup = 'paid' | 'organic' | 'internal' | 'untracked'
 export type LeadSourceKey =
   | 'google_ads' | 'google_ads_call' | 'meta_ads' | 'meta_ads_call' | 'other_paid'
   | 'organic_search' | 'google_business' | 'ai_assistant' | 'social' | 'referral' | 'direct'
-  | 'call_or_message' | 'website_call' | 'imported' | 'added_manually' | 'other' | 'untracked'
+  | 'email' | 'call_or_message' | 'website_call' | 'imported' | 'added_manually' | 'other' | 'untracked'
 
 /**
  * Which of GHL's two attributions to read.
@@ -42,6 +42,9 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   { key: 'social',          label: 'Social media',                    group: 'organic' },
   { key: 'referral',        label: 'Other websites',                  group: 'organic' },
   { key: 'direct',          label: 'Came straight to your site',      group: 'organic' },
+  // GHL sends sessionSource 'email marketing' for a click from a campaign it sent. Owned media
+  // rather than something they found, but they came on their own, so it sits with organic.
+  { key: 'email',           label: 'Email campaigns',                 group: 'organic' },
   // A call, text or chat that reached the CRM without a website visit, so nothing says what
   // prompted it: it could have come from the listing, an ad's call button, or a business card.
   { key: 'call_or_message', label: 'Calls and messages',              group: 'untracked' },
@@ -108,6 +111,8 @@ const META_AD_SRC   = /^(fb|facebook|ig|instagram|meta)[_ -]?ads?$/
 const AI_SRC        = /(chatgpt|openai|perplexity|gemini\.google|copilot\.(microsoft|com)|claude\.ai|deepseek|grok\.com|meta\.ai)/
 // GHL's medium when a contact arrived by phone, text or chat rather than a web form.
 const CONVERSATION_MEDIUM = /^(conversation|call|phone|sms|chat|chat_widget|messaging)$/
+const EMAIL_SESSION = /^(email|email marketing|newsletter)$/
+const EMAIL_MEDIUM  = /^(email|e-mail|newsletter)$/
 const GBP_SRC       = /^(gmb|gbp|google[_ -]?(my[_ -]?business|business([_ -]?profile)?|maps)|maps)$/
 const SEARCH_REF    = /(^|\.)(google|bing|yahoo|duckduckgo|ecosia|yandex|baidu|search\.brave)\./
 const SOCIAL_REF    = /(facebook|instagram|fb\.com|(^|\.)t\.co$|twitter|x\.com|linkedin|lnkd\.in|tiktok|pinterest|youtube|reddit|nextdoor)/
@@ -121,7 +126,9 @@ const MANUAL_MEDIUM = /^(manual|manually|crm ui|crm|added manually)$/
 // What GHL writes into contact.source. These are labels the agency chooses when it sets up a
 // form, a pool or a listing, so they are matched loosely — "GBP", "Google Business Profile" and
 // "gmb" all mean the same thing, and a pool is named for what it is rather than to a standard.
-const SOURCE_NUMBER_POOL = /number[_ -]?pool|call[_ -]?tracking/
+// Deliberately not a bare /pool/: a swimming-pool company names a line "Pool Service", and
+// calling that a website visit would be a confident lie. A pool is named for being one.
+const SOURCE_NUMBER_POOL = /(number|website|site|tracking|dynamic|swap)[_ -]?pool|pool[_ -]?\d|call[_ -]?tracking/
 const SOURCE_GBP         = /\bgbp\b|\bgmb\b|google[_ -]?business|google[_ -]?my[_ -]?business|business[_ -]?profile|\bmaps\b/
 
 // What an agency calls a tracking number in the phone system, by the channel it stands for.
@@ -189,6 +196,7 @@ export function classifyContact(contact: Record<string, unknown>, touch: Touch =
   if (fbclid || session === 'social media' || session === 'social' || SOCIAL_REF.test(referrer) || META_SRC.test(utmSrc)) return 'social'
   if (session === 'referral' || referrer) return 'referral'
   if (session === 'direct traffic' || session === 'direct') return 'direct'
+  if (EMAIL_SESSION.test(session) || EMAIL_MEDIUM.test(medium)) return 'email'
 
   // Put in the CRM by the team, not by marketing.
   if (IMPORT_MEDIUM.test(ghlMedium)) return 'imported'
@@ -281,8 +289,11 @@ export function trackingNumberSource(
   if (GOOGLE_AD_NUMBER.test(name)) return 'google_ads_call'
   if (META_NUMBER.test(name))    return 'meta_ads_call'
   if (ORGANIC_NUMBER.test(name)) return 'organic_search'
-  // A pool number is only ever shown to someone already on the website.
-  if (inPool) return 'website_call'
+  // A pool number is only ever shown to someone already on the website, so it places the caller
+  // even when nothing says which channel brought them there. The pools endpoint tells us this
+  // properly; when it is refused, a name that says "pool" or "call tracking" is the same fact
+  // written by hand. Tested after the channel rules, so "GBP Call Tracking" stays a listing call.
+  if (inPool || SOURCE_NUMBER_POOL.test(name)) return 'website_call'
   return null
 }
 
