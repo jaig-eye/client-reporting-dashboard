@@ -1232,6 +1232,19 @@ export default async function OverviewPage({
     )
   }
 
+  /**
+   * How much of "no clear source" the ad calls could account for.
+   *
+   * A caller who taps the number on an ad never lands on the website, so the CRM records no
+   * visit and the lead reads as unsourced. Google counts those calls, which makes the slice
+   * explainable rather than mysterious — but only as a bound, for two reasons: Google counts
+   * calls where the CRM counts people, so one caller who rang twice is two calls and one lead;
+   * and some of those callers were already customers, not new leads. So it is "up to", never
+   * "plus", and it is capped by the number of unsourced leads there actually are.
+   */
+  const adCallsInGap = Math.min(adCallCount, leadSources.untracked)
+  const adLeadsHigh  = leadSources.paid + adCallsInGap
+
   // ── The sentence a business owner reads first ─────────────────────────────
   const headline: ReactNode = hasCrmData ? (
     <>
@@ -1263,7 +1276,11 @@ export default async function OverviewPage({
           />
         ) : (
           <>
-            {headline && <p className="ov-headline">{headline}</p>}
+            {headline && (
+              <section className="ov-headline" aria-label="Summary">
+                <p className="ov-headline__text">{headline}</p>
+              </section>
+            )}
 
             {(topHighlights.length > 0 || watch) && (
               <section className="card ov3-glance" aria-labelledby="ov3-glance-title">
@@ -1417,7 +1434,8 @@ export default async function OverviewPage({
                     />
                     <p className="ov2-foot">
                       {leadSources.internal > 0 && `Not from marketing means ${crmLabel} recorded the contact as arriving in a file import, or as created by someone using it — not from a visit or an ad. `}
-                      {leadSources.untracked > 0 && 'No clear source means the lead reached you in a way nothing recorded — often a phone call. '}
+                      {leadSources.untracked > 0 && `No clear source means the lead reached you in a way nothing recorded — most often a phone call, because a caller leaves no visit behind. `}
+                      {adCallsInGap > 0 && `Google counted ${fmtInt(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} placed straight from your ads over these days, and those callers never reach the website — so up to ${fmtInt(adCallsInGap)} of the ${fmtInt(leadSources.untracked)} unsourced leads came from ads too, putting ads somewhere between ${fmtInt(leadSources.paid)} and ${fmtInt(adLeadsHigh)} of your ${fmtInt(leadSources.total)} leads. `}
                       {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
                     </p>
                   </section>

@@ -1,5 +1,5 @@
 // Lead mix as an SVG donut, rendered on the server: no chart library and no client JS. Every
-// colour comes from theme tokens so it holds in light and dark, and the legend beside the ring
+// colour comes from theme tokens so it holds in light and dark, and the legend under the ring
 // carries the numbers, so the ring never has to be read on its own.
 
 export interface MixSlice { name: string; value: number; color: string }
@@ -43,8 +43,8 @@ export default function LeadMixDonut({
           <li key={s.name} className="ov2-mix__item">
             <span className="ov2-mix__swatch" style={{ background: s.color }} aria-hidden />
             <span className="ov2-mix__name">{s.name}</span>
-            <span className="ov2-mix__pct">{pct(s.value)}%</span>
             <span className="ov2-mix__count">{s.value.toLocaleString('en-US')}</span>
+            <span className="ov2-mix__pct">{pct(s.value)}%</span>
           </li>
         ))}
       </ul>

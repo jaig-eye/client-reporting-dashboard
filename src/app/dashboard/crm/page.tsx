@@ -246,6 +246,8 @@ export default async function CrmPage({
     adCalls.reduce((s, r) => s + num(r.phone_calls), 0),
     adCalls.reduce((s, r) => s + num(r.calls_from_ad), 0),
   )
+  // Google counts calls, the CRM counts people, so this bounds the overlap rather than adding it.
+  const adCallsInGap = Math.min(adCallCount, sources.untracked)
   const adCallsAnswered = adCalls.reduce((s, r) => s + num(r.calls_received), 0)
   const adCallsMissed   = adCalls.reduce((s, r) => s + num(r.calls_missed), 0)
   const hasCallsBucket  = sources.channels.some(c => c.key === 'call_or_message')
@@ -438,7 +440,7 @@ export default async function CrmPage({
             )}
             {adCallCount > 0 && (
               <p className="crm-insight">
-                {`Google Ads also counted ${fmtNum(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} straight from your ads. Those callers never visited your site, so ${crmName} can't tie them to the ad${hasCallsBucket ? ': they are likely among the "Calls and messages" above' : ''}.${adCallsAnswered + adCallsMissed > 0 ? ` Of the calls Google could track, ${fmtNum(adCallsAnswered)} ${adCallsAnswered === 1 ? 'was' : 'were'} answered${adCallsMissed > 0 ? ` and ${fmtNum(adCallsMissed)} missed` : ''}.` : ''}`}
+                {`Google Ads counted ${fmtNum(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} placed straight from your ads. Those callers never visit the site, so ${crmName} has no visit to tie them to — which is why they land under "no clear source" rather than with the ads.${adCallsInGap > 0 ? ` Allowing for them, ads brought in between ${fmtNum(sources.paid)} and ${fmtNum(sources.paid + adCallsInGap)} of your ${fmtNum(sources.total)} leads.` : ''}${adCallsAnswered + adCallsMissed > 0 ? ` Of the calls Google could track, ${fmtNum(adCallsAnswered)} ${adCallsAnswered === 1 ? 'was' : 'were'} answered${adCallsMissed > 0 ? ` and ${fmtNum(adCallsMissed)} missed` : ''}.` : ''}`}
               </p>
             )}
             {!sourcesComplete && (

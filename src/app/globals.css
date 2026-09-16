@@ -4177,15 +4177,34 @@ select.note-field__input { cursor: pointer; }
 
 /* The sentence the owner reads before any number: plain language, one line of
    thought, the figures picked out rather than shouted. */
+/* The opening sentence. It is the first thing anyone reads and the only prose on the page, so
+   it gets a surface of its own and a rule in the accent colour rather than sitting as loose text
+   on the page background. The figures inside are the point, so they take the primary ink and
+   tabular numerals while the connecting words recede. */
 .ov-headline {
+  padding: 1.125rem 1.25rem 1.125rem 1.5rem;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--blue);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+.ov-headline__text {
   margin: 0;
-  max-width: 68ch;
+  max-width: 70ch;
   font-size: 0.9375rem;
-  line-height: 1.65;
-  color: var(--text-muted);
+  line-height: 1.7;
+  color: var(--text-secondary);
   text-wrap: pretty;
 }
-.ov-headline b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ov-headline b {
+  color: var(--text-primary);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .ov-headline { padding: 1rem 1rem 1rem 1.125rem; }
+  .ov-headline__text { font-size: 0.875rem; line-height: 1.65; }
+}
 
 /* Stream band — one ribbon per way of getting found, so the cards inside read as
    a group rather than as six unrelated tiles. */
@@ -4447,16 +4466,50 @@ select.note-field__input { cursor: pointer; }
 .ov2-foot { margin: 0.75rem 0 0; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
 
 /* Lead mix */
-.ov2-mix { display: flex; align-items: center; gap: 1.25rem; flex: 1 1 auto; }
-.ov2-mix__ring { width: 9.5rem; height: 9.5rem; flex-shrink: 0; }
+/* The ring sits above its legend rather than beside it: in a single column the two side by
+   side left the card half empty and clipped the longer names. Stacked, the ring is big enough
+   to read at a glance and every legend row gets the full width as a line of a small table. */
+.ov2-mix {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.ov2-mix__ring { width: 12rem; height: 12rem; flex-shrink: 0; }
 .ov2-mix__total { font-size: 15px; font-weight: 700; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
 .ov2-mix__caption { font-size: 7px; fill: var(--text-muted); }
-.ov2-mix__legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.625rem; flex: 1 1 auto; min-width: 0; }
-.ov2-mix__item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 0.5rem; align-items: baseline; font-size: 0.8125rem; }
-.ov2-mix__swatch { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+
+.ov2-mix__legend { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; }
+.ov2-mix__item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 2.75rem;
+  column-gap: 0.75rem;
+  align-items: center;
+  padding: 0.5625rem 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.8125rem;
+}
+.ov2-mix__item:first-child { border-top: none; }
+.ov2-mix__swatch { width: 10px; height: 10px; border-radius: 3px; }
 .ov2-mix__name { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov2-mix__pct { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
-.ov2-mix__count { grid-column: 2 / 4; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ov2-mix__count {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.ov2-mix__pct {
+  text-align: right;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .ov2-mix__ring { width: 10rem; height: 10rem; }
+}
 
 /* Chart legend + tooltip shared by the Overview charts */
 .ov2-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-bottom: 0.5rem; font-size: 0.75rem; color: var(--text-muted); }
