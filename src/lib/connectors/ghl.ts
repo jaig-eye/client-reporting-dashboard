@@ -358,6 +358,12 @@ export interface CallLookupStats {
   missing_to:     number
   /** Every inbound call's timing, for matching against Google's log. No numbers. */
   crmCalls:       CrmCall[]
+  /** Field names on a call message, and inside its meta. Names only, so the right one can be read. */
+  call_fields:    Record<string, number>
+  meta_fields:    Record<string, number>
+  /** How many inbound calls came with a duration, and the largest seen. */
+  calls_with_duration: number
+  longest_call_sec:    number
   out_of_range:   number
   /** Message types seen on these threads, by name and count. Names only. */
   types:          Record<string, number>
@@ -431,11 +437,18 @@ async function fetchDialledNumbers(
         // Timing only, so Google's log can be matched against it. Whether we know the number
         // dialled is a separate question, answered below.
         const meta = msg.meta as Record<string, unknown> | undefined
-        stats?.crmCalls.push({
-          contactId:   conv.contactId,
-          startedAt:   parsed.ts,
-          durationSec: Number(meta?.callDuration ?? 0),
-        })
+        // Whatever GHL calls it. The first spelling that holds a number wins.
+        const durationSec = Number(
+          meta?.callDuration ?? meta?.duration ?? meta?.callDurationSeconds ??
+          msg.callDuration ?? msg.duration ?? 0,
+        ) || 0
+        if (stats) {
+          for (const k of Object.keys(msg)) stats.call_fields[k] = (stats.call_fields[k] ?? 0) + 1
+          for (const k of Object.keys(meta ?? {})) stats.meta_fields[k] = (stats.meta_fields[k] ?? 0) + 1
+          if (durationSec > 0) stats.calls_with_duration++
+          if (durationSec > stats.longest_call_sec) stats.longest_call_sec = durationSec
+        }
+        stats?.crmCalls.push({ contactId: conv.contactId, startedAt: parsed.ts, durationSec })
         // `to` on an inbound call is the business's end. Keep it only if we already know it.
         const dialled = numberKey(msg.to)
         if (!dialled) { if (stats) stats.missing_to++; continue }
@@ -1178,7 +1191,8 @@ export const ghlConnector: ConnectorAdapter = {
         threads_opened: 0, threads_failed: 0, messages: 0, call_messages: 0,
         inbound_calls: 0, unknown_to: 0, missing_to: 0, out_of_range: 0, types: {},
         distinct_callers: 0, calls_from_repeat_callers: 0, busiest_caller_calls: 0,
-        crmCalls: [],
+        crmCalls: [], call_fields: {}, meta_fields: {},
+        calls_with_duration: 0, longest_call_sec: 0,
       }
       if (worthOpening.length > 0 && trackingNumbers.size > 0) {
         const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo, lookup)
@@ -1205,7 +1219,7 @@ export const ghlConnector: ConnectorAdapter = {
           durationSec: Number(c.duration_seconds ?? 0),
         }))
         .filter(c => isFinite(c.startedAt))
-      let adMatch = { matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0, placed: 0 }
+      let adMatch = { matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0, placed: 0, timeOnly: false }
       if (adCalls.length > 0 && lookup.crmCalls.length > 0) {
         const m = matchAdCalls(lookup.crmCalls, adCalls)
         let placedFromAds = 0
@@ -1225,7 +1239,7 @@ export const ghlConnector: ConnectorAdapter = {
           }
         }
         adMatch = { matched: m.matched, ambiguous: m.ambiguous, offsetMinutes: m.offsetMinutes,
-                    runnerUpMatched: m.runnerUpMatched, placed: placedFromAds }
+                    runnerUpMatched: m.runnerUpMatched, placed: placedFromAds, timeOnly: m.timeOnly }
         console.log(`[ghl] ad calls: ${m.matched} of ${adCalls.length} matched a CRM call, ${placedFromAds} leads credited to ads`)
       }
 

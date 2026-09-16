@@ -32,6 +32,11 @@ export interface MatchOptions {
   /** Google may or may not count ringing time, so durations rarely agree to the second. */
   durationToleranceSec?: number
   /**
+   * The window when only timing can be compared. Tighter than the usual one, because without a
+   * duration to agree on, timing is carrying the whole weight of the claim.
+   */
+  timeOnlyToleranceMs?:  number
+  /**
    * How many calls an offset must explain before it is believed.
    *
    * The offset is worked out from the data, and with only a call or two almost any gap under
@@ -50,6 +55,8 @@ export interface MatchOptions {
 export interface MatchResult {
   /** Contact id → how many ad calls matched it. A person who rang twice counts twice. */
   byContact: Map<string, number>
+  /** True when one side reported no durations, so only the timing could be compared. */
+  timeOnly:  boolean
   matched:   number
   /** Pairs inside tolerance that lost to a better fit for the same call. */
   ambiguous: number
@@ -62,6 +69,7 @@ export interface MatchResult {
 const DEFAULTS = {
   startToleranceMs: 120_000,
   durationToleranceSec: 10,
+  timeOnlyToleranceMs: 90_000,
   minMatches: 3,
   maxRunnerUpShare: 0.5,
 }
@@ -83,6 +91,7 @@ function matchAtOffset(
   adCalls: AdCall[],
   offsetMinutes: number,
   opts: Required<MatchOptions>,
+  timeOnly: boolean,
 ): { byContact: Map<string, number>; matched: number; ambiguous: number } {
   const shift = offsetMinutes * 60_000
 
@@ -94,7 +103,8 @@ function matchAtOffset(
     for (let ci = 0; ci < crmCalls.length; ci++) {
       const crm = crmCalls[ci]
       const dStart = Math.abs((ad.startedAt - shift) - crm.startedAt)
-      if (dStart > opts.startToleranceMs) continue
+      if (dStart > (timeOnly ? opts.timeOnlyToleranceMs : opts.startToleranceMs)) continue
+      if (timeOnly) { pairs.push({ ai, ci, score: dStart }); continue }
       const dDur = Math.abs(ad.durationSec - crm.durationSec)
       if (dDur > opts.durationToleranceSec) continue
       pairs.push({ ai, ci, score: dStart + dDur * 1_000 })
@@ -129,17 +139,26 @@ export function matchAdCalls(
 ): MatchResult {
   const opts = { ...DEFAULTS, ...options }
   const empty: MatchResult = {
-    byContact: new Map(), matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0,
+    byContact: new Map(), timeOnly: false, matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0,
   }
   if (crmCalls.length === 0 || adCalls.length === 0) return empty
+
+  /**
+   * When one side reports no duration for any call, duration carries no information and testing it
+   * would reject every pair. Dropping it then is not a loosening — it is declining to compare a
+   * field that isn't there. The window tightens to compensate, and the confidence floor below is
+   * what keeps this safe: at a wrong offset, calls this sparse line up by chance far less often
+   * than three times.
+   */
+  const timeOnly = !crmCalls.some(c => c.durationSec > 0) || !adCalls.some(c => c.durationSec > 0)
 
   let best = empty
   let runnerUp = 0
   for (const offset of candidateOffsets()) {
-    const r = matchAtOffset(crmCalls, adCalls, offset, opts)
+    const r = matchAtOffset(crmCalls, adCalls, offset, opts, timeOnly)
     if (r.matched > best.matched) {
       runnerUp = best.matched
-      best = { ...r, offsetMinutes: offset, runnerUpMatched: 0 }
+      best = { ...r, timeOnly, offsetMinutes: offset, runnerUpMatched: 0 }
     } else if (r.matched > runnerUp) {
       runnerUp = r.matched
     }
