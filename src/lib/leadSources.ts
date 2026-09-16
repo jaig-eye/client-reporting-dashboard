@@ -118,6 +118,12 @@ const INTERNAL_SESS = /^(crm ui|crm|third party|mobile app|api|import|zapier|wor
 const IMPORT_MEDIUM = /(csv|bulk)?_?import|^csv|import$/
 const MANUAL_MEDIUM = /^(manual|manually|crm ui|crm|added manually)$/
 
+// What GHL writes into contact.source. These are labels the agency chooses when it sets up a
+// form, a pool or a listing, so they are matched loosely — "GBP", "Google Business Profile" and
+// "gmb" all mean the same thing, and a pool is named for what it is rather than to a standard.
+const SOURCE_NUMBER_POOL = /number[_ -]?pool|call[_ -]?tracking/
+const SOURCE_GBP         = /\bgbp\b|\bgmb\b|google[_ -]?business|google[_ -]?my[_ -]?business|business[_ -]?profile|\bmaps\b/
+
 // What an agency calls a tracking number in the phone system, by the channel it stands for.
 const GBP_NUMBER       = /(\bgbp\b|\bgmb\b|google business|business profile|google my business|\bmaps\b|\blisting\b)/
 const GOOGLE_AD_NUMBER = /(google ads?\b|\badwords\b|\bppc\b|paid search|\bsem\b|\blsa\b|local services)/
@@ -205,6 +211,10 @@ export function sourceChannel(contact: Record<string, unknown>): LeadSourceKey |
   if (/import|csv|bulk|migrat/.test(source))                       return 'imported'
   if (/manual|by hand|crm ui|admin/.test(source))                  return 'added_manually'
   if (/facebook lead|instagram lead|lead ad/.test(source))         return 'meta_ads'
+  // The specific labels first: a number-pool source reads "website call tracking (number pool)",
+  // which contains "call" and would otherwise be swallowed by the generic rule below.
+  if (SOURCE_NUMBER_POOL.test(source))                             return 'website_call'
+  if (SOURCE_GBP.test(source))                                     return 'google_business'
   if (/call|phone|sms|text|chat|message|whatsapp/.test(source))    return 'call_or_message'
   if (/api|zapier|integration|webhook|workflow|automation|sync/.test(source)) return 'other'
   return null
