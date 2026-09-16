@@ -345,12 +345,28 @@ export interface DialledCall {
  * sits in `from` and is never touched, and anything that is not already a known tracking number is
  * dropped, so a consumer's number cannot reach this list even if GHL fills a field unexpectedly.
  */
+export interface CallLookupStats {
+  threads_opened: number
+  threads_failed: number
+  messages:       number
+  call_messages:  number
+  inbound_calls:  number
+  /** Inbound calls whose dialled number is not one of this location's own. */
+  unknown_to:     number
+  /** Inbound calls with no 'to' field at all — the shape is not what we expect. */
+  missing_to:     number
+  out_of_range:   number
+  /** Message types seen on these threads, by name and count. Names only. */
+  types:          Record<string, number>
+}
+
 async function fetchDialledNumbers(
   apiKey: string,
   conversations: { id: string; contactId: string }[],
   ownNumbers: Map<string, TrackingNumber>,
   dateFrom: string,
   dateTo: string,
+  stats?: CallLookupStats,
 ): Promise<DialledCall[]> {
   if (ownNumbers.size === 0 || conversations.length === 0) return []
 
@@ -368,19 +384,29 @@ async function fetchDialledNumbers(
       let data: Record<string, unknown>
       try {
         data = await ghlGet(`/conversations/${conv.id}/messages`, apiKey, { limit: '100' }, 2, '2021-04-15')
-      } catch { failed++; return }
+      } catch { failed++; if (stats) stats.threads_failed++; return }
+      if (stats) stats.threads_opened++
       const envelope = data.messages as unknown
       const list = (Array.isArray(envelope)
         ? envelope
         : (envelope as Record<string, unknown> | undefined)?.messages) as Record<string, unknown>[] | undefined
       for (const msg of list ?? []) {
+        if (stats) {
+          stats.messages++
+          const t = String(msg.messageType ?? msg.type ?? '(none)').toUpperCase().slice(0, 40)
+          stats.types[t] = (stats.types[t] ?? 0) + 1
+        }
+        const isCall = VOICE_CALL_MSG_TYPES.has(String(msg.messageType ?? '').toUpperCase())
+        if (stats && isCall) stats.call_messages++
         if (String(msg.direction ?? '').toLowerCase() !== 'inbound') continue
-        if (!VOICE_CALL_MSG_TYPES.has(String(msg.messageType ?? '').toUpperCase())) continue
+        if (!isCall) continue
+        if (stats) stats.inbound_calls++
         const parsed = parseGhlDate(msg.dateAdded ?? msg.dateUpdated)
-        if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
+        if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) { if (stats) stats.out_of_range++; continue }
         // `to` on an inbound call is the business's end. Keep it only if we already know it.
         const dialled = numberKey(msg.to)
-        if (!dialled || !ownNumbers.has(dialled)) continue
+        if (!dialled) { if (stats) stats.missing_to++; continue }
+        if (!ownNumbers.has(dialled)) { if (stats) stats.unknown_to++; continue }
         calls.push({ date: parsed.date, contactId: conv.contactId, dialled })
       }
     }))
@@ -404,11 +430,26 @@ export interface ContactDay {
   leads:   { id: string; key: LeadSourceKey }[]
 }
 
+export interface AttributionStats {
+  /** Contacts in range, and how many carried any attribution at all. */
+  in_range:   number
+  with_attr:  number
+  /** Attribution field names GHL sent, and on how many contacts. Names only. */
+  fields:     Record<string, number>
+  /** GHL's own contact.source values — short labels it sets, not free text. */
+  sources:    Record<string, number>
+  /** sessionSource values, which name the channel GHL decided on. */
+  session:    Record<string, number>
+  /** GHL's medium: form, call, chat_widget and so on. */
+  medium:     Record<string, number>
+}
+
 async function fetchContacts(
   apiKey: string,
   locationId: string,
   dateFrom: string,
-  dateTo: string
+  dateTo: string,
+  attrStats?: AttributionStats,
 ): Promise<ContactDay[]> {
   let contacts: Record<string, unknown>[]
   try {
@@ -456,6 +497,9 @@ async function fetchContacts(
       if (groupOf(key) === 'untracked') {
         const label = `${key}: first ${attributionLabel(c, 'first')} | latest ${attributionLabel(c, 'last')}`
         unsortedLabels.set(label, (unsortedLabels.get(label) ?? 0) + 1)
+      }
+      // Every contact's source, not just the unsourced ones, so the tally describes the account.
+      {
         const src = typeof c.source === 'string' ? c.source.trim().toLowerCase().slice(0, 60) : '(none)'
         if (!src.includes('@')) sourceValues.set(src, (sourceValues.get(src) ?? 0) + 1)
       }
@@ -478,6 +522,16 @@ async function fetchContacts(
       }
     }
     byDate.set(parsed.date, ex)
+  }
+  if (attrStats) {
+    const top = (m: Map<string, number>, limit = 20) => Object.fromEntries(
+      Array.from(m).sort((a, b) => b[1] - a[1]).slice(0, limit))
+    attrStats.in_range  = inRange
+    attrStats.with_attr = withAttr
+    attrStats.fields    = top(attrKeys, 40)
+    attrStats.sources   = top(sourceValues)
+    attrStats.session   = top(attrValues.get('sessionSource') ?? new Map())
+    attrStats.medium    = top(attrValues.get('medium') ?? new Map())
   }
   if (contacts.length > 0) {
     const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
@@ -1037,6 +1091,10 @@ export const ghlConnector: ConnectorAdapter = {
     // Set by fetchTrackingNumbers when the phone system refuses us, which is a different problem
     // from a location that simply has no numbers set up.
     const numberOutcome = { refused: false }
+    // What GHL actually sends on a contact, filled in by fetchContacts.
+    const attribution: AttributionStats = {
+      in_range: 0, with_attr: 0, fields: {}, sources: {}, session: {}, medium: {},
+    }
 
     try {
       // All fetches are independent — run in parallel. ghlGet handles 429s with backoff.
@@ -1048,7 +1106,7 @@ export const ghlConnector: ConnectorAdapter = {
         reviewData,
         trackingNumbers,
       ] = await Promise.all([
-        fetchContacts(apiKey, locationId, dateFrom, dateTo),
+        fetchContacts(apiKey, locationId, dateFrom, dateTo, attribution),
         fetchConversations(apiKey, locationId, dateFrom, dateTo),
         fetchFormsAndSurveys(apiKey, locationId, dateFrom, dateTo),
         fetchAllOpportunities(apiKey, locationId, dateFrom, dateTo),
@@ -1069,8 +1127,12 @@ export const ghlConnector: ConnectorAdapter = {
       let callSourceDates = new Map<string, LeadSourceCounts>()
       let moved = 0
       let matchedCalls = 0
+      const lookup: CallLookupStats = {
+        threads_opened: 0, threads_failed: 0, messages: 0, call_messages: 0,
+        inbound_calls: 0, unknown_to: 0, missing_to: 0, out_of_range: 0, types: {},
+      }
       if (worthOpening.length > 0 && trackingNumbers.size > 0) {
-        const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo)
+        const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo, lookup)
         matchedCalls = calls.length
         const applied = applyCallSources(
           contactData, calls, trackingNumbers,
@@ -1095,20 +1157,28 @@ export const ghlConnector: ConnectorAdapter = {
        * Counts and a code only — no numbers, no names, nothing about a caller.
        */
       const callTracking = {
+        // Order matters: having no numbers at all is the blocker, whether or not something was
+        // refused along the way. The pools endpoint being refused while the numbers list works is
+        // a partial success, not a failure, so it no longer masks what actually went wrong.
         reason:
-          numberOutcome.refused      ? 'no_phone_scope'
-          : trackingNumbers.size === 0 ? 'no_numbers'
+          trackingNumbers.size === 0
+            ? (numberOutcome.refused ? 'no_phone_scope' : 'no_numbers')
           : unplaced.size === 0        ? 'nothing_to_fix'
           : worthOpening.length === 0  ? 'no_call_threads'
-          : moved === 0                ? 'unnamed_numbers'
+          : lookup.threads_opened === 0 ? 'threads_unreadable'
+          : lookup.inbound_calls === 0  ? 'no_inbound_call_messages'
+          : matchedCalls === 0          ? 'dialled_number_unknown'
+          : moved === 0                 ? 'unnamed_numbers'
           : 'ok',
-        numbers:       trackingNumbers.size,
-        pooled:        Array.from(trackingNumbers.values()).filter(n => n.inPool).length,
-        named:         Array.from(trackingNumbers.values()).filter(n => n.name.trim()).length,
+        numbers:        trackingNumbers.size,
+        pooled:         Array.from(trackingNumbers.values()).filter(n => n.inPool).length,
+        named:          Array.from(trackingNumbers.values()).filter(n => n.name.trim()).length,
+        pools_refused:  numberOutcome.refused,
         unplaced_leads: unplaced.size,
-        call_threads:  worthOpening.length,
-        matched_calls: matchedCalls,
-        placed:        moved,
+        call_threads:   worthOpening.length,
+        matched_calls:  matchedCalls,
+        placed:         moved,
+        lookup,
       }
       console.log('[ghl] call tracking:', JSON.stringify(callTracking))
       const { oppData, closedOppData } = allOppResult
@@ -1154,6 +1224,8 @@ export const ghlConnector: ConnectorAdapter = {
             tracking_calls: callSourceMap.get(date) ?? {},
             // Why call attribution did or didn't run this sync. Same on every day of the range.
             call_tracking: callTracking,
+            // Which attribution fields GHL sent, by name. Same on every day of the range.
+            attribution,
             // Always written, even when empty, so a day synced with attribution can be told
             // apart from a day synced before it existed.
             lead_sources:   c?.sources ?? {},
