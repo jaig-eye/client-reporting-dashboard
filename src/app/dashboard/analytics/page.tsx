@@ -551,12 +551,14 @@ export default async function AnalyticsPage({
                   const share = aiNamedTotal > 0 ? a.sessions / aiNamedTotal : 0
                   return (
                     <li key={a.name} className="an-bar">
+                      <span className="an-bar__head">
+                        <span className="an-bar__name">{a.name}</span>
+                        <span className="an-bar__value">{fmtNum(a.sessions)}</span>
+                        <span className="an-bar__pct">{fmtPct(share)}</span>
+                      </span>
                       <span className="an-bar__track">
                         <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                        <span className="an-bar__name">{a.name}</span>
                       </span>
-                      <span className="an-bar__value">{fmtNum(a.sessions)}</span>
-                      <span className="an-bar__pct">{fmtPct(share)}</span>
                     </li>
                   )
                 })}
@@ -626,15 +628,17 @@ export default async function AnalyticsPage({
                 const share = sourceTotal > 0 ? s.sessions / sourceTotal : 0
                 return (
                   <li key={`${s.source}|${s.medium}|${s.campaign}`} className="an-bar">
-                    <span className="an-bar__track">
-                      <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                      <span className="an-bar__name">
+                    <span className="an-bar__head">
+                        <span className="an-bar__name">
                         {s.source}
                         <span className="an-bar__medium">{s.medium}</span>
                       </span>
-                    </span>
-                    <span className="an-bar__value">{fmtNum(s.sessions)}</span>
-                    <span className="an-bar__pct">{fmtPct(share)}</span>
+                        <span className="an-bar__value">{fmtNum(s.sessions)}</span>
+                        <span className="an-bar__pct">{fmtPct(share)}</span>
+                      </span>
+                      <span className="an-bar__track">
+                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
+                      </span>
                   </li>
                 )
               })}
@@ -703,12 +707,14 @@ export default async function AnalyticsPage({
                   const share = deviceTotal > 0 ? d.sessions / deviceTotal : 0
                   return (
                     <li key={d.value} className="an-bar">
+                      <span className="an-bar__head">
+                        <span className="an-bar__name">{DEVICE_LABEL[d.value] ?? d.value}</span>
+                        <span className="an-bar__value">{fmtNum(d.sessions)}</span>
+                        <span className="an-bar__pct">{fmtPct(share)}</span>
+                      </span>
                       <span className="an-bar__track">
                         <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                        <span className="an-bar__name">{DEVICE_LABEL[d.value] ?? d.value}</span>
                       </span>
-                      <span className="an-bar__value">{fmtNum(d.sessions)}</span>
-                      <span className="an-bar__pct">{fmtPct(share)}</span>
                     </li>
                   )
                 })}
@@ -727,12 +733,14 @@ export default async function AnalyticsPage({
                   const share = cityTotal > 0 ? c.sessions / cityTotal : 0
                   return (
                     <li key={c.value} className="an-bar">
+                      <span className="an-bar__head">
+                        <span className="an-bar__name">{c.value}</span>
+                        <span className="an-bar__value">{fmtNum(c.sessions)}</span>
+                        <span className="an-bar__pct">{fmtPct(share)}</span>
+                      </span>
                       <span className="an-bar__track">
                         <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                        <span className="an-bar__name">{c.value}</span>
                       </span>
-                      <span className="an-bar__value">{fmtNum(c.sessions)}</span>
-                      <span className="an-bar__pct">{fmtPct(share)}</span>
                     </li>
                   )
                 })}
@@ -795,12 +803,14 @@ export default async function AnalyticsPage({
                   const share = keyEventTotal > 0 ? e.conversions / keyEventTotal : 0
                   return (
                     <li key={e.value} className="an-bar">
+                      <span className="an-bar__head">
+                        <span className="an-bar__name" title={e.value}>{eventLabel(e.value)}</span>
+                        <span className="an-bar__value">{fmtNum(e.conversions)}</span>
+                        <span className="an-bar__pct">{fmtPct(share)}</span>
+                      </span>
                       <span className="an-bar__track">
                         <span className="an-bar__fill an-bar__fill--conv" style={{ width: barWidth(share) }} aria-hidden />
-                        <span className="an-bar__name" title={e.value}>{eventLabel(e.value)}</span>
                       </span>
-                      <span className="an-bar__value">{fmtNum(e.conversions)}</span>
-                      <span className="an-bar__pct">{fmtPct(share)}</span>
                     </li>
                   )
                 })}

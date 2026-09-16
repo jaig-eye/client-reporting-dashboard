@@ -5,6 +5,7 @@
 
 import { useMemo, useState } from 'react'
 import { CaretDown, ArrowUp, ArrowDown, DownloadSimple } from '@phosphor-icons/react'
+import { ConnectorLogo } from '@/components/ConnectorLogo'
 
 import { formatMetric, percentChange, isImprovement, type ComparisonMetric, type ComparisonSection } from './format'
 export type { ComparisonMetric, ComparisonSection } from './format'
@@ -110,7 +111,9 @@ export default function ComparisonTable({
                       onClick={() => setCollapsed(c => ({ ...c, [section.id]: isOpen }))}
                     >
                       <CaretDown size={13} weight="bold" aria-hidden className={isOpen ? 'cmp-caret' : 'cmp-caret cmp-caret--closed'} />
-                      <span className="cmp-group__dot" style={{ background: section.color }} aria-hidden />
+                      {section.logo
+                        ? <ConnectorLogo type={section.logo} size={16} className="cmp-group__logo" aria-hidden />
+                        : <span className="cmp-group__dot" style={{ background: section.color }} aria-hidden />}
                       {section.name}
                       <span className="cmp-group__count">{section.metrics.length} {section.metrics.length === 1 ? 'metric' : 'metrics'}</span>
                     </button>

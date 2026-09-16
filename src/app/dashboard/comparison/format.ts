@@ -21,6 +21,11 @@ export interface ComparisonSection {
   name:    string
   /** Tints the group header, matching the colour that channel has elsewhere. */
   color:   string
+  /**
+   * Connector type, so the group header can carry the platform's own logo. Sections with no
+   * platform behind them (a white-labelled CRM) leave it unset and fall back to the colour dot.
+   */
+  logo?:   string
   metrics: ComparisonMetric[]
 }
 

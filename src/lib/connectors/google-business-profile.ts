@@ -217,10 +217,12 @@ export interface GBPReviewResult {
 
 const STAR_WORDS: Record<string, number> = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 }
 
-// Google returns 50 reviews a page. Eight pages is every review for the businesses we report on,
-// and stops a listing with thousands from holding up a sync.
+// Google returns 50 reviews a page. Forty pages covers every listing we report on outright —
+// the largest holds about 1,200 — which matters because the reply rate is only true if it is
+// measured over all of them. The cap is here so a listing with tens of thousands cannot hold up
+// a sync, and the page says when it has been hit.
 const REVIEW_PAGE_SIZE = 50
-const MAX_REVIEW_PAGES = 8
+const MAX_REVIEW_PAGES = 40
 
 interface V4Review {
   reviewId?:    string

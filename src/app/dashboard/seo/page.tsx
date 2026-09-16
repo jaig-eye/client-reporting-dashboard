@@ -34,6 +34,7 @@ import ScrollTabs            from '@/components/ui/ScrollTabs'
 import RowLimit              from '@/components/dashboard/RowLimit'
 import {
   MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold, Key,
+  Info,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -657,7 +658,7 @@ export default async function SeoPage({
                 ? `How people are finding you, ${fmtDay(iso(fromDate))} – ${fmtDay(iso(toDate))}, against ${compare === 'last_year' ? 'the same dates last year' : 'the period before'}`
                 : `How people are finding you, ${fmtDay(iso(fromDate))} – ${fmtDay(iso(toDate))}`}
             />
-            <div className="stat-grid stat-grid--wide">
+            <div className="stat-grid stat-grid--wide seo-headline">
               {headline.map((h, i) => (
                 <SparkMetricCard
                   key={h.label}
@@ -1023,6 +1024,14 @@ export default async function SeoPage({
                       colorSpend="var(--seo-search-soft)"
                       colorConversions="var(--seo-local)"
                     />
+                    <p className="gbp-lag">
+                      <Info size={13} weight="fill" className="gbp-lag__icon" aria-hidden />
+                      <span>
+                        Google finishes counting listing activity a few days after the fact, so the
+                        last few days here will look lower than they really were. They fill in on
+                        their own.
+                      </span>
+                    </p>
                   </div>
                 </section>
 

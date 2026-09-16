@@ -45,7 +45,7 @@ import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck, Sparkle,
+  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck, Sparkle, Info,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -146,6 +146,7 @@ const _getOverviewData = unstable_cache(
       ghlRes, ghlPriorRes, ghlRollRes, gbpRes, gbpPriorRes,
       ga4Res, ga4PriorRes, ahrefsRes, keywordsRes,
       adStrengthRes, negativesRes, postsRes, sitesRes, updatesRes, adCallsRes, reviewsRes,
+      ratingRes,
     ] = await Promise.all([
       // Paged: .limit() can't lift the API's 1000-row cap, and campaigns x days passes it.
       has.google
@@ -266,6 +267,15 @@ const _getOverviewData = unstable_cache(
         ? db.from('gbp_reviews').select('star_rating,created_at,reply_comment')
             .eq('client_id', clientId).order('created_at', { ascending: false }).limit(500)
         : none,
+
+      // The listing's running total and average. It is written to the most recent synced day, which
+      // a short date range usually doesn't contain — so this looks outside the range on purpose,
+      // the same way the Reputation page does. Without it the rating reads "—".
+      has.gbp
+        ? db.from('gbp_metrics').select('reviews_count,reviews_avg_rating')
+            .eq('client_id', clientId).gt('reviews_count', 0)
+            .order('date', { ascending: false }).limit(1)
+        : none,
     ])
 
     return {
@@ -293,6 +303,7 @@ const _getOverviewData = unstable_cache(
       updates:     (updatesRes.data ?? []) as unknown as UpdateRow[],
       adCalls:     (adCallsRes.data ?? []) as AdCallRow[],
       reviewRows:  (reviewsRes.data ?? []) as ReviewRow[],
+      ratingNow:   ((ratingRes.data ?? [])[0] ?? null) as { reviews_count: number; reviews_avg_rating: number } | null,
     }
   },
   ['dashboard-overview-v11'],
@@ -1015,8 +1026,13 @@ export default async function OverviewPage({
     const inPeriod = all.filter(r => day(r.created_at) >= periodFrom && day(r.created_at) <= periodTo)
     const awaiting = all.filter(r => !r.reply_comment).length
     const rated    = inPeriod.filter(r => r.star_rating > 0)
+    const allRated = all.filter(r => r.star_rating > 0)
+    // Google's own figures when we have them, otherwise worked out from the reviews we hold.
+    const snap     = data.ratingNow
     return {
-      total:     all.length,
+      total:     snap?.reviews_count || all.length,
+      rating:    snap?.reviews_avg_rating
+        || (allRated.length > 0 ? allRated.reduce((s, r) => s + r.star_rating, 0) / allRated.length : 0),
       inPeriod:  inPeriod.length,
       awaiting,
       replyRate: ((all.length - awaiting) / all.length) * 100,
@@ -1393,14 +1409,14 @@ export default async function OverviewPage({
                       slices={[
                         { name: 'From ads',        value: leadSources.paid,      color: 'var(--blue)' },
                         { name: 'On their own',    value: leadSources.organic,   color: 'var(--green)' },
-                        { name: 'Imported or entered by hand', value: leadSources.internal, color: 'var(--ov-violet)' },
+                        { name: 'Not from marketing', value: leadSources.internal, color: 'var(--ov-violet)' },
                         { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
                       ]}
                       total={leadSources.total}
                       centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
                     />
                     <p className="ov2-foot">
-                      {leadSources.internal > 0 && `Imported or entered by hand means ${crmLabel} recorded the contact as arriving in a file import or as typed in by someone using it, not from a visit or an ad. `}
+                      {leadSources.internal > 0 && `Not from marketing means ${crmLabel} recorded the contact as arriving in a file import, or as created by someone using it — not from a visit or an ad. `}
                       {leadSources.untracked > 0 && 'No clear source means the lead reached you in a way nothing recorded — often a phone call. '}
                       {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
                     </p>
@@ -1748,8 +1764,8 @@ export default async function OverviewPage({
                 <ul className="ov3-local">
                   <li className="ov3-local__stat">
                     <span className="metric-label">Rating</span>
-                    <span className="ov3-local__value">{reviews.count > 0 ? reviews.rating.toFixed(1) : '—'}</span>
-                    <span className="ov3-local__sub">across {fmtInt(reviews.count || reputation.total)} reviews</span>
+                    <span className="ov3-local__value">{reputation.rating > 0 ? reputation.rating.toFixed(1) : '—'}</span>
+                    <span className="ov3-local__sub">across {fmtInt(reputation.total)} reviews</span>
                   </li>
                   <li className="ov3-local__stat">
                     <span className="metric-label">New reviews</span>
@@ -1759,7 +1775,7 @@ export default async function OverviewPage({
                   <li className="ov3-local__stat">
                     <span className="metric-label">Replied to</span>
                     <span className="ov3-local__value">{reputation.replyRate.toFixed(0)}%</span>
-                    <span className="ov3-local__sub">of every review</span>
+                    <span className="ov3-local__sub">of the reviews we hold</span>
                   </li>
                   <li className="ov3-local__stat">
                     <span className="metric-label">Awaiting a reply</span>
@@ -1839,9 +1855,14 @@ export default async function OverviewPage({
                       </>
                     )}
 
-                    {gbpLastDay && (
-                      <p className="ov2-foot">Google reports listing activity a few days late; these figures run to {fmtShortDate(gbpLastDay)}.</p>
-                    )}
+                    <p className="gbp-lag">
+                      <Info size={13} weight="fill" className="gbp-lag__icon" aria-hidden />
+                      <span>
+                        Google finishes counting listing activity a few days after the fact, so the
+                        most recent days read lower than they really were
+                        {gbpLastDay ? <> — these figures run to {fmtShortDate(gbpLastDay)}</> : null}.
+                      </span>
+                    </p>
                   </section>
                 )}
 

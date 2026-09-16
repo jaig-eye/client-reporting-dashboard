@@ -232,7 +232,9 @@ export default async function CrmPage({
   const hasSources      = sources.total > 0
   const sourcesComplete = sourceDates.length === data.length
   // Each label is literally what the CRM recorded, so we can explain any slice when a client asks.
-  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', internal: 'Imported or entered by hand', untracked: 'No clear source' }
+  // "Not from marketing" is the one thing an import and a manually created contact have in common,
+  // and it reads the same whichever of the two channels sits under it.
+  const GROUP_LABEL: Record<LeadSourceGroup, string> = { paid: 'Clicked an ad', organic: 'Found you on their own', internal: 'Not from marketing', untracked: 'No clear source' }
   const sourceGroups = (['paid', 'organic', 'internal', 'untracked'] as const)
     .map(g => ({ key: g, label: GROUP_LABEL[g], count: sources[g] }))
     .filter(g => g.count > 0)

@@ -20,6 +20,7 @@ export function ConnectorLogo({
     case 'meta_ads':              return <MetaAdsLogo   size={size} className={className} aria-hidden={ah} />
     case 'google_analytics':      return <GALogo        size={size} className={className} aria-hidden={ah} />
     case 'google_search_console': return <GSCLogo       size={size} className={className} aria-hidden={ah} />
+    case 'google_business_profile': return <GBPLogo     size={size} className={className} aria-hidden={ah} />
     case 'ghl':                   return <GhlLogo       size={size} className={className} aria-hidden={ah} />
     case 'wordpress':             return <WpLogo        size={size} className={className} aria-hidden={ah} />
     default:                      return <DefaultLogo   size={size} className={className} label={type} aria-hidden={ah} />
@@ -150,6 +151,20 @@ export function LocalDominatorLogo({ size = 20, className, 'aria-hidden': ah }: 
 }
 
 // ── Fallback ─────────────────────────────────────────────────────────────────
+// ── Google Business Profile ──────────────────────────────────────────────────
+// The Maps pin, in Google's four colours — how people recognise a listing.
+export function GBPLogo({ size = 20, className, 'aria-hidden': ah }: { size?: number; className?: string; 'aria-hidden'?: 'true' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} aria-hidden={ah}>
+      <path d="M12 22s7-7.03 7-12A7 7 0 0 0 5 10c0 4.97 7 12 7 12z" fill="#34A853" />
+      <path d="M5.73 5.02A6.98 6.98 0 0 1 12 3c1.9 0 3.62.76 4.88 1.99l-4.9 5.02-6.25-4.99z" fill="#EA4335" />
+      <path d="M5.73 5.02A6.97 6.97 0 0 0 5 10c0 1.7.82 3.62 1.9 5.4L12 10 5.73 5.02z" fill="#FBBC05" />
+      <path d="M16.88 4.99A6.98 6.98 0 0 1 19 10c0 1.7-.82 3.62-1.9 5.4L12 10l4.88-5.01z" fill="#4285F4" />
+      <circle cx="12" cy="10" r="2.5" fill="#fff" />
+    </svg>
+  )
+}
+
 function DefaultLogo({ size = 20, className, label, 'aria-hidden': ah }: { size?: number; className?: string; label: string; 'aria-hidden'?: 'true' }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden={ah}>

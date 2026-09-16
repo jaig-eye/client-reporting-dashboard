@@ -49,9 +49,9 @@ export const LEAD_SOURCES: { key: LeadSourceKey; label: string; group: LeadSourc
   // recorded no visit, so we still can't name the channel. Better than "no source", not organic.
   { key: 'website_call',    label: 'Called a number on your website', group: 'untracked' },
   // Not marketing. These two are the only thing the CRM tells us: it recorded the contact as
-  // arriving through a file import, or as entered by someone using the CRM. We say that and no more.
+  // arriving through a file import, or as created by someone using the CRM. We say that and no more.
   { key: 'imported',        label: 'Imported from a file',            group: 'internal' },
-  { key: 'added_manually',  label: 'Entered in the CRM by hand',      group: 'internal' },
+  { key: 'added_manually',  label: 'Created manually',                group: 'internal' },
   // A source GHL recorded that none of the rules recognise. It could be an ad or not, so it is not
   // counted as organic: it sits with "no source" until a rule is added for it.
   { key: 'other',           label: 'Other sources',                   group: 'untracked' },

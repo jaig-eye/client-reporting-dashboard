@@ -311,7 +311,7 @@ export default async function ComparisonPage({
 
   if (g.spend > 0 || g.clicks > 0 || gPrev.spend > 0) {
     sections.push({
-      id: 'google_ads', name: 'Google Ads', color: 'var(--chan-google)',
+      id: 'google_ads', name: 'Google Ads', color: 'var(--chan-google)', logo: 'google_ads',
       metrics: [
         metric('Spend',              g.spend,       gPrev.spend,       'money',  { key: true }),
         metric('Conversions',        g.conversions, gPrev.conversions, 'number', { key: true }),
@@ -327,7 +327,7 @@ export default async function ComparisonPage({
 
   if (m.spend > 0 || m.clicks > 0 || mPrev.spend > 0) {
     sections.push({
-      id: 'meta_ads', name: 'Meta Ads', color: 'var(--chan-meta)',
+      id: 'meta_ads', name: 'Meta Ads', color: 'var(--chan-meta)', logo: 'meta_ads',
       metrics: [
         metric('Spend',              m.spend,       mPrev.spend,       'money',  { key: true }),
         metric('Conversions',        m.conversions, mPrev.conversions, 'number', { key: true }),
@@ -342,7 +342,7 @@ export default async function ComparisonPage({
 
   if (a.total > 0 || aPrev.total > 0) {
     sections.push({
-      id: 'ga4', name: 'Website traffic', color: 'var(--chan-ga4)',
+      id: 'ga4', name: 'Website traffic', color: 'var(--chan-ga4)', logo: 'google_analytics',
       metrics: [
         metric('Visitors',      a.users,       aPrev.users,       'number', { key: true }),
         metric('Visits',        a.total,       aPrev.total,       'number', { key: true }),
@@ -356,7 +356,7 @@ export default async function ComparisonPage({
 
   if (gscCurr && (gscCurr.totals.impressions > 0 || (gscPrior?.totals.impressions ?? 0) > 0)) {
     sections.push({
-      id: 'search_console', name: 'Google search results', color: 'var(--chan-crm)',
+      id: 'search_console', name: 'Google search results', color: 'var(--chan-crm)', logo: 'google_search_console',
       metrics: [
         metric('Clicks from search', gscCurr.totals.clicks,      gscPrior?.totals.clicks ?? 0,      'number', { key: true }),
         metric('Times you appeared', gscCurr.totals.impressions, gscPrior?.totals.impressions ?? 0, 'number', { key: true }),
@@ -368,7 +368,7 @@ export default async function ComparisonPage({
 
   if (b.views > 0 || b.calls > 0 || bPrev.calls > 0) {
     sections.push({
-      id: 'business_profile', name: 'Google listing', color: 'var(--chan-listing)',
+      id: 'business_profile', name: 'Google listing', color: 'var(--chan-listing)', logo: 'google_business_profile',
       metrics: [
         metric('Listing views',  b.views,      bPrev.views,      'number', { key: true }),
         metric('Calls',          b.calls,      bPrev.calls,      'number', { key: true }),
@@ -381,7 +381,7 @@ export default async function ComparisonPage({
   const crmName = settings.crm_name ?? 'CRM'
   if (c.leads > 0 || cPrev.leads > 0) {
     sections.push({
-      id: 'crm', name: crmName, color: 'var(--chan-google)',
+      id: 'crm', name: crmName, color: 'var(--chan-crm)',
       metrics: [
         metric('Leads',        c.leads,    cPrev.leads,    'number', { key: true }),
         metric('Phone calls',  c.calls,    cPrev.calls,    'number', { key: true }),
