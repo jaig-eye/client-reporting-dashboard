@@ -717,18 +717,30 @@ export default async function DashboardPage({
   const adjPriorCpm   = prior.impressions > 0 ? (adjPriorSpend / prior.impressions) * 1000 : 0
 
   // Metric value map — drives layout-based KPI and top metric rendering
-  type MetricCardDef = { value: string; sparkData?: {v:number}[]; delta?: number; invertDelta?: boolean; sparkColor?: string }
+  type MetricCardDef = { value: string; sub?: string; sparkData?: {v:number}[]; delta?: number; invertDelta?: boolean; sparkColor?: string }
+  /**
+   * Which platforms the headline figures add up. A reader comparing the total against the Google
+   * Ads card below needs to know the top one is the sum of both, or the two read as a
+   * contradiction. Empty on a single-platform view, where the total is that platform.
+   */
+  const platformScope = isFiltered
+    ? ''
+    : hasGoogle && hasMeta ? 'across Google and Meta'
+    : hasGoogle            ? 'Google Ads only'
+    : hasMeta              ? 'Meta Ads only'
+    : ''
+
   const metricValMap: Record<string, MetricCardDef> = {
-    spend:       { value: fmt$(adjSpend), sparkData: spendSpark, delta: showCompare ? calcDelta(adjSpend, adjPriorSpend) : undefined, invertDelta: true, sparkColor: settings.chart_color_spend ?? '#93c5fd' },
+    spend:       { sub: platformScope, value: fmt$(adjSpend), sparkData: spendSpark, delta: showCompare ? calcDelta(adjSpend, adjPriorSpend) : undefined, invertDelta: true, sparkColor: settings.chart_color_spend ?? '#93c5fd' },
     leads:       { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     conversions: { value: fmtNum(current.conversions), sparkData: convSpark, delta: showCompare ? calcDelta(current.conversions, prior.conversions) : undefined, sparkColor: settings.chart_color_conversions ?? '#10b981' },
     revenue:     { value: fmt$(current.conversionValue), sparkData: convValueSpark, delta: showCompare ? calcDelta(current.conversionValue, prior.conversionValue) : undefined, sparkColor: '#10b981' },
     roas:        { value: fmtRoas(adjRoas), sparkData: roasSpark, delta: showCompare ? calcDelta(adjRoas, adjPriorRoas) : undefined, sparkColor: '#8b5cf6' },
-    cpa:         { value: adjCpa > 0 ? fmtCurrency(adjCpa) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(adjCpa, adjPriorCpa) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpa:         { sub: platformScope, value: adjCpa > 0 ? fmtCurrency(adjCpa) : '—', sparkData: cplSpark, delta: showCompare ? calcDelta(adjCpa, adjPriorCpa) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
     ctr:         { value: fmtPct(current.ctr), sparkData: ctrSpark, delta: showCompare ? calcDelta(current.ctr, prior.ctr) : undefined, sparkColor: '#3b82f6' },
     conv_rate:   { value: fmtPct(convRate), sparkData: crSpark, delta: showCompare ? calcDelta(convRate, prior.clicks > 0 ? prior.conversions / prior.clicks : 0) : undefined, sparkColor: '#10b981' },
-    cpm:         { value: adjCpm > 0 ? fmtCurrency(adjCpm) : '—', sparkData: cpmSpark, delta: showCompare ? calcDelta(adjCpm, adjPriorCpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
-    cpc:         { value: adjCpc > 0 ? fmtCurrency(adjCpc) : '—', sparkData: ds.map(d => { const s = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.clicks > 0 ? s / d.clicks : 0 } }), delta: showCompare ? calcDelta(adjCpc, adjPriorCpc) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpm:         { sub: platformScope, value: adjCpm > 0 ? fmtCurrency(adjCpm) : '—', sparkData: cpmSpark, delta: showCompare ? calcDelta(adjCpm, adjPriorCpm) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
+    cpc:         { sub: platformScope, value: adjCpc > 0 ? fmtCurrency(adjCpc) : '—', sparkData: ds.map(d => { const s = effectiveAdFuelCut > 0 ? applyAdFuel(d.spend, effectiveAdFuelCut) : d.spend; return { v: d.clicks > 0 ? s / d.clicks : 0 } }), delta: showCompare ? calcDelta(adjCpc, adjPriorCpc) : undefined, invertDelta: true, sparkColor: '#f59e0b' },
     impressions: { value: fmtNum(current.impressions), sparkData: ds.map(d => ({ v: d.impressions })), delta: showCompare ? calcDelta(current.impressions, prior.impressions) : undefined, sparkColor: '#6366f1' },
     clicks:      { value: fmtNum(current.clicks), sparkData: ds.map(d => ({ v: d.clicks })), delta: showCompare ? calcDelta(current.clicks, prior.clicks) : undefined, sparkColor: '#6366f1' },
     reach:       { value: fmtNum(current.reach ?? 0), sparkData: ds.map(d => ({ v: (d as Record<string, unknown>).reach as number ?? 0 })), delta: showCompare ? calcDelta(current.reach ?? 0, prior.reach ?? 0) : undefined, sparkColor: '#06b6d4' },
@@ -775,6 +787,7 @@ export default async function DashboardPage({
                     key={key}
                     label={METRIC_LABELS[key as MetricKey] ?? key}
                     value={m.value}
+                    sub={m.sub}
                     sparkData={m.sparkData}
                     delta={m.delta}
                     invertDelta={m.invertDelta}
