@@ -237,7 +237,8 @@ export default async function ReputationPage({
   const priorLabel = compare === 'last_year' ? 'the same dates last year' : `the ${dayCount} days before`
 
   const inRange = (r: ReviewRow, a: string, b: string) => day(r.created_at) >= a && day(r.created_at) <= b
-  const now    = summarise(reviews.filter(r => inRange(r, from, to)))
+  const periodReviews = reviews.filter(r => inRange(r, from, to))
+  const now    = summarise(periodReviews)
   const before = summarise(reviews.filter(r => inRange(r, iso(priorFrom), iso(priorTo))))
 
   // ── Lifetime, because this is what a searcher sees on the listing ─────────
@@ -254,7 +255,7 @@ export default async function ReputationPage({
   const distMax = Math.max(1, ...distribution.map(d => d.count))
 
   // Twelve months back from the end of the selected range, so the chart follows the date picker.
-  const months: { key: string; label: string; count: number; low: number }[] = []
+  const months: { key: string; label: string; count: number; low: number; inRange: boolean }[] = []
   for (let i = 11; i >= 0; i--) {
     const d   = new Date(toDate.getFullYear(), toDate.getMonth() - i, 1)
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -264,12 +265,15 @@ export default async function ReputationPage({
       label: d.toLocaleDateString('en-US', { month: 'short' }),
       count: inMonth.length,
       low:   inMonth.filter(r => r.star_rating > 0 && r.star_rating <= 3).length,
+      // Any overlap with the selected range at all, so a short window still marks its month.
+      inRange: key >= from.slice(0, 7) && key <= to.slice(0, 7),
     })
   }
   const monthMax    = Math.max(1, ...months.map(m => m.count))
   const monthsShown = months.some(m => m.count > 0)
 
-  const periodWord = now.count === 1 ? 'review' : 'reviews'
+  const periodWord   = now.count === 1 ? 'review' : 'reviews'
+  const unrepliedNow = periodReviews.filter(r => !r.reply_comment).length
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -362,11 +366,11 @@ export default async function ReputationPage({
             <section className="card rep-card" aria-labelledby="rep-trend-title">
               <div className="rep-card__head">
                 <h2 id="rep-trend-title" className="section-title">Reviews each month</h2>
-                <p className="section-desc">The twelve months up to {prettyDate(to)}. Amber marks three stars or below.</p>
+                <p className="section-desc">Twelve months for context — the dates you picked are in full colour. Amber marks three stars or below.</p>
               </div>
               <ul className="rep-months">
                 {months.map(m => (
-                  <li key={m.key} className="rep-month">
+                  <li key={m.key} className={m.inRange ? 'rep-month' : 'rep-month rep-month--outside'}>
                     <span className="rep-month__track">
                       {/* A month with no reviews gets no bar at all — a sliver of colour would read
                           as a little bit of something, when the answer is nothing. */}
@@ -387,25 +391,23 @@ export default async function ReputationPage({
           )}
         </div>
 
-        {/* ── Every review ────────────────────────────────────────────────── */}
+        {/* ── The reviews in the selected range ───────────────────────────── */}
         <section className="card rep-card" aria-labelledby="rep-all-title">
           <div className="rep-card__head">
-            <h2 id="rep-all-title" className="section-title">Every review</h2>
+            <h2 id="rep-all-title" className="section-title">Reviews in this period</h2>
             <p className="section-desc">
-              Newest first, with your reply where there is one
-              {awaiting > 0 && ` · ${fmtNum(awaiting)} still waiting on one`}
+              {periodReviews.length > 0
+                ? <>Newest first, with your reply where there is one{unrepliedNow > 0 && <> · {fmtNum(unrepliedNow)} still waiting on one</>}</>
+                : <>Nothing was left between these dates. Widen the range to see more.</>}
             </p>
           </div>
-          <RowLimit total={reviews.length} noun="reviews">
-            <div className="rep-list">
-              {reviews.map(r => <ReviewCard key={r.review_id} review={r} />)}
-            </div>
-          </RowLimit>
-          <p className="rep-foot">
-            Google doesn&rsquo;t record how a reviewer found you, so reviews can&rsquo;t be traced back to an ad or a
-            search the way leads can.
-            {reviews.length < lifetimeCount && ` Showing the ${fmtNum(reviews.length)} most recent of ${fmtNum(lifetimeCount)}.`}
-          </p>
+          {periodReviews.length > 0 && (
+            <RowLimit total={periodReviews.length} noun="reviews">
+              <div className="rep-list">
+                {periodReviews.map(r => <ReviewCard key={r.review_id} review={r} />)}
+              </div>
+            </RowLimit>
+          )}
         </section>
       </main>
     </div>

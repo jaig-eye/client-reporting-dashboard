@@ -40,7 +40,7 @@ import { ConnectorLogo } from '@/components/ConnectorLogo'
 import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
 import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
 import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
-import { addLeadSources, summariseLeadSources, LEAD_SOURCES, type LeadSourceCounts, type LeadSourceKey } from '@/lib/leadSources'
+import { addLeadSources, summariseLeadSources, LEAD_SOURCES, groupOf, type LeadSourceCounts, type LeadSourceKey } from '@/lib/leadSources'
 import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
 import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
 import {
@@ -705,7 +705,6 @@ export default async function OverviewPage({
     organic_search: 'Organic Search', direct: 'Direct', referral: 'Referral',
     social: 'Organic Social', ai_assistant: 'AI Assistant',
   }
-  const AD_SOURCE_KEYS: LeadSourceKey[] = ['google_ads', 'google_ads_call', 'meta_ads', 'meta_ads_call']
   const sourceLeads = (keys: LeadSourceKey[]) => keys.reduce((s, k) => s + (sourceCounts[k] ?? 0), 0)
   const crmLeadTrend = (keys: LeadSourceKey[]) => allDays.map(d => ({
     v: keys.reduce((s, k) => s + (sourcesByDate.get(d)?.[k] ?? 0), 0),
@@ -749,20 +748,47 @@ export default async function OverviewPage({
         trend: crmLeadTrend(['meta_ads', 'meta_ads_call']),
       })
     }
-    LEAD_SOURCES
-      .filter(s => !AD_SOURCE_KEYS.includes(s.key))
-      .map(s => ({ ...s, count: sourceCounts[s.key] ?? 0 }))
-      .filter(s => s.count > 0)
+    // One row per thing a client would act on, rather than one per value GHL happened to record.
+    // Every bundle stays inside a single donut group, so the table and the chart cannot disagree.
+    const BUNDLES: { key: LeadSourceKey; also?: LeadSourceKey[]; name?: string }[] = [
+      { key: 'other_paid' },
+      { key: 'google_business' },
+      { key: 'organic_search' },
+      { key: 'ai_assistant' },
+      // Everything else they did to find you on their own. Ads, the listing, search and AI each
+      // keep their own row because each is a thing we work on; these three are not, and as
+      // separate rows of three, one and nought they were noise.
+      { key: 'direct', also: ['social', 'referral'], name: 'Other ways they found you' },
+      // Every lead nothing recorded a source for, however it reached the CRM. The donut counts
+      // these as one slice; listing them apart made the same leads look like different answers.
+      { key: 'untracked', also: ['call_or_message', 'website_call', 'other'], name: 'No source recorded' },
+    ]
+    BUNDLES
+      .map(b => {
+        const keys = [b.key, ...(b.also ?? [])]
+        return {
+          ...b, keys,
+          count: sourceLeads(keys),
+          label: b.name ?? LEAD_SOURCES.find(s => s.key === b.key)?.label ?? b.key,
+          group: groupOf(b.key),
+        }
+      })
+      .filter(b => b.count > 0)
       .sort((a, b) => b.count - a.count)
-      .forEach(s => {
-        const ga4Name = GA4_FOR_SOURCE[s.key]
+      .forEach(b => {
+        // Visits come from the Analytics channel that matches, where one does.
+        const visits = b.keys.reduce<number | null>((sum, k) => {
+          const name = GA4_FOR_SOURCE[k]
+          const v = name ? ga4.byChannel.get(name)?.sessions : undefined
+          return v == null ? sum : (sum ?? 0) + v
+        }, null)
         channels.push({
-          key: `crm:${s.key}`, name: s.label, icon: sourceIcon(s.key),
-          color: groupColor[s.group] ?? 'var(--text-faint)',
+          key: `crm:${b.key}`, name: b.label, icon: sourceIcon(b.key),
+          color: groupColor[b.group] ?? 'var(--text-faint)',
           cost: null,
-          visits: ga4Name ? (ga4.byChannel.get(ga4Name)?.sessions ?? null) : null,
-          leads: s.count,
-          trend: crmLeadTrend([s.key]),
+          visits,
+          leads: b.count,
+          trend: crmLeadTrend(b.keys),
         })
       })
   } else if (hasGoogleData) {
@@ -783,7 +809,6 @@ export default async function OverviewPage({
     })
   }
 
-  const excludedPaidGa4 = hasPaidData && Array.from(ga4.byChannel.keys()).some(n => PAID_GA4.test(n))
   const ga4Channels = Array.from(ga4.byChannel.entries())
     .filter(([name, v]) => v.sessions > 0 && !(hasPaidData && PAID_GA4.test(name)))
     .sort(([, a], [, b]) => b.conversions - a.conversions || b.sessions - a.sessions)
@@ -817,24 +842,6 @@ export default async function OverviewPage({
     .map(c => ({ name: c.name, value: Math.round(c.leads), color: c.color }))
   const mixTotal = mixSlices.reduce((s, c) => s + c.value, 0)
 
-  // Conversions are counted by each source, not by the CRM, so this table's total can be higher
-  // than the lead count in the headline. Say so beside the numbers, not somewhere else.
-  const channelFootnote = hasLeadSources ? [
-    `Leads are the people ${settings.crm_name || 'your CRM'} recorded, counted once each, so this table adds up to the ${fmtInt(leadSources.total)} leads above.`,
-    hasPaidData && adLeads > 0
-      ? `Google and Meta reported ${fmtInt(adLeads)} conversions over the same days: a conversion counts an action, so one person can count more than once.`
-      : '',
-    !sourcesComplete ? 'Some days in this range were synced before sources were tracked, so a few leads are missing from the split.' : '',
-    'Visits are ad clicks for the ad channels and website sessions where Google Analytics has a matching channel.',
-  ].filter(Boolean).join(' ') : [
-    hasPaidData && hasGa4Data
-      ? 'Conversions are counted by each source: Google and Meta for ads, Google Analytics for everything else. They can add up to more than the leads your CRM recorded.'
-      : hasPaidData
-        ? 'Conversions are the ones Google and Meta report, so they can add up to more than the leads your CRM recorded.'
-        : 'Conversions are the ones Google Analytics recorded, so they can differ from the leads your CRM recorded.',
-    excludedPaidGa4 && "Google Analytics' own paid channels are left out so no ad conversion is counted twice.",
-    'Visits are ad clicks for paid channels and website sessions for the rest.',
-  ].filter(Boolean).join(' ')
 
   // ── Cost vs leads by day ──────────────────────────────────────────────────
   const lastCrmDate = crmDays.length > 0 ? crmDays[crmDays.length - 1][0] : null
@@ -1248,8 +1255,12 @@ export default async function OverviewPage({
   // ── The sentence a business owner reads first ─────────────────────────────
   const headline: ReactNode = hasCrmData ? (
     <>
-      You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}
-      {crm.calls + crm.forms > 0 && <> — <b>{fmtInt(crm.calls)}</b> by phone and <b>{fmtInt(crm.forms)}</b> through the website</>}.
+      You picked up <b>{fmtInt(crm.leads)} {crm.leads === 1 ? 'lead' : 'leads'}</b> over {periodLabel}.
+      {/* Deliberately a second sentence, not a dash: these are activity counts, not a split of
+          the lead total. Calls counts every inbound call including repeat and existing customers,
+          where a lead is a person counted once, so the two never add up to the headline. Joined to
+          it with a dash they read as a breakdown, and the arithmetic visibly fails. */}
+      {crm.calls + crm.forms > 0 && <> Your phone rang <b>{fmtInt(crm.calls)}</b> {crm.calls === 1 ? 'time' : 'times'} and <b>{fmtInt(crm.forms)}</b> {crm.forms === 1 ? 'enquiry' : 'enquiries'} came through the website.</>}
       {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
       {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads came through an ad</>}.{adCallCount > 0 && <> Google Ads also counted <b>{fmtInt(adCallCount)}</b> {adCallCount === 1 ? 'call' : 'calls'} straight from the ad.</>}</>}
     </>
@@ -1413,7 +1424,6 @@ export default async function OverviewPage({
                       )}
                     </table>
                   </div>
-                  <p className="ov2-foot">{channelFootnote}</p>
                 </section>
 
                 {hasLeadSources ? (
@@ -1432,12 +1442,12 @@ export default async function OverviewPage({
                       total={leadSources.total}
                       centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
                     />
-                    <p className="ov2-foot">
-                      {leadSources.internal > 0 && `Not from marketing means ${crmLabel} recorded the contact as arriving in a file import, or as created by someone using it — not from a visit or an ad. `}
-                      {leadSources.untracked > 0 && `No clear source means the lead reached you in a way nothing recorded — most often a phone call, because a caller leaves no visit behind. `}
-                      {adCallsInGap > 0 && `Google counted ${fmtInt(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} placed straight from your ads over these days, and those callers never reach the website — so up to ${fmtInt(adCallsInGap)} of the ${fmtInt(leadSources.untracked)} unsourced leads came from ads too, putting ads somewhere between ${fmtInt(leadSources.paid)} and ${fmtInt(adLeadsHigh)} of your ${fmtInt(leadSources.total)} leads. `}
-                      {!sourcesComplete && 'Some days in this range were synced before sources were tracked, so this covers fewer leads than the total.'}
-                    </p>
+                    {adCallsInGap > 0 && (
+                      <p className="ov2-mix__range">
+                        <span>With ad calls counted</span>
+                        <b>{fmtInt(leadSources.paid)}–{fmtInt(adLeadsHigh)} from ads</b>
+                      </p>
+                    )}
                   </section>
                 ) : mixTotal > 0 && (
                   <section className="card ov2-card" aria-labelledby="ov2-mix-title">

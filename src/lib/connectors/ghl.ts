@@ -281,7 +281,11 @@ export interface TrackingNumber {
  * it is one of these, so a caller's own number can never be picked up. When the token has no phone
  * system scope this comes back empty and the call lookup is skipped entirely.
  */
-async function fetchTrackingNumbers(apiKey: string, locationId: string): Promise<Map<string, TrackingNumber>> {
+async function fetchTrackingNumbers(
+  apiKey: string,
+  locationId: string,
+  outcome?: { refused: boolean },
+): Promise<Map<string, TrackingNumber>> {
   const numbers = new Map<string, TrackingNumber>()
 
   // Pool numbers first, so a number listed in both is remembered as pooled.
@@ -299,6 +303,7 @@ async function fetchTrackingNumbers(apiKey: string, locationId: string): Promise
     }
     console.log(`[ghl] number pools: ${pools.length}, pooled numbers ${numbers.size}`)
   } catch (e) {
+    if (outcome) outcome.refused = true
     console.log(`[ghl] number pools unavailable (needs the phone system scope): ${String(e).slice(0, 200)}`)
   }
 
@@ -314,6 +319,7 @@ async function fetchTrackingNumbers(apiKey: string, locationId: string): Promise
       numbers.set(key, { name: String(n.friendlyName ?? n.name ?? ''), inPool: false })
     }
   } catch (e) {
+    if (outcome) outcome.refused = true
     console.log(`[ghl] number list unavailable (needs the phone system scope): ${String(e).slice(0, 200)}`)
   }
 
@@ -1028,6 +1034,10 @@ export const ghlConnector: ConnectorAdapter = {
       return { rows: [], error: 'Missing GHL API key or location ID' }
     }
 
+    // Set by fetchTrackingNumbers when the phone system refuses us, which is a different problem
+    // from a location that simply has no numbers set up.
+    const numberOutcome = { refused: false }
+
     try {
       // All fetches are independent — run in parallel. ghlGet handles 429s with backoff.
       const [
@@ -1044,7 +1054,7 @@ export const ghlConnector: ConnectorAdapter = {
         fetchAllOpportunities(apiKey, locationId, dateFrom, dateTo),
         fetchReviews(apiKey, locationId, dateFrom, dateTo),
         // Best-effort: a token without the phone system scope just means no call sources.
-        fetchTrackingNumbers(apiKey, locationId).catch(() => new Map<string, TrackingNumber>()),
+        fetchTrackingNumbers(apiKey, locationId, numberOutcome).catch(() => new Map<string, TrackingNumber>()),
       ])
       const convData = convResult.daily
 
@@ -1057,17 +1067,50 @@ export const ghlConnector: ConnectorAdapter = {
       }
       const worthOpening = convResult.phoneThreads.filter(t => unplaced.has(t.contactId))
       let callSourceDates = new Map<string, LeadSourceCounts>()
+      let moved = 0
+      let matchedCalls = 0
       if (worthOpening.length > 0 && trackingNumbers.size > 0) {
         const calls = await fetchDialledNumbers(apiKey, worthOpening, trackingNumbers, dateFrom, dateTo)
-        const { moved, byDate } = applyCallSources(
+        matchedCalls = calls.length
+        const applied = applyCallSources(
           contactData, calls, trackingNumbers,
           (config.call_sources as Record<string, string>) ?? {},
         )
-        callSourceDates = byDate
+        moved = applied.moved
+        callSourceDates = applied.byDate
         console.log(`[ghl] call sources: ${moved} of ${unplaced.size} unplaced leads named by the number they dialled`)
       } else {
         console.log(`[ghl] call sources: skipped (${unplaced.size} unplaced leads, ${worthOpening.length} phone threads, ${trackingNumbers.size} tracking numbers)`)
       }
+
+      /**
+       * Why call attribution did or didn't happen, so it can be answered from the data rather
+       * than from a log line. Each reason has a different fix:
+       *   no_phone_scope  the token can't read the phone system — add the scope
+       *   no_numbers      the phone system is readable but holds no numbers for this location
+       *   nothing_to_fix  every lead already has a source; nothing to attribute
+       *   no_call_threads the unsourced leads have no phone conversation, so they aren't calls
+       *   unnamed_numbers calls matched a number, but no name or pool said what it stands for
+       *   ok              leads were placed by the number they dialled
+       * Counts and a code only — no numbers, no names, nothing about a caller.
+       */
+      const callTracking = {
+        reason:
+          numberOutcome.refused      ? 'no_phone_scope'
+          : trackingNumbers.size === 0 ? 'no_numbers'
+          : unplaced.size === 0        ? 'nothing_to_fix'
+          : worthOpening.length === 0  ? 'no_call_threads'
+          : moved === 0                ? 'unnamed_numbers'
+          : 'ok',
+        numbers:       trackingNumbers.size,
+        pooled:        Array.from(trackingNumbers.values()).filter(n => n.inPool).length,
+        named:         Array.from(trackingNumbers.values()).filter(n => n.name.trim()).length,
+        unplaced_leads: unplaced.size,
+        call_threads:  worthOpening.length,
+        matched_calls: matchedCalls,
+        placed:        moved,
+      }
+      console.log('[ghl] call tracking:', JSON.stringify(callTracking))
       const { oppData, closedOppData } = allOppResult
       console.log(`[ghl] contacts in range: ${contactData.reduce((s, d) => s + d.count, 0)} across ${contactData.length} days`)
       console.log(`[ghl] reviews: ${reviewData.reduce((s, d) => s + d.received, 0)}`)
@@ -1109,6 +1152,8 @@ export const ghlConnector: ConnectorAdapter = {
             form_breakdown: f?.breakdown ?? [],
             // Inbound calls by the channel the number dialled stands for. Counts only.
             tracking_calls: callSourceMap.get(date) ?? {},
+            // Why call attribution did or didn't run this sync. Same on every day of the range.
+            call_tracking: callTracking,
             // Always written, even when empty, so a day synced with attribution can be told
             // apart from a day synced before it existed.
             lead_sources:   c?.sources ?? {},

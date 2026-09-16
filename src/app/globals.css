@@ -5655,3 +5655,32 @@ select.note-field__input { cursor: pointer; }
   line-height: 1.5;
 }
 .gbp-lag__icon { flex-shrink: 0; color: var(--amber); margin-top: 0.0625rem; }
+
+/* ── Reputation: months outside the selected dates ──────────────────────────
+   The chart keeps twelve months because a trend needs more than the window you
+   are looking at, but the months you picked are the ones being counted above,
+   so the rest sit back rather than competing with them. */
+.rep-month--outside .rep-month__bar { opacity: 0.28; }
+.rep-month--outside .rep-month__n,
+.rep-month--outside .rep-month__label { color: var(--text-faint); }
+
+/* ── Overview: the ad-call range under the lead-mix legend ──────────────────
+   One line, not a paragraph: the bound is worth showing, the reasoning behind
+   it is not something a client reads under a chart. */
+.ov2-mix__range {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.ov2-mix__range b {
+  color: var(--text-primary);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
