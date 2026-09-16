@@ -1,3 +1,4 @@
+import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { syncClient } from '@/lib/sync'
@@ -16,6 +17,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const records = await syncClient(clientId, 'manual', parseInt(days) || 30, accountId || undefined, dateStart, dateEnd)
+    revalidateTag('client-metrics')
     return NextResponse.json({ success: true, records })
   } catch (e) {
     console.error('Sync error:', e)

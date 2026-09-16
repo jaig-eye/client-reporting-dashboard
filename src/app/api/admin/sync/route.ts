@@ -2,6 +2,7 @@
 // Triggers a manual sync for a client. Can target a specific connection or all connections.
 // Used by the ClientSyncButton and admin sync panels.
 
+import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { syncClient } from '@/lib/sync'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -49,6 +50,10 @@ export async function POST(req: NextRequest) {
       ip,
       meta: { jobType: resolvedJobType, connectionId, records },
     })
+    // Dashboard pages cache for ten minutes under this tag. Without this a manual sync wrote the
+    // new figures and every page carried on showing the old ones, which reads as the sync having
+    // done nothing. The cron route has always done this; the admin one never did.
+    revalidateTag('client-metrics')
     return NextResponse.json({ ok: true, records })
   } catch (err) {
     console.error('Sync error:', err)

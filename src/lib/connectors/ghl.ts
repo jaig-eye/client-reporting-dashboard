@@ -359,8 +359,10 @@ export interface CallLookupStats {
   /** Every inbound call's timing, for matching against Google's log. No numbers. */
   crmCalls:       CrmCall[]
   /** Field names on a call message, and inside its meta. Names only, so the right one can be read. */
-  call_fields:    Record<string, number>
-  meta_fields:    Record<string, number>
+  call_fields:      Record<string, number>
+  meta_fields:      Record<string, number>
+  /** Names inside meta.call, which is where the duration turned out to live. */
+  call_meta_fields: Record<string, number>
   /** How many inbound calls came with a duration, and the largest seen. */
   calls_with_duration: number
   longest_call_sec:    number
@@ -437,14 +439,19 @@ async function fetchDialledNumbers(
         // Timing only, so Google's log can be matched against it. Whether we know the number
         // dialled is a separate question, answered below.
         const meta = msg.meta as Record<string, unknown> | undefined
-        // Whatever GHL calls it. The first spelling that holds a number wins.
+        // meta holds a single key, `call`, which is an object rather than a number — so the
+        // duration sits one level further in than the obvious place. Every spelling either level
+        // might use is tried, and the first that holds a number wins.
+        const call = meta?.call as Record<string, unknown> | undefined
         const durationSec = Number(
+          call?.duration ?? call?.callDuration ?? call?.durationSeconds ?? call?.length ??
           meta?.callDuration ?? meta?.duration ?? meta?.callDurationSeconds ??
           msg.callDuration ?? msg.duration ?? 0,
         ) || 0
         if (stats) {
           for (const k of Object.keys(msg)) stats.call_fields[k] = (stats.call_fields[k] ?? 0) + 1
           for (const k of Object.keys(meta ?? {})) stats.meta_fields[k] = (stats.meta_fields[k] ?? 0) + 1
+          for (const k of Object.keys(call ?? {})) stats.call_meta_fields[k] = (stats.call_meta_fields[k] ?? 0) + 1
           if (durationSec > 0) stats.calls_with_duration++
           if (durationSec > stats.longest_call_sec) stats.longest_call_sec = durationSec
         }
@@ -1191,7 +1198,7 @@ export const ghlConnector: ConnectorAdapter = {
         threads_opened: 0, threads_failed: 0, messages: 0, call_messages: 0,
         inbound_calls: 0, unknown_to: 0, missing_to: 0, out_of_range: 0, types: {},
         distinct_callers: 0, calls_from_repeat_callers: 0, busiest_caller_calls: 0,
-        crmCalls: [], call_fields: {}, meta_fields: {},
+        crmCalls: [], call_fields: {}, meta_fields: {}, call_meta_fields: {},
         calls_with_duration: 0, longest_call_sec: 0,
       }
       if (worthOpening.length > 0 && trackingNumbers.size > 0) {

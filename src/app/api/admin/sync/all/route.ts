@@ -3,6 +3,7 @@
 // Runs in parallel batches of 3 to cut wall-clock time while avoiding API rate limits.
 // Returns a per-client summary of records synced / errors.
 
+import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { syncClient } from '@/lib/sync'
@@ -64,5 +65,7 @@ export async function POST(req: NextRequest) {
     ip,
     meta: { scope: 'all_clients', total_records: total, days },
   })
+  // Same as the cron: the figures are no use if every page keeps showing the previous ones.
+  revalidateTag('client-metrics')
   return NextResponse.json({ results, total_records: total })
 }
