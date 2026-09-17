@@ -205,7 +205,7 @@ export default async function ReputationPage({
   if (reviews.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="Reputation" accent="var(--amber)" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="Reputation" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
           <EmptyState
             icon={<Star size={22} weight="fill" />}
@@ -277,7 +277,7 @@ export default async function ReputationPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="Reputation" accent="var(--amber)" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="Reputation" fromDate={fromDate} toDate={toDate} compare={compare} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5 sm:space-y-6">
         <p className="rep-lede">

@@ -105,7 +105,7 @@ export default async function SearchConsolePage({
   if (gscConnections.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Search Console" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Search Console not connected"
@@ -148,7 +148,7 @@ export default async function SearchConsolePage({
   if (!curr || !hasData) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Search Console" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<MagnifyingGlass size={22} />} />
         </main>
@@ -230,7 +230,7 @@ export default async function SearchConsolePage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="SEO — Search Console" accent="#4285f4" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="SEO — Search Console" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* Sparse data notice */}

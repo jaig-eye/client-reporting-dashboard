@@ -67,7 +67,7 @@ export default async function GBPPage({
   if (gbpConnections.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Google Business Profile" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Google Business Profile not connected"
@@ -99,7 +99,7 @@ export default async function GBPPage({
   if (gbpRows.length === 0) {
     return (
       <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO — Google Business Profile" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState title="No data for this date range" description="Try selecting a wider date range, or wait for the next sync." icon={<MapPin size={22} />} />
         </main>
@@ -181,7 +181,7 @@ export default async function GBPPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="SEO — Google Business Profile" accent="#34a853" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="SEO — Google Business Profile" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
         {/* KPI cards */}

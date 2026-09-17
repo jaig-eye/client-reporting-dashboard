@@ -411,7 +411,7 @@ export default async function ComparisonPage({
   const previousLabel = rangeLabel(priorFrom, priorTo)
 
   const header = (
-    <PageHeader title="Period Comparison" accent="var(--ov-indigo)" fromDate={fromDate} toDate={toDate} compare={compare} />
+    <PageHeader title="Period Comparison" fromDate={fromDate} toDate={toDate} compare={compare} />
   )
 
   if (sections.length === 0) {

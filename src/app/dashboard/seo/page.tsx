@@ -23,6 +23,7 @@ import type { Client, DailyMetric } from '@/lib/types'
 import { fetchGSCLiveData }  from '@/lib/gsc-live'
 import type { GSCSummaryResult } from '@/lib/gsc-live'
 import PageHeader            from '@/components/dashboard/PageHeader'
+import ListingPreview, { type SetupVerdict } from './ListingPreview'
 import EmptyState            from '@/components/dashboard/EmptyState'
 import SparkMetricCard       from '@/components/SparkMetricCard'
 import SpendChart            from '@/components/SpendChart'
@@ -457,16 +458,6 @@ export default async function SeoPage({
    * How the listing is set up, from the most recent day that captured it. A snapshot rather than
    * a series, so the newest one wins and the panel is simply absent before a sync has stored one.
    */
-  /**
-   * A listing setting, judged rather than just reported. Google's own limits are the yardstick:
-   * ten categories, 750 characters of description. "Worth adding to" is the useful state — it is
-   * where the next hour of work goes.
-   */
-  type SetupState = 'done' | 'partial' | 'missing'
-  const setupRow = (
-    label: string, state: SetupState, value: string, note?: string,
-  ) => ({ label, state, value, note })
-
   const listing = (() => {
     type Snapshot = import('@/lib/connectors/google-business-profile').GBPProfile
     const rows = (gbpRows as unknown as { date: string; raw_data?: { profile?: Snapshot } | null }[]) ?? []
@@ -658,7 +649,7 @@ export default async function SeoPage({
   if (nothingConnected) {
     return (
       <div className="seo-report min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <PageHeader title="SEO" accent="var(--seo-search)" fromDate={fromDate} toDate={toDate} compare={compare} />
+        <PageHeader title="SEO" fromDate={fromDate} toDate={toDate} compare={compare} />
         <main className="max-w-7xl mx-auto px-6 py-8">
           <EmptyState
             title="Your search reporting isn't switched on yet"
@@ -672,7 +663,7 @@ export default async function SeoPage({
 
   return (
     <div className="seo-report min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="SEO" accent="var(--seo-search)" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="SEO" fromDate={fromDate} toDate={toDate} compare={compare} />
 
       <main className="max-w-7xl mx-auto px-6 py-6 seo-page">
 
@@ -1039,75 +1030,74 @@ export default async function SeoPage({
               {listing && (
                 <section className="card seo-panel">
                   <div className="seo-panel__head">
-                    <h3 className="section-title">How your listing is set up</h3>
+                    <h3 className="section-title">Your listing, as people see it</h3>
                     <p className="section-desc">
-                      What Google shows people about you. Categories and services decide which
-                      searches you turn up in.
+                      What Google shows someone who finds you. The categories and services decide
+                      which searches you turn up in at all.
                     </p>
                   </div>
                   <div className="seo-panel__body">
-                    {(() => {
-                      const rows = [
-                        setupRow('Main category',
-                          listing.primary_category ? 'done' : 'missing',
-                          listing.primary_category || 'Not set',
-                          listing.primary_category ? 'The single biggest factor in which searches you appear for' : undefined),
-                        setupRow('Other categories',
-                          listing.extra_categories.length >= 3 ? 'done'
+                    <ListingPreview
+                      listing={listing}
+                      rating={avgRating}
+                      reviews={reviewCount}
+                      verdicts={[
+                        {
+                          label: 'Main category',
+                          state: listing.primary_category ? 'done' : 'missing',
+                          value: listing.primary_category || 'Not set',
+                          note:  'Decides which searches you are eligible for at all',
+                        },
+                        {
+                          label: 'Other categories',
+                          state: listing.extra_categories.length >= 3 ? 'done'
                             : listing.extra_categories.length > 0 ? 'partial' : 'missing',
-                          listing.extra_categories.length > 0 ? listing.extra_categories.join(', ') : 'None added',
-                          `${listing.extra_categories.length} of the 9 Google allows`),
-                        setupRow('Services listed',
-                          listing.services.length >= 10 ? 'done'
+                          value: listing.extra_categories.length > 0
+                            ? listing.extra_categories.join(', ') : 'None added',
+                          note:  `${listing.extra_categories.length} of the 9 Google allows`,
+                        },
+                        {
+                          label: 'Services',
+                          state: listing.services.length >= 10 ? 'done'
                             : listing.services.length > 0 ? 'partial' : 'missing',
-                          listing.services.length > 0 ? String(listing.services.length) : 'None added',
-                          listing.services.length > 0
-                            ? listing.services.slice(0, 6).join(', ') +
-                              (listing.services.length > 6 ? ` and ${listing.services.length - 6} more` : '')
-                            : 'Each one is a search you can show up for'),
-                        setupRow('Description',
-                          listing.description_length >= 500 ? 'done'
+                          value: listing.services.length > 0
+                            ? `${listing.services.length} listed` : 'None added',
+                          note:  'Each one is a search you can appear for',
+                        },
+                        {
+                          label: 'Description',
+                          state: listing.description_length >= 500 ? 'done'
                             : listing.description_length > 0 ? 'partial' : 'missing',
-                          listing.description_length > 0 ? `${listing.description_length} characters` : 'Not written',
-                          listing.description_length > 0
-                            ? `${750 - listing.description_length} characters spare of the 750 Google allows`
-                            : 'Google allows 750 characters'),
-                        setupRow('Opening hours',
-                          listing.hours_set ? 'done' : 'missing',
-                          listing.hours_set ? 'Set' : 'Not set',
-                          listing.hours_set && !listing.special_hours_set
-                            ? 'Holiday hours not set — worth adding before a bank holiday'
-                            : listing.special_hours_set ? 'Holiday hours added too' : undefined),
-                        ...(listing.service_areas > 0 ? [setupRow('Areas you serve', 'done',
-                          String(listing.service_areas), 'Where Google will show you on the map')] : []),
-                        setupRow('Phone and website',
-                          listing.phone && listing.website ? 'done'
+                          value: listing.description_length > 0
+                            ? `${listing.description_length} characters` : 'Not written',
+                          note:  `${750 - listing.description_length} spare of the 750 allowed`,
+                        },
+                        {
+                          label: 'Photos',
+                          state: listing.photo_count >= 10 ? 'done'
+                            : listing.photo_count > 0 ? 'partial' : 'missing',
+                          value: listing.photo_count > 0
+                            ? `${listing.photo_count} on the listing` : 'None',
+                          note:  'Listings with photos get more calls and direction requests',
+                        },
+                        {
+                          label: 'Opening hours',
+                          state: listing.hours_set ? 'done' : 'missing',
+                          value: listing.hours_set ? `${listing.hours.length} days set` : 'Not set',
+                          note:  listing.special_hours_set
+                            ? 'Holiday hours added too'
+                            : 'Holiday hours not set',
+                        },
+                        {
+                          label: 'Phone and website',
+                          state: listing.phone && listing.website ? 'done'
                             : listing.phone || listing.website ? 'partial' : 'missing',
-                          listing.phone && listing.website ? 'Both on the listing'
+                          value: listing.phone && listing.website ? 'Both on the listing'
                             : !listing.phone && !listing.website ? 'Neither is set'
-                            : !listing.phone ? 'No phone number' : 'No website link'),
-                      ]
-                      const done = rows.filter(r => r.state === 'done').length
-                      return (
-                        <>
-                          <p className="gbp-setup__score">
-                            <b>{done} of {rows.length}</b> filled in as well as Google allows
-                            {done < rows.length && <span> &middot; the rest are where the next gains are</span>}
-                          </p>
-                          <dl className="gbp-setup">
-                            {rows.map(r => (
-                              <div key={r.label} className="gbp-setup__row" data-state={r.state}>
-                                <dt>{r.label}</dt>
-                                <dd>
-                                  <span className={r.state === 'missing' ? 'gbp-setup__missing' : 'gbp-setup__value'}>{r.value}</span>
-                                  {r.note && <span className="gbp-setup__detail">{r.note}</span>}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </>
-                      )
-                    })()}
+                            : !listing.phone ? 'No phone number' : 'No website link',
+                        },
+                      ] satisfies SetupVerdict[]}
+                    />
                   </div>
                 </section>
               )}

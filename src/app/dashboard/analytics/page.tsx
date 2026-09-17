@@ -269,7 +269,7 @@ export default async function AnalyticsPage({
 
   const shell = (children: React.ReactNode) => (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="Website Traffic" accent={GA4_ACCENT} fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="Website Traffic" fromDate={fromDate} toDate={toDate} compare={compare} />
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-5">{children}</main>
     </div>
   )

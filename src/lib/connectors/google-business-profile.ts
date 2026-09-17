@@ -85,8 +85,27 @@ async function googleGet<T>(url: URL | string, accessToken: string, what: string
  * Google returns all of it from the same locations endpoint we already call — we were asking for
  * three fields. This is a snapshot of the present state, not a daily series.
  */
+/** One day's opening hours, as Google stores them. */
+export interface GBPHours {
+  day:   string
+  open:  string
+  close: string
+}
+
 export interface GBPProfile {
   title:               string
+  /** The address as Google prints it, line by line. Empty for a business with no shopfront. */
+  address:             string[]
+  /** As written on the listing, for the preview. Public information on the listing itself. */
+  phone_number:        string
+  website_url:         string
+  /** Opening hours per day, so the preview can show them the way a searcher sees them. */
+  hours:               GBPHours[]
+  /** Photo URLs from the listing, newest first. Google-hosted and public. */
+  photos:              string[]
+  photo_count:         number
+  /** The description itself, so the preview can show what those characters actually say. */
+  description:         string
   primary_category:    string
   extra_categories:    string[]
   services:            string[]
@@ -336,6 +355,7 @@ export async function fetchReviews(
 const PROFILE_READ_MASK = [
   'name', 'title', 'categories', 'profile', 'phoneNumbers', 'websiteUri',
   'regularHours', 'specialHours', 'serviceArea', 'labels', 'openInfo', 'metadata', 'serviceItems',
+  'storefrontAddress',
 ].join(',')
 
 interface V1Category { displayName?: string }
@@ -355,6 +375,65 @@ interface V1Location {
     structuredServiceItem?: { description?: string }
     freeFormServiceItem?:   { label?: { displayName?: string } }
   }[]
+  storefrontAddress?: {
+    addressLines?: string[]
+    locality?: string
+    administrativeArea?: string
+    postalCode?: string
+  }
+}
+
+const DAY_NAMES: Record<string, string> = {
+  MONDAY: 'Monday', TUESDAY: 'Tuesday', WEDNESDAY: 'Wednesday', THURSDAY: 'Thursday',
+  FRIDAY: 'Friday', SATURDAY: 'Saturday', SUNDAY: 'Sunday',
+}
+
+/** Google sends hours as {hours, minutes} with either part missing when zero. */
+function clockTime(t: { hours?: number; minutes?: number } | undefined): string {
+  if (!t) return ''
+  const h = t.hours ?? 0
+  const m = t.minutes ?? 0
+  const suffix = h >= 12 ? 'pm' : 'am'
+  const hour12 = h % 12 === 0 ? 12 : h % 12
+  return m === 0 ? `${hour12}${suffix}` : `${hour12}:${String(m).padStart(2, '0')}${suffix}`
+}
+
+/**
+ * The listing's photos. Same v4 endpoint and scope as the reviews, so nothing new is needed —
+ * and best-effort, because a listing with no photos is a finding rather than a failure.
+ */
+async function fetchLocationPhotos(
+
+  locationName: string,
+  accessToken: string,
+): Promise<{ urls: string[]; total: number }> {
+  try {
+    // The media path needs the owning account, which a location name does not carry — the same
+    // problem the reviews fetch has, solved the same way: try each account until one answers.
+    let res: Response | null = null
+    for (const account of await listAccounts(accessToken)) {
+      const url = new URL(`${MYBIZ_BASE}/${account.name}/${locationName}/media`)
+      url.searchParams.set('pageSize', '25')
+      const attempt = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } })
+      if (attempt.ok) { res = attempt; break }
+    }
+    if (!res) return { urls: [], total: 0 }
+    const data = await res.json() as {
+      mediaItems?: { mediaFormat?: string; googleUrl?: string; thumbnailUrl?: string
+                     locationAssociation?: { category?: string } }[]
+      totalMediaItemCount?: number
+    }
+    const items = (data.mediaItems ?? []).filter(m => m.mediaFormat === 'PHOTO' && (m.googleUrl || m.thumbnailUrl))
+    // A cover or profile shot is what Google leads with, so it leads here too.
+    const rank = (c?: string) => (c === 'COVER' ? 0 : c === 'PROFILE' ? 1 : c === 'LOGO' ? 3 : 2)
+    items.sort((a, b) => rank(a.locationAssociation?.category) - rank(b.locationAssociation?.category))
+    return {
+      urls:  items.slice(0, 8).map(m => (m.googleUrl || m.thumbnailUrl) as string),
+      total: data.totalMediaItemCount ?? items.length,
+    }
+  } catch {
+    return { urls: [], total: 0 }
+  }
 }
 
 /**
@@ -384,8 +463,35 @@ export async function fetchLocationProfile(
     .map(s => s.trim())
     .filter(Boolean)
 
+  const addr = loc.storefrontAddress
+  const addressLines = [
+    ...(addr?.addressLines ?? []),
+    [addr?.locality, addr?.administrativeArea, addr?.postalCode].filter(Boolean).join(', '),
+  ].map(l => l.trim()).filter(Boolean)
+
+  const hours: GBPHours[] = ((loc.regularHours?.periods ?? []) as {
+    openDay?: string; openTime?: { hours?: number; minutes?: number }
+    closeTime?: { hours?: number; minutes?: number }
+  }[])
+    .map(p => ({
+      day:   DAY_NAMES[String(p.openDay ?? '').toUpperCase()] ?? '',
+      open:  clockTime(p.openTime),
+      close: clockTime(p.closeTime),
+    }))
+    .filter(h => h.day)
+
+  // Photos come from the account that owned the location, which fetchReviews already worked out.
+  const photos = await fetchLocationPhotos(locationName, accessToken)
+
   const profile: GBPProfile = {
     title:              loc.title ?? '',
+    address:            addressLines,
+    phone_number:       loc.phoneNumbers?.primaryPhone ?? '',
+    website_url:        loc.websiteUri ?? '',
+    hours,
+    photos:             photos.urls,
+    photo_count:        photos.total,
+    description:        (loc.profile?.description ?? '').trim(),
     primary_category:   loc.categories?.primaryCategory?.displayName ?? '',
     extra_categories:   (loc.categories?.additionalCategories ?? [])
                           .map(c => c.displayName ?? '').filter(Boolean),

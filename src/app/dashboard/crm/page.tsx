@@ -272,7 +272,7 @@ export default async function CrmPage({
   const hasOutreach = t.emails > 0 || t.sms > 0
 
   const header = (
-    <PageHeader title="Leads & Customers" accent="var(--crm-lead)" fromDate={fromDate} toDate={toDate} compare={compare}>
+    <PageHeader title="Leads & Customers" fromDate={fromDate} toDate={toDate} compare={compare}>
       <span className="badge badge-gray">{crmName}</span>
     </PageHeader>
   )

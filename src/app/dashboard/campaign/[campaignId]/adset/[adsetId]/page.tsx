@@ -804,7 +804,7 @@ export default async function AdSetDetailPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title={groupName} accent="var(--accent)" fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
+      <PageHeader title={groupName} fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
         <Link href={campHref} className="dash-page-header__back">← {campaignName}</Link>
         <span className="dash-page-header__source">
           <ConnectorLogo type={isGoogleAds ? 'google_ads' : 'meta_ads'} size={14} aria-hidden />

@@ -10,8 +10,6 @@ import DateRangePicker from '@/components/DateRangePicker'
 interface Props {
   /** What the page shows, in the client's words — not the vendor's. */
   title: string
-  /** Small dot before the title, used to tint a page to its data source. */
-  accent?: string
   fromDate?: Date
   toDate?: Date
   compare?: string
@@ -24,12 +22,11 @@ interface Props {
 const iso = (d: Date) => d.toISOString().split('T')[0]
 
 export default function PageHeader({
-  title, accent, fromDate, toDate, compare = '', showDateRange = true, children,
+  title, fromDate, toDate, compare = '', showDateRange = true, children,
 }: Props) {
   return (
     <div className="dash-page-header">
       <div className="dash-page-header__title">
-        {accent && <span className="dash-page-header__dot" style={{ background: accent }} aria-hidden />}
         <h1>{title}</h1>
         {children}
       </div>

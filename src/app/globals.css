@@ -5751,3 +5751,142 @@ select.note-field__input { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .dash-bone { animation: none; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Listing preview — the client's Google listing, shown the way a searcher sees it.
+
+   The panel is deliberately narrow, the way a knowledge panel is on Google, so it
+   reads as a preview of something rather than another block of our dashboard. The
+   audit sits beside it, so every verdict is next to the thing it is about.
+───────────────────────────────────────────────────────────────────────────── */
+.lp {
+  display: grid;
+  grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* ── The listing ───────────────────────────────────────────────────────────── */
+.lp__panel {
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: var(--bg-elevated);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 17, 23, 0.06), 0 6px 20px -12px rgba(15, 17, 23, 0.25);
+}
+[data-theme="dark"] .lp__panel {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px -12px rgba(0, 0, 0, 0.7);
+}
+
+.lp__photos {
+  display: grid;
+  gap: 2px;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-subtle);
+  position: relative;
+}
+.lp__photos[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.lp__photos[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.lp__photos[data-count="3"] {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.lp__photos[data-count="3"] .lp__photo[data-i="0"] { grid-row: 1 / 3; }
+.lp__photo { width: 100%; height: 100%; max-width: 100%; object-fit: cover; display: block; background: var(--bg-muted); }
+.lp__photo-more {
+  position: absolute; right: 0.5rem; bottom: 0.5rem;
+  padding: 0.125rem 0.5rem; border-radius: 999px;
+  background: rgba(15, 17, 23, 0.72); color: #fff;
+  font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.01em;
+}
+/* No photos is a finding, not an error — so it shows the shape of what is missing. */
+.lp__photos--none {
+  aspect-ratio: 16 / 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.375rem;
+  background: repeating-linear-gradient(
+    -45deg, var(--bg-subtle) 0 8px, var(--bg-muted) 8px 16px
+  );
+  color: var(--text-muted); font-size: 0.75rem; font-weight: 500;
+}
+
+.lp__body { padding: 0.875rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.625rem; }
+.lp__name {
+  margin: 0; font-size: 1.125rem; font-weight: 600; line-height: 1.25;
+  color: var(--text-primary); text-wrap: balance;
+}
+.lp__rating {
+  margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem;
+  font-size: 0.8125rem; color: var(--text-secondary);
+}
+.lp__rating b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.lp__stars { display: inline-flex; gap: 1px; line-height: 0; }
+.lp__star { color: var(--text-faint); }
+.lp__star--on { color: var(--amber); }
+.lp__muted { color: var(--text-muted); }
+
+.lp__desc {
+  margin: 0; font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.lp__facts { margin: 0.125rem 0 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.lp__fact  { display: grid; grid-template-columns: 1.125rem minmax(0, 1fr); gap: 0.5rem; align-items: start; }
+.lp__fact dt { margin: 0; color: var(--text-faint); line-height: 0; padding-top: 0.15rem; }
+.lp__fact dd { margin: 0; font-size: 0.8125rem; line-height: 1.45; color: var(--text-secondary); min-width: 0; }
+.lp__truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.lp__hours { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.15rem; }
+.lp__hours li { display: flex; justify-content: space-between; gap: 0.75rem; }
+.lp__hours li > :first-child { color: var(--text-muted); }
+.lp__hours li > :last-child  { font-variant-numeric: tabular-nums; }
+
+.lp__services { margin-top: 0.125rem; padding-top: 0.75rem; border-top: 1px solid var(--border-subtle); }
+.lp__services-head {
+  margin: 0 0 0.5rem; font-size: 0.6875rem; font-weight: 600;
+  color: var(--text-muted);
+}
+.lp__chips { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.lp__chips li {
+  padding: 0.2rem 0.5rem; border-radius: 0.4rem;
+  background: var(--bg-subtle); color: var(--text-secondary);
+  font-size: 0.75rem; line-height: 1.3;
+}
+.lp__chip-more { color: var(--text-muted) !important; background: transparent !important; }
+
+/* ── The audit beside it ───────────────────────────────────────────────────── */
+.lp__audit { display: flex; flex-direction: column; gap: 0.875rem; min-width: 0; }
+.lp__score { margin: 0; font-size: 0.875rem; color: var(--text-muted); }
+.lp__score b { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.lp__verdicts {
+  margin: 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; align-content: start;
+}
+.lp__verdict {
+  display: flex; flex-direction: column; gap: 0.125rem;
+  padding: 0.625rem 0.75rem 0.625rem 0.875rem;
+  border: 1px solid var(--border-subtle); border-radius: 0.625rem;
+  border-left-width: 3px; min-width: 0;
+}
+.lp__verdict[data-state="done"]    { border-left-color: var(--green); }
+.lp__verdict[data-state="partial"] { border-left-color: var(--amber); }
+.lp__verdict[data-state="missing"] { border-left-color: var(--red); }
+.lp__verdict-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); }
+.lp__verdict-value { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); line-height: 1.35; overflow-wrap: anywhere; }
+.lp__verdict[data-state="missing"] .lp__verdict-value { color: var(--red); }
+.lp__verdict-note  { font-size: 0.75rem; color: var(--text-faint); line-height: 1.4; }
+
+.lp__next {
+  margin: 0; padding: 0.625rem 0.75rem; border-radius: 0.625rem;
+  background: var(--bg-subtle); color: var(--text-secondary);
+  font-size: 0.8125rem; line-height: 1.45;
+}
+
+@media (max-width: 1023px) {
+  .lp { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .lp__panel { max-width: 26rem; }
+}
+@media (max-width: 639px) {
+  .lp__verdicts { grid-template-columns: minmax(0, 1fr); }
+  .lp__panel { max-width: none; }
+}

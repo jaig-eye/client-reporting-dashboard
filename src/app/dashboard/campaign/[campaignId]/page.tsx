@@ -813,7 +813,7 @@ export default async function CampaignDetailPage({
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title={campaignName} accent="var(--accent)" fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
+      <PageHeader title={campaignName} fromDate={new Date(dateFrom)} toDate={new Date(dateTo)} compare={compare ?? 'none'}>
         <Link href={backHref} className="dash-page-header__back">← {isGoogleAds ? 'Google Ads' : 'Meta Ads'}</Link>
         <span className="dash-page-header__source">
           <ConnectorLogo type={isGoogleAds ? 'google_ads' : 'meta_ads'} size={14} aria-hidden />

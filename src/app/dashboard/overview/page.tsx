@@ -1291,7 +1291,7 @@ export default async function OverviewPage({
 
   return (
     <div className="ov-scope" style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
-      <PageHeader title="Overview" accent="var(--accent)" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader title="Overview" fromDate={fromDate} toDate={toDate} compare={compare} />
 
       <main className="page ov-main">
         {noDataForWindow ? (

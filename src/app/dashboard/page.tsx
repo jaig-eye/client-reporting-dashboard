@@ -751,7 +751,7 @@ export default async function DashboardPage({
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <PageHeader
         title={isFiltered ? (source === 'google_ads' ? 'Google Ads' : 'Meta Ads') : paidOnly ? 'Paid Ads' : 'Summary'}
-        accent="var(--accent)"
+       
         fromDate={fromDate}
         toDate={toDate}
         compare={compare}
