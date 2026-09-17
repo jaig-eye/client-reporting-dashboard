@@ -5711,3 +5711,29 @@ select.note-field__input { cursor: pointer; }
 @media (max-width: 640px) {
   .gbp-setup__row { grid-template-columns: 1fr; gap: 0.1875rem; }
 }
+
+/* ── SEO: the listing setup, judged ─────────────────────────────────────────
+   A rail down the left of each row carries the verdict, so the rows worth
+   acting on are findable without reading every value. Green is nothing to do;
+   amber is where the next hour goes. */
+.gbp-setup__score {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.gbp-setup__score b { color: var(--text-primary); font-weight: 650; }
+
+.gbp-setup__row { position: relative; padding-left: 0.875rem; }
+.gbp-setup__row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0.75rem; bottom: 0.75rem;
+  width: 2px; border-radius: 1px;
+  background: var(--border);
+}
+.gbp-setup__row[data-state='done']::before    { background: var(--green); }
+.gbp-setup__row[data-state='partial']::before { background: var(--amber); }
+.gbp-setup__row[data-state='missing']::before { background: var(--red); }
+.gbp-setup__row:first-child::before { top: 0.25rem; }
+
+.gbp-setup__value { color: var(--text-primary); font-weight: 600; }

@@ -457,6 +457,16 @@ export default async function SeoPage({
    * How the listing is set up, from the most recent day that captured it. A snapshot rather than
    * a series, so the newest one wins and the panel is simply absent before a sync has stored one.
    */
+  /**
+   * A listing setting, judged rather than just reported. Google's own limits are the yardstick:
+   * ten categories, 750 characters of description. "Worth adding to" is the useful state — it is
+   * where the next hour of work goes.
+   */
+  type SetupState = 'done' | 'partial' | 'missing'
+  const setupRow = (
+    label: string, state: SetupState, value: string, note?: string,
+  ) => ({ label, state, value, note })
+
   const listing = (() => {
     type Snapshot = import('@/lib/connectors/google-business-profile').GBPProfile
     const rows = (gbpRows as unknown as { date: string; raw_data?: { profile?: Snapshot } | null }[]) ?? []
@@ -1036,60 +1046,68 @@ export default async function SeoPage({
                     </p>
                   </div>
                   <div className="seo-panel__body">
-                    <dl className="gbp-setup">
-                      <div className="gbp-setup__row">
-                        <dt>Main category</dt>
-                        <dd>{listing.primary_category
-                          ? <b>{listing.primary_category}</b>
-                          : <span className="gbp-setup__missing">Not set</span>}</dd>
-                      </div>
-                      <div className="gbp-setup__row">
-                        <dt>Other categories</dt>
-                        <dd>{listing.extra_categories.length > 0
-                          ? listing.extra_categories.join(', ')
-                          : <span className="gbp-setup__missing">None added</span>}</dd>
-                      </div>
-                      <div className="gbp-setup__row">
-                        <dt>Services listed</dt>
-                        <dd>{listing.services.length > 0
-                          ? <>
-                              <b>{listing.services.length}</b>
-                              <span className="gbp-setup__detail">
-                                {listing.services.slice(0, 6).join(', ')}
-                                {listing.services.length > 6 && ` and ${listing.services.length - 6} more`}
-                              </span>
-                            </>
-                          : <span className="gbp-setup__missing">None added</span>}</dd>
-                      </div>
-                      <div className="gbp-setup__row">
-                        <dt>Description</dt>
-                        <dd>{listing.description_length > 0
-                          ? <>{listing.description_length} characters{listing.description_length < 250 &&
-                              <span className="gbp-setup__detail">Google allows 750 &mdash; room to say more</span>}</>
-                          : <span className="gbp-setup__missing">Not written</span>}</dd>
-                      </div>
-                      <div className="gbp-setup__row">
-                        <dt>Opening hours</dt>
-                        <dd>{listing.hours_set
-                          ? <>Set{listing.special_hours_set && <span className="gbp-setup__detail">Holiday hours added too</span>}</>
-                          : <span className="gbp-setup__missing">Not set</span>}</dd>
-                      </div>
-                      {listing.service_areas > 0 && (
-                        <div className="gbp-setup__row">
-                          <dt>Areas you serve</dt>
-                          <dd><b>{listing.service_areas}</b></dd>
-                        </div>
-                      )}
-                      <div className="gbp-setup__row">
-                        <dt>Phone and website</dt>
-                        <dd>{listing.phone && listing.website
-                          ? 'Both on the listing'
-                          : <span className="gbp-setup__missing">
-                              {!listing.phone && !listing.website ? 'Neither is set'
-                                : !listing.phone ? 'No phone number' : 'No website link'}
-                            </span>}</dd>
-                      </div>
-                    </dl>
+                    {(() => {
+                      const rows = [
+                        setupRow('Main category',
+                          listing.primary_category ? 'done' : 'missing',
+                          listing.primary_category || 'Not set',
+                          listing.primary_category ? 'The single biggest factor in which searches you appear for' : undefined),
+                        setupRow('Other categories',
+                          listing.extra_categories.length >= 3 ? 'done'
+                            : listing.extra_categories.length > 0 ? 'partial' : 'missing',
+                          listing.extra_categories.length > 0 ? listing.extra_categories.join(', ') : 'None added',
+                          `${listing.extra_categories.length} of the 9 Google allows`),
+                        setupRow('Services listed',
+                          listing.services.length >= 10 ? 'done'
+                            : listing.services.length > 0 ? 'partial' : 'missing',
+                          listing.services.length > 0 ? String(listing.services.length) : 'None added',
+                          listing.services.length > 0
+                            ? listing.services.slice(0, 6).join(', ') +
+                              (listing.services.length > 6 ? ` and ${listing.services.length - 6} more` : '')
+                            : 'Each one is a search you can show up for'),
+                        setupRow('Description',
+                          listing.description_length >= 500 ? 'done'
+                            : listing.description_length > 0 ? 'partial' : 'missing',
+                          listing.description_length > 0 ? `${listing.description_length} characters` : 'Not written',
+                          listing.description_length > 0
+                            ? `${750 - listing.description_length} characters spare of the 750 Google allows`
+                            : 'Google allows 750 characters'),
+                        setupRow('Opening hours',
+                          listing.hours_set ? 'done' : 'missing',
+                          listing.hours_set ? 'Set' : 'Not set',
+                          listing.hours_set && !listing.special_hours_set
+                            ? 'Holiday hours not set — worth adding before a bank holiday'
+                            : listing.special_hours_set ? 'Holiday hours added too' : undefined),
+                        ...(listing.service_areas > 0 ? [setupRow('Areas you serve', 'done',
+                          String(listing.service_areas), 'Where Google will show you on the map')] : []),
+                        setupRow('Phone and website',
+                          listing.phone && listing.website ? 'done'
+                            : listing.phone || listing.website ? 'partial' : 'missing',
+                          listing.phone && listing.website ? 'Both on the listing'
+                            : !listing.phone && !listing.website ? 'Neither is set'
+                            : !listing.phone ? 'No phone number' : 'No website link'),
+                      ]
+                      const done = rows.filter(r => r.state === 'done').length
+                      return (
+                        <>
+                          <p className="gbp-setup__score">
+                            <b>{done} of {rows.length}</b> filled in as well as Google allows
+                            {done < rows.length && <span> &middot; the rest are where the next gains are</span>}
+                          </p>
+                          <dl className="gbp-setup">
+                            {rows.map(r => (
+                              <div key={r.label} className="gbp-setup__row" data-state={r.state}>
+                                <dt>{r.label}</dt>
+                                <dd>
+                                  <span className={r.state === 'missing' ? 'gbp-setup__missing' : 'gbp-setup__value'}>{r.value}</span>
+                                  {r.note && <span className="gbp-setup__detail">{r.note}</span>}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </>
+                      )
+                    })()}
                   </div>
                 </section>
               )}

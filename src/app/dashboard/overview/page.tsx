@@ -1809,11 +1809,7 @@ export default async function OverviewPage({
                     <span className="ov3-local__value">{reputation.replyRate.toFixed(0)}%</span>
                     <span className="ov3-local__sub">of the reviews we hold</span>
                   </li>
-                  <li className="ov3-local__stat">
-                    <span className="metric-label">Awaiting a reply</span>
-                    <span className="ov3-local__value">{fmtInt(reputation.awaiting)}</span>
-                    <span className="ov3-local__sub">{reputation.awaiting === 0 ? 'nothing outstanding' : 'still unanswered'}</span>
-                  </li>
+
                 </ul>
               </section>
             )}
