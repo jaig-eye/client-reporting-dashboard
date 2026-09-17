@@ -89,6 +89,7 @@ type GhlRow    = {
   missed_calls: number; forms_submitted: number; new_opportunities: number; won_opportunities: number; won_value: number
   /** raw_data->lead_sources: null on days synced before lead sources were recorded. */
   lead_sources?: LeadSourceCounts | null
+  spam_sources?: LeadSourceCounts | null
 }
 type GbpRow    = {
   date: string; call_clicks: number; direction_clicks: number
@@ -131,7 +132,7 @@ const _getOverviewData = unstable_cache(
 
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
-    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources'
+    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources,spam_sources:raw_data->spam_sources'
     const GBP_COLS    = 'date,call_clicks,direction_clicks,views_search,views_maps,website_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
@@ -515,7 +516,7 @@ export default async function OverviewPage({
   // ── CRM: who actually got in touch, and what became work ──────────────────
   type CrmDay = { leads: number; calls: number; forms: number; incoming: number; missed: number; won: number }
   function sumGhl(rows: GhlRow[]) {
-    const t = { leads: 0, calls: 0, forms: 0, incoming: 0, missed: 0, newOpps: 0, won: 0, wonValue: 0 }
+    const t = { leads: 0, spam: 0, calls: 0, forms: 0, incoming: 0, missed: 0, newOpps: 0, won: 0, wonValue: 0 }
     const byDate = new Map<string, CrmDay>()
     for (const r of rows) {
       // Spam is excluded from lead counts — GHL's own reporting does the same.
@@ -527,6 +528,7 @@ export default async function OverviewPage({
       const m   = Number(r.missed_calls)      || 0
       const w   = Number(r.won_opportunities) || 0
       t.leads += l; t.calls += c; t.forms += f; t.incoming += inc; t.missed += m
+      t.spam  += Number(r.spam_leads) || 0
       t.newOpps  += Number(r.new_opportunities) || 0
       t.won      += w
       t.wonValue += Number(r.won_value) || 0
@@ -1248,8 +1250,19 @@ export default async function OverviewPage({
    * and some of those callers were already customers, not new leads. So it is "up to", never
    * "plus", and it is capped by the number of unsourced leads there actually are.
    */
-  const adCallsInGap = Math.min(adCallCount, leadSources.untracked)
+  // Only when no ad call has been credited to a contact. Once they have been, those calls are
+  // already inside the paid figure and adding the rest on top counts them a second time.
+  const adCallsUnattributed = (sourceCounts.google_ads_call ?? 0) === 0
+  const adCallsInGap = adCallsUnattributed ? Math.min(adCallCount, leadSources.untracked) : 0
   const adLeadsHigh  = leadSources.paid + adCallsInGap
+
+  /**
+   * Spam that arrived through an ad. Spam is money when an ad paid for it, and the fix — a
+   * negative keyword, a placement exclusion — needs someone to know it is happening.
+   */
+  const spamCounts: LeadSourceCounts = {}
+  for (const row of data.ghl) addLeadSources(spamCounts, row.spam_sources)
+  const spamFromAds = summariseLeadSources(spamCounts).paid
 
   // ── The sentence a business owner reads first ─────────────────────────────
   const headline: ReactNode = hasCrmData ? (
@@ -1261,6 +1274,9 @@ export default async function OverviewPage({
           it with a dash they read as a breakdown, and the arithmetic visibly fails. */}
       {crm.calls + crm.forms > 0 && <> Your phone rang <b>{fmtInt(crm.calls)}</b> {crm.calls === 1 ? 'time' : 'times'} and <b>{fmtInt(crm.forms)}</b> {crm.forms === 1 ? 'enquiry' : 'enquiries'} came through the website.</>}
       {crm.won > 0 && <> <b>{fmtInt(crm.won)}</b> {crm.won === 1 ? 'job was' : 'jobs were'} won{crm.wonValue > 0 && <>, worth <b>{fmt$(crm.wonValue)}</b></>}.</>}
+      {/* Said out loud rather than quietly dropped: a client counting their own inbox will see a
+          bigger number than this page does, and deserves to know why. */}
+      {crm.spam > 0 && <> <b>{fmtInt(crm.spam)}</b> spam {crm.spam === 1 ? 'contact was' : 'contacts were'} left out{spamFromAds > 0 && <>, {fmtInt(spamFromAds)} of {crm.spam === 1 ? 'which came' : 'them through'} your ads</>}.</>}
       {adLeads > 0 && <> Google and Meta reported <b>{fmtInt(adLeads)}</b> {Math.round(adLeads) === 1 ? 'conversion' : 'conversions'} from your ads at <b>{fmtCurrency(adCpl)}</b> each{sourcesComplete && leadSources.paid > 0 && <>, and <b>{fmtInt(leadSources.paid)}</b> of your leads came through an ad</>}.{adCallCount > 0 && <> Google Ads also counted <b>{fmtInt(adCallCount)}</b> {adCallCount === 1 ? 'call' : 'calls'} straight from the ad.</>}</>}
     </>
   ) : adLeads > 0 ? (
@@ -1418,7 +1434,7 @@ export default async function OverviewPage({
                   <section className="card ov2-card" aria-labelledby="ov2-mix-title">
                     <div className="ov2-card-head">
                       <h2 id="ov2-mix-title" className="section-title">Where your leads came from</h2>
-                      <p className="section-desc">How each lead reached you, as tracked in {crmLabel}. An ad on their first or latest visit counts as from ads.</p>
+                      <p className="section-desc">How each lead reached you, as tracked in {crmLabel}.</p>
                     </div>
                     <LeadMixDonut
                       slices={[

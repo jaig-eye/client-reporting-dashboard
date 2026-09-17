@@ -270,7 +270,7 @@ export default async function SeoPage({
     }
   }
 
-  const GBP_COLS = 'date, location_id, location_name, views_search, views_maps, website_clicks, call_clicks, direction_clicks, reviews_count, reviews_avg_rating'
+  const GBP_COLS = 'date, location_id, location_name, views_search, views_maps, website_clicks, call_clicks, direction_clicks, reviews_count, reviews_avg_rating, raw_data'
 
   // Phase 1 — everything that doesn't depend on another query, in parallel.
   const [
@@ -452,6 +452,17 @@ export default async function SeoPage({
   const gbpContacts  = gbp.calls + gbp.directions
   const gbpPrevContacts = gbpPrev.calls + gbpPrev.directions
   const hasGbpData   = gbpRows.length > 0
+
+  /**
+   * How the listing is set up, from the most recent day that captured it. A snapshot rather than
+   * a series, so the newest one wins and the panel is simply absent before a sync has stored one.
+   */
+  const listing = (() => {
+    type Snapshot = import('@/lib/connectors/google-business-profile').GBPProfile
+    const rows = (gbpRows as unknown as { date: string; raw_data?: { profile?: Snapshot } | null }[]) ?? []
+    const withProfile = rows.filter(r => r.raw_data?.profile).sort((a, b) => b.date.localeCompare(a.date))
+    return withProfile[0]?.raw_data?.profile ?? null
+  })()
 
   // Daily series (summed across locations) for the chart and the headline sparkline.
   const gbpDailyMap = new Map<string, { views: number; contacts: number }>()
@@ -1014,6 +1025,74 @@ export default async function SeoPage({
                   delay={3}
                 />
               </div>
+
+              {listing && (
+                <section className="card seo-panel">
+                  <div className="seo-panel__head">
+                    <h3 className="section-title">How your listing is set up</h3>
+                    <p className="section-desc">
+                      What Google shows people about you. Categories and services decide which
+                      searches you turn up in.
+                    </p>
+                  </div>
+                  <div className="seo-panel__body">
+                    <dl className="gbp-setup">
+                      <div className="gbp-setup__row">
+                        <dt>Main category</dt>
+                        <dd>{listing.primary_category
+                          ? <b>{listing.primary_category}</b>
+                          : <span className="gbp-setup__missing">Not set</span>}</dd>
+                      </div>
+                      <div className="gbp-setup__row">
+                        <dt>Other categories</dt>
+                        <dd>{listing.extra_categories.length > 0
+                          ? listing.extra_categories.join(', ')
+                          : <span className="gbp-setup__missing">None added</span>}</dd>
+                      </div>
+                      <div className="gbp-setup__row">
+                        <dt>Services listed</dt>
+                        <dd>{listing.services.length > 0
+                          ? <>
+                              <b>{listing.services.length}</b>
+                              <span className="gbp-setup__detail">
+                                {listing.services.slice(0, 6).join(', ')}
+                                {listing.services.length > 6 && ` and ${listing.services.length - 6} more`}
+                              </span>
+                            </>
+                          : <span className="gbp-setup__missing">None added</span>}</dd>
+                      </div>
+                      <div className="gbp-setup__row">
+                        <dt>Description</dt>
+                        <dd>{listing.description_length > 0
+                          ? <>{listing.description_length} characters{listing.description_length < 250 &&
+                              <span className="gbp-setup__detail">Google allows 750 &mdash; room to say more</span>}</>
+                          : <span className="gbp-setup__missing">Not written</span>}</dd>
+                      </div>
+                      <div className="gbp-setup__row">
+                        <dt>Opening hours</dt>
+                        <dd>{listing.hours_set
+                          ? <>Set{listing.special_hours_set && <span className="gbp-setup__detail">Holiday hours added too</span>}</>
+                          : <span className="gbp-setup__missing">Not set</span>}</dd>
+                      </div>
+                      {listing.service_areas > 0 && (
+                        <div className="gbp-setup__row">
+                          <dt>Areas you serve</dt>
+                          <dd><b>{listing.service_areas}</b></dd>
+                        </div>
+                      )}
+                      <div className="gbp-setup__row">
+                        <dt>Phone and website</dt>
+                        <dd>{listing.phone && listing.website
+                          ? 'Both on the listing'
+                          : <span className="gbp-setup__missing">
+                              {!listing.phone && !listing.website ? 'Neither is set'
+                                : !listing.phone ? 'No phone number' : 'No website link'}
+                            </span>}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </section>
+              )}
 
               <div className="seo-split seo-split--aside">
                 <section className="card seo-panel">

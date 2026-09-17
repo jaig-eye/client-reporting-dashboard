@@ -485,6 +485,8 @@ export interface ContactDay {
   count:   number
   spam:    number
   sources: LeadSourceCounts
+  /** Where the spam came from, counted apart so it never reaches the lead totals. */
+  spamSources: LeadSourceCounts
   /** The leads behind those counts, so a call to a tracking number can re-place one. Held in
    *  memory for the length of the sync only — contact ids are never written anywhere. */
   leads:   { id: string; key: LeadSourceKey }[]
@@ -523,7 +525,7 @@ async function fetchContacts(
   const fromMs = new Date(dateFrom + 'T00:00:00Z').getTime()
   const toMs   = new Date(dateTo   + 'T23:59:59Z').getTime()
 
-  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts; leads: { id: string; key: LeadSourceKey }[] }>()
+  const byDate = new Map<string, { count: number; spam: number; sources: LeadSourceCounts; spamSources: LeadSourceCounts; leads: { id: string; key: LeadSourceKey }[] }>()
   // Which attribution fields GHL actually sent, by name only, so the logs show whether the
   // classifier has something to work with without ever printing a contact's details.
   const attrKeys = new Map<string, number>()
@@ -544,11 +546,15 @@ async function fetchContacts(
     if (!parsed || parsed.ts < fromMs || parsed.ts > toMs) continue
     if (c.archived === true || c.deleted === true) continue
     inRange++
-    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {}, leads: [] }
+    const ex   = byDate.get(parsed.date) ?? { count: 0, spam: 0, sources: {}, spamSources: {}, leads: [] }
     ex.count++
     const tags = (c.tags as string[]) ?? []
     if (tags.some(t => t.toLowerCase().includes('spam'))) {
       ex.spam++
+      // Classified the same way a real lead is, but into its own counts. Spam arriving through an
+      // ad is money spent, and nobody can act on that without knowing which ad.
+      const spamKey = classifyLead(c)
+      ex.spamSources[spamKey] = (ex.spamSources[spamKey] ?? 0) + 1
     } else {
       // Spam stays out of the source counts, so the channels add up to the lead count.
       // One channel per lead: an ad on either of GHL's two attributions wins, otherwise the first visit.
@@ -1368,6 +1374,8 @@ export const ghlConnector: ConnectorAdapter = {
             // Always written, even when empty, so a day synced with attribution can be told
             // apart from a day synced before it existed.
             lead_sources:   c?.sources ?? {},
+            // Spam by channel, kept apart from lead_sources so the totals stay clean.
+            spam_sources:   c?.spamSources ?? {},
           },
         }
       })

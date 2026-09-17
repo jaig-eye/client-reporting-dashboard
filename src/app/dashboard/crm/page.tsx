@@ -247,7 +247,11 @@ export default async function CrmPage({
     adCalls.reduce((s, r) => s + num(r.calls_from_ad), 0),
   )
   // Google counts calls, the CRM counts people, so this bounds the overlap rather than adding it.
-  const adCallsInGap = Math.min(adCallCount, sources.untracked)
+  // Only worth saying while no ad call has been credited to a contact: after that the calls are
+  // already counted under the ads and the bound would count them twice.
+  const adCallsInGap = (sourceCounts.google_ads_call ?? 0) === 0
+    ? Math.min(adCallCount, sources.untracked)
+    : 0
   const adCallsAnswered = adCalls.reduce((s, r) => s + num(r.calls_received), 0)
   const adCallsMissed   = adCalls.reduce((s, r) => s + num(r.calls_missed), 0)
   const hasCallsBucket  = sources.channels.some(c => c.key === 'call_or_message')

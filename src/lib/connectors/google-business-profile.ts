@@ -78,6 +78,30 @@ async function googleGet<T>(url: URL | string, accessToken: string, what: string
 // GBP API helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * How the listing is set up, as opposed to how it performed.
+ *
+ * Categories, services, the description and the hours are what an agency actually works on, and
+ * Google returns all of it from the same locations endpoint we already call — we were asking for
+ * three fields. This is a snapshot of the present state, not a daily series.
+ */
+export interface GBPProfile {
+  title:               string
+  primary_category:    string
+  extra_categories:    string[]
+  services:            string[]
+  description_length:  number
+  phone:               boolean
+  website:             boolean
+  hours_set:           boolean
+  special_hours_set:   boolean
+  service_areas:       number
+  /** Google's own word for whether the business has verified control of the listing. */
+  verified:            boolean
+  open_status:         string
+  labels:              string[]
+}
+
 export interface GBPRawRow {
   location_id: string
   location_name: string
@@ -302,6 +326,82 @@ export async function fetchReviews(
     console.warn(`[google-business-profile] reviews failed for ${locationName}:`, e)
   }
   return empty
+}
+
+/**
+ * The fields worth asking for. Google refuses the whole request if the mask names a field it does
+ * not know, so an unexpected refusal falls back to the three fields that have always worked and
+ * the panel simply stays empty rather than the sync failing.
+ */
+const PROFILE_READ_MASK = [
+  'name', 'title', 'categories', 'profile', 'phoneNumbers', 'websiteUri',
+  'regularHours', 'specialHours', 'serviceArea', 'labels', 'openInfo', 'metadata', 'serviceItems',
+].join(',')
+
+interface V1Category { displayName?: string }
+interface V1Location {
+  title?:        string
+  websiteUri?:   string
+  categories?:   { primaryCategory?: V1Category; additionalCategories?: V1Category[] }
+  profile?:      { description?: string }
+  phoneNumbers?: { primaryPhone?: string }
+  regularHours?: { periods?: unknown[] }
+  specialHours?: { specialHourPeriods?: unknown[] }
+  serviceArea?:  { places?: { placeInfos?: unknown[] } }
+  labels?:       string[]
+  openInfo?:     { status?: string }
+  metadata?:     { hasVoiceOfMerchant?: boolean }
+  serviceItems?: {
+    structuredServiceItem?: { description?: string }
+    freeFormServiceItem?:   { label?: { displayName?: string } }
+  }[]
+}
+
+/**
+ * What the listing is set up with. Read from the same Business Information endpoint used to list
+ * locations, with a mask that asks for the fields the team fills in rather than three of them.
+ */
+export async function fetchLocationProfile(
+  locationName: string,
+  accessToken: string,
+): Promise<GBPProfile | null> {
+  const get = async (mask: string) => {
+    const url = new URL(`${BIZ_INFO_BASE}/${locationName}`)
+    url.searchParams.set('readMask', mask)
+    return googleGet<V1Location>(url, accessToken, `Business Profile setup for ${locationName}`)
+  }
+
+  let loc: V1Location
+  try {
+    loc = await get(PROFILE_READ_MASK)
+  } catch (e) {
+    console.warn(`[google-business-profile] full field mask refused, listing setup unavailable: ${String(e).slice(0, 240)}`)
+    return null
+  }
+
+  const services = (loc.serviceItems ?? [])
+    .map(s => s.freeFormServiceItem?.label?.displayName ?? s.structuredServiceItem?.description ?? '')
+    .map(s => s.trim())
+    .filter(Boolean)
+
+  const profile: GBPProfile = {
+    title:              loc.title ?? '',
+    primary_category:   loc.categories?.primaryCategory?.displayName ?? '',
+    extra_categories:   (loc.categories?.additionalCategories ?? [])
+                          .map(c => c.displayName ?? '').filter(Boolean),
+    services,
+    description_length: (loc.profile?.description ?? '').trim().length,
+    phone:              !!loc.phoneNumbers?.primaryPhone,
+    website:            !!loc.websiteUri,
+    hours_set:          (loc.regularHours?.periods ?? []).length > 0,
+    special_hours_set:  (loc.specialHours?.specialHourPeriods ?? []).length > 0,
+    service_areas:      (loc.serviceArea?.places?.placeInfos ?? []).length,
+    verified:           loc.metadata?.hasVoiceOfMerchant === true,
+    open_status:        loc.openInfo?.status ?? '',
+    labels:             loc.labels ?? [],
+  }
+  console.log(`[google-business-profile] listing setup: ${profile.primary_category || 'no category'}, ${profile.extra_categories.length} extra, ${services.length} services, description ${profile.description_length} chars`)
+  return profile
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

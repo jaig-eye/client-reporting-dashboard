@@ -21,7 +21,7 @@ import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
-import { fetchReviews as fetchGBPReviews } from './connectors/google-business-profile'
+import { fetchReviews as fetchGBPReviews, fetchLocationProfile } from './connectors/google-business-profile'
 import { fetchAhrefsKeywords, fetchAhrefsPages } from './connectors/ahrefs'
 import type { AhrefsKeywordRow, AhrefsPageRow } from './connectors/ahrefs'
 import { fetchSearchAnalytics, fetchDailyTotals } from './connectors/google-search-console'
@@ -347,6 +347,24 @@ export async function syncClient(
         // the reviews themselves into their own table. Best-effort — a listing that refuses
         // reviews still syncs its views and clicks.
         const gbpToken = String((auth as Record<string, unknown>).access_token ?? '')
+
+        // How the listing is set up — categories, services, description, hours. A snapshot of the
+        // present state rather than a daily series, so it goes on every row of the range and the
+        // page reads the most recent. Best-effort: a refused field mask just leaves the panel out.
+        if (gbpToken) {
+          try {
+            const profile = await fetchLocationProfile(connection.external_id, gbpToken)
+            if (profile) {
+              for (const row of gbpRows) {
+                ;(row as unknown as { raw_data?: unknown }).raw_data = { profile }
+              }
+              console.log(`[sync] GBP listing setup captured for connection ${connection.id}`)
+            }
+          } catch (e) {
+            console.error('[sync] GBP listing setup failed:', e)
+          }
+        }
+
         if (gbpToken) {
           try {
             const reviews = await fetchGBPReviews(connection.external_id, gbpToken)
@@ -1603,6 +1621,8 @@ export async function upsertGBPMetrics(
     date:               r.date,
     location_id:        r.location_id,
     location_name:      r.location_name || null,
+    // Carries the listing setup snapshot when the sync captured one.
+    raw_data:           (r as unknown as { raw_data?: unknown }).raw_data ?? null,
     views_search:       r.views_search,
     views_maps:         r.views_maps,
     website_clicks:     r.website_clicks,

@@ -5684,3 +5684,30 @@ select.note-field__input { cursor: pointer; }
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── SEO: how the Google listing is set up ──────────────────────────────────
+   A definition list rather than cards: each row is one setting and its value,
+   and what is missing has to read as plainly as what is filled in, because the
+   gaps are the half worth acting on. */
+.gbp-setup { margin: 0; display: grid; gap: 0; }
+.gbp-setup__row {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border-subtle);
+  align-items: baseline;
+}
+.gbp-setup__row:first-child { border-top: none; padding-top: 0; }
+.gbp-setup dt { font-size: 0.8125rem; color: var(--text-muted); }
+.gbp-setup dd {
+  margin: 0; font-size: 0.8125rem; color: var(--text-secondary);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem;
+}
+.gbp-setup dd b { color: var(--text-primary); font-weight: 650; }
+.gbp-setup__missing { color: var(--amber); font-weight: 600; }
+.gbp-setup__detail { flex-basis: 100%; font-size: 0.75rem; color: var(--text-faint); line-height: 1.5; }
+
+@media (max-width: 640px) {
+  .gbp-setup__row { grid-template-columns: 1fr; gap: 0.1875rem; }
+}
