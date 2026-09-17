@@ -1220,16 +1220,29 @@ export const ghlConnector: ConnectorAdapter = {
        * same call when they start together and run the same length — which credits the contact to
        * the ad without needing a number dedicated to it.
        */
-      const adCalls = ((config.ad_calls as Record<string, unknown>[] | undefined) ?? [])
+      const adCallRows = (config.ad_calls as Record<string, unknown>[] | undefined) ?? []
+      // Only a call placed from the ad itself. Google also logs calls made from its forwarding
+      // number on the website, which is a weaker claim, and crediting a lead to paid is not
+      // something to do on the weaker of two available signals.
+      const paidCallRows = adCallRows.filter(c => c.from_ad === true)
+      const adCalls = paidCallRows
         .map((c): AdCall => ({
           startedAt:   Date.parse(String(c.started_at ?? '')),
           durationSec: Number(c.duration_seconds ?? 0),
         }))
         .filter(c => isFinite(c.startedAt))
-      let adMatch = { matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0, placed: 0, timeOnly: false }
+      let adMatch = {
+        matched: 0, ambiguous: 0, offsetMinutes: 0, runnerUpMatched: 0, placed: 0, timeOnly: false,
+        // Of those placed: how many had no source at all, and how many were credited to the
+        // listing. The second is a move from organic to paid, so it is kept visible.
+        placed_from_unsourced: 0, placed_from_listing: 0,
+        ad_calls_offered: 0, ad_calls_not_from_ad: 0,
+      }
       if (adCalls.length > 0 && lookup.crmCalls.length > 0) {
         const m = matchAdCalls(lookup.crmCalls, adCalls)
         let placedFromAds = 0
+        let fromUnsourced = 0
+        let fromListing   = 0
         for (const day of contactData) {
           for (const lead of day.leads) {
             if (!m.byContact.has(lead.id)) continue
@@ -1241,13 +1254,20 @@ export const ghlConnector: ConnectorAdapter = {
             if (had <= 1) delete day.sources[lead.key]
             else          day.sources[lead.key] = had - 1
             day.sources.google_ads_call = (day.sources.google_ads_call ?? 0) + 1
+            if (lead.key === 'google_business') fromListing++
+            else                                fromUnsourced++
             lead.key = 'google_ads_call'
             placedFromAds++
           }
         }
-        adMatch = { matched: m.matched, ambiguous: m.ambiguous, offsetMinutes: m.offsetMinutes,
-                    runnerUpMatched: m.runnerUpMatched, placed: placedFromAds, timeOnly: m.timeOnly }
-        console.log(`[ghl] ad calls: ${m.matched} of ${adCalls.length} matched a CRM call, ${placedFromAds} leads credited to ads`)
+        adMatch = {
+          matched: m.matched, ambiguous: m.ambiguous, offsetMinutes: m.offsetMinutes,
+          runnerUpMatched: m.runnerUpMatched, placed: placedFromAds, timeOnly: m.timeOnly,
+          placed_from_unsourced: fromUnsourced, placed_from_listing: fromListing,
+          ad_calls_offered: adCallRows.length,
+          ad_calls_not_from_ad: adCallRows.length - paidCallRows.length,
+        }
+        console.log(`[ghl] ad calls: ${m.matched} of ${adCalls.length} matched a CRM call; ${placedFromAds} leads credited to ads (${fromUnsourced} had no source, ${fromListing} were on the listing)`)
       }
 
       /**
