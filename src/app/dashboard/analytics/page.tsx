@@ -26,7 +26,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { resolveDashboardRange } from '@/lib/dateRange'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import SpendChart from '@/components/SpendChart'
-import SparkMetricCard from '@/components/SparkMetricCard'
+import Sparkline from '@/components/Sparkline'
 import TrafficBySourceTable from '@/components/TrafficBySourceTable'
 import PageHeader from '@/components/dashboard/PageHeader'
 import EmptyState from '@/components/dashboard/EmptyState'
@@ -215,6 +215,68 @@ function Delta({ value }: { value: number | null }) {
     <span className={`an-delta ${value >= 0 ? 'an-delta--up' : 'an-delta--down'}`}>
       {value >= 0 ? '▲' : '▼'} {Math.abs(value).toFixed(1)}%
     </span>
+  )
+}
+
+/**
+ * One figure in the scorecard. The volume metrics carry a spark and a comparison; the rates below
+ * them are the same cell at a quieter size, so the panel reads as one instrument rather than two.
+ */
+function ScoreCell({
+  label, value, sub, delta, spark, color, small,
+}: {
+  label: React.ReactNode
+  value: string
+  sub?: string
+  delta?: number | null
+  spark?: { v: number }[]
+  color?: string
+  small?: boolean
+}) {
+  return (
+    <div className={small ? 'an-cell an-cell--sm' : 'an-cell'}>
+      <div className="an-cell__top">
+        <p className="metric-label">{label}</p>
+        {delta != null && delta !== 0 && <Delta value={delta} />}
+      </div>
+      <p className="an-cell__value">{value}</p>
+      {sub && <p className="an-cell__sub">{sub}</p>}
+      {spark && spark.length > 1 && color && (
+        <div className="an-cell__spark"><Sparkline data={spark} color={color} height={26} /></div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One row of a ranked list: the name, the count and the share on a single line, sitting on a wash
+ * sized to that share. Every breakdown on the page goes through this, so a row means the same
+ * thing whether it is a source, a device, a city or a conversion.
+ */
+function BarRow({
+  name, medium, value, share, conv, title,
+}: {
+  name: string
+  medium?: string
+  value: string
+  share: number
+  conv?: boolean
+  title?: string
+}) {
+  return (
+    <li className="an-bar">
+      <span
+        className={conv ? 'an-bar__fill an-bar__fill--conv' : 'an-bar__fill'}
+        style={{ width: barWidth(share) }}
+        aria-hidden
+      />
+      <span className="an-bar__name" title={title ?? name}>
+        {name}
+        {medium && <span className="an-bar__medium">{medium}</span>}
+      </span>
+      <span className="an-bar__value">{value}</span>
+      <span className="an-bar__pct">{fmtPct(share)}</span>
+    </li>
   )
 }
 
@@ -447,7 +509,7 @@ export default async function AnalyticsPage({
   return shell(
     <>
       {/* The answer in a sentence, before any chart. */}
-      <section className="card an-lede">
+      <section className="an-lede">
         <p className="an-lede__line">
           <strong className="an-lede__figure">{fmtNum(now.users)}</strong> people visited your website between{' '}
           <strong>{fmtRange(fromDate, toDate)}</strong>
@@ -470,29 +532,69 @@ export default async function AnalyticsPage({
         </p>
       </section>
 
-      {/* How many came, and how that compares. */}
-      <div className="stat-grid stat-grid--wide an-kpis">
-        <SparkMetricCard
-          label="Visitors" value={fmtNum(now.users)} sub={since(prior.users, 'visitors')}
-          sparkData={visitorsSpark} sparkColor={SERIES_VISITS} delay={0}
-          delta={visitorsDelta ?? undefined}
-        />
-        <SparkMetricCard
-          label="Visits" value={fmtNum(now.sessions)} sub={since(prior.sessions, 'visits')}
-          sparkData={visitsSpark} sparkColor={SERIES_VISITS} delay={1}
-          delta={(showCompare ? pctChange(now.sessions, prior.sessions) : null) ?? undefined}
-        />
-        <SparkMetricCard
-          label="Pages viewed" value={fmtNum(now.pageViews)} sub={since(prior.pageViews, 'views')}
-          sparkData={pagesSpark} sparkColor={SERIES_VISITS} delay={2}
-          delta={(showCompare ? pctChange(now.pageViews, prior.pageViews) : null) ?? undefined}
-        />
-        <SparkMetricCard
-          label="Conversions" value={fmtNum(now.conversions)} sub={since(prior.conversions, 'conversions')}
-          sparkData={convSpark} sparkColor={SERIES_CONVERSIONS} delay={3}
-          delta={(showCompare ? pctChange(now.conversions, prior.conversions) : null) ?? undefined}
-        />
-      </div>
+      {/* Every headline figure for the period, in one panel: how many came on top, how they
+          behaved underneath. Eight cards said eight subjects; this is eight readings of one month. */}
+      <section className="card an-score" aria-label="Headline figures">
+        <div className="an-score__row">
+          <ScoreCell
+            label="Visitors" value={fmtNum(now.users)} sub={since(prior.users, 'visitors')}
+            delta={visitorsDelta} spark={visitorsSpark} color={SERIES_VISITS}
+          />
+          <ScoreCell
+            label="Visits" value={fmtNum(now.sessions)} sub={since(prior.sessions, 'visits')}
+            delta={showCompare ? pctChange(now.sessions, prior.sessions) : null}
+            spark={visitsSpark} color={SERIES_VISITS}
+          />
+          <ScoreCell
+            label="Pages viewed" value={fmtNum(now.pageViews)} sub={since(prior.pageViews, 'views')}
+            delta={showCompare ? pctChange(now.pageViews, prior.pageViews) : null}
+            spark={pagesSpark} color={SERIES_VISITS}
+          />
+          <ScoreCell
+            label="Conversions" value={fmtNum(now.conversions)} sub={since(prior.conversions, 'conversions')}
+            delta={showCompare ? pctChange(now.conversions, prior.conversions) : null}
+            spark={convSpark} color={SERIES_CONVERSIONS}
+          />
+        </div>
+        <div className="an-score__row an-score__row--sub">
+          <ScoreCell
+            small
+            label={<>Engagement rate <span className="an-hint">engaged visits</span></>}
+            value={fmtPct(now.engagementRate)}
+            delta={showCompare ? pctChange(now.engagementRate, prior.engagementRate) : null}
+            sub={showCompare
+              ? `from ${fmtPct(prior.engagementRate)} ${priorShort}`
+              : 'Visits that lasted, browsed on, or converted'}
+          />
+          <ScoreCell
+            small
+            label={<>Time on site <span className="an-hint">per visit</span></>}
+            value={fmtSec(now.avgDuration)}
+            delta={showCompare ? pctChange(now.avgDuration, prior.avgDuration) : null}
+            sub={showCompare
+              ? `from ${fmtSec(prior.avgDuration)} ${priorShort}`
+              : 'How long an average visit lasts'}
+          />
+          <ScoreCell
+            small
+            label="Pages per visit"
+            value={now.pagesPerVisit.toFixed(1)}
+            delta={showCompare ? pctChange(now.pagesPerVisit, prior.pagesPerVisit) : null}
+            sub={showCompare
+              ? `from ${prior.pagesPerVisit.toFixed(1)} ${priorShort}`
+              : 'How far into the site people go'}
+          />
+          <ScoreCell
+            small
+            label="Conversion rate"
+            value={fmtPct(now.convRate)}
+            delta={showCompare ? pctChange(now.convRate, prior.convRate) : null}
+            sub={showCompare
+              ? `from ${fmtPct(prior.convRate)} ${priorShort}`
+              : 'Share of visits that ended in a conversion'}
+          />
+        </div>
+      </section>
 
       {/* The trend over time. */}
       <section className="card p-4 sm:p-6">
@@ -520,163 +622,107 @@ export default async function AnalyticsPage({
         />
       </section>
 
-      {/* Visits from AI assistants. */}
-      {aiSessions > 0 && (
-        <section className="card p-4 sm:p-6" aria-labelledby="an-ai-title">
-          <div className="mb-4">
-            <h2 id="an-ai-title" className="section-title">Visits from AI assistants</h2>
-            <p className="section-desc">People who clicked through to your site from ChatGPT, Gemini, Copilot and other AI assistants</p>
-          </div>
-          <div className="an-ai">
-            <dl className="an-ai__figures">
+      {/* The breakdowns, packed into one grid. Each holds a handful of short rows; giving each the
+          full width of the page is most of why this read as spaced out. */}
+      <div className="an-mods">
+        {aiSessions > 0 && (
+          <section className="card an-mod an-mod--wide" aria-labelledby="an-ai-title">
+            <div className="an-mod__head">
+              <h2 id="an-ai-title" className="an-mod__title">Visits from AI assistants</h2>
+              <p className="an-mod__desc">People who clicked through from ChatGPT, Gemini, Copilot and others</p>
+            </div>
+            <dl className="an-mod__figures">
               <div>
                 <dt className="metric-label">Visits</dt>
-                <dd className="an-band__value">{fmtNum(aiSessions)}</dd>
+                <dd className="an-mod__fig">{fmtNum(aiSessions)}</dd>
                 {showCompare && aiChannel && aiChannel.delta != null && (
-                  <dd className="an-band__sub"><Delta value={aiChannel.delta} /> vs {priorShort}</dd>
+                  <dd className="an-mod__figsub"><Delta value={aiChannel.delta} /> vs {priorShort}</dd>
                 )}
               </div>
               <div>
                 <dt className="metric-label">Conversions</dt>
-                <dd className="an-band__value">{fmtNum(aiConversions)}</dd>
+                <dd className="an-mod__fig">{fmtNum(aiConversions)}</dd>
               </div>
               <div>
                 <dt className="metric-label">Share of visits</dt>
-                <dd className="an-band__value">{now.sessions > 0 ? fmtPct(aiSessions / now.sessions) : '—'}</dd>
+                <dd className="an-mod__fig">{now.sessions > 0 ? fmtPct(aiSessions / now.sessions) : '—'}</dd>
               </div>
             </dl>
             {aiNamed.length > 0 && (
-              <ul className="an-bars">
-                {aiNamed.slice(0, 6).map(a => {
-                  const share = aiNamedTotal > 0 ? a.sessions / aiNamedTotal : 0
-                  return (
-                    <li key={a.name} className="an-bar">
-                      <span className="an-bar__head">
-                        <span className="an-bar__name">{a.name}</span>
-                        <span className="an-bar__value">{fmtNum(a.sessions)}</span>
-                        <span className="an-bar__pct">{fmtPct(share)}</span>
-                      </span>
-                      <span className="an-bar__track">
-                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
+              <div className="an-mod__body">
+                <ul className="an-bars">
+                  {aiNamed.slice(0, 6).map(a => (
+                    <BarRow
+                      key={a.name} name={a.name} value={fmtNum(a.sessions)}
+                      share={aiNamedTotal > 0 ? a.sessions / aiNamedTotal : 0}
+                    />
+                  ))}
+                </ul>
+              </div>
             )}
-          </div>
-          <p className="an-note">
-            Google counts a visit here when the AI assistant passes on where the visitor came from. Some apps don&rsquo;t, so a few AI visits show up as Direct instead.
-          </p>
-        </section>
-      )}
+            <p className="an-mod__foot">
+              Google counts a visit here when the AI assistant passes on where the visitor came from. Some apps don&rsquo;t, so a few AI visits show up as Direct instead.
+            </p>
+          </section>
+        )}
 
-      {/* What they did once they arrived. */}
-      <section className="card an-band">
-        <div className="an-band__item">
-          <p className="metric-label">Engagement rate <span className="an-hint">engaged visits</span></p>
-          <p className="an-band__value">{fmtPct(now.engagementRate)}</p>
-          <p className="an-band__sub">
-            {showCompare
-              ? <><Delta value={pctChange(now.engagementRate, prior.engagementRate)} /> from {fmtPct(prior.engagementRate)} {priorShort}</>
-              : 'Visits that lasted, browsed on, or converted'}
-          </p>
-        </div>
-        <div className="an-band__item">
-          <p className="metric-label">Time on site <span className="an-hint">per visit</span></p>
-          <p className="an-band__value">{fmtSec(now.avgDuration)}</p>
-          <p className="an-band__sub">
-            {showCompare
-              ? <><Delta value={pctChange(now.avgDuration, prior.avgDuration)} /> from {fmtSec(prior.avgDuration)} {priorShort}</>
-              : 'How long an average visit lasts'}
-          </p>
-        </div>
-        <div className="an-band__item">
-          <p className="metric-label">Pages per visit</p>
-          <p className="an-band__value">{now.pagesPerVisit.toFixed(1)}</p>
-          <p className="an-band__sub">
-            {showCompare
-              ? <><Delta value={pctChange(now.pagesPerVisit, prior.pagesPerVisit)} /> from {prior.pagesPerVisit.toFixed(1)} {priorShort}</>
-              : 'How far into the site people go'}
-          </p>
-        </div>
-        <div className="an-band__item">
-          <p className="metric-label">Conversion rate</p>
-          <p className="an-band__value">{fmtPct(now.convRate)}</p>
-          <p className="an-band__sub">
-            {showCompare
-              ? <><Delta value={pctChange(now.convRate, prior.convRate)} /> from {fmtPct(prior.convRate)} {priorShort}</>
-              : 'Share of visits that ended in a conversion'}
-          </p>
-        </div>
-      </section>
-
-      {/* Where they came from, and who they were. */}
-      <div className="an-panels">
-        <section className="card p-4 sm:p-6">
-          <div className="mb-4">
-            <h2 className="section-title">Top sources</h2>
-            <p className="section-desc">
+        <section className="card an-mod" aria-labelledby="an-sources-title">
+          <div className="an-mod__head">
+            <h2 id="an-sources-title" className="an-mod__title">Top sources</h2>
+            <p className="an-mod__desc">
               {topSources.length > 0
-                ? `The named places your visits came from, as a share of the ${fmtNum(sourceTotal)} visits that can be traced to one`
+                ? `The named places your visits came from, as a share of the ${fmtNum(sourceTotal)} traced to one`
                 : 'Where visits came from'}
             </p>
           </div>
           {topSources.length > 0 ? (
-            <ul className="an-bars">
-              {topSources.map(s => {
-                const share = sourceTotal > 0 ? s.sessions / sourceTotal : 0
-                return (
-                  <li key={`${s.source}|${s.medium}|${s.campaign}`} className="an-bar">
-                    <span className="an-bar__head">
-                        <span className="an-bar__name">
-                        {s.source}
-                        <span className="an-bar__medium">{s.medium}</span>
-                      </span>
-                        <span className="an-bar__value">{fmtNum(s.sessions)}</span>
-                        <span className="an-bar__pct">{fmtPct(share)}</span>
-                      </span>
-                      <span className="an-bar__track">
-                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                      </span>
-                  </li>
-                )
-              })}
-            </ul>
+            <div className="an-mod__body">
+              <ul className="an-bars">
+                {topSources.map(s => (
+                  <BarRow
+                    key={`${s.source}|${s.medium}|${s.campaign}`}
+                    name={s.source} medium={s.medium} value={fmtNum(s.sessions)}
+                    share={sourceTotal > 0 ? s.sessions / sourceTotal : 0}
+                  />
+                ))}
+              </ul>
+            </div>
           ) : (
-            <p className="an-note">
+            <p className="an-mod__foot">
               Visits are being recorded, but the referral detail behind them hasn&rsquo;t come through for these dates.
               The channel breakdown below still covers the whole period.
             </p>
           )}
         </section>
 
-        <section className="card p-4 sm:p-6">
-          <div className="mb-4">
-            <h2 className="section-title">New vs returning</h2>
-            <p className="section-desc">Whether people are finding you for the first time or coming back</p>
+        <section className="card an-mod" aria-labelledby="an-newret-title">
+          <div className="an-mod__head">
+            <h2 id="an-newret-title" className="an-mod__title">New vs returning</h2>
+            <p className="an-mod__desc">Whether people are finding you for the first time or coming back</p>
           </div>
           {now.users > 0 ? (
             <>
-              <div
-                className="an-split"
-                role="img"
-                aria-label={`${fmtPct(newShare)} new visitors, ${fmtPct(returningShare)} returning`}
-              >
-                <span className="an-split__seg an-split__seg--new" style={{ width: barWidth(newShare) }} />
-                <span className="an-split__seg an-split__seg--ret" style={{ width: barWidth(returningShare) }} />
+              <div className="an-mod__body">
+                <div
+                  className="an-split"
+                  role="img"
+                  aria-label={`${fmtPct(newShare)} new visitors, ${fmtPct(returningShare)} returning`}
+                >
+                  <span className="an-split__seg an-split__seg--new" style={{ width: barWidth(newShare) }} />
+                  <span className="an-split__seg an-split__seg--ret" style={{ width: barWidth(returningShare) }} />
+                </div>
+                <dl className="an-legend">
+                  <div className="an-legend__row">
+                    <dt><span className="an-dot an-dot--new" aria-hidden /> New visitors</dt>
+                    <dd><strong>{fmtNum(now.newUsers)}</strong><span>{fmtPct(newShare)}</span></dd>
+                  </div>
+                  <div className="an-legend__row">
+                    <dt><span className="an-dot an-dot--ret" aria-hidden /> Returning visitors</dt>
+                    <dd><strong>{fmtNum(now.returningUsers)}</strong><span>{fmtPct(returningShare)}</span></dd>
+                  </div>
+                </dl>
               </div>
-              <dl className="an-legend">
-                <div className="an-legend__row">
-                  <dt><span className="an-dot an-dot--new" aria-hidden /> New visitors</dt>
-                  <dd><strong>{fmtNum(now.newUsers)}</strong><span>{fmtPct(newShare)}</span></dd>
-                </div>
-                <div className="an-legend__row">
-                  <dt><span className="an-dot an-dot--ret" aria-hidden /> Returning visitors</dt>
-                  <dd><strong>{fmtNum(now.returningUsers)}</strong><span>{fmtPct(returningShare)}</span></dd>
-                </div>
-              </dl>
-              <p className="an-note">
+              <p className="an-mod__foot">
                 {returningShare >= 0.35
                   ? 'A healthy share of people are coming back, so the site is earning more than a single look.'
                   : 'Most of this traffic is people finding you for the first time.'}
@@ -684,82 +730,90 @@ export default async function AnalyticsPage({
               </p>
             </>
           ) : (
-            <p className="an-note">No visitor counts were recorded for these dates.</p>
+            <p className="an-mod__foot">No visitor counts were recorded for these dates.</p>
           )}
         </section>
+
+        {devices.length > 0 && (
+          <section className="card an-mod" aria-labelledby="an-devices-title">
+            <div className="an-mod__head">
+              <h2 id="an-devices-title" className="an-mod__title">Phone, computer or tablet</h2>
+              <p className="an-mod__desc">
+                {phoneShare >= 0.5
+                  ? <><strong>{fmtPct(phoneShare)}</strong> of visits came from a phone, so the site has to work well on one.</>
+                  : 'The devices people used to visit your site'}
+              </p>
+            </div>
+            <div className="an-mod__body">
+              <ul className="an-bars">
+                {devices.map(d => (
+                  <BarRow
+                    key={d.value} name={DEVICE_LABEL[d.value] ?? d.value} value={fmtNum(d.sessions)}
+                    share={deviceTotal > 0 ? d.sessions / deviceTotal : 0}
+                  />
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
+        {cities.length > 0 && (
+          <section className="card an-mod" aria-labelledby="an-cities-title">
+            <div className="an-mod__head">
+              <h2 id="an-cities-title" className="an-mod__title">Where visitors are</h2>
+              <p className="an-mod__desc">The cities your visits came from, as a share of visits with a known location</p>
+            </div>
+            <div className="an-mod__body">
+              <ul className="an-bars">
+                {cities.map(c => (
+                  <BarRow
+                    key={c.value} name={c.value} value={fmtNum(c.sessions)}
+                    share={cityTotal > 0 ? c.sessions / cityTotal : 0}
+                  />
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
+        {keyEvents.length > 0 && (
+          <section className="card an-mod" aria-labelledby="an-events-title">
+            <div className="an-mod__head">
+              <h2 id="an-events-title" className="an-mod__title">What counted as a conversion</h2>
+              <p className="an-mod__desc">
+                The actions Google Analytics is set to count, {fmtNum(keyEventTotal)} in total. One visitor can count more than once.
+              </p>
+            </div>
+            <div className="an-mod__body">
+              <ul className="an-bars">
+                {keyEvents.slice(0, 8).map(e => (
+                  <BarRow
+                    key={e.value} name={eventLabel(e.value)} title={e.value} conv
+                    value={fmtNum(e.conversions)}
+                    share={keyEventTotal > 0 ? e.conversions / keyEventTotal : 0}
+                  />
+                ))}
+              </ul>
+            </div>
+            {routineKeyEvents.length > 0 && (
+              <p className="an-callout">
+                {routineKeyEvents.map(e => eventLabel(e.value)).join(' and ')} {routineKeyEvents.length === 1 ? 'happens' : 'happen'} on
+                most visits, so counting {routineKeyEvents.length === 1 ? 'it' : 'them'} as a conversion makes the total much higher than
+                real enquiries. Your account manager can switch {routineKeyEvents.length === 1 ? 'it' : 'them'} off in Google Analytics.
+              </p>
+            )}
+          </section>
+        )}
       </div>
 
-      {/* Who is visiting: the device in their hand, and where they are. */}
-      {(devices.length > 0 || cities.length > 0) && (
-        <div className="an-panels">
-          {devices.length > 0 && (
-            <section className="card p-4 sm:p-6" aria-labelledby="an-devices-title">
-              <div className="mb-4">
-                <h2 id="an-devices-title" className="section-title">Phone, computer or tablet</h2>
-                <p className="section-desc">
-                  {phoneShare >= 0.5
-                    ? <><strong>{fmtPct(phoneShare)}</strong> of visits came from a phone, so the site has to work well on one.</>
-                    : 'The devices people used to visit your site'}
-                </p>
-              </div>
-              <ul className="an-bars">
-                {devices.map(d => {
-                  const share = deviceTotal > 0 ? d.sessions / deviceTotal : 0
-                  return (
-                    <li key={d.value} className="an-bar">
-                      <span className="an-bar__head">
-                        <span className="an-bar__name">{DEVICE_LABEL[d.value] ?? d.value}</span>
-                        <span className="an-bar__value">{fmtNum(d.sessions)}</span>
-                        <span className="an-bar__pct">{fmtPct(share)}</span>
-                      </span>
-                      <span className="an-bar__track">
-                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
-
-          {cities.length > 0 && (
-            <section className="card p-4 sm:p-6" aria-labelledby="an-cities-title">
-              <div className="mb-4">
-                <h2 id="an-cities-title" className="section-title">Where visitors are</h2>
-                <p className="section-desc">The cities your visits came from, as a share of visits with a known location</p>
-              </div>
-              <ul className="an-bars">
-                {cities.map(c => {
-                  const share = cityTotal > 0 ? c.sessions / cityTotal : 0
-                  return (
-                    <li key={c.value} className="an-bar">
-                      <span className="an-bar__head">
-                        <span className="an-bar__name">{c.value}</span>
-                        <span className="an-bar__value">{fmtNum(c.sessions)}</span>
-                        <span className="an-bar__pct">{fmtPct(share)}</span>
-                      </span>
-                      <span className="an-bar__track">
-                        <span className="an-bar__fill" style={{ width: barWidth(share) }} aria-hidden />
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
-        </div>
-      )}
-
-      {/* Where they start, and what counted as a conversion. */}
-      {(landingPages.length > 0 || keyEvents.length > 0) && (
-        <div className="an-panels">
-          {landingPages.length > 0 && (
-            <section className="card an-flush" aria-labelledby="an-pages-title">
-              <div className="an-flush__head">
-                <h2 id="an-pages-title" className="section-title">Pages people land on</h2>
-                <p className="section-desc">The first page of each visit, and how many of those visits converted</p>
-              </div>
-              <RowLimit total={landingPages.length} noun="pages">
+      {/* Where they start. A table of paths wants the width; it never shared it well. */}
+      {landingPages.length > 0 && (
+        <section className="card an-flush" aria-labelledby="an-pages-title">
+          <div className="an-flush__head">
+            <h2 id="an-pages-title" className="section-title">Pages people land on</h2>
+            <p className="section-desc">The first page of each visit, and how many of those visits converted</p>
+          </div>
+          <RowLimit total={landingPages.length} noun="pages">
                 <div className="table-scroll">
                   <table className="data-table an-table an-pages-table">
                     <thead>
@@ -786,45 +840,8 @@ export default async function AnalyticsPage({
                     </tbody>
                   </table>
                 </div>
-              </RowLimit>
-            </section>
-          )}
-
-          {keyEvents.length > 0 && (
-            <section className="card p-4 sm:p-6" aria-labelledby="an-events-title">
-              <div className="mb-4">
-                <h2 id="an-events-title" className="section-title">What counted as a conversion</h2>
-                <p className="section-desc">
-                  The actions Google Analytics is set to count, {fmtNum(keyEventTotal)} in total. One visitor can count more than once.
-                </p>
-              </div>
-              <ul className="an-bars">
-                {keyEvents.slice(0, 8).map(e => {
-                  const share = keyEventTotal > 0 ? e.conversions / keyEventTotal : 0
-                  return (
-                    <li key={e.value} className="an-bar">
-                      <span className="an-bar__head">
-                        <span className="an-bar__name" title={e.value}>{eventLabel(e.value)}</span>
-                        <span className="an-bar__value">{fmtNum(e.conversions)}</span>
-                        <span className="an-bar__pct">{fmtPct(share)}</span>
-                      </span>
-                      <span className="an-bar__track">
-                        <span className="an-bar__fill an-bar__fill--conv" style={{ width: barWidth(share) }} aria-hidden />
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-              {routineKeyEvents.length > 0 && (
-                <p className="an-callout">
-                  {routineKeyEvents.map(e => eventLabel(e.value)).join(' and ')} {routineKeyEvents.length === 1 ? 'happens' : 'happen'} on
-                  most visits, so counting {routineKeyEvents.length === 1 ? 'it' : 'them'} as a conversion makes the total much higher than
-                  real enquiries. Your account manager can switch {routineKeyEvents.length === 1 ? 'it' : 'them'} off in Google Analytics.
-                </p>
-              )}
-            </section>
-          )}
-        </div>
+          </RowLimit>
+        </section>
       )}
 
       {/* Which channels actually convert. */}
