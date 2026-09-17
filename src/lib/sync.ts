@@ -1615,14 +1615,13 @@ export async function upsertGBPMetrics(
   const valid = rows.filter(r => r.date && r.location_id)
   if (!valid.length) return 0
 
-  const mapped = valid.map(r => ({
+  const mapped = valid.map(r => {
+    const row: Record<string, unknown> = {
     connection_id:      connectionId,
     client_id:          clientId,
     date:               r.date,
     location_id:        r.location_id,
     location_name:      r.location_name || null,
-    // Carries the listing setup snapshot when the sync captured one.
-    raw_data:           (r as unknown as { raw_data?: unknown }).raw_data ?? null,
     views_search:       r.views_search,
     views_maps:         r.views_maps,
     website_clicks:     r.website_clicks,
@@ -1631,7 +1630,14 @@ export async function upsertGBPMetrics(
     reviews_count:      r.reviews_count,
     reviews_avg_rating: r.reviews_avg_rating || null,
     synced_at:          new Date().toISOString(),
-  }))
+    }
+    // Only sent when this sync captured the listing setup. Sending null when the fetch failed
+    // would upsert over a good snapshot and empty the panel until some later sync happened to
+    // succeed — a transient refusal should cost nothing.
+    const snapshot = (r as unknown as { raw_data?: unknown }).raw_data
+    if (snapshot) row.raw_data = snapshot
+    return row
+  })
 
   for (let i = 0; i < mapped.length; i += 200) {
     const { error } = await db

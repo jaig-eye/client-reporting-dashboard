@@ -5737,3 +5737,17 @@ select.note-field__input { cursor: pointer; }
 .gbp-setup__row:first-child::before { top: 0.25rem; }
 
 .gbp-setup__value { color: var(--text-primary); font-weight: 600; }
+
+/* ── Loading skeletons on the rebuilt dashboard pages ───────────────────────
+   A slow breath rather than a shimmer: the page is about to be replaced, so
+   the placeholder should read as "not yet" without competing for attention.
+   It stops entirely for anyone who asked their system to reduce motion — a
+   pulsing full-page placeholder is precisely what that setting exists for. */
+.dash-bone { animation: dash-bone-pulse 1.6s ease-in-out infinite; }
+@keyframes dash-bone-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-bone { animation: none; }
+}
