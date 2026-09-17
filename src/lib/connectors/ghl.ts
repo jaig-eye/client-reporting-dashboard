@@ -507,6 +507,24 @@ export interface AttributionStats {
   /** Leads an ad touched later but did not bring in. First touch leaves these with their
    *  original channel; this is how many that decision moves. */
   ad_on_later_visit_only: number
+
+  /**
+   * First and latest attribution counted apart, which the merged tallies above cannot show.
+   *
+   * `both_say_something` is the only population where the two rules disagree — everywhere else
+   * each falls through to the other. `differ` is how many of those would land on a different
+   * channel, which is the real cost of the choice.
+   *
+   * `converted_by_call` and `call_with_no_channel` answer whether last touch can speak for a
+   * phone lead at all: if the converting interaction is a call and its attribution carries no
+   * session, the latest visit has nothing to say about where that lead came from.
+   */
+  first_channel:        Record<string, number>
+  last_channel:         Record<string, number>
+  both_say_something:   number
+  differ:               number
+  converted_by_call:    number
+  call_with_no_channel: number
 }
 
 async function fetchContacts(
@@ -578,6 +596,24 @@ async function fetchContacts(
       const contactId = String(c.id ?? c.contactId ?? '')
       if (contactId) ex.leads.push({ id: contactId, key })
       sourceTally.set(key, (sourceTally.get(key) ?? 0) + 1)
+      if (attrStats) {
+        // Where each attribution points on its own, before either rule picks between them.
+        const fk = classifyContact(c, 'first')
+        const lk = classifyContact(c, 'last')
+        attrStats.first_channel[fk] = (attrStats.first_channel[fk] ?? 0) + 1
+        attrStats.last_channel[lk]  = (attrStats.last_channel[lk]  ?? 0) + 1
+        if (groupOf(fk) !== 'untracked' && groupOf(lk) !== 'untracked') {
+          attrStats.both_say_something++
+          if (fk !== lk) attrStats.differ++
+        }
+        // The converting interaction, and whether it carries a channel of its own.
+        const lastAttr = contactAttribution(c, 'last')
+        const lastMedium = typeof lastAttr?.medium === 'string' ? lastAttr.medium.toLowerCase() : ''
+        if (/^(conversation|call|phone|sms|chat|chat_widget|messaging)$/.test(lastMedium)) {
+          attrStats.converted_by_call++
+          if (groupOf(lk) === 'untracked') attrStats.call_with_no_channel++
+        }
+      }
       const attrs = [contactAttribution(c, 'first'), contactAttribution(c, 'last')]
         .filter((a, i, all): a is Record<string, unknown> => !!a && all.indexOf(a) === i)
       if (attrs.length > 0) withAttr++
@@ -610,6 +646,10 @@ async function fetchContacts(
     console.log(`[ghl] attribution: ${withAttr}/${inRange} contacts in range have it (${contacts.length} fetched); fields ${fields || 'none'}`)
     console.log(`[ghl] lead sources: ${Array.from(sourceTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}`)
     console.log(`[ghl] returned through an ad but not brought in by one, so not credited to ads: ${adOnLaterVisitOnly}`)
+    if (attrStats) {
+      console.log(`[ghl] first vs latest: ${attrStats.both_say_something} contacts have a channel on both, ${attrStats.differ} of them disagree`)
+      console.log(`[ghl] converted by a call: ${attrStats.converted_by_call}, of which ${attrStats.call_with_no_channel} carry no channel on that visit`)
+    }
     const unsorted = Array.from(unsortedLabels).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([l, n]) => `${n}× ${l}`)
     if (unsorted.length > 0) console.log(`[ghl] leads with no clear source, by label:\n  ${unsorted.join('\n  ')}`)
     const srcVals = Array.from(sourceValues).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`)
@@ -1166,6 +1206,8 @@ export const ghlConnector: ConnectorAdapter = {
     // What GHL actually sends on a contact, filled in by fetchContacts.
     const attribution: AttributionStats = {
       in_range: 0, with_attr: 0, fields: {}, sources: {}, session: {}, medium: {}, ad_on_later_visit_only: 0,
+      first_channel: {}, last_channel: {}, both_say_something: 0, differ: 0,
+      converted_by_call: 0, call_with_no_channel: 0,
     }
 
     try {
