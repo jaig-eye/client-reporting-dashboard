@@ -24,6 +24,8 @@ import { fetchGSCLiveData }  from '@/lib/gsc-live'
 import type { GSCSummaryResult } from '@/lib/gsc-live'
 import PageHeader            from '@/components/dashboard/PageHeader'
 import ListingPreview, { type SetupVerdict } from './ListingPreview'
+import ContentPlan, { type ContentPost } from './ContentPlan'
+import { fetchLivePageImages } from '@/lib/content/livePageImage'
 import EmptyState            from '@/components/dashboard/EmptyState'
 import SparkMetricCard       from '@/components/SparkMetricCard'
 import SpendChart            from '@/components/SpendChart'
@@ -282,6 +284,8 @@ export default async function SeoPage({
     { data: ahrefsKwDates },
     { data: rankData },
     { data: rankHistData },
+    { data: postData },
+    { data: topicData },
   ] = await Promise.all([
     db.from('client_connections')
       .select('id, connector:connectors(type)')
@@ -326,6 +330,20 @@ export default async function SeoPage({
       .lte('date', iso(toDate))
       .order('date', { ascending: true })
       .limit(2000),
+    // Only work the client has signed off. Drafts, rejected ideas and anything still pending are
+    // ours, not theirs — and only the columns a client should ever see are asked for.
+    db.from('content_posts')
+      .select('id,title,status,target_keyword,published_url,featured_image_url,published_at,word_count,topic_rationale,scheduled_publish_date,target_publish_date')
+      .eq('client_id', client.id)
+      .in('status', ['approved', 'published'])
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .limit(100),
+    // The brief behind each post: the search it targets and why we picked it.
+    db.from('content_topics')
+      .select('post_id,rationale,target_keyword,search_volume,keyword_difficulty,page_to_support')
+      .eq('client_id', client.id)
+      .not('post_id', 'is', null)
+      .limit(300),
   ])
 
   // Which connectors are live, and the Search Console connection to read from.
@@ -339,6 +357,60 @@ export default async function SeoPage({
     }
     return null
   }
+
+  // ── The blog work ─────────────────────────────────────────────────────────
+  type PostRow = {
+    id: string; title: string | null; status: string; target_keyword: string | null
+    published_url: string | null; featured_image_url: string | null; published_at: string | null
+    word_count: number | null; topic_rationale: string | null
+    scheduled_publish_date: string | null; target_publish_date: string | null
+  }
+  type TopicRow = {
+    post_id: string; rationale: string | null; target_keyword: string | null
+    search_volume: number | null; keyword_difficulty: number | null; page_to_support: string | null
+  }
+  const postRows  = ((postData  ?? []) as unknown as PostRow[]).filter(p => p.title)
+  const topicRows = (topicData ?? []) as unknown as TopicRow[]
+  const briefFor  = new Map(topicRows.map(t => [t.post_id, t]))
+
+  // A post that is live but has no image on file usually had one attached inside WordPress after
+  // we published. Read the page itself rather than report a gap that isn't there — best-effort,
+  // capped, and cached for a day.
+  const needImage = postRows
+    .filter(p => p.status === 'published' && p.published_url && !p.featured_image_url)
+    .map(p => p.published_url as string)
+  const liveImages = needImage.length > 0 ? await fetchLivePageImages(needImage) : {}
+
+  const contentPosts: ContentPost[] = postRows.map(p => {
+    const brief = briefFor.get(p.id)
+    const fromSite = !p.featured_image_url && !!p.published_url && !!liveImages[p.published_url]
+    return {
+      id:              p.id,
+      title:           p.title as string,
+      status:          p.status,
+      url:             p.published_url,
+      image:           p.featured_image_url ?? (p.published_url ? liveImages[p.published_url] ?? null : null),
+      image_from_site: fromSite,
+      published_at:    p.published_at,
+      due_at:          p.scheduled_publish_date ?? p.target_publish_date,
+      word_count:      p.word_count,
+      keyword:         p.target_keyword ?? brief?.target_keyword ?? null,
+      searches:        brief?.search_volume ?? null,
+      difficulty:      brief?.keyword_difficulty ?? null,
+      reason:          (p.topic_rationale ?? brief?.rationale ?? null) || null,
+      supports:        brief?.page_to_support ?? null,
+    }
+  })
+  // The header already prints the dates; this is the same window said in a sentence.
+  const contentDays  = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1)
+  const contentLabel = contentDays === 1 ? 'today' : `in the last ${contentDays} days`
+
+  const publishedPosts = contentPosts.filter(p =>
+    p.status === 'published' && p.published_at
+    && p.published_at.slice(0, 10) >= iso(fromDate) && p.published_at.slice(0, 10) <= iso(toDate))
+  // Approved work is not dated yet, so it is always shown — it is what is coming, not what happened.
+  const upcomingPosts  = contentPosts.filter(p => p.status !== 'published')
+  const hasContent     = publishedPosts.length > 0 || upcomingPosts.length > 0
 
   const gscConnectionId = connectionIdFor('google_search_console')
   const hasGbpConn      = connectionIdFor('google_business_profile') !== null
@@ -633,6 +705,7 @@ export default async function SeoPage({
     { id: 'search',    label: 'Search results' },
     { id: 'local',     label: 'Google listing' },
     { id: 'authority', label: 'Site strength' },
+    ...(hasContent ? [{ id: 'content', label: 'Blog posts' }] : []),
   ]
   const tab = seoTabs.some(t => t.id === params.tab) ? (params.tab as string) : seoTabs[0].id
   const tabHref = (id: string) => {
@@ -1214,6 +1287,14 @@ export default async function SeoPage({
         )}
 
         {/* ── Authority (Ahrefs) ────────────────────────────────────────── */}
+        {tab === 'content' && hasContent && (
+          <ContentPlan
+            published={publishedPosts}
+            upcoming={upcomingPosts}
+            periodLabel={contentLabel}
+          />
+        )}
+
         {tab === 'authority' && (
         <section className="seo-section">
           <SectionHead

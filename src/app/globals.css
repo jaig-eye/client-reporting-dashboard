@@ -5752,6 +5752,73 @@ select.note-field__input { cursor: pointer; }
   .dash-bone { animation: none; }
 }
 
+/* ── The blog work ──────────────────────────────────────────────────────────
+   Each post is a small published thing with a cover, so it gets a card — but the brief under it
+   is the reason the section exists, so the card is sized by the words, not by the picture.
+─────────────────────────────────────────────────────────────────────────────── */
+.cp {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 1rem;
+  align-items: start;
+}
+.cp__post {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-subtle); border-radius: 0.75rem; overflow: hidden;
+  background: var(--bg-surface);
+}
+.cp__cover {
+  width: 100%; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block;
+  background: var(--bg-subtle);
+}
+/* No cover on file is not a broken image — it is the post's own words, set large. */
+.cp__cover--none {
+  display: flex; align-items: center; justify-content: center; padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, var(--bg-subtle), var(--bg-muted));
+}
+.cp__cover-word {
+  font-size: 1.0625rem; font-weight: 600; line-height: 1.25; text-align: center;
+  color: var(--text-muted); text-transform: capitalize; text-wrap: balance;
+}
+.cp__body { padding: 0.875rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.cp__head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.cp__state {
+  padding: 0.125rem 0.5rem; border-radius: 999px;
+  font-size: 0.6875rem; font-weight: 600;
+}
+.cp__state[data-state="live"]  { background: var(--green-subtle); color: var(--green); }
+.cp__state[data-state="ready"] { background: var(--amber-subtle); color: var(--amber); }
+.cp__when { margin-left: auto; font-size: 0.75rem; color: var(--text-faint); }
+.cp__title {
+  margin: 0; font-size: 0.9375rem; font-weight: 600; line-height: 1.35;
+  color: var(--text-primary); text-wrap: pretty;
+}
+.cp__title a { color: inherit; }
+.cp__title a:hover { color: var(--accent); }
+.cp__target {
+  margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.4rem;
+  font-size: 0.8125rem; color: var(--text-secondary);
+}
+.cp__target svg { color: var(--text-faint); align-self: center; }
+.cp__kw {
+  padding: 0.075rem 0.4rem; border-radius: 0.35rem;
+  background: var(--accent-subtle); color: var(--accent); font-weight: 600;
+}
+.cp__muted { color: var(--text-muted); font-size: 0.75rem; }
+.cp__reason { margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); }
+.cp__reason-label { color: var(--text-muted); font-weight: 600; }
+.cp__foot {
+  margin-top: 0.125rem; padding-top: 0.5rem; border-top: 1px solid var(--border-subtle);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.75rem;
+  font-size: 0.75rem; color: var(--text-muted);
+}
+.cp__supports { display: inline-flex; align-items: center; gap: 0.3rem; }
+.cp__words    { font-variant-numeric: tabular-nums; }
+.cp__nocover  { color: var(--text-faint); }
+.cp__read {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 0.3rem;
+  color: var(--accent); font-weight: 600; white-space: nowrap;
+}
+.cp__read:hover { text-decoration: underline; }
+
 /* ── What we shared to their pages ──────────────────────────────────────────
    A post is a small piece of published work, so each one is a row with its image, not a card in
    a grid: the copy is the point and the copy wants width.
