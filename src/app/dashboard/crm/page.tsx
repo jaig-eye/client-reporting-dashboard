@@ -176,7 +176,7 @@ export default async function CrmPage({
   }
   const priorLabel = compare === 'last_year' ? 'the same period last year' : `the previous ${dayCount} days`
 
-  const { rows, priorRows, adCalls } = await _getCachedCrmMetrics(
+  const { rows, priorRows } = await _getCachedCrmMetrics(
     client.id,
     iso(fromDate), iso(toDate),
     iso(priorFrom), iso(priorTo),
@@ -240,20 +240,6 @@ export default async function CrmPage({
     .filter(g => g.count > 0)
   const leadWord = (n: number) => (n === 1 ? 'lead' : 'leads')
 
-  // Calls straight from Google ads. The callers never visited the website, so the CRM can't tie them
-  // to the ad; they're reported beside the lead sources rather than added into them.
-  const adCallCount    = Math.max(
-    adCalls.reduce((s, r) => s + num(r.phone_calls), 0),
-    adCalls.reduce((s, r) => s + num(r.calls_from_ad), 0),
-  )
-  // Google counts calls, the CRM counts people, so this bounds the overlap rather than adding it.
-  // Only worth saying while no ad call has been credited to a contact: after that the calls are
-  // already counted under the ads and the bound would count them twice.
-  const adCallsInGap = (sourceCounts.google_ads_call ?? 0) === 0
-    ? Math.min(adCallCount, sources.untracked)
-    : 0
-  const adCallsAnswered = adCalls.reduce((s, r) => s + num(r.calls_received), 0)
-  const adCallsMissed   = adCalls.reduce((s, r) => s + num(r.calls_missed), 0)
   const hasCallsBucket  = sources.channels.some(c => c.key === 'call_or_message')
 
   // Trend: new leads as bars, phone calls as the line, on the shared chart. When the client
@@ -440,11 +426,6 @@ export default async function CrmPage({
             {share(sources.untracked, sources.total) >= 40 && (
               <p className="crm-insight crm-insight--warn">
                 {`${share(sources.untracked, sources.total).toFixed(0)}% of leads have no clear source. ${crmName} records how someone reached you from their visit to your site, so an enquiry that starts with a phone call, a text or a walk-in has nothing to record.`}
-              </p>
-            )}
-            {adCallCount > 0 && (
-              <p className="crm-insight">
-                {`Google Ads counted ${fmtNum(adCallCount)} ${adCallCount === 1 ? 'call' : 'calls'} placed straight from your ads. Those callers never visit the site, so ${crmName} has no visit to tie them to — which is why they land under "no clear source" rather than with the ads.${adCallsInGap > 0 ? ` Allowing for them, ads brought in between ${fmtNum(sources.paid)} and ${fmtNum(sources.paid + adCallsInGap)} of your ${fmtNum(sources.total)} leads.` : ''}${adCallsAnswered + adCallsMissed > 0 ? ` Of the calls Google could track, ${fmtNum(adCallsAnswered)} ${adCallsAnswered === 1 ? 'was' : 'were'} answered${adCallsMissed > 0 ? ` and ${fmtNum(adCallsMissed)} missed` : ''}.` : ''}`}
               </p>
             )}
             {!sourcesComplete && (

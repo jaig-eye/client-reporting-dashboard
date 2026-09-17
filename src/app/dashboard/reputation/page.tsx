@@ -193,15 +193,19 @@ function ReviewCard({ review }: { review: ReviewRow }) {
 /** What one period's reviews add up to. Used for the selected range and the one it is compared to. */
 function summarise(reviews: ReviewRow[]) {
   const rated   = reviews.filter(r => r.star_rating > 0)
-  const replied = reviews.filter(r => r.reply_comment)
+  // The reply rate counts five-star reviews only. Anything less tends to be answered by phone or
+  // in person rather than in public, so including it measured a policy rather than the work.
+  const praise  = reviews.filter(r => r.star_rating === 5)
+  const replied = praise.filter(r => r.reply_comment)
   const lags    = reviews
     .map(r => (r.replied_at ? daysBetween(r.created_at, r.replied_at) : null))
     .filter((n): n is number => n != null)
   return {
     count:     reviews.length,
     avg:       rated.length > 0 ? rated.reduce((s, r) => s + r.star_rating, 0) / rated.length : 0,
+    praise:    praise.length,
     replied:   replied.length,
-    replyRate: reviews.length > 0 ? (replied.length / reviews.length) * 100 : 0,
+    replyRate: praise.length > 0 ? (replied.length / praise.length) * 100 : 0,
     lags,
     medianLag: median(lags),
   }
@@ -279,7 +283,6 @@ export default async function ReputationPage({
   const lifetimeAvg   = snapshot?.reviews_avg_rating
     || (rated.length > 0 ? rated.reduce((s, r) => s + r.star_rating, 0) / rated.length : 0)
   const lifetimeCount = snapshot?.reviews_count || reviews.length
-  const awaiting      = reviews.filter(r => !r.reply_comment).length
 
   const distribution = [5, 4, 3, 2, 1].map(stars => ({
     stars,
@@ -413,15 +416,14 @@ export default async function ReputationPage({
           <div className="rep-kpi">
             <p className="metric-label">Replied to</p>
             <p className="rep-kpi__value">
-              {now.count > 0 ? `${now.replyRate.toFixed(0)}%` : '—'}
-              {showCompare && before.count > 0 && now.count > 0 &&
+              {now.praise > 0 ? `${now.replyRate.toFixed(0)}%` : '—'}
+              {showCompare && before.praise > 0 && now.praise > 0 &&
                 <Delta pct={change(now.replyRate, before.replyRate)} />}
             </p>
             <p className="rep-kpi__sub">
-              {now.count > 0
-                ? `${fmtNum(now.replied)} of ${fmtNum(now.count)} this period`
-                : 'No reviews this period'}
-              {awaiting > 0 && ` · ${fmtNum(awaiting)} unanswered overall`}
+              {now.praise > 0
+                ? `${fmtNum(now.replied)} of ${fmtNum(now.praise)} five-star reviews`
+                : 'No five-star reviews this period'}
             </p>
           </div>
 
@@ -524,7 +526,7 @@ export default async function ReputationPage({
                 </div>
               ))}
             </dl>
-            <RowLimit total={groups.length} noun="posts">
+            <RowLimit total={groups.length} noun="posts" limit={4}>
               <div className="rep-social">
                 {groups.map(g => {
                   const reach = g.likes + g.comments + g.shares

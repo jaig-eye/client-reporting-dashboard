@@ -42,23 +42,6 @@ function competition(kd: number | null): string | null {
 const prettyDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
-/**
- * The first sentence or two of a brief, and everything after it.
- *
- * These are written for us — keyword difficulty, SERP composition, internal link targets — and run
- * to several hundred words on some posts. The opening almost always carries the actual reason; the
- * rest is the working. So the card shows the reason and keeps the working one click away.
- */
-function leadAndRest(text: string): { lead: string; rest: string } {
-  const clean = text.replace(/\s+/g, ' ').trim()
-  if (clean.length <= 200) return { lead: clean, rest: '' }
-  const window = clean.slice(0, 240)
-  const stop = Math.max(window.lastIndexOf('. '), window.lastIndexOf('? '), window.lastIndexOf('! '))
-  // Prefer a sentence end; fall back to a word boundary so nothing is cut mid-word.
-  const at = stop > 90 ? stop + 1 : window.lastIndexOf(' ')
-  return { lead: clean.slice(0, at).trim(), rest: clean.slice(at).trim() }
-}
-
 /** A post with no image is still a post. This is a cover, not an apology. */
 function CoverFallback({ keyword, title }: { keyword: string | null; title: string }) {
   const words = (keyword || title).split(/\s+/).slice(0, 4).join(' ')
@@ -116,28 +99,18 @@ function PostCard({ post }: { post: ContentPost }) {
           </p>
         )}
 
-        {post.reason && (() => {
-          const { lead, rest } = leadAndRest(post.reason as string)
-          return (
-            <div className="cp__reason">
-              <p className="cp__reason-lead">
-                <span className="cp__reason-label">Why this one:</span> {lead}
-              </p>
-              {rest && (
-                <BriefModal
-                  title={post.title}
-                  reason={post.reason as string}
-                  facts={{
-                    keyword:    post.keyword,
-                    searches:   post.searches,
-                    difficulty: post.difficulty,
-                    supports:   post.supports,
-                  }}
-                />
-              )}
-            </div>
-          )
-        })()}
+        {post.reason && (
+          <BriefModal
+            title={post.title}
+            reason={post.reason}
+            facts={{
+              keyword:    post.keyword,
+              searches:   post.searches,
+              difficulty: post.difficulty,
+              supports:   post.supports,
+            }}
+          />
+        )}
 
         <footer className="cp__foot">
           {post.word_count != null && post.word_count > 0 && (

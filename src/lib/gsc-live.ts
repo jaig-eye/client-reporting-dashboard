@@ -72,11 +72,27 @@ export async function fetchGSCLiveData(
       ? { regex: cfg.page_filter_regex, type: ((cfg.page_filter_type as string | undefined) ?? 'exclude') as 'include' | 'exclude' }
       : undefined
 
+    // These were a plain Promise.all, which meant one slow call took the other two down with it:
+    // a single aborted request emptied the whole page — headline figures, trend and tables — even
+    // though the daily totals behind the headline had nothing to do with it.
+    //
+    // Two changes. Each call now gets a second attempt, because the failure seen in production is
+    // a first-request abort that succeeds immediately afterwards (a cold function, a token refresh
+    // and three Search Console round trips landing at once). And they settle independently, so a
+    // call that fails twice costs its own section rather than the page.
     const [dailyRows, queryRows, pageRows] = await Promise.all([
-      fetchDailyTotals(siteUrl, auth.access_token, from, to),
-      fetchQueryTotals(siteUrl, auth.access_token, from, to),
-      fetchPageTotals(siteUrl, auth.access_token, from, to, pageFilter),
+      twice(() => fetchDailyTotals(siteUrl, auth.access_token, from, to), 'daily totals', connectionId),
+      twice(() => fetchQueryTotals(siteUrl, auth.access_token, from, to), 'queries', connectionId),
+      twice(() => fetchPageTotals(siteUrl, auth.access_token, from, to, pageFilter), 'pages', connectionId),
     ])
+
+    // The headline, the trend and the position spread all read from the daily rows. Without them
+    // there is no report, and reporting zeroes would be worse than saying nothing — a cached zero
+    // is indistinguishable from a real one for as long as the cache holds it.
+    if (dailyRows === null) {
+      console.error('[gsc-live] daily totals unavailable for connection', connectionId, '— reporting nothing rather than zeroes')
+      return null
+    }
 
     // Aggregate totals from daily rows (avoids double-counting from query/page dimensions)
     let totalClicks = 0
@@ -92,7 +108,7 @@ export async function fetchGSCLiveData(
 
     // Aggregate query rows by query (sum across dates)
     const queryMap = new Map<string, { clicks: number; impressions: number; posSum: number }>()
-    for (const r of queryRows) {
+    for (const r of queryRows ?? []) {
       if (!r.query) continue
       const ex = queryMap.get(r.query) ?? { clicks: 0, impressions: 0, posSum: 0 }
       ex.clicks      += r.clicks
@@ -114,7 +130,7 @@ export async function fetchGSCLiveData(
 
     // Aggregate page rows by page (sum across dates)
     const pageMap = new Map<string, { clicks: number; impressions: number; posSum: number }>()
-    for (const r of pageRows) {
+    for (const r of pageRows ?? []) {
       if (!r.page) continue
       const ex = pageMap.get(r.page) ?? { clicks: 0, impressions: 0, posSum: 0 }
       ex.clicks      += r.clicks
@@ -156,4 +172,29 @@ export async function fetchGSCLiveData(
     console.error('[gsc-live] fetchGSCLiveData error for connection', connectionId, err)
     return null
   }
+}
+
+/**
+ * One retry, then give up and say so.
+ *
+ * Returns null rather than an empty array when both attempts fail, so the caller can tell "Google
+ * had nothing for these dates" apart from "we never got an answer" — the two look identical
+ * downstream and only one of them should empty the page.
+ */
+async function twice<T>(
+  call: () => Promise<T[]>,
+  label: string,
+  connectionId: string,
+): Promise<T[] | null> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await call()
+    } catch (err) {
+      if (attempt === 2) {
+        console.error(`[gsc-live] ${label} failed twice for connection ${connectionId}`, err)
+        return null
+      }
+    }
+  }
+  return null
 }

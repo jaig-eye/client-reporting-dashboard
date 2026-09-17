@@ -7,24 +7,29 @@
 
 import { useState, type ReactNode } from 'react'
 
-const LIMIT = 10   // matches the nth-child rule in globals.css
+// Each supported limit needs its own nth-child rule in globals.css, so this is a fixed set rather
+// than any number: 10 for tables, 4 for lists whose rows are tall enough to run down the page.
+const LIMIT = 10
 
 export default function RowLimit({
   total,
   noun,
+  limit = LIMIT,
   children,
 }: {
   /** How many rows the table has. */
   total: number
   /** What the rows are, for the button: "Show all 25 searches". */
   noun: string
+  /** How many to show before collapsing. Must have a matching rule in globals.css. */
+  limit?: 4 | 10
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const needed = total > LIMIT
+  const needed = total > limit
 
   return (
-    <div className="row-limit" data-open={open || !needed}>
+    <div className="row-limit" data-open={open || !needed} data-limit={limit}>
       {children}
       {needed && (
         <button
@@ -33,7 +38,7 @@ export default function RowLimit({
           aria-expanded={open}
           onClick={() => setOpen(o => !o)}
         >
-          {open ? `Show top ${LIMIT}` : `Show all ${total} ${noun}`}
+          {open ? `Show top ${limit}` : `Show all ${total} ${noun}`}
         </button>
       )}
     </div>

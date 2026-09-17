@@ -5285,6 +5285,9 @@ select.note-field__input { cursor: pointer; }
 /* ── Long tables: top 10 rows, then a button for the rest ── */
 .row-limit[data-open='false'] tbody tr:nth-child(n+11) { display: none; }
 .row-limit[data-open='false'] .rep-list > :nth-child(n+11) { display: none; }
+.row-limit[data-open='false'] .rep-social > :nth-child(n+11) { display: none; }
+/* A shared post is several lines tall, so four of them is already a screenful. */
+.row-limit[data-open='false'][data-limit='4'] .rep-social > :nth-child(n+5) { display: none; }
 .row-limit__toggle {
   display: block;
   width: 100%;
@@ -5866,11 +5869,6 @@ select.note-field__input { cursor: pointer; }
   background: var(--accent-subtle); color: var(--accent); font-weight: 600;
 }
 .cp__muted { color: var(--text-muted); font-size: 0.75rem; }
-.cp__reason { min-width: 0; }
-.cp__reason-lead {
-  margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); text-wrap: pretty;
-}
-.cp__reason-label { color: var(--text-muted); font-weight: 600; }
 /* The way into the full brief. A button, because it opens a dialog rather than going anywhere. */
 .cp__why {
   margin-top: 0.4375rem;
@@ -5974,7 +5972,8 @@ select.note-field__input { cursor: pointer; }
    gap happened to leave them — the same treatment the Analytics scorecard uses. */
 .rep-social__stats {
   display: flex; flex-wrap: wrap; row-gap: 0.75rem;
-  margin: 0 0 1.125rem; padding-bottom: 0.875rem;
+  margin: 0;
+  padding: 0 1.5rem 1rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 .rep-social__stats > div {
@@ -5995,7 +5994,10 @@ select.note-field__input { cursor: pointer; }
   font-size: 0.625rem; font-weight: 600; text-transform: capitalize;
 }
 
-.rep-social { display: flex; flex-direction: column; gap: 0.625rem; }
+.rep-social {
+  display: flex; flex-direction: column; gap: 0.625rem;
+  padding: 1.125rem 1.5rem 1.5rem;
+}
 .rep-social__post {
   display: grid; grid-template-columns: 3.75rem minmax(0, 1fr); gap: 0.875rem;
   align-items: start;
@@ -6044,7 +6046,9 @@ a.rep-social__where svg { opacity: 0.55; }
   .rep-social__post { grid-template-columns: 2.75rem minmax(0, 1fr); gap: 0.625rem; padding: 0.625rem; }
   .rep-social__post--text { grid-template-columns: minmax(0, 1fr); }
   .rep-social__media { width: 2.75rem; height: 2.75rem; }
+  .rep-social__stats { padding: 0 1.25rem 0.875rem; }
   .rep-social__stats > div { padding-inline: 0.875rem; }
+  .rep-social { padding: 1rem 1.25rem 1.25rem; }
   .rep-social__when { margin-left: 0; width: 100%; }
   .rep-social__link { margin-left: 0; }
 }
