@@ -1130,6 +1130,177 @@ async function fetchReviews(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Social Planner
+//
+// Everything the Social Planner holds was scheduled by us, which is the whole reason this is
+// reportable: Meta's Page API would return the client's own posts alongside ours with no field
+// to tell them apart. Here, authorship is the table.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One post we published on a client's behalf. */
+export interface GhlSocialPost {
+  post_id:       string
+  status:        string
+  /** Which networks this one post went to. Never one row per network — engagement is counted once. */
+  platforms:     string[]
+  account_names: string[]
+  summary:       string
+  media_url:     string | null
+  post_url:      string | null
+  created_at:    string | null
+  published_at:  string | null
+  likes:         number
+  comments:      number
+  shares:        number
+  raw:           Record<string, unknown>
+}
+
+export type SocialOutcome = 'ok' | 'no_scope' | 'unavailable'
+
+/** Social Planner speaks v3 only; the default version header 404s on these paths. */
+const SOCIAL_VERSION   = 'v3'
+const SOCIAL_PAGE      = 100
+const SOCIAL_MAX_PAGES = 10
+
+const socialStr = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
+const socialNum = (v: unknown): number => {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0
+}
+
+/** A refusal we can act on — the token is fine, it just lacks the scope. */
+function isScopeRefusal(e: unknown): boolean {
+  const s = String(e)
+  return s.includes('401') || s.includes('403')
+}
+
+/**
+ * The accounts the Social Planner posts through, so a post's account ids can be named and placed
+ * on a network. Best-effort: without it a post still reports, just without its page name.
+ */
+async function fetchSocialAccounts(
+  apiKey: string,
+  locationId: string,
+): Promise<Map<string, { platform: string; name: string }>> {
+  const byId = new Map<string, { platform: string; name: string }>()
+  try {
+    const data = await ghlGet(
+      `/social-media-posting/${locationId}/accounts`, apiKey, {}, 4, SOCIAL_VERSION)
+    const results  = (data.results ?? data) as Record<string, unknown>
+    const accounts = ((results?.accounts ?? data.accounts) ?? []) as Record<string, unknown>[]
+    if (accounts.length > 0) {
+      console.log(`[ghl] social account fields: ${Object.keys(accounts[0]).join(',')}`)
+    }
+    for (const a of accounts) {
+      const id = socialStr(a.id ?? a._id ?? a.accountId)
+      if (!id) continue
+      byId.set(id, {
+        platform: socialStr(a.platform ?? a.type ?? a.provider).toLowerCase(),
+        name:     socialStr(a.name ?? a.pageName ?? a.username ?? a.originId),
+      })
+    }
+  } catch (e) {
+    if (isScopeRefusal(e)) {
+      console.log('[ghl] social accounts: missing scope — add "socialplanner/account.readonly" to your private integration')
+    } else {
+      console.log(`[ghl] social accounts unavailable: ${String(e).slice(0, 200)}`)
+    }
+  }
+  return byId
+}
+
+/**
+ * The posts we published in the window.
+ *
+ * GHL documents _id, status and insights and little else, so every other field is read through a
+ * list of plausible names and the first post's real keys are logged. One sync against a live
+ * location then says exactly what to keep, the same way the call-duration shape was settled. The
+ * raw post is stored alongside, so nothing is lost while the names are still uncertain.
+ *
+ * includeUsers is deliberately not requested: we want the posts, not the staff who scheduled them.
+ */
+export async function fetchSocialPosts(
+  apiKey: string,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<{ posts: GhlSocialPost[]; outcome: SocialOutcome }> {
+  const accounts = await fetchSocialAccounts(apiKey, locationId)
+  const posts: GhlSocialPost[] = []
+  const seen = new Set<string>()
+
+  try {
+    for (let page = 0; page < SOCIAL_MAX_PAGES; page++) {
+      const data = await ghlPost(
+        `/social-media-posting/${locationId}/posts/list`, apiKey,
+        {
+          type:     'published',
+          skip:     String(page * SOCIAL_PAGE),
+          limit:    String(SOCIAL_PAGE),
+          fromDate: new Date(`${dateFrom}T00:00:00Z`).toISOString(),
+          toDate:   new Date(`${dateTo}T23:59:59Z`).toISOString(),
+        },
+        4, SOCIAL_VERSION)
+
+      const results = (data.results ?? data) as Record<string, unknown>
+      const batch   = ((results?.posts ?? data.posts) ?? []) as Record<string, unknown>[]
+
+      if (page === 0) {
+        if (batch.length === 0) { console.log('[ghl] social posts: none published in range'); break }
+        console.log(`[ghl] social post fields: ${Object.keys(batch[0]).join(',')}`)
+      }
+
+      for (const p of batch) {
+        const id = socialStr(p._id ?? p.id ?? p.postId)
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+
+        const accountIds = (Array.isArray(p.accountIds) ? p.accountIds
+          : Array.isArray(p.accounts) ? p.accounts : []) as unknown[]
+        const resolved = accountIds
+          .map(a => accounts.get(socialStr(a)))
+          .filter(Boolean) as { platform: string; name: string }[]
+
+        const insights = (p.insights ?? {}) as Record<string, unknown>
+        const media    = (Array.isArray(p.media) ? p.media : []) as Record<string, unknown>[]
+
+        const created   = parseGhlDate(p.createdAt ?? p.dateAdded)
+        const published = parseGhlDate(
+          p.publishedAt ?? p.postedAt ?? p.scheduleDate ?? p.publishedDate ?? p.createdAt)
+
+        posts.push({
+          post_id:       id,
+          status:        socialStr(p.status) || 'published',
+          platforms:     Array.from(new Set(resolved.map(r => r.platform).filter(Boolean))),
+          account_names: Array.from(new Set(resolved.map(r => r.name).filter(Boolean))),
+          summary:       socialStr(p.summary ?? p.content ?? p.text ?? p.caption),
+          media_url:     socialStr(media[0]?.url ?? media[0]?.thumbnail ?? p.imageUrl) || null,
+          post_url:      socialStr(p.permalink ?? p.postUrl ?? p.url ?? p.link) || null,
+          created_at:    created?.iso   ?? null,
+          published_at:  published?.iso ?? null,
+          likes:         socialNum(insights.like ?? insights.likes),
+          comments:      socialNum(insights.comment ?? insights.comments),
+          shares:        socialNum(insights.share ?? insights.shares),
+          raw:           p,
+        })
+      }
+
+      if (batch.length < SOCIAL_PAGE) break
+    }
+  } catch (e) {
+    if (isScopeRefusal(e)) {
+      console.log('[ghl] social posts: missing scope — add "socialplanner/post.readonly" to your private integration')
+      return { posts: [], outcome: 'no_scope' }
+    }
+    console.log(`[ghl] social posts unavailable: ${String(e).slice(0, 200)}`)
+    return { posts: [], outcome: 'unavailable' }
+  }
+
+  console.log(`[ghl] social posts: ${posts.length} published between ${dateFrom} and ${dateTo}`)
+  return { posts, outcome: 'ok' }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Connector adapter
 // ─────────────────────────────────────────────────────────────────────────────
 

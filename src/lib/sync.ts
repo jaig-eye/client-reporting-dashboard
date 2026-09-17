@@ -19,6 +19,7 @@ import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKe
 import { fetchGoogleSearchTerms, fetchGoogleAdsCalls } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
+import { fetchSocialPosts } from './connectors/ghl'
 import type { ClientConnection, Connector, SyncJobType } from './types'
 import type { GoogleAdsRawRow, MetaAdsRawRow } from './connectors/types'
 import { fetchReviews as fetchGBPReviews, fetchLocationProfile } from './connectors/google-business-profile'
@@ -304,6 +305,23 @@ export async function syncClient(
           clientId,
           result.rows as unknown as GhlRawRow[]
         )
+
+        // The posts we published to their social pages in this window. Best-effort: a token
+        // without the Social Planner scope logs how to add it and the section stays hidden.
+        const ghlKey = String((auth as Record<string, unknown>).api_key ?? '')
+        if (ghlKey && connection.external_id) {
+          try {
+            const social = await fetchSocialPosts(
+              ghlKey, connection.external_id, resolvedFrom, resolvedTo)
+            if (social.posts.length > 0) {
+              const stored = await upsertGhlSocialPosts(
+                db, connection.id, clientId, connection.external_id, social.posts)
+              console.log(`[sync] social posts: stored ${stored} for connection ${connection.id}`)
+            }
+          } catch (e) {
+            console.error('[sync] social posts failed:', e)
+          }
+        }
       } else if (connection.connector.type === 'google_analytics') {
         recordCount = await upsertGA4Metrics(
           db,
@@ -1413,6 +1431,121 @@ export async function upsertGBPReviews(
     return mapped.length
   } catch (e) {
     console.error('[sync] gbp_reviews failed:', e)
+    return 0
+  }
+}
+
+/**
+ * Normalises text down to the letters and digits, so a review quoted inside a post still matches
+ * after the copy has been rewrapped, re-punctuated or had emoji dropped into it.
+ */
+function socialNormalise(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+/**
+ * Which review each post was sharing, where the post quotes it.
+ *
+ * A review's own words are a strong enough fingerprint on their own: a run of 60 normalised
+ * characters from a real review does not appear in unrelated copy by accident. Short reviews are
+ * skipped entirely rather than guessed at — "Great service" would match half the posts ever
+ * written, and a wrong link here would misreport our own work.
+ */
+function matchPostsToReviews(
+  posts: { post_id: string; summary: string }[],
+  reviews: { review_id: string; comment: string | null }[],
+): Map<string, string> {
+  const MIN_FINGERPRINT = 40
+  const usable = reviews
+    .map(r => ({ review_id: r.review_id, text: socialNormalise(r.comment ?? '') }))
+    .filter(r => r.text.length >= MIN_FINGERPRINT)
+
+  const byPost = new Map<string, string>()
+  if (usable.length === 0) return byPost
+
+  for (const p of posts) {
+    const hay = socialNormalise(p.summary)
+    if (hay.length < MIN_FINGERPRINT) continue
+    // The longest match wins, so a review that quotes another review's opening line loses to the
+    // one that matches further in.
+    let best = '', bestLen = 0
+    for (const r of usable) {
+      const probe = r.text.slice(0, 120)
+      if (probe.length > bestLen && hay.includes(probe.slice(0, MIN_FINGERPRINT))
+          && hay.includes(probe.slice(0, Math.min(probe.length, 80)))) {
+        best = r.review_id; bestLen = probe.length
+      }
+    }
+    if (best) byPost.set(p.post_id, best)
+  }
+  return byPost
+}
+
+/**
+ * Stores the posts we published on a client's behalf, one row per post — never one per network,
+ * so a post that went to two pages cannot double-count its own engagement.
+ *
+ * Before migration 221 the write fails quietly and the rest of the GHL sync is unaffected.
+ */
+export async function upsertGhlSocialPosts(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  locationId: string,
+  posts: import('./connectors/ghl').GhlSocialPost[]
+): Promise<number> {
+  const valid = posts.filter(p => p.post_id)
+  if (valid.length === 0) return 0
+  try {
+    // The reviews we already hold for this client, to tie each post back to what it was sharing.
+    let reviews: { review_id: string; comment: string | null }[] = []
+    try {
+      const { data } = await db
+        .from('gbp_reviews')
+        .select('review_id,comment')
+        .eq('client_id', clientId)
+        .not('comment', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      reviews = (data ?? []) as { review_id: string; comment: string | null }[]
+    } catch { /* no reviews table yet, or none stored — posts still report on their own */ }
+
+    const matched = matchPostsToReviews(valid, reviews)
+    const syncedAt = new Date().toISOString()
+    const mapped = valid.map(p => ({
+      connection_id: connectionId,
+      client_id:     clientId,
+      location_id:   locationId,
+      post_id:       p.post_id,
+      status:        p.status,
+      platforms:     p.platforms,
+      account_names: p.account_names,
+      summary:       p.summary || null,
+      media_url:     p.media_url,
+      post_url:      p.post_url,
+      created_at:    p.created_at,
+      published_at:  p.published_at,
+      likes:         p.likes,
+      comments:      p.comments,
+      shares:        p.shares,
+      review_id:     matched.get(p.post_id) ?? null,
+      raw:           p.raw,
+      synced_at:     syncedAt,
+    }))
+    console.log(`[sync] social posts: ${matched.size} of ${mapped.length} matched to a review`)
+
+    for (let i = 0; i < mapped.length; i += 200) {
+      const { error } = await db
+        .from('ghl_social_posts')
+        .upsert(mapped.slice(i, i + 200), { onConflict: 'connection_id,post_id', ignoreDuplicates: false })
+      if (error) {
+        console.error(`[sync] ghl_social_posts upsert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+    return mapped.length
+  } catch (e) {
+    console.error('[sync] ghl_social_posts failed:', e)
     return 0
   }
 }

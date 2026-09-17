@@ -38,10 +38,13 @@ const REVIEW_SELECT = 'review_id,reviewer_name,star_rating,comment,created_at,re
 // picture, and the page reads them all into memory.
 const REVIEW_CAP = 1000
 
+const POST_SELECT = 'post_id,platforms,account_names,summary,media_url,post_url,published_at,created_at,likes,comments,shares,review_id'
+const POST_CAP    = 500
+
 const _getCachedReputation = unstable_cache(
   async (clientId: string) => {
     const db = createAdminClient()
-    const [{ data: reviews }, { data: snapshot }] = await Promise.all([
+    const [{ data: reviews }, { data: snapshot }, { data: posts }] = await Promise.all([
       // Migration 219. Before it exists this read fails quietly and the page shows its empty state.
       db.from('gbp_reviews').select(REVIEW_SELECT)
         .eq('client_id', clientId)
@@ -51,15 +54,38 @@ const _getCachedReputation = unstable_cache(
       db.from('gbp_metrics').select('date,reviews_count,reviews_avg_rating')
         .eq('client_id', clientId).gt('reviews_count', 0)
         .order('date', { ascending: false }).limit(1),
+      // What we published to their pages. Migration 221, and only populated for a client whose
+      // GHL token carries the Social Planner scope — before either, this fails quietly and the
+      // section stays out of the page rather than showing an empty promise.
+      db.from('ghl_social_posts').select(POST_SELECT)
+        .eq('client_id', clientId)
+        .order('published_at', { ascending: false })
+        .limit(POST_CAP),
     ])
     return {
       reviews:  (reviews  ?? []) as unknown as ReviewRow[],
       snapshot: ((snapshot ?? [])[0] ?? null) as { reviews_count: number; reviews_avg_rating: number } | null,
+      posts:    (posts    ?? []) as unknown as SocialRow[],
     }
   },
-  ['dashboard-reputation-v2'],
+  ['dashboard-reputation-v3'],
   { revalidate: 600, tags: ['client-metrics'] }
 )
+
+type SocialRow = {
+  post_id:       string
+  platforms:     string[] | null
+  account_names: string[] | null
+  summary:       string | null
+  media_url:     string | null
+  post_url:      string | null
+  published_at:  string | null
+  created_at:    string | null
+  likes:         number
+  comments:      number
+  shares:        number
+  review_id:     string | null
+}
 
 type ReviewRow = {
   review_id:     string
@@ -200,7 +226,7 @@ export default async function ReputationPage({
   const compare     = params.compare ?? 'none'
   const showCompare = compare !== 'none'
 
-  const { reviews, snapshot } = await _getCachedReputation(client.id)
+  const { reviews, snapshot, posts } = await _getCachedReputation(client.id)
 
   if (reviews.length === 0) {
     return (
@@ -273,7 +299,24 @@ export default async function ReputationPage({
   const monthsShown = months.some(m => m.count > 0)
 
   const periodWord   = now.count === 1 ? 'review' : 'reviews'
-  const unrepliedNow = periodReviews.filter(r => !r.reply_comment).length
+
+  // ── What we published to their pages in this period ───────────────────────
+  // A post is dated by when it actually went out; a post with no publish date falls back to when
+  // it was created, which is the same day in practice for anything already published.
+  const postDay      = (p: SocialRow) => day(p.published_at ?? p.created_at ?? '')
+  const periodPosts  = posts.filter(p => {
+    const d = postDay(p)
+    return d >= from && d <= to
+  })
+  // How many of THIS period's reviews we shared — the number worth putting in a sentence. Counted
+  // over the reviews, not the posts, so one review shared to two pages still counts once.
+  const sharedIds    = new Set(periodPosts.map(p => p.review_id).filter(Boolean) as string[])
+  const sharedOfNew  = periodReviews.filter(r => sharedIds.has(r.review_id)).length
+  const reviewById   = new Map(reviews.map(r => [r.review_id, r]))
+  const networkNames = Array.from(new Set(
+    periodPosts.flatMap(p => p.platforms ?? []).filter(Boolean),
+  )).map(p => p.charAt(0).toUpperCase() + p.slice(1))
+  const anyEngagement = periodPosts.some(p => p.likes + p.comments + p.shares > 0)
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -391,13 +434,86 @@ export default async function ReputationPage({
           )}
         </div>
 
+        {/* ── What we shared to their pages ───────────────────────────────── */}
+        {periodPosts.length > 0 && (
+          <section className="card rep-card" aria-labelledby="rep-social-title">
+            <div className="rep-card__head">
+              <h2 id="rep-social-title" className="section-title">Shared to your pages</h2>
+              <p className="section-desc">
+                {sharedOfNew > 0
+                  ? <><b>{fmtNum(sharedOfNew)}</b> of your {fmtNum(now.count)} new {periodWord} went out
+                      {networkNames.length > 0 && <> to {networkNames.join(' and ')}</>}, posted for you automatically.</>
+                  : <>{fmtNum(periodPosts.length)} {periodPosts.length === 1 ? 'post' : 'posts'} published for you
+                      {networkNames.length > 0 && <> on {networkNames.join(' and ')}</>} in this period.</>}
+              </p>
+            </div>
+            <RowLimit total={periodPosts.length} noun="posts">
+              <div className="rep-social">
+                {periodPosts.map(p => {
+                  const review = p.review_id ? reviewById.get(p.review_id) : undefined
+                  const reach  = p.likes + p.comments + p.shares
+                  // Social copy is written with a blank line between every thought. Kept as-is,
+                  // the preview spends half its lines on nothing — so the gaps close to one break.
+                  const copy   = (p.summary ?? '').replace(/\n{2,}/g, '\n').trim()
+                  return (
+                    <article key={p.post_id}
+                             className={p.media_url ? 'rep-social__post' : 'rep-social__post rep-social__post--text'}>
+                      {p.media_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.media_url} alt="" className="rep-social__media" loading="lazy" />
+                      )}
+                      <div className="rep-social__body">
+                        <header className="rep-social__head">
+                          {(p.platforms ?? []).map(n => (
+                            <span key={n} className="rep-social__where" data-net={n}>
+                              {n.charAt(0).toUpperCase() + n.slice(1)}
+                            </span>
+                          ))}
+                          <time className="rep-social__when" dateTime={postDay(p)}>{prettyDate(postDay(p))}</time>
+                        </header>
+                        {copy && <p className="rep-social__text">{copy}</p>}
+                        <footer className="rep-social__foot">
+                          {review && (
+                            <span className="rep-social__review">
+                              <Stars rating={review.star_rating} />
+                              from {review.reviewer_name || 'a customer'}
+                            </span>
+                          )}
+                          {reach > 0 && (
+                            <span className="rep-social__reach">
+                              {p.likes > 0     && <>{fmtNum(p.likes)} {p.likes === 1 ? 'like' : 'likes'}</>}
+                              {p.comments > 0  && <>{p.likes > 0 && ' · '}{fmtNum(p.comments)} {p.comments === 1 ? 'comment' : 'comments'}</>}
+                              {p.shares > 0    && <>{(p.likes > 0 || p.comments > 0) && ' · '}{fmtNum(p.shares)} {p.shares === 1 ? 'share' : 'shares'}</>}
+                            </span>
+                          )}
+                          {p.post_url && (
+                            <a className="rep-social__link" href={p.post_url} target="_blank" rel="noopener noreferrer">
+                              See the post
+                            </a>
+                          )}
+                        </footer>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </RowLimit>
+            {!anyEngagement && (
+              <p className="rep-social__note">
+                Likes and comments arrive from the networks a while after a post goes out, so
+                recent ones can read as zero for a day or two.
+              </p>
+            )}
+          </section>
+        )}
+
         {/* ── The reviews in the selected range ───────────────────────────── */}
         <section className="card rep-card" aria-labelledby="rep-all-title">
           <div className="rep-card__head">
             <h2 id="rep-all-title" className="section-title">Reviews in this period</h2>
             <p className="section-desc">
               {periodReviews.length > 0
-                ? <>Newest first, with your reply where there is one{unrepliedNow > 0 && <> · {fmtNum(unrepliedNow)} still waiting on one</>}</>
+                ? <>Newest first, with your reply where there is one</>
                 : <>Nothing was left between these dates. Widen the range to see more.</>}
             </p>
           </div>

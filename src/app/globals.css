@@ -5752,6 +5752,60 @@ select.note-field__input { cursor: pointer; }
   .dash-bone { animation: none; }
 }
 
+/* ── What we shared to their pages ──────────────────────────────────────────
+   A post is a small piece of published work, so each one is a row with its image, not a card in
+   a grid: the copy is the point and the copy wants width.
+─────────────────────────────────────────────────────────────────────────────── */
+.rep-social { display: flex; flex-direction: column; gap: 0.75rem; }
+.rep-social__post {
+  display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.875rem;
+  padding: 0.875rem; border: 1px solid var(--border-subtle); border-radius: 0.75rem;
+}
+.rep-social__post--text { grid-template-columns: minmax(0, 1fr); }
+.rep-social__media {
+  width: 4.5rem; height: 4.5rem; max-width: 100%; object-fit: cover;
+  border-radius: 0.5rem; background: var(--bg-subtle); display: block;
+}
+.rep-social__body { display: flex; flex-direction: column; gap: 0.375rem; min-width: 0; }
+.rep-social__head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.rep-social__where {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.125rem 0.5rem; border-radius: 999px;
+  background: var(--bg-subtle); color: var(--text-secondary);
+  font-size: 0.6875rem; font-weight: 600;
+}
+.rep-social__where::before {
+  content: ''; width: 6px; height: 6px; border-radius: 999px; background: var(--text-faint);
+}
+.rep-social__where[data-net="facebook"]::before  { background: #1877f2; }
+.rep-social__where[data-net="instagram"]::before { background: #e1306c; }
+.rep-social__where[data-net="google"]::before    { background: #34a853; }
+.rep-social__where[data-net="linkedin"]::before  { background: #0a66c2; }
+.rep-social__where[data-net="tiktok"]::before    { background: #010101; }
+.rep-social__when { margin-left: auto; font-size: 0.75rem; color: var(--text-faint); }
+.rep-social__text {
+  margin: 0; font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
+  white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rep-social__foot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.875rem;
+  font-size: 0.75rem; color: var(--text-muted);
+}
+.rep-social__review { display: inline-flex; align-items: center; gap: 0.3rem; }
+.rep-social__reach  { font-variant-numeric: tabular-nums; }
+.rep-social__link   { margin-left: auto; color: var(--accent); font-weight: 600; }
+.rep-social__link:hover { text-decoration: underline; }
+.rep-social__note   { margin: 0.75rem 0 0; font-size: 0.75rem; color: var(--text-faint); line-height: 1.5; }
+
+@media (max-width: 639px) {
+  .rep-social__post { grid-template-columns: 3rem minmax(0, 1fr); gap: 0.625rem; padding: 0.75rem; }
+  .rep-social__post--text { grid-template-columns: minmax(0, 1fr); }
+  .rep-social__media { width: 3rem; height: 3rem; }
+  .rep-social__when { margin-left: 0; width: 100%; }
+  .rep-social__link { margin-left: 0; }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Listing preview — the client's Google listing, shown the way a searcher sees it.
 
