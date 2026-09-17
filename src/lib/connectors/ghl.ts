@@ -504,6 +504,9 @@ export interface AttributionStats {
   session:    Record<string, number>
   /** GHL's medium: form, call, chat_widget and so on. */
   medium:     Record<string, number>
+  /** Leads an ad touched later but did not bring in. First touch leaves these with their
+   *  original channel; this is how many that decision moves. */
+  ad_on_later_visit_only: number
 }
 
 async function fetchContacts(
@@ -535,7 +538,9 @@ async function fetchContacts(
   const LABEL_FIELDS = ['sessionSource', 'utmSessionSource', 'medium', 'utmSource', 'utmMedium'] as const
   const attrValues  = new Map<string, Map<string, number>>()
   const sourceTally = new Map<string, number>()
-  let adFromLatestVisit = 0
+  // Leads an ad touched on the way back but did not bring in. First touch declines to credit
+  // these, and the count says how much that decision is worth arguing about.
+  let adOnLaterVisitOnly = 0
   let inRange = 0
   const unsortedLabels = new Map<string, number>()
   // GHL's own source on the contact, counted by value. It names how the contact got in — a form, an
@@ -559,7 +564,7 @@ async function fetchContacts(
       // Spam stays out of the source counts, so the channels add up to the lead count.
       // One channel per lead: an ad on either of GHL's two attributions wins, otherwise the first visit.
       const key = classifyLead(c)
-      if (groupOf(key) === 'paid' && groupOf(classifyContact(c, 'first')) !== 'paid') adFromLatestVisit++
+      if (groupOf(classifyContact(c, 'last')) === 'paid' && groupOf(classifyContact(c, 'first')) !== 'paid') adOnLaterVisitOnly++
       if (groupOf(key) === 'untracked') {
         const label = `${key}: first ${attributionLabel(c, 'first')} | latest ${attributionLabel(c, 'last')}`
         unsortedLabels.set(label, (unsortedLabels.get(label) ?? 0) + 1)
@@ -598,12 +603,13 @@ async function fetchContacts(
     attrStats.sources   = top(sourceValues)
     attrStats.session   = top(attrValues.get('sessionSource') ?? new Map())
     attrStats.medium    = top(attrValues.get('medium') ?? new Map())
+    attrStats.ad_on_later_visit_only = adOnLaterVisitOnly
   }
   if (contacts.length > 0) {
     const fields = Array.from(attrKeys, ([k, n]) => `${k}:${n}`).join(',')
     console.log(`[ghl] attribution: ${withAttr}/${inRange} contacts in range have it (${contacts.length} fetched); fields ${fields || 'none'}`)
     console.log(`[ghl] lead sources: ${Array.from(sourceTally, ([k, n]) => `${k}:${n}`).join(',') || 'none'}`)
-    console.log(`[ghl] counted as ad leads because of their latest visit: ${adFromLatestVisit}`)
+    console.log(`[ghl] returned through an ad but not brought in by one, so not credited to ads: ${adOnLaterVisitOnly}`)
     const unsorted = Array.from(unsortedLabels).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([l, n]) => `${n}× ${l}`)
     if (unsorted.length > 0) console.log(`[ghl] leads with no clear source, by label:\n  ${unsorted.join('\n  ')}`)
     const srcVals = Array.from(sourceValues).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([v, n]) => `${v}:${n}`)
@@ -1159,7 +1165,7 @@ export const ghlConnector: ConnectorAdapter = {
     const numberOutcome = { refused: false }
     // What GHL actually sends on a contact, filled in by fetchContacts.
     const attribution: AttributionStats = {
-      in_range: 0, with_attr: 0, fields: {}, sources: {}, session: {}, medium: {},
+      in_range: 0, with_attr: 0, fields: {}, sources: {}, session: {}, medium: {}, ad_on_later_visit_only: 0,
     }
 
     try {

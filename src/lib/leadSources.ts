@@ -229,11 +229,15 @@ export function sourceChannel(contact: Record<string, unknown>): LeadSourceKey |
 }
 
 /**
- * The one channel a lead is counted under.
- *   1. An ad on either visit wins: the latest visit's ad first, then the first visit's.
- *      Someone who found the business through search and came back through an ad counts as an ad lead.
- *   2. Otherwise the first visit decides, since that is how they found the business.
- *   3. When the first visit says nothing useful, the latest visit is used instead.
+ * The one channel a lead is counted under. First touch, deliberately.
+ *   1. The first visit decides, whatever it says: that is what brought them here.
+ *   2. Only when the first visit says nothing does the latest visit get a turn.
+ *   3. When neither says anything, GHL's own source on the contact answers.
+ *
+ * So someone who arrived through search and returned through an ad counts as search. The ad did
+ * not win that customer, and crediting it would mean paying twice for one they already had. The
+ * one place a later signal outranks an earlier one is a call Google itself logged as coming from
+ * an ad — there the ad click *is* the interaction, and the CRM never saw a visit for it at all.
  */
 export function classifyLead(contact: Record<string, unknown>): LeadSourceKey {
   const first = classifyContact(contact, 'first')
@@ -243,10 +247,12 @@ export function classifyLead(contact: Record<string, unknown>): LeadSourceKey {
     const bySource = sourceChannel(contact)
     if (bySource) return bySource
   }
-  if (groupOf(last) === 'paid')     return last
-  if (groupOf(first) === 'paid')    return first
-  if (groupOf(first) === 'organic') return first
-  if (groupOf(last) === 'organic')  return last
+  // The first visit decides, whatever it says. It is the thing that got them here: someone who
+  // found the business through search and came back through an ad was won by the search, and
+  // crediting the ad would be paying twice for a customer it did not bring in.
+  if (groupOf(first) !== 'untracked') return first
+  // Only when the first visit says nothing does the latest get a turn.
+  if (groupOf(last) !== 'untracked')  return last
   // Neither points anywhere: keep whichever says the most, an unrecognised label, then a call or
   // message, then nothing at all.
   const unclear: Partial<Record<LeadSourceKey, number>> = { other: 2, call_or_message: 1, untracked: 0 }
