@@ -28,7 +28,7 @@ import type { Client } from '@/lib/types'
 import PageHeader from '@/components/dashboard/PageHeader'
 import EmptyState from '@/components/dashboard/EmptyState'
 import RowLimit from '@/components/dashboard/RowLimit'
-import { Star, ChatCircleText, ArrowUp, ArrowDown } from '@phosphor-icons/react/dist/ssr'
+import { Star, ChatCircleText, ArrowUp, ArrowDown, ArrowSquareOut } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -335,6 +335,51 @@ export default async function ReputationPage({
   // GHL labels a post it built from a review. That is its word, not our inference from the text.
   const fromReviews = periodPosts.filter(p => p.created_via === 'review').length
 
+  // The Social Planner posts once per network, so one review comes back as two or three rows with
+  // the same words. They are grouped back together here: one thing shared, however many places it
+  // went. Engagement sums across them because those really are separate posts.
+  type SocialGroup = {
+    key:      string
+    networks: { platform: string; url: string | null }[]
+    summary:  string
+    media:    string | null
+    day:      string
+    likes:    number
+    comments: number
+    shares:   number
+    review:   ReviewRow | undefined
+    kind:     string | null
+  }
+  const groups: SocialGroup[] = []
+  const groupByKey = new Map<string, SocialGroup>()
+  for (const p of periodPosts) {
+    // A post with no review falls back to its own id, so it still gets a row of its own.
+    const key = p.review_id ?? `post:${p.post_id}`
+    let g = groupByKey.get(key)
+    if (!g) {
+      g = {
+        key,
+        networks: [],
+        summary:  (p.summary ?? '').replace(/\n{2,}/g, '\n').trim(),
+        media:    p.media_url,
+        day:      postDay(p),
+        likes: 0, comments: 0, shares: 0,
+        review:   p.review_id ? reviewById.get(p.review_id) : undefined,
+        kind:     p.post_type && p.post_type !== 'post' ? p.post_type : null,
+      }
+      groupByKey.set(key, g)
+      groups.push(g)
+    }
+    for (const n of p.platforms ?? []) {
+      if (!g.networks.some(x => x.platform === n)) g.networks.push({ platform: n, url: p.post_url })
+    }
+    g.likes += p.likes; g.comments += p.comments; g.shares += p.shares
+    if (!g.media && p.media_url) g.media = p.media_url
+    if (!g.summary && p.summary) g.summary = p.summary.replace(/\n{2,}/g, '\n').trim()
+    // The newest of the group dates it — they go out within seconds of each other.
+    if (postDay(p) > g.day) g.day = postDay(p)
+  }
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
       <PageHeader title="Reputation" fromDate={fromDate} toDate={toDate} compare={compare} />
@@ -482,54 +527,55 @@ export default async function ReputationPage({
                 </div>
               ))}
             </dl>
-            <RowLimit total={periodPosts.length} noun="posts">
+            <RowLimit total={groups.length} noun="posts">
               <div className="rep-social">
-                {periodPosts.map(p => {
-                  const review = p.review_id ? reviewById.get(p.review_id) : undefined
-                  const reach  = p.likes + p.comments + p.shares
-                  // Social copy is written with a blank line between every thought. Kept as-is,
-                  // the preview spends half its lines on nothing — so the gaps close to one break.
-                  const copy   = (p.summary ?? '').replace(/\n{2,}/g, '\n').trim()
+                {groups.map(g => {
+                  const reach = g.likes + g.comments + g.shares
                   return (
-                    <article key={p.post_id}
-                             className={p.media_url ? 'rep-social__post' : 'rep-social__post rep-social__post--text'}>
-                      {p.media_url && (
+                    <article key={g.key}
+                             className={g.media ? 'rep-social__post' : 'rep-social__post rep-social__post--text'}>
+                      {g.media && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.media_url} alt="" className="rep-social__media" loading="lazy" />
+                        <img src={g.media} alt="" className="rep-social__media" loading="lazy" />
                       )}
                       <div className="rep-social__body">
                         <header className="rep-social__head">
-                          {(p.platforms ?? []).map(n => (
-                            <span key={n} className="rep-social__where" data-net={n}>
-                              {n.charAt(0).toUpperCase() + n.slice(1)}
-                            </span>
-                          ))}
-                          {p.post_type && p.post_type !== 'post' && (
-                            <span className="rep-social__kind">{p.post_type}</span>
-                          )}
-                          <time className="rep-social__when" dateTime={postDay(p)}>{prettyDate(postDay(p))}</time>
+                          {g.networks.map(n => {
+                            const label = n.platform.charAt(0).toUpperCase() + n.platform.slice(1)
+                            // The chip is the link where we have one — where it went and how to
+                            // get there, in one object.
+                            return n.url ? (
+                              <a key={n.platform} className="rep-social__where" data-net={n.platform}
+                                 href={n.url} target="_blank" rel="noopener noreferrer">
+                                {label}<ArrowSquareOut size={10} weight="bold" aria-hidden />
+                              </a>
+                            ) : (
+                              <span key={n.platform} className="rep-social__where" data-net={n.platform}>
+                                {label}
+                              </span>
+                            )
+                          })}
+                          {g.kind && <span className="rep-social__kind">{g.kind}</span>}
+                          <time className="rep-social__when" dateTime={g.day}>{prettyDate(g.day)}</time>
                         </header>
-                        {copy && <p className="rep-social__text">{copy}</p>}
-                        <footer className="rep-social__foot">
-                          {review && (
-                            <span className="rep-social__review">
-                              <Stars rating={review.star_rating} />
-                              from {review.reviewer_name || 'a customer'}
-                            </span>
-                          )}
-                          {reach > 0 && (
-                            <span className="rep-social__reach">
-                              {p.likes > 0     && <>{fmtNum(p.likes)} {p.likes === 1 ? 'like' : 'likes'}</>}
-                              {p.comments > 0  && <>{p.likes > 0 && ' · '}{fmtNum(p.comments)} {p.comments === 1 ? 'comment' : 'comments'}</>}
-                              {p.shares > 0    && <>{(p.likes > 0 || p.comments > 0) && ' · '}{fmtNum(p.shares)} {p.shares === 1 ? 'share' : 'shares'}</>}
-                            </span>
-                          )}
-                          {p.post_url && (
-                            <a className="rep-social__link" href={p.post_url} target="_blank" rel="noopener noreferrer">
-                              See the post
-                            </a>
-                          )}
-                        </footer>
+                        {g.summary && <p className="rep-social__text">{g.summary}</p>}
+                        {(g.review || reach > 0) && (
+                          <footer className="rep-social__foot">
+                            {g.review && (
+                              <span className="rep-social__review">
+                                <Stars rating={g.review.star_rating} />
+                                from {g.review.reviewer_name || 'a customer'}
+                              </span>
+                            )}
+                            {reach > 0 && (
+                              <span className="rep-social__reach">
+                                {g.likes > 0    && <>{fmtNum(g.likes)} {g.likes === 1 ? 'like' : 'likes'}</>}
+                                {g.comments > 0 && <>{g.likes > 0 && ' · '}{fmtNum(g.comments)} {g.comments === 1 ? 'comment' : 'comments'}</>}
+                                {g.shares > 0   && <>{(g.likes > 0 || g.comments > 0) && ' · '}{fmtNum(g.shares)} {g.shares === 1 ? 'share' : 'shares'}</>}
+                              </span>
+                            )}
+                          </footer>
+                        )}
                       </div>
                     </article>
                   )

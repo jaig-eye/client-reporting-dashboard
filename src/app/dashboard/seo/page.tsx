@@ -396,9 +396,13 @@ export default async function SeoPage({
   // capped, and cached for a day.
   // A post is live when WordPress says it is published and we hold the URL it went to.
   const isLive = (p: PostRow) => p.wp_status === 'publish' && !!p.published_url
-  const needImage = postRows
-    .filter(p => isLive(p) && !p.featured_image_url)
-    .map(p => p.published_url as string)
+  //
+  // Gated on the tab. This is the one thing on the page that leaves our own infrastructure, and
+  // ungated it made every other tab wait on the client's web server before rendering a word.
+  const wantsContentTab = params.tab === 'content'
+  const needImage = wantsContentTab
+    ? postRows.filter(p => isLive(p) && !p.featured_image_url).map(p => p.published_url as string)
+    : []
   const liveImages = needImage.length > 0 ? await fetchLivePageImages(needImage) : {}
 
   const contentPosts: ContentPost[] = postRows.map(p => {
