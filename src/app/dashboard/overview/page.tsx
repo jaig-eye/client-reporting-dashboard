@@ -255,7 +255,7 @@ const _getOverviewData = unstable_cache(
         .select('title,content,next_up:fields->>next_up,created_at')
         .eq('client_id', clientId).eq('category', 'client_update')
         .gte('created_at', new Date(new Date(to + 'T00:00:00Z').getTime() - 90 * 86_400_000).toISOString())
-        .order('created_at', { ascending: false }).limit(3),
+        .order('created_at', { ascending: false }).limit(12),
       // Calls from Google Ads. Only campaign-days with calls are stored, so this stays small; before
       // migration 218 the read fails quietly and nothing is shown.
       has.google
@@ -571,7 +571,6 @@ export default async function OverviewPage({
   }
   const callSources    = summariseLeadSources(callSourceCounts)
   const paidCalls      = callSources.paid
-  const placedCalls    = callSources.total
   // Only speak for the whole range when every day in it was counted.
   const sourcesComplete = hasLeadSources && sourceDays === data.ghl.length
 
@@ -1205,16 +1204,16 @@ export default async function OverviewPage({
     kpis.push(
       <SparkMetricCard
         key="leads" label="Leads" value={fmtInt(crm.leads)}
-        sub={sourcesComplete ? `${fmtInt(leadSources.paid)} from ads, ${fmtInt(leadSources.organic)} on their own` : 'new people who got in touch'}
+        sub={sourcesComplete ? `${fmtInt(leadSources.paid)} paid, ${fmtInt(leadSources.organic)} organic` : 'new people who got in touch'}
         delta={delta(crm.leads, crmPrior.leads)} delay={0}
         sparkData={crmDays.map(([, v]) => ({ v: v.leads }))} sparkColor="var(--blue)"
       />,
       <SparkMetricCard
         key="calls" label="Phone calls" value={fmtInt(crm.calls)}
-        sub={paidCalls > 0
-          ? `${fmtInt(paidCalls)} rang a number from your ads`
-          : placedCalls > 0
-            ? `${fmtInt(placedCalls)} placed to a tracked number`
+        sub={adCallCount > 0
+          ? `${fmtInt(adCallCount)} paid calls from your Google Ads`
+          : paidCalls > 0
+            ? `${fmtInt(paidCalls)} paid calls`
             : 'tracked calls to the business'}
         delta={delta(crm.calls, crmPrior.calls)} delay={1}
         sparkData={crmDays.map(([, v]) => ({ v: v.calls }))} sparkColor="var(--green)"
@@ -1383,14 +1382,35 @@ export default async function OverviewPage({
                   )}
                 </article>
                 {data.updates.length > 1 && (
-                  <ul className="ov3-team__earlier">
-                    {data.updates.slice(1).map(u => (
-                      <li key={u.created_at}>
-                        <span className="ov3-team__earlier-title">{u.title || alertPlainText(u.content).slice(0, 90)}</span>
-                        <span className="ov3-team__date">{fmtShortDate(u.created_at.slice(0, 10))}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  // Folded away by default and capped in height when open, so the card stays the
+                  // same size whether there are two updates or forty. Each one opens to its own
+                  // words — the old list showed titles the client could not read past.
+                  <details className="ov3-team__more">
+                    <summary>
+                      {data.updates.length - 1} earlier {data.updates.length - 1 === 1 ? 'update' : 'updates'}
+                    </summary>
+                    <ul className="ov3-team__earlier">
+                      {data.updates.slice(1).map(u => (
+                        <li key={u.created_at}>
+                          <details>
+                            <summary>
+                              <span className="ov3-team__earlier-title">
+                                {u.title || alertPlainText(u.content).slice(0, 90)}
+                              </span>
+                              <span className="ov3-team__date">{fmtShortDate(u.created_at.slice(0, 10))}</span>
+                            </summary>
+                            <div className="ov3-team__body"><AlertBody body={u.content} /></div>
+                            {u.next_up && (
+                              <div className="ov3-team__next">
+                                <span className="ov3-team__next-label">What&apos;s next</span>
+                                <div className="ov3-team__body"><AlertBody body={u.next_up} /></div>
+                              </div>
+                            )}
+                          </details>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
               </section>
             )}
@@ -1459,8 +1479,8 @@ export default async function OverviewPage({
                     </div>
                     <LeadMixDonut
                       slices={[
-                        { name: 'From ads',        value: leadSources.paid,      color: 'var(--blue)' },
-                        { name: 'On their own',    value: leadSources.organic,   color: 'var(--green)' },
+                        { name: 'Paid leads',      value: leadSources.paid,      color: 'var(--blue)' },
+                        { name: 'Organic leads',   value: leadSources.organic,   color: 'var(--green)' },
                         { name: 'Not from marketing', value: leadSources.internal, color: 'var(--ov-violet)' },
                         { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
                       ]}

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { requireWriteAdmin } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isNoteCategory, sanitizeNoteFields, categoryHoldsSecret } from '@/lib/note-templates'
@@ -32,6 +33,9 @@ export async function DELETE(
     console.error('[client note DELETE]', error)
     return NextResponse.json({ error: 'Failed to delete note' }, { status: 500 })
   }
+
+  // A deleted note has to leave the client's dashboard as promptly as it arrived.
+  revalidateTag('client-metrics')
 
   return new NextResponse(null, { status: 204 })
 }
@@ -168,5 +172,7 @@ export async function PATCH(
 
   // Never let ciphertext onto the wire. The client only needs to know whether a
   // credential is stored; reading it goes through the audited reveal endpoint.
+  revalidateTag('client-metrics')
+
   return NextResponse.json({ note: redactSecret(data as unknown as Record<string, unknown>) })
 }

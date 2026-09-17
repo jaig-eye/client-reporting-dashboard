@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { isAdminAuthed, getVerifiedUserId } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import {
@@ -162,6 +163,10 @@ export async function POST(
       else contactStampedAt = iso
     }
   }
+
+  // The client dashboards read notes through a cache tagged 'client-metrics'. Without this the
+  // note a client is meant to see sits invisible for up to ten minutes after it is written.
+  revalidateTag('client-metrics')
 
   // editor is always null on a fresh insert (updated_by is unset)
   return NextResponse.json(

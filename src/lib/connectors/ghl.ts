@@ -1260,6 +1260,9 @@ export async function fetchSocialPosts(
         const resolved = accountIds
           .map(a => accounts.get(socialStr(a)))
           .filter(Boolean) as { platform: string; name: string }[]
+        // The post names its own network, so a post still reports where it went even when the
+        // accounts call was refused for want of the account scope.
+        const ownPlatform = socialStr(p.platform).toLowerCase()
 
         const insights = (p.insights ?? {}) as Record<string, unknown>
         const media    = (Array.isArray(p.media) ? p.media : []) as Record<string, unknown>[]
@@ -1271,11 +1274,12 @@ export async function fetchSocialPosts(
         posts.push({
           post_id:       id,
           status:        socialStr(p.status) || 'published',
-          platforms:     Array.from(new Set(resolved.map(r => r.platform).filter(Boolean))),
+          platforms:     Array.from(new Set(
+                           [...resolved.map(r => r.platform), ownPlatform].filter(Boolean))),
           account_names: Array.from(new Set(resolved.map(r => r.name).filter(Boolean))),
           summary:       socialStr(p.summary ?? p.content ?? p.text ?? p.caption),
           media_url:     socialStr(media[0]?.url ?? media[0]?.thumbnail ?? p.imageUrl) || null,
-          post_url:      socialStr(p.permalink ?? p.postUrl ?? p.url ?? p.link) || null,
+          post_url:      socialStr(p.previewLink ?? p.permalink ?? p.postUrl ?? p.url ?? p.link) || null,
           created_at:    created?.iso   ?? null,
           published_at:  published?.iso ?? null,
           likes:         socialNum(insights.like ?? insights.likes),

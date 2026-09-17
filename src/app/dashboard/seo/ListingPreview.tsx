@@ -8,7 +8,10 @@
 // Deliberately *evocative* of a Google knowledge panel rather than a copy of it: our own type and
 // tokens, no Google marks. It is the client's own listing, not Google's interface.
 
-import { Star, MapPin, Phone, Globe, Clock, ImageSquare } from '@phosphor-icons/react/dist/ssr'
+import {
+  Star, MapPin, Phone, Globe, Clock, ImageSquare,
+  CheckCircle, WarningCircle, XCircle,
+} from '@phosphor-icons/react/dist/ssr'
 import type { GBPProfile } from '@/lib/connectors/google-business-profile'
 
 /** One setting, and how well it is filled in. */
@@ -136,6 +139,11 @@ export default function ListingPreview({
         <ul className="lp__verdicts">
           {verdicts.map(v => (
             <li key={v.label} className="lp__verdict" data-state={v.state}>
+              <span className="lp__verdict-mark" aria-hidden>
+                {v.state === 'done'    ? <CheckCircle   size={19} weight="fill" />
+                 : v.state === 'partial' ? <WarningCircle size={19} weight="fill" />
+                 :                         <XCircle      size={19} weight="fill" />}
+              </span>
               <span className="lp__verdict-label">{v.label}</span>
               <span className="lp__verdict-value">{v.value}</span>
               {v.note && <span className="lp__verdict-note">{v.note}</span>}

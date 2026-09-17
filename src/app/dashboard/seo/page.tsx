@@ -286,6 +286,7 @@ export default async function SeoPage({
     { data: rankHistData },
     { data: postData },
     { data: topicData },
+    { data: reviewSnap },
   ] = await Promise.all([
     db.from('client_connections')
       .select('id, connector:connectors(type)')
@@ -330,13 +331,19 @@ export default async function SeoPage({
       .lte('date', iso(toDate))
       .order('date', { ascending: true })
       .limit(2000),
-    // Only work the client has signed off. Drafts, rejected ideas and anything still pending are
-    // ours, not theirs — and only the columns a client should ever see are asked for.
+    // Work that reached the client's site, or is booked to. WordPress's own state is the honest
+    // signal — our 'status' column tracks our review workflow, not whether anything went live.
+    // Rejected posts are excluded outright; anything still waiting on sign-off is ours, not theirs.
+    // Only columns a client should ever see are asked for.
     db.from('content_posts')
-      .select('id,title,status,target_keyword,published_url,featured_image_url,published_at,word_count,topic_rationale,scheduled_publish_date,target_publish_date')
+      .select('id,title,status,wp_status,target_keyword,published_url,featured_image_url,published_at,word_count,topic_rationale,scheduled_publish_date,target_publish_date,updated_at')
       .eq('client_id', client.id)
-      .in('status', ['approved', 'published'])
-      .order('published_at', { ascending: false, nullsFirst: false })
+      .neq('status', 'rejected')
+      // Either WordPress has it (live or booked), or our own workflow signed it off and the push
+      // hasn't happened yet. The second case never occurs in the data today, but a post approved
+      // and not yet pushed is still work the client is owed sight of.
+      .or('wp_status.in.(publish,future),status.in.(approved,published)')
+      .order('target_publish_date', { ascending: false, nullsFirst: false })
       .limit(100),
     // The brief behind each post: the search it targets and why we picked it.
     db.from('content_topics')
@@ -344,6 +351,16 @@ export default async function SeoPage({
       .eq('client_id', client.id)
       .not('post_id', 'is', null)
       .limit(300),
+    // Google's running review total and average. It is stamped on the most recent synced day,
+    // which a chosen date range usually doesn't contain — so this deliberately looks outside the
+    // range, the same way the Reputation page does. Without it a listing with a thousand reviews
+    // reads as "No reviews yet" on any window that doesn't end on the last sync.
+    db.from('gbp_metrics')
+      .select('location_id,date,reviews_count,reviews_avg_rating')
+      .eq('client_id', client.id)
+      .gt('reviews_count', 0)
+      .order('date', { ascending: false })
+      .limit(60),
   ])
 
   // Which connectors are live, and the Search Console connection to read from.
@@ -360,10 +377,11 @@ export default async function SeoPage({
 
   // ── The blog work ─────────────────────────────────────────────────────────
   type PostRow = {
-    id: string; title: string | null; status: string; target_keyword: string | null
+    id: string; title: string | null; status: string; wp_status: string | null
+    target_keyword: string | null
     published_url: string | null; featured_image_url: string | null; published_at: string | null
     word_count: number | null; topic_rationale: string | null
-    scheduled_publish_date: string | null; target_publish_date: string | null
+    scheduled_publish_date: string | null; target_publish_date: string | null; updated_at: string | null
   }
   type TopicRow = {
     post_id: string; rationale: string | null; target_keyword: string | null
@@ -376,8 +394,10 @@ export default async function SeoPage({
   // A post that is live but has no image on file usually had one attached inside WordPress after
   // we published. Read the page itself rather than report a gap that isn't there — best-effort,
   // capped, and cached for a day.
+  // A post is live when WordPress says it is published and we hold the URL it went to.
+  const isLive = (p: PostRow) => p.wp_status === 'publish' && !!p.published_url
   const needImage = postRows
-    .filter(p => p.status === 'published' && p.published_url && !p.featured_image_url)
+    .filter(p => isLive(p) && !p.featured_image_url)
     .map(p => p.published_url as string)
   const liveImages = needImage.length > 0 ? await fetchLivePageImages(needImage) : {}
 
@@ -387,11 +407,13 @@ export default async function SeoPage({
     return {
       id:              p.id,
       title:           p.title as string,
-      status:          p.status,
+      status:          isLive(p) ? 'published' : 'approved',
       url:             p.published_url,
       image:           p.featured_image_url ?? (p.published_url ? liveImages[p.published_url] ?? null : null),
       image_from_site: fromSite,
-      published_at:    p.published_at,
+      // published_at is never written by the publish flow, so the date it was booked for is the
+      // only one that exists. updated_at is the last resort, not a publish date.
+      published_at:    p.published_at ?? p.target_publish_date ?? p.updated_at,
       due_at:          p.scheduled_publish_date ?? p.target_publish_date,
       word_count:      p.word_count,
       keyword:         p.target_keyword ?? brief?.target_keyword ?? null,
@@ -408,7 +430,7 @@ export default async function SeoPage({
   const publishedPosts = contentPosts.filter(p =>
     p.status === 'published' && p.published_at
     && p.published_at.slice(0, 10) >= iso(fromDate) && p.published_at.slice(0, 10) <= iso(toDate))
-  // Approved work is not dated yet, so it is always shown — it is what is coming, not what happened.
+  // Scheduled work is not dated into the past, so it is always shown — it is what is coming.
   const upcomingPosts  = contentPosts.filter(p => p.status !== 'published')
   const hasContent     = publishedPosts.length > 0 || upcomingPosts.length > 0
 
@@ -567,9 +589,24 @@ export default async function SeoPage({
     latestByLocation.set(r.location_id, ex)
   }
   const locations  = Array.from(latestByLocation.entries()).map(([id, v]) => ({ id, ...v })).sort((a, b) => b.views - a.views)
-  const rated      = locations.filter(l => l.rating > 0)
+
+  // The lifetime figures, newest row per location. Rows arrive newest first, so the first one
+  // seen for a location is the one to keep.
+  const lifetimeByLocation = new Map<string, { rating: number; count: number }>()
+  for (const r of ((reviewSnap ?? []) as { location_id: string; reviews_count: number; reviews_avg_rating: number }[])) {
+    if (lifetimeByLocation.has(r.location_id)) continue
+    lifetimeByLocation.set(r.location_id, { rating: r.reviews_avg_rating ?? 0, count: r.reviews_count ?? 0 })
+  }
+  // Prefer what the range recorded; fall back to the lifetime snapshot when it recorded nothing.
+  const reviewFigures = locations.length > 0
+    ? locations.map(l => ({
+        rating: l.rating || lifetimeByLocation.get(l.id)?.rating || 0,
+        count:  l.count  || lifetimeByLocation.get(l.id)?.count  || 0,
+      }))
+    : Array.from(lifetimeByLocation.values())
+  const rated      = reviewFigures.filter(l => l.rating > 0)
   const avgRating  = rated.length > 0 ? rated.reduce((s, l) => s + l.rating, 0) / rated.length : 0
-  const reviewCount = locations.reduce((s, l) => s + l.count, 0)
+  const reviewCount = reviewFigures.reduce((s, l) => s + l.count, 0)
 
   // ── Rank tracking ──────────────────────────────────────────────────────────
   const rankRows  = (rankData ?? []) as RankRow[]

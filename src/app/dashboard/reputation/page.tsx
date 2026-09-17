@@ -38,7 +38,10 @@ const REVIEW_SELECT = 'review_id,reviewer_name,star_rating,comment,created_at,re
 // picture, and the page reads them all into memory.
 const REVIEW_CAP = 1000
 
-const POST_SELECT = 'post_id,platforms,account_names,summary,media_url,post_url,published_at,created_at,likes,comments,shares,review_id'
+const POST_SELECT = 'post_id,platforms,account_names,summary,media_url,post_url,published_at,created_at,likes,comments,shares,review_id,'
+  // GHL sends more than the columns cover. The payload is already in the row, so these come out of
+  // it rather than out of a migration.
+  + 'created_via:raw->>source,post_type:raw->>type'
 const POST_CAP    = 500
 
 const _getCachedReputation = unstable_cache(
@@ -85,6 +88,10 @@ type SocialRow = {
   comments:      number
   shares:        number
   review_id:     string | null
+  /** GHL's own word for why the post exists — 'review' for the ones we publish from a review. */
+  created_via:   string | null
+  /** post | story | reel */
+  post_type:     string | null
 }
 
 type ReviewRow = {
@@ -317,6 +324,16 @@ export default async function ReputationPage({
     periodPosts.flatMap(p => p.platforms ?? []).filter(Boolean),
   )).map(p => p.charAt(0).toUpperCase() + p.slice(1))
   const anyEngagement = periodPosts.some(p => p.likes + p.comments + p.shares > 0)
+  // Distinct reviews, so a review shared to two networks counts once.
+  const sharedReviews = new Set(periodPosts.map(p => p.review_id).filter(Boolean)).size
+  const byNetwork: { name: string; count: number }[] = Object.entries(
+    periodPosts.reduce<Record<string, number>>((acc, p) => {
+      for (const n of p.platforms ?? []) acc[n] = (acc[n] ?? 0) + 1
+      return acc
+    }, {}),
+  ).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+  // GHL labels a post it built from a review. That is its word, not our inference from the text.
+  const fromReviews = periodPosts.filter(p => p.created_via === 'review').length
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)' }}>
@@ -447,6 +464,24 @@ export default async function ReputationPage({
                       {networkNames.length > 0 && <> on {networkNames.join(' and ')}</>} in this period.</>}
               </p>
             </div>
+            <dl className="rep-social__stats">
+              <div>
+                <dt className="metric-label">Posts published</dt>
+                <dd className="rep-social__fig">{fmtNum(periodPosts.length)}</dd>
+              </div>
+              {sharedReviews > 0 && (
+                <div>
+                  <dt className="metric-label">Reviews shared</dt>
+                  <dd className="rep-social__fig">{fmtNum(sharedReviews)}</dd>
+                </div>
+              )}
+              {byNetwork.map(n => (
+                <div key={n.name}>
+                  <dt className="metric-label">{n.name.charAt(0).toUpperCase() + n.name.slice(1)}</dt>
+                  <dd className="rep-social__fig">{fmtNum(n.count)}</dd>
+                </div>
+              ))}
+            </dl>
             <RowLimit total={periodPosts.length} noun="posts">
               <div className="rep-social">
                 {periodPosts.map(p => {
@@ -469,6 +504,9 @@ export default async function ReputationPage({
                               {n.charAt(0).toUpperCase() + n.slice(1)}
                             </span>
                           ))}
+                          {p.post_type && p.post_type !== 'post' && (
+                            <span className="rep-social__kind">{p.post_type}</span>
+                          )}
                           <time className="rep-social__when" dateTime={postDay(p)}>{prettyDate(postDay(p))}</time>
                         </header>
                         {copy && <p className="rep-social__text">{copy}</p>}
@@ -498,6 +536,12 @@ export default async function ReputationPage({
                 })}
               </div>
             </RowLimit>
+            {fromReviews === periodPosts.length && periodPosts.length > 0 && (
+              <p className="rep-social__note">
+                Every one of these was built from one of your reviews — that is how your CRM
+                recorded it, not something we worked out from the wording.
+              </p>
+            )}
             {!anyEngagement && (
               <p className="rep-social__note">
                 Likes and comments arrive from the networks a while after a post goes out, so

@@ -3873,14 +3873,14 @@ select.note-field__input { cursor: pointer; }
    the full width of the page is most of why this read as spaced out. */
 .an-mods {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(18.5rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.875rem;
-  align-items: start;
 }
-/* The AI module carries three figures and a list, so it earns two tracks where there is room. */
-@media (min-width: 60rem) { .an-mod--wide { grid-column: span 2; } }
+@media (max-width: 1023px) { .an-mods { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-.an-mod { padding: 0; overflow: hidden; }
+.an-mod { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+/* The note sits on the floor of the card, so a row of cards shares one baseline. */
+.an-mod__foot { margin-top: auto; }
 .an-mod__head { padding: 0.8125rem 0.875rem 0.5rem; }
 .an-mod__title { margin: 0; font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
 .an-mod__desc {
@@ -3889,7 +3889,7 @@ select.note-field__input { cursor: pointer; }
 }
 .an-mod__body { padding: 0 0.5rem 0.5rem; }
 .an-mod__foot {
-  margin: 0;
+  margin: auto 0 0;
   padding: 0.375rem 0.875rem 0.75rem;
   font-size: 0.6875rem; line-height: 1.45; color: var(--text-faint); text-wrap: pretty;
 }
@@ -5134,17 +5134,52 @@ select.note-field__input { cursor: pointer; }
 .ov3-team__body .alert-body__list li + li { margin-top: 0.25rem; }
 .ov3-team__next { margin-top: 0.75rem; padding-top: 0.625rem; border-top: 1px solid var(--border-subtle); }
 .ov3-team__next-label { display: block; margin-bottom: 0.25rem; font-size: 0.75rem; font-weight: 600; color: var(--text-primary); }
-.ov3-team__earlier { list-style: none; margin: 0.75rem 0 0; padding: 0; display: flex; flex-direction: column; }
+/* Everything before the newest note folds into one line, so the card's height stops depending on
+   how long we have been writing them. */
+.ov3-team__more { margin-top: 0.75rem; }
+.ov3-team__more > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.3rem 0.5rem; margin-left: -0.5rem; border-radius: 0.375rem;
+  font-size: 0.8125rem; font-weight: 600; color: var(--accent);
+}
+.ov3-team__more > summary::-webkit-details-marker { display: none; }
+.ov3-team__more > summary::before {
+  content: '';
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+.ov3-team__more[open] > summary::before { transform: rotate(90deg); }
+.ov3-team__more > summary:hover { background: var(--bg-subtle); }
+
+.ov3-team__earlier {
+  list-style: none; margin: 0.25rem 0 0; padding: 0;
+  display: flex; flex-direction: column;
+  /* However many there are, the list itself scrolls rather than the page. */
+  max-height: 18rem; overflow-y: auto;
+}
 .ov3-team__earlier li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding-block: 0.5rem;
   border-top: 1px solid var(--border-subtle);
   font-size: 0.8125rem;
 }
+.ov3-team__earlier li > details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
+  padding-block: 0.5rem;
+}
+.ov3-team__earlier li > details > summary::-webkit-details-marker { display: none; }
+.ov3-team__earlier li > details > summary:hover .ov3-team__earlier-title { color: var(--text-primary); }
+.ov3-team__earlier li > details[open] { padding-bottom: 0.625rem; }
 .ov3-team__earlier-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ov3-team__more > summary::before { transition: none; }
+}
 
 @media (max-width: 639px) {
   .ov3-team { padding: 1rem; }
@@ -5841,6 +5876,25 @@ select.note-field__input { cursor: pointer; }
    A post is a small piece of published work, so each one is a row with its image, not a card in
    a grid: the copy is the point and the copy wants width.
 ─────────────────────────────────────────────────────────────────────────────── */
+/* What the month added up to, before the posts themselves. */
+.rep-social__stats {
+  display: flex; flex-wrap: wrap; gap: 0.5rem 2rem;
+  margin: 0 0 1rem; padding-bottom: 0.875rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.rep-social__stats > div { min-width: 0; }
+.rep-social__stats dd { margin: 0.15rem 0 0; }
+.rep-social__fig {
+  font-size: 1.25rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+/* A story or a reel is not a post, and the difference matters to whoever asked for it. */
+.rep-social__kind {
+  padding: 0.075rem 0.4rem; border-radius: 0.35rem;
+  background: var(--bg-subtle); color: var(--text-muted);
+  font-size: 0.625rem; font-weight: 600; text-transform: capitalize;
+}
+
 .rep-social { display: flex; flex-direction: column; gap: 0.75rem; }
 .rep-social__post {
   display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.875rem;
@@ -6001,15 +6055,26 @@ select.note-field__input { cursor: pointer; }
   margin: 0; padding: 0; list-style: none;
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; align-content: start;
 }
+/* The mark carries the verdict, so the card doesn't need a coloured rail to be read as one. */
 .lp__verdict {
-  display: flex; flex-direction: column; gap: 0.125rem;
-  padding: 0.625rem 0.75rem 0.625rem 0.875rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.625rem;
+  row-gap: 0.125rem;
+  align-items: center;
+  padding: 0.625rem 0.75rem;
   border: 1px solid var(--border-subtle); border-radius: 0.625rem;
-  border-left-width: 3px; min-width: 0;
+  min-width: 0;
 }
-.lp__verdict[data-state="done"]    { border-left-color: var(--green); }
-.lp__verdict[data-state="partial"] { border-left-color: var(--amber); }
-.lp__verdict[data-state="missing"] { border-left-color: var(--red); }
+.lp__verdict-mark {
+  grid-row: 1 / 4;
+  align-self: center;
+  display: inline-grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 9px;
+}
+.lp__verdict[data-state="done"]    .lp__verdict-mark { background: var(--green-subtle); color: var(--green); }
+.lp__verdict[data-state="partial"] .lp__verdict-mark { background: var(--amber-subtle); color: var(--amber); }
+.lp__verdict[data-state="missing"] .lp__verdict-mark { background: var(--red-subtle);   color: var(--red); }
 .lp__verdict-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); }
 .lp__verdict-value { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); line-height: 1.35; overflow-wrap: anywhere; }
 .lp__verdict[data-state="missing"] .lp__verdict-value { color: var(--red); }

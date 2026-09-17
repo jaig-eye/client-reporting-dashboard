@@ -626,7 +626,7 @@ export default async function AnalyticsPage({
           full width of the page is most of why this read as spaced out. */}
       <div className="an-mods">
         {aiSessions > 0 && (
-          <section className="card an-mod an-mod--wide" aria-labelledby="an-ai-title">
+          <section className="card an-mod" aria-labelledby="an-ai-title">
             <div className="an-mod__head">
               <h2 id="an-ai-title" className="an-mod__title">Visits from AI assistants</h2>
               <p className="an-mod__desc">People who clicked through from ChatGPT, Gemini, Copilot and others</p>

@@ -65,7 +65,7 @@ function PostCard({ post }: { post: ContentPost }) {
       <div className="cp__body">
         <div className="cp__head">
           <span className="cp__state" data-state={live ? 'live' : 'ready'}>
-            {live ? 'Live on your site' : 'Approved, publishing soon'}
+            {live ? 'Live on your site' : 'Scheduled to publish'}
           </span>
           {post.published_at && live && (
             <time className="cp__when" dateTime={post.published_at.slice(0, 10)}>
@@ -162,9 +162,9 @@ export default function ContentPlan({
       {upcoming.length > 0 && (
         <section className="card seo-panel">
           <div className="seo-panel__head">
-            <h3 className="section-title">Approved and on the way</h3>
+            <h3 className="section-title">Scheduled and on the way</h3>
             <p className="section-desc">
-              Written and signed off, waiting to go up on your site.
+              Written, signed off and booked in, waiting to go up on your site.
             </p>
           </div>
           <div className="seo-panel__body">
