@@ -323,7 +323,6 @@ export default async function ReputationPage({
   const networkNames = Array.from(new Set(
     periodPosts.flatMap(p => p.platforms ?? []).filter(Boolean),
   )).map(p => p.charAt(0).toUpperCase() + p.slice(1))
-  const anyEngagement = periodPosts.some(p => p.likes + p.comments + p.shares > 0)
   // Distinct reviews, so a review shared to two networks counts once.
   const sharedReviews = new Set(periodPosts.map(p => p.review_id).filter(Boolean)).size
   const byNetwork: { name: string; count: number }[] = Object.entries(
@@ -332,8 +331,6 @@ export default async function ReputationPage({
       return acc
     }, {}),
   ).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
-  // GHL labels a post it built from a review. That is its word, not our inference from the text.
-  const fromReviews = periodPosts.filter(p => p.created_via === 'review').length
 
   // The Social Planner posts once per network, so one review comes back as two or three rows with
   // the same words. They are grouped back together here: one thing shared, however many places it
@@ -582,18 +579,6 @@ export default async function ReputationPage({
                 })}
               </div>
             </RowLimit>
-            {fromReviews === periodPosts.length && periodPosts.length > 0 && (
-              <p className="rep-social__note">
-                Every one of these was built from one of your reviews — that is how your CRM
-                recorded it, not something we worked out from the wording.
-              </p>
-            )}
-            {!anyEngagement && (
-              <p className="rep-social__note">
-                Likes and comments arrive from the networks a while after a post goes out, so
-                recent ones can read as zero for a day or two.
-              </p>
-            )}
           </section>
         )}
 

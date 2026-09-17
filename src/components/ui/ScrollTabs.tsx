@@ -26,12 +26,18 @@ interface Props {
   items: TabItem[]
   activeId: string
   onSelect?: (id: string) => void
+  /**
+   * Called when a linked tab is clicked, before the browser follows it. Lets a caller take the
+   * navigation over — to start a transition and show something while it runs — while the tab stays
+   * a real anchor for middle-click and "copy link".
+   */
+  onNavigate?: (id: string, href: string, e: React.MouseEvent<HTMLAnchorElement>) => void
   /** Accessible name for the strip, e.g. "Client sections". */
   label: string
   className?: string
 }
 
-export default function ScrollTabs({ items, activeId, onSelect, label, className }: Props) {
+export default function ScrollTabs({ items, activeId, onSelect, onNavigate, label, className }: Props) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft]   = useState(false)
   const [canRight, setCanRight] = useState(false)
@@ -91,6 +97,7 @@ export default function ScrollTabs({ items, activeId, onSelect, label, className
               data-active={active}
               className="tabs__tab"
               scroll={false}
+              onClick={e => onNavigate?.(item.id, item.href as string, e)}
             >
               {inner}
             </Link>

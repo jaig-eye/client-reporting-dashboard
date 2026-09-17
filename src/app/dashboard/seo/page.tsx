@@ -33,7 +33,7 @@ import GscTrendChart         from './search-console/GscTrendChart'
 import type { GscDailyPoint } from './search-console/GscTrendChart'
 import { GscQueriesTable, GscPagesTable } from './search-console/GscSortableTable'
 import { PositionPill } from '@/components/dashboard/KeywordRank'
-import ScrollTabs            from '@/components/ui/ScrollTabs'
+import SeoTabs               from './SeoTabs'
 import RowLimit              from '@/components/dashboard/RowLimit'
 import {
   MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold, Key,
@@ -548,8 +548,6 @@ export default async function SeoPage({
   const gbpPrev     = gbpTotals(gbpPrevRows)
   const gbpViews    = gbp.search + gbp.maps
   const gbpPrevViews = gbpPrev.search + gbpPrev.maps
-  const gbpContacts  = gbp.calls + gbp.directions
-  const gbpPrevContacts = gbpPrev.calls + gbpPrev.directions
   const hasGbpData   = gbpRows.length > 0
 
   /**
@@ -725,17 +723,6 @@ export default async function SeoPage({
       color:  'var(--seo-neutral)',
     })
   }
-  if (hasGbpData) {
-    headline.push({
-      label: 'Calls & directions',
-      value: fmtNum(gbpContacts),
-      sub:   `${fmtNum(gbp.calls)} calls · ${fmtNum(gbp.directions)} direction requests`,
-      delta: showCompare ? pctDelta(gbpContacts, gbpPrevContacts) : undefined,
-      spark: gbpDaily.map(([, v]) => ({ v: v.contacts })),
-      color: 'var(--seo-local)',
-    })
-  }
-
   const nothingConnected = !gscConnectionId && !hasGbpConn && !hasAhrefs && !hasRanks
   const mapsUrl = client.local_dominator_url ?? null
 
@@ -809,12 +796,10 @@ export default async function SeoPage({
             </div>
           </section>
         )}
-        <ScrollTabs
-          label="SEO sections"
-          className="seo-tabs"
+        <SeoTabs
           activeId={tab}
           items={seoTabs.map(t => ({ id: t.id, label: t.label, href: tabHref(t.id) }))}
-        />
+        >
 
 
         {/* ── Keywords: what people search for, and where you rank ───────────── */}
@@ -1511,7 +1496,7 @@ export default async function SeoPage({
           )}
         </section>
         )}
-
+        </SeoTabs>
       </main>
     </div>
   )

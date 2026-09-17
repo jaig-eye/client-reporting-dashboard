@@ -8,7 +8,8 @@
 // Only work the client has signed off appears here: published posts, and approved ones still on
 // the way. Drafts, rejected ideas and anything pending are ours, not theirs.
 
-import { ArrowSquareOut, MagnifyingGlass, ArrowBendUpRight } from '@phosphor-icons/react/dist/ssr'
+import { ArrowSquareOut, MagnifyingGlass } from '@phosphor-icons/react/dist/ssr'
+import BriefModal from './BriefModal'
 
 export interface ContentPost {
   id:              string
@@ -123,22 +124,22 @@ function PostCard({ post }: { post: ContentPost }) {
                 <span className="cp__reason-label">Why this one:</span> {lead}
               </p>
               {rest && (
-                <details className="cp__more">
-                  <summary>The rest of the thinking</summary>
-                  <p className="cp__reason-rest">{rest}</p>
-                </details>
+                <BriefModal
+                  title={post.title}
+                  reason={post.reason as string}
+                  facts={{
+                    keyword:    post.keyword,
+                    searches:   post.searches,
+                    difficulty: post.difficulty,
+                    supports:   post.supports,
+                  }}
+                />
               )}
             </div>
           )
         })()}
 
         <footer className="cp__foot">
-          {post.supports && (
-            <span className="cp__supports">
-              <ArrowBendUpRight size={12} weight="bold" aria-hidden />
-              Points readers to {post.supports}
-            </span>
-          )}
           {post.word_count != null && post.word_count > 0 && (
             <span className="cp__words">{post.word_count.toLocaleString()} words</span>
           )}

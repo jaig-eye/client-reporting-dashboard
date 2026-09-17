@@ -5162,19 +5162,29 @@ select.note-field__input { cursor: pointer; }
   /* However many there are, the list itself scrolls rather than the page. */
   max-height: 18rem; overflow-y: auto;
 }
-.ov3-team__earlier li {
-  border-top: 1px solid var(--border-subtle);
-  font-size: 0.8125rem;
-}
+.ov3-team__earlier li { font-size: 0.8125rem; }
+.ov3-team__earlier li + li { margin-top: 0.375rem; }
 .ov3-team__earlier li > details > summary {
   cursor: pointer;
   list-style: none;
   display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
-  padding-block: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
 }
 .ov3-team__earlier li > details > summary::-webkit-details-marker { display: none; }
+.ov3-team__earlier li > details > summary:hover { background: var(--bg-subtle); }
 .ov3-team__earlier li > details > summary:hover .ov3-team__earlier-title { color: var(--text-primary); }
-.ov3-team__earlier li > details[open] { padding-bottom: 0.625rem; }
+/* Opened, it wears the same panel as the newest update — one note, not paragraphs adrift. */
+.ov3-team__earlier li > details[open] {
+  padding: 0.25rem 0.25rem 0.75rem;
+  border-radius: 12px;
+  background: var(--bg-subtle);
+}
+.ov3-team__earlier li > details[open] > summary { background: transparent; }
+.ov3-team__earlier li > details[open] > summary:hover { background: transparent; }
+.ov3-team__earlier li > details[open] .ov3-team__earlier-title { color: var(--text-primary); font-weight: 600; }
+.ov3-team__earlier li > details[open] > .ov3-team__body,
+.ov3-team__earlier li > details[open] > .ov3-team__next { margin-inline: 0.75rem; }
 .ov3-team__earlier-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5861,31 +5871,85 @@ select.note-field__input { cursor: pointer; }
   margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); text-wrap: pretty;
 }
 .cp__reason-label { color: var(--text-muted); font-weight: 600; }
-/* The working, folded away. Open, it scrolls rather than stretching the card past its neighbours. */
-.cp__more { margin-top: 0.375rem; }
-.cp__more > summary {
-  cursor: pointer; list-style: none;
-  display: inline-flex; align-items: center; gap: 0.3rem;
+/* The way into the full brief. A button, because it opens a dialog rather than going anywhere. */
+.cp__why {
+  margin-top: 0.4375rem;
+  padding: 0.25rem 0.5rem; margin-left: -0.5rem;
+  border-radius: 0.375rem;
   font-size: 0.75rem; font-weight: 600; color: var(--accent);
+  cursor: pointer;
 }
-.cp__more > summary::-webkit-details-marker { display: none; }
-.cp__more > summary::before {
-  content: '';
-  width: 0; height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3.5px solid transparent;
-  border-bottom: 3.5px solid transparent;
-  transition: transform 0.15s ease;
+.cp__why:hover { background: var(--accent-subtle); }
+
+/* ── The brief, opened ─────────────────────────────────────────────────────── */
+.cp-modal {
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(42rem, calc(100vh - 4rem));
+  padding: 0; border: none; border-radius: 0.875rem;
+  background: var(--bg-surface); color: var(--text-primary);
+  box-shadow: 0 24px 60px -20px rgba(15, 17, 23, 0.4);
 }
-.cp__more[open] > summary::before { transform: rotate(90deg); }
-.cp__more > summary:hover { text-decoration: underline; }
-.cp__reason-rest {
-  margin: 0.375rem 0 0;
-  max-height: 11rem; overflow-y: auto;
-  font-size: 0.75rem; line-height: 1.55; color: var(--text-muted); text-wrap: pretty;
+.cp-modal::backdrop { background: rgba(15, 17, 23, 0.45); }
+[data-theme="dark"] .cp-modal { border: 1px solid var(--border); }
+.cp-modal__panel { display: flex; flex-direction: column; max-height: inherit; }
+.cp-modal__head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+  padding: 1.125rem 1.25rem 0.875rem;
+  border-bottom: 1px solid var(--border-subtle);
 }
-@media (prefers-reduced-motion: reduce) {
-  .cp__more > summary::before { transition: none; }
+.cp-modal__eyebrow {
+  margin: 0 0 0.2rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted);
+}
+.cp-modal__title {
+  margin: 0; font-size: 1rem; font-weight: 600; line-height: 1.35;
+  color: var(--text-primary); text-wrap: pretty;
+}
+.cp-modal__close {
+  flex-shrink: 0;
+  display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--bg-subtle); color: var(--text-muted); cursor: pointer;
+}
+.cp-modal__close:hover { background: var(--bg-muted); color: var(--text-primary); }
+
+/* The parts of the brief that have a shape, pulled out of the prose. */
+.cp-modal__facts {
+  list-style: none; margin: 0; padding: 0.875rem 1.25rem;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.625rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+.cp-modal__facts li {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.5rem; align-items: baseline;
+}
+.cp-modal__facts svg { grid-row: 1 / 3; align-self: center; color: var(--text-faint); }
+.cp-modal__fact-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); }
+.cp-modal__fact-value {
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere;
+}
+
+.cp-modal__body { padding: 1rem 1.25rem 1.25rem; overflow-y: auto; }
+.cp-modal__body p {
+  margin: 0; font-size: 0.875rem; line-height: 1.65; color: var(--text-secondary); text-wrap: pretty;
+}
+.cp-modal__body p + p { margin-top: 0.875rem; }
+
+/* The tab skeleton: rows the shape of the panel that is coming. dash-bone is only the pulse, so
+   the ground and the corners are set here. */
+.seo-skel .dash-bone {
+  display: block;
+  background: var(--bg-subtle);
+  border-radius: 0.375rem;
+  max-width: 100%;
+}
+.seo-skel-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+
+@media (max-width: 639px) {
+  .cp-modal { width: calc(100vw - 1.5rem); max-height: calc(100vh - 3rem); }
+  .cp-modal__head { padding: 1rem 1rem 0.75rem; }
+  .cp-modal__facts { padding: 0.75rem 1rem; grid-template-columns: minmax(0, 1fr); }
+  .cp-modal__body { padding: 0.875rem 1rem 1rem; }
 }
 .cp__foot {
   margin-top: 0.125rem; padding-top: 0.5rem; border-top: 1px solid var(--border-subtle);
@@ -5910,7 +5974,7 @@ select.note-field__input { cursor: pointer; }
    gap happened to leave them — the same treatment the Analytics scorecard uses. */
 .rep-social__stats {
   display: flex; flex-wrap: wrap; row-gap: 0.75rem;
-  margin: 0 0 0.875rem; padding-bottom: 0.75rem;
+  margin: 0 0 1.125rem; padding-bottom: 0.875rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 .rep-social__stats > div {
@@ -5931,19 +5995,19 @@ select.note-field__input { cursor: pointer; }
   font-size: 0.625rem; font-weight: 600; text-transform: capitalize;
 }
 
-.rep-social { display: flex; flex-direction: column; gap: 0.5rem; }
+.rep-social { display: flex; flex-direction: column; gap: 0.625rem; }
 .rep-social__post {
-  display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: 0.75rem;
+  display: grid; grid-template-columns: 3.75rem minmax(0, 1fr); gap: 0.875rem;
   align-items: start;
-  padding: 0.75rem; border: 1px solid var(--border-subtle); border-radius: 0.625rem;
+  padding: 0.875rem 1rem; border: 1px solid var(--border-subtle); border-radius: 0.625rem;
 }
 .rep-social__post--text { grid-template-columns: minmax(0, 1fr); }
 .rep-social__media {
-  width: 3.5rem; height: 3.5rem; max-width: 100%; object-fit: cover;
-  border-radius: 0.4375rem; background: var(--bg-subtle); display: block;
+  width: 3.75rem; height: 3.75rem; max-width: 100%; object-fit: cover;
+  border-radius: 0.5rem; background: var(--bg-subtle); display: block;
 }
-.rep-social__body { display: flex; flex-direction: column; gap: 0.3125rem; min-width: 0; }
-.rep-social__head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.rep-social__body { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.rep-social__head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; min-height: 1.375rem; }
 .rep-social__where {
   display: inline-flex; align-items: center; gap: 0.3rem;
   padding: 0.125rem 0.5rem; border-radius: 999px;
@@ -5962,13 +6026,12 @@ a.rep-social__where svg { opacity: 0.55; }
 .rep-social__where[data-net="tiktok"]::before    { background: #010101; }
 .rep-social__when { margin-left: auto; font-size: 0.75rem; color: var(--text-faint); }
 .rep-social__text {
-  margin: 0; font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
-  white-space: pre-line;
-  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+  margin: 0; font-size: 0.875rem; line-height: 1.6; color: var(--text-secondary);
+  white-space: pre-line; text-wrap: pretty;
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
 }
 .rep-social__foot {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem 0.875rem;
-  margin-top: 0.0625rem;
   font-size: 0.75rem; color: var(--text-muted);
 }
 .rep-social__review { display: inline-flex; align-items: center; gap: 0.3rem; }
