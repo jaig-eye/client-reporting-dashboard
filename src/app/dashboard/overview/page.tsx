@@ -90,6 +90,8 @@ type GhlRow    = {
   /** raw_data->lead_sources: null on days synced before lead sources were recorded. */
   lead_sources?: LeadSourceCounts | null
   spam_sources?: LeadSourceCounts | null
+  /** raw_data->tracking_calls: inbound calls by the channel their dialled number stands for. */
+  tracking_calls?: LeadSourceCounts | null
 }
 type GbpRow    = {
   date: string; call_clicks: number; direction_clicks: number
@@ -132,7 +134,7 @@ const _getOverviewData = unstable_cache(
 
     const GOOGLE_COLS = 'campaign_id,date,spend,clicks,conversions,impressions,search_impression_share,search_top_impression_share'
     const META_COLS   = 'ad_id,campaign_id,date,spend,clicks,actions,action_values'
-    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources,spam_sources:raw_data->spam_sources'
+    const GHL_COLS    = 'date,contacts_created,spam_leads,total_calls,incoming_calls,missed_calls,forms_submitted,new_opportunities,won_opportunities,won_value,lead_sources:raw_data->lead_sources,spam_sources:raw_data->spam_sources,tracking_calls:raw_data->tracking_calls'
     const GBP_COLS    = 'date,call_clicks,direction_clicks,views_search,views_maps,website_clicks,location_id,reviews_count,reviews_avg_rating'
     const GA4_COLS    = 'date,channel_group,sessions,conversions'
 
@@ -556,6 +558,20 @@ export default async function OverviewPage({
   }
   const leadSources     = summariseLeadSources(sourceCounts)
   const hasLeadSources  = sourceDays > 0 && leadSources.total > 0
+
+  // ── The same question asked of the calls: which number did they ring? ──────
+  // A call is placed by the tracking number it came in on, so this is measured rather than
+  // inferred. Calls that arrived on a number we don't recognise are simply absent, which means
+  // this can undercount the calls from ads but can never overstate them.
+  const callSourceCounts: LeadSourceCounts = {}
+  for (const r of data.ghl) {
+    if (r.tracking_calls && typeof r.tracking_calls === 'object') {
+      addLeadSources(callSourceCounts, r.tracking_calls)
+    }
+  }
+  const callSources    = summariseLeadSources(callSourceCounts)
+  const paidCalls      = callSources.paid
+  const placedCalls    = callSources.total
   // Only speak for the whole range when every day in it was counted.
   const sourcesComplete = hasLeadSources && sourceDays === data.ghl.length
 
@@ -1194,7 +1210,12 @@ export default async function OverviewPage({
         sparkData={crmDays.map(([, v]) => ({ v: v.leads }))} sparkColor="var(--blue)"
       />,
       <SparkMetricCard
-        key="calls" label="Phone calls" value={fmtInt(crm.calls)} sub="tracked calls to the business"
+        key="calls" label="Phone calls" value={fmtInt(crm.calls)}
+        sub={paidCalls > 0
+          ? `${fmtInt(paidCalls)} rang a number from your ads`
+          : placedCalls > 0
+            ? `${fmtInt(placedCalls)} placed to a tracked number`
+            : 'tracked calls to the business'}
         delta={delta(crm.calls, crmPrior.calls)} delay={1}
         sparkData={crmDays.map(([, v]) => ({ v: v.calls }))} sparkColor="var(--green)"
       />,
