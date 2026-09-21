@@ -2154,99 +2154,7 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 .today-hello .page-title { margin: 0.125rem 0 0; }
 .today-hello__line { margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary); }
 
-.today-subhead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin: 0 0 0.625rem;
-}
-.today-subhead__title { margin: 0; font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
-.today-subhead__note { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
-
 .today-tile__sub--green { color: var(--green); }
-
-.today-kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
-}
-.card.today-kpi {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 0.875rem 1rem 0.75rem;
-  text-decoration: none;
-  color: inherit;
-}
-.today-kpi--link { transition: border-color 0.15s ease; }
-.today-kpi--link:hover { border-color: var(--text-faint); }
-.today-kpi--link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.today-kpi__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-.today-kpi__label {
-  margin: 0;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  line-height: 1.35;
-}
-.today-kpi__value {
-  margin: 0.375rem 0 0;
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.15;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-.today-kpi__compare { margin: 0.125rem 0 0; font-size: 0.75rem; color: var(--text-muted); min-height: 1.125rem; }
-.today-kpi__viz { margin: 0.5rem -0.25rem 0; height: 36px; display: flex; align-items: flex-end; }
-.today-kpi__viz > * { flex: 1; }
-.today-kpi__go {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.625rem;
-  color: var(--text-faint);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-.today-kpi--link:hover .today-kpi__go { opacity: 1; }
-
-.today-delta {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.1875rem;
-  flex-shrink: 0;
-  padding: 0.0625rem 0.375rem;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.today-delta--good    { background: var(--green-subtle); color: var(--green); }
-.today-delta--bad     { background: var(--red-subtle);   color: var(--red); }
-.today-delta--info    { background: var(--blue-subtle);  color: var(--blue); }
-.today-delta--neutral { background: var(--bg-subtle);    color: var(--text-muted); }
-
-.today-meter {
-  width: 100%;
-  height: 6px;
-  margin: 0 0.25rem 0.5rem;
-  border-radius: 999px;
-  background: var(--bg-subtle);
-  overflow: hidden;
-}
-.today-meter__fill { height: 100%; border-radius: inherit; }
-.today-meter__fill--good    { background: var(--green); }
-.today-meter__fill--bad     { background: var(--red); }
-.today-meter__fill--info    { background: var(--blue); }
-.today-meter__fill--neutral { background: var(--amber); }
 
 .today-more {
   display: flex;
@@ -2304,14 +2212,7 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 .today-muted-toggle:hover { color: var(--text-primary); }
 .today-muted-toggle[aria-pressed="true"] { color: var(--blue); }
 
-@media (max-width: 1199px) {
-  .today-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 639px) {
-  .today-kpis { gap: 0.5rem; }
-  .card.today-kpi { padding: 0.75rem 0.75rem 0.625rem; }
-  .today-kpi__value { font-size: 1.25rem; }
-  .today-kpi__top { flex-direction: column; gap: 0.25rem; }
   .today-more, .today-filters { padding-inline: 1rem; }
 }
 
@@ -2872,10 +2773,6 @@ select.note-field__input { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .note-composer, .note-type, .note-filter, .note-item, .note-item__actions, .note-fields__caret { transition: none; }
-}
-
-@media (max-width: 639px) {
-  .today-subhead { flex-direction: column; align-items: flex-start; gap: 0.125rem; }
 }
 
 /* Notes: keep avatars legible on the pinned tint; hint sits tight above the title. */

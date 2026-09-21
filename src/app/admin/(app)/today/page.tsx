@@ -1,12 +1,12 @@
 // Today — /admin/today
-// The admin's home: what's new and what needs attention, across every client, plus a handful of
-// agency-wide KPIs with a trend.
+// The admin's home: what needs attention across every client, and nothing else. The agency-wide
+// KPI cards were removed — none of them was something to act on, and five of them cost a query
+// apiece to render a number nobody used.
 // Server component; every section loads in parallel and fails on its own, so one broken query
 // shows a line of text instead of taking the whole page down.
 //
 // "Today" is a rolling window: agency_settings has no timezone, so "new" means created in the last
-// 24 hours. Day-level metrics (spend, conversions, leads) use yesterday's UTC date, which is the
-// last complete day the daily syncs have written.
+// 24 hours.
 
 import Link from 'next/link'
 import type { ReactNode } from 'react'
@@ -19,7 +19,6 @@ import { loadClientAdFuelBalances } from '@/lib/adFuelBalance'
 import { balanceLevel } from '@/lib/adFuelColor'
 import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
 import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
-import KpiCard, { type KpiDelta, type KpiTone } from './KpiCard'
 import Greeting from './Greeting'
 import LowAdFuelList, { type LowFuelRow } from './LowAdFuelList'
 
@@ -28,8 +27,6 @@ export const dynamic = 'force-dynamic'
 const DAY_MS        = 86_400_000
 const SSL_WARN_DAYS = 14
 const ALERT_LIMIT   = 6
-const PAGE_SIZE     = 1000
-const MAX_PAGES     = 20
 
 // Content alerts are mostly routine (posts ready, auto-published, digests) and the Content card
 // covers those. Only these content types are something to act on.
@@ -65,9 +62,6 @@ interface SiteRow {
   ssl_days_remaining: number | null; uptime_7d: number | null
   clients: { name: string } | null
 }
-interface GoogleDayRow { client_id: string; campaign_id: string; date: string; spend: number | string; conversions: number | string }
-interface MetaDayRow   { client_id: string; date: string; spend: number | string }
-interface GhlDayRow    { date: string; contacts_created: number | null; spam_leads: number | null; reviews_received: number | null }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -81,21 +75,6 @@ async function settle<T>(fn: () => Promise<T>): Promise<Settled<T>> {
     console.error('[today]', error)
     return { ok: false, error }
   }
-}
-
-type PageResult = PromiseLike<{ data: unknown; error: { message: string } | null }>
-
-/** Read a bounded query past PostgREST's 1,000-row cap, one page at a time. */
-async function fetchPaged<T>(page: (from: number, to: number) => PageResult): Promise<T[]> {
-  const out: T[] = []
-  for (let i = 0; i < MAX_PAGES; i++) {
-    const { data, error } = await page(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
-    if (error) throw new Error(error.message)
-    const rows = (data ?? []) as T[]
-    out.push(...rows)
-    if (rows.length < PAGE_SIZE) break
-  }
-  return out
 }
 
 async function headCount(q: PromiseLike<{ count: number | null; error: { message: string } | null }>): Promise<number> {
@@ -121,35 +100,11 @@ function relTime(iso: string, now: number): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
-
-const whole = (n: number) => Math.round(n).toLocaleString('en-US')
-
 const shortDate = (isoDate: string) =>
   new Date(isoDate + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 
-const weekday = (isoDate: string) =>
-  new Date(isoDate + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
-
 function hostOf(url: string) {
   try { return new URL(url).host } catch { return url }
-}
-
-/** Percentage change as a chip. upTone/downTone say whether each direction is good news. */
-function changeDelta(cur: number, prev: number, upTone: KpiTone, downTone: KpiTone, vs: string): KpiDelta | null {
-  if (prev === 0 && cur === 0) return null
-  if (prev === 0) return { text: 'New', direction: 'up', tone: upTone, label: `Up from zero ${vs}` }
-  const pct = ((cur - prev) / prev) * 100
-  const abs = Math.abs(pct)
-  if (abs < 0.5) return null   // no meaningful change — show no pill rather than "0%"
-  const up = pct > 0
-  return {
-    text:      `${abs >= 100 ? Math.round(abs) : abs.toFixed(1)}%`,
-    direction: up ? 'up' : 'down',
-    tone:      up ? upTone : downTone,
-    label:     `${up ? 'Up' : 'Down'} ${abs.toFixed(1)}% ${vs}`,
-  }
 }
 
 // ─── Building blocks ─────────────────────────────────────────────────────────
@@ -270,14 +225,8 @@ export default async function TodayPage() {
   const since24h = new Date(now - DAY_MS).toISOString()
   const since48h = new Date(now - 2 * DAY_MS).toISOString()
 
-  // Day buckets for the KPI trends: the 14 days ending yesterday (UTC), oldest first.
-  const dayIso    = (daysAgo: number) => new Date(now - daysAgo * DAY_MS).toISOString().slice(0, 10)
-  const days14    = Array.from({ length: 14 }, (_, i) => dayIso(14 - i))
-  const yesterday = days14[13]
-  const lastWeek  = days14[6]   // same weekday as yesterday, one week earlier
-  const vsLastWeek = `vs last ${weekday(lastWeek)}`
 
-  const [alertsRes, syncRes, fuelRes, reviewRes, sitesRes, adsRes, ghlRes, postsRes, syncRateRes, purchasesRes] = await Promise.all([
+  const [alertsRes, syncRes, fuelRes, reviewRes, sitesRes] = await Promise.all([
     // ── Alerts: new in the last 24h (actionable only), a 48h list, and the older backlog count
     settle(async () => {
       const count = () => db.from('admin_alerts').select('id', { count: 'exact', head: true }).is('dismissed_at', null)
@@ -328,95 +277,6 @@ export default async function TodayPage() {
         .order('name')
       if (error) throw new Error(error.message)
       return (data ?? []) as unknown as SiteRow[]
-    }),
-    // ── Ad spend + Google conversions per day. Google: campaign rows, de-duplicated per
-    //    (client, campaign, date) like sum_google_spend_by_client. Meta spend: the ad-level
-    //    daily_meta_spend_by_client RPC — never campaign-level meta_ads_metrics.
-    settle(async () => {
-      const [googleRows, metaRes] = await Promise.all([
-        fetchPaged<GoogleDayRow>((from, to) => db.from('google_ads_metrics')
-          .select('client_id, campaign_id, date, spend, conversions')
-          .gte('date', days14[0]).lte('date', yesterday)
-          .or('cost_micros.gt.0,conversions.gt.0')
-          .order('id')
-          .range(from, to)),
-        db.rpc('daily_meta_spend_by_client', { floor_date: days14[0] }),
-      ])
-      if (metaRes.error) throw new Error(metaRes.error.message)
-      const spend = new Map(days14.map(d => [d, 0]))
-      const conv  = new Map(days14.map(d => [d, 0]))
-      const seen  = new Set<string>()
-      for (const r of googleRows) {
-        const key = `${r.client_id}|${r.campaign_id}|${r.date}`
-        if (seen.has(key) || !spend.has(r.date)) continue
-        seen.add(key)
-        spend.set(r.date, spend.get(r.date)! + (Number(r.spend) || 0))
-        conv.set(r.date, conv.get(r.date)! + (Number(r.conversions) || 0))
-      }
-      for (const r of (metaRes.data ?? []) as MetaDayRow[]) {
-        if (spend.has(r.date)) spend.set(r.date, spend.get(r.date)! + (Number(r.spend) || 0))
-      }
-      return { spend: days14.map(d => spend.get(d)!), conversions: days14.map(d => conv.get(d)!) }
-    }),
-    // ── CRM leads (new contacts minus spam, as on the CRM dashboard) and reviews per day
-    settle(async () => {
-      const rows = await fetchPaged<GhlDayRow>((from, to) => db.from('ghl_metrics')
-        .select('date, contacts_created, spam_leads, reviews_received')
-        .gte('date', days14[0]).lte('date', yesterday)
-        .order('id')
-        .range(from, to))
-      const leads   = new Map(days14.map(d => [d, 0]))
-      const reviews = new Map(days14.map(d => [d, 0]))
-      for (const r of rows) {
-        if (!leads.has(r.date)) continue
-        leads.set(r.date, leads.get(r.date)! + Math.max(0, (Number(r.contacts_created) || 0) - (Number(r.spam_leads) || 0)))
-        reviews.set(r.date, reviews.get(r.date)! + (Number(r.reviews_received) || 0))
-      }
-      return { leads: days14.map(d => leads.get(d)!), reviews: days14.map(d => reviews.get(d)!) }
-    }),
-    // ── Posts published in the last 14 days (7-day total + previous 7 days)
-    settle(async () => {
-      const { data, error } = await db.from('content_posts')
-        .select('published_at')
-        .eq('status', 'published')
-        .gte('published_at', new Date(now - 14 * DAY_MS).toISOString())
-        .limit(PAGE_SIZE)
-      if (error) throw new Error(error.message)
-      const times = ((data ?? []) as { published_at: string }[]).map(p => new Date(p.published_at).getTime())
-      const last7 = times.filter(t => t >= now - 7 * DAY_MS).length
-      const daily = Array.from({ length: 14 }, (_, i) => {
-        const end = now - (13 - i) * DAY_MS
-        return times.filter(t => t < end && t >= end - DAY_MS).length
-      })
-      return { last7, prev7: times.length - last7, daily }
-    }),
-    // ── Sync success rate: head counts only, this 24h vs the 24h before
-    settle(async () => {
-      const jobs = (status: 'success' | 'error', from: string, to?: string) => {
-        let q = db.from('sync_jobs').select('id', { count: 'exact', head: true }).eq('status', status).gte('started_at', from)
-        if (to) q = q.lt('started_at', to)
-        return headCount(q)
-      }
-      const [ok, failed, okPrev, failedPrev] = await Promise.all([
-        jobs('success', since24h), jobs('error', since24h),
-        jobs('success', since48h, since24h), jobs('error', since48h, since24h),
-      ])
-      return { ok, failed, okPrev, failedPrev }
-    }),
-    // ── Ad Fuel purchased (same ledger the balance uses), last 60 days
-    settle(async () => {
-      const { data, error } = await db.from('ad_fuel_ledger')
-        .select('date_of_payment, amount_af')
-        .gte('date_of_payment', dayIso(59))
-        .lte('date_of_payment', dayIso(0))
-        .limit(PAGE_SIZE)
-      if (error) throw new Error(error.message)
-      const rows  = (data ?? []) as { date_of_payment: string; amount_af: number | string }[]
-      const sum   = (from: string, to: string) => rows
-        .filter(r => r.date_of_payment >= from && r.date_of_payment <= to)
-        .reduce((s, r) => s + (Number(r.amount_af) || 0), 0)
-      const weekly = Array.from({ length: 8 }, (_, i) => sum(dayIso(55 - i * 7), dayIso(49 - i * 7)))
-      return { last30: sum(dayIso(29), dayIso(0)), prev30: sum(dayIso(59), dayIso(30)), weekly }
     }),
   ])
 
@@ -486,32 +346,8 @@ export default async function TodayPage() {
   const sslExpiring = sites
     .filter(s => s.ssl_days_remaining != null && s.ssl_days_remaining <= SSL_WARN_DAYS)
     .sort((a, b) => (a.ssl_days_remaining ?? 0) - (b.ssl_days_remaining ?? 0))
-  const uptimes     = sites.map(s => s.uptime_7d).filter((u): u is number => u != null).map(Number)
-  const avgUptime   = uptimes.length ? uptimes.reduce((s, u) => s + u, 0) / uptimes.length : null
 
   // ── KPI values
-  const ads       = adsRes.ok ? adsRes.value : null
-  const ghl       = ghlRes.ok ? ghlRes.value : null
-  const posts     = postsRes.ok ? postsRes.value : null
-  const syncRate  = syncRateRes.ok ? syncRateRes.value : null
-  const purchases = purchasesRes.ok ? purchasesRes.value : null
-
-  const syncTotal     = syncRate ? syncRate.ok + syncRate.failed : 0
-  const syncTotalPrev = syncRate ? syncRate.okPrev + syncRate.failedPrev : 0
-  const syncPct       = syncTotal ? (syncRate!.ok / syncTotal) * 100 : null
-  const syncPctPrev   = syncTotalPrev ? (syncRate!.okPrev / syncTotalPrev) * 100 : null
-  let syncDelta: KpiDelta | null = null
-  if (syncPct != null && syncPctPrev != null) {
-    const pts = syncPct - syncPctPrev
-    syncDelta = Math.abs(pts) < 0.5
-      ? null   // no meaningful change — show no pill rather than "0 pts"
-      : {
-          text:      `${Math.abs(pts).toFixed(1)} pts`,
-          direction: pts > 0 ? 'up' : 'down',
-          tone:      pts > 0 ? 'good' : 'bad',
-          label:     `${pts > 0 ? 'Up' : 'Down'} ${Math.abs(pts).toFixed(1)} points vs the previous 24 hours`,
-        }
-  }
 
   // ── Header
   const failed    = 'couldn’t load'
@@ -565,86 +401,7 @@ export default async function TodayPage() {
         />
       </div>
 
-      {/* ── KPI spark cards ──────────────────────────────────────────────── */}
-      <section aria-labelledby="kpis-title">
-        <div className="today-subhead">
-          <h2 id="kpis-title" className="today-subhead__title">At a glance</h2>
-          <p className="today-subhead__note">Yesterday vs the same day last week, 14-day trend</p>
-        </div>
-        <div className="today-kpis">
-          <KpiCard
-            href="/admin/dashboard"
-            label="Ad spend yesterday"
-            error={!ads}
-            value={ads ? money(ads.spend[13]) : null}
-            compare={ads && `${money(ads.spend[6])} last ${weekday(lastWeek)}`}
-            delta={ads && changeDelta(ads.spend[13], ads.spend[6], 'info', 'info', vsLastWeek)}
-            spark={ads?.spend}
-          />
-          <KpiCard
-            href="/admin/dashboard"
-            label="Google Ads conversions"
-            error={!ads}
-            value={ads ? whole(ads.conversions[13]) : null}
-            compare={ads && `${whole(ads.conversions[6])} last ${weekday(lastWeek)}`}
-            delta={ads && changeDelta(Math.round(ads.conversions[13]), Math.round(ads.conversions[6]), 'good', 'bad', vsLastWeek)}
-            spark={ads?.conversions}
-          />
-          <KpiCard
-            label="CRM leads yesterday"
-            error={!ghl}
-            value={ghl ? whole(ghl.leads[13]) : null}
-            compare={ghl && `${whole(ghl.leads[6])} last ${weekday(lastWeek)}`}
-            delta={ghl && changeDelta(ghl.leads[13], ghl.leads[6], 'good', 'bad', vsLastWeek)}
-            spark={ghl?.leads}
-          />
-          <KpiCard
-            label="Reviews received yesterday"
-            error={!ghl}
-            value={ghl ? whole(ghl.reviews[13]) : null}
-            compare={ghl && `${whole(ghl.reviews[6])} last ${weekday(lastWeek)}`}
-            delta={ghl && changeDelta(ghl.reviews[13], ghl.reviews[6], 'good', 'bad', vsLastWeek)}
-            spark={ghl?.reviews}
-          />
-          <KpiCard
-            href="/admin/content"
-            label="Posts published, 7 days"
-            error={!posts}
-            value={posts ? whole(posts.last7) : null}
-            compare={posts && `${whole(posts.prev7)} the 7 days before`}
-            delta={posts && changeDelta(posts.last7, posts.prev7, 'good', 'bad', 'vs the previous 7 days')}
-            spark={posts?.daily}
-          />
-          <KpiCard
-            href="/admin/system"
-            label="Sync success, 24 hours"
-            error={!syncRate}
-            value={syncPct == null ? '–' : `${syncPct >= 99.95 || syncPct === 0 ? syncPct.toFixed(0) : syncPct.toFixed(1)}%`}
-            compare={syncRate && (syncTotal ? `${whole(syncRate.ok)} of ${plural(syncTotal, 'run')} succeeded` : 'No syncs ran')}
-            delta={syncDelta}
-            meter={syncPct == null ? undefined : { pct: syncPct, tone: syncPct >= 95 ? 'good' : syncPct >= 80 ? 'neutral' : 'bad' }}
-          />
-          <KpiCard
-            href="/admin/sites"
-            label="Site uptime, 7 days"
-            error={!sitesRes.ok}
-            value={avgUptime == null ? '–' : `${avgUptime.toFixed(2)}%`}
-            compare={avgUptime == null ? 'No uptime data yet' : `Average across ${plural(uptimes.length, 'site')}`}
-            meter={avgUptime == null ? undefined : { pct: avgUptime, tone: avgUptime >= 99 ? 'good' : avgUptime >= 95 ? 'neutral' : 'bad' }}
-          />
-          <KpiCard
-            href="/admin/ad-fuel"
-            label="Ad Fuel purchased, 30 days"
-            error={!purchases}
-            value={purchases ? money(purchases.last30) : null}
-            compare={purchases && `${money(purchases.prev30)} the 30 days before`}
-            delta={purchases && changeDelta(purchases.last30, purchases.prev30, 'good', 'neutral', 'vs the previous 30 days')}
-            spark={purchases?.weekly}
-          />
-        </div>
-      </section>
-
-      <div className="today-grid">
+<div className="today-grid">
         <div className="today-col">
           {/* ── Needs attention ──────────────────────────────────────── */}
           <Section
