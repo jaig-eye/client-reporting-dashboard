@@ -6024,6 +6024,142 @@ select.note-field__input { cursor: pointer; }
   .ov4-lede p { font-size: 0.875rem; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEO ACTIVITY — a lifetime log of the work
+
+   Everything we did for this client, in the order it happened: review replies, social posts,
+   blog posts, and the off-platform work entered by hand. No date picker on this tab, so the
+   list carries its own month headings.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.act {
+  --act-violet: #7c3aed;
+  --act-violet-subtle: color-mix(in srgb, #7c3aed 10%, transparent);
+}
+/* This app themes on [data-theme] alone — there is no prefers-color-scheme rule anywhere else in
+   this stylesheet, and adding one here would turn the icon dark on a light page whenever the OS
+   is dark. Match the house convention. */
+[data-theme="dark"] .act {
+  --act-violet: #a78bfa;
+  --act-violet-subtle: color-mix(in srgb, #a78bfa 16%, transparent);
+}
+
+/* ── Filters ──────────────────────────────────────────────────────────────── */
+.act-filters { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 1rem; }
+.act-filter {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.3125rem 0.625rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.act-filter:hover { border-color: var(--text-faint); color: var(--text-primary); }
+.act-filter:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.act-filter[aria-pressed="true"] {
+  border-color: var(--blue); color: var(--blue); background: var(--blue-subtle);
+}
+.act-filter__n {
+  font-variant-numeric: tabular-nums; font-weight: 650;
+  color: var(--text-muted);
+}
+.act-filter[aria-pressed="true"] .act-filter__n { color: var(--blue); }
+
+/* ── The list ─────────────────────────────────────────────────────────────── */
+.act-list { list-style: none; margin: 0; padding: 0; }
+.act-month {
+  margin: 1.25rem 0 0.625rem;
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.act-item:first-child .act-month { margin-top: 0; }
+
+.act-row {
+  position: relative;
+  display: grid; grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.5rem 0 0.6875rem;
+}
+/* The rail behind the icons. It stops short of the last row so the sequence ends, not trails. */
+.act-row::before {
+  content: ''; position: absolute;
+  left: 0.71875rem; top: 1.9rem; bottom: -0.125rem;
+  width: 1px; background: var(--border-subtle);
+}
+.act-item:last-child .act-row::before { display: none; }
+
+.act-icon {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem; margin-top: 0.125rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.act-body { min-width: 0; }
+.act-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem;
+}
+.act-kind { font-size: 0.6875rem; font-weight: 700; }
+.act-date { font-size: 0.6875rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.act-title {
+  margin: 0.1875rem 0 0;
+  font-size: 0.875rem; font-weight: 600; line-height: 1.45; color: var(--text-primary);
+  text-wrap: pretty; overflow-wrap: anywhere;
+}
+.act-link {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  color: inherit; text-decoration: none;
+}
+.act-link:hover { color: var(--blue); text-decoration: underline; }
+.act-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+.act-link svg { flex-shrink: 0; color: var(--text-faint); }
+
+.act-detail {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
+  text-wrap: pretty;
+  /* A long review reply is quoted, not reproduced in full. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.act-chips { display: flex; flex-wrap: wrap; gap: 0.3125rem; margin-top: 0.4375rem; }
+.act-chip {
+  display: inline-flex; align-items: center; gap: 0.1875rem;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  font-size: 0.6875rem; font-weight: 600; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.act-chip--stars { color: var(--amber); background: var(--amber-subtle); }
+
+.act-more {
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  width: 100%; margin-top: 1rem;
+  padding: 0.5625rem 0.75rem;
+  border: 1px solid var(--border-subtle); border-radius: 0.5rem;
+  background: var(--bg-surface);
+  font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.act-more:hover { border-color: var(--text-faint); color: var(--text-primary); }
+.act-more:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.act-more__n { color: var(--text-faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 639px) {
+  .act-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.625rem; }
+  .act-row::before { left: 0.59375rem; }
+  .act-icon { width: 1.25rem; height: 1.25rem; }
+  .act-icon svg { width: 12px; height: 12px; }
+  .act-title { font-size: 0.8125rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .act-filter, .act-more { transition: none; }
+}
+
 /* ── What we shared to their pages ──────────────────────────────────────────
    A post is a small piece of published work, so each one is a row with its image, not a card in
    a grid: the copy is the point and the copy wants width.

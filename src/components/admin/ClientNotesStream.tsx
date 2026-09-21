@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo, type ComponentType } from 'react'
 import {
   PushPin, Trash, PencilSimple, X, MagnifyingGlass, LockSimple,
   NotePencil, ChatCircleText, Key, GlobeSimple, HardDrives, ShieldCheck,
-  CreditCard, WarningCircle, ClockCounterClockwise, SlidersHorizontal, Megaphone,
+  CreditCard, WarningCircle, ClockCounterClockwise, SlidersHorizontal, Megaphone, LinkSimple,
   type IconProps,
 } from '@phosphor-icons/react'
 import {
@@ -51,6 +51,7 @@ const CATEGORY_ICONS: Record<NoteCategory, ComponentType<IconProps>> = {
   change:     ClockCounterClockwise,
   preference: SlidersHorizontal,
   client_update: Megaphone,
+  seo_work:   LinkSimple,
 }
 
 /** How many notes the feed shows before "Show more". Searching shows everything. */

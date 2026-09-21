@@ -49,7 +49,7 @@ export interface NoteField {
 export const NOTE_CATEGORIES = [
   'general', 'contact', 'login', 'dns', 'hosting',
   'access', 'billing', 'issue', 'change', 'preference',
-  'client_update',
+  'client_update', 'seo_work',
 ] as const
 
 export type NoteCategory = typeof NOTE_CATEGORIES[number]
@@ -219,6 +219,28 @@ export const NOTE_TEMPLATES: Record<NoteCategory, NoteTemplate> = {
     bodyLabel: 'What we did (one point per line, **bold** for emphasis)',
     fields: [
       { key: 'next_up', label: "What's next", type: 'textarea', wide: true, placeholder: 'One point per line' },
+    ],
+  },
+
+  // The off-platform SEO work: backlinks, citations, referral placements. Nothing syncs it, so
+  // without this the client never learns it happened. Shown on their SEO Activity tab.
+  //
+  // 'performed_on' rather than the note's created_at: the work and the write-up are rarely the
+  // same day, and the log is ordered by when the work landed. Blank falls back to created_at.
+  seo_work: {
+    key: 'seo_work', label: 'SEO work',
+    hint: "Off-platform work: backlinks, citations, referrals. Shown to the client on their SEO tab.",
+    tone: 'blue', clientVisible: true,
+    bodyLabel: 'What this does for them (plain language — they read this)',
+    fields: [
+      { key: 'work_type',    label: 'Type of work', type: 'select',
+        options: ['Backlink', 'Directory citation', 'Referral placement', 'Guest post', 'Listing fix', 'Technical fix', 'Other'] },
+      { key: 'placed_on',    label: 'Where it landed', type: 'text', placeholder: 'Site or directory name' },
+      { key: 'url',          label: 'Link', type: 'url', wide: true, placeholder: 'https://…' },
+      { key: 'performed_on', label: 'Date of the work', type: 'date' },
+      { key: 'target_page',  label: 'Page it points to', type: 'text', tier: 'more', placeholder: 'The page on their site' },
+      { key: 'anchor',       label: 'Anchor text', type: 'text', tier: 'more' },
+      { key: 'source',       label: 'Where we bought it', type: 'text', tier: 'more', placeholder: 'NicheRanker, direct outreach, …' },
     ],
   },
 }

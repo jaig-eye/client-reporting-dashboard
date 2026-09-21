@@ -24,6 +24,7 @@ import { fetchGSCLiveData }  from '@/lib/gsc-live'
 import type { GSCSummaryResult } from '@/lib/gsc-live'
 import PageHeader            from '@/components/dashboard/PageHeader'
 import ListingPreview, { type SetupVerdict } from './ListingPreview'
+import ActivityLog, { type ActivityItem } from './ActivityLog'
 import ContentPlan, { type ContentPost } from './ContentPlan'
 import { fetchLivePageImages } from '@/lib/content/livePageImage'
 import EmptyState            from '@/components/dashboard/EmptyState'
@@ -37,7 +38,7 @@ import SeoTabs               from './SeoTabs'
 import RowLimit              from '@/components/dashboard/RowLimit'
 import {
   MagnifyingGlass, Storefront, ChartLineUp, LinkSimple, MapTrifold, Key,
-  Info,
+  Info, ClockCounterClockwise,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -275,6 +276,9 @@ export default async function SeoPage({
 
   const GBP_COLS = 'date, location_id, location_name, views_search, views_maps, website_clicks, call_clicks, direction_clicks, reviews_count, reviews_avg_rating, raw_data'
 
+  // The Activity log is lifetime and costs three reads, so only the tab that shows it pays.
+  const wantsActivityTab = params.tab === 'activity'
+
   // Phase 1 — everything that doesn't depend on another query, in parallel.
   const [
     { data: connData },
@@ -287,6 +291,9 @@ export default async function SeoPage({
     { data: postData },
     { data: topicData },
     { data: reviewSnap },
+    { data: replyData },
+    { data: socialData },
+    { data: workData },
   ] = await Promise.all([
     db.from('client_connections')
       .select('id, connector:connectors(type)')
@@ -361,6 +368,40 @@ export default async function SeoPage({
       .gt('reviews_count', 0)
       .order('date', { ascending: false })
       .limit(60),
+
+    // ── The Activity log's three extra sources. Lifetime, so they are only read on that tab.
+    //
+    // Replies we wrote to their reviews. Public listing content, the same rows the Reputation
+    // page already shows. Before migration 219 this read fails quietly and the kind disappears
+    // from the log; the other three still show.
+    wantsActivityTab
+      ? db.from('gbp_reviews')
+          .select('id,reviewer_name,star_rating,comment,reply_comment,replied_at')
+          .eq('client_id', client.id)
+          .not('reply_comment', 'is', null)
+          .order('replied_at', { ascending: false, nullsFirst: false })
+          .limit(300)
+      : Promise.resolve({ data: null }),
+    // Posts we published to their pages. Before migration 221, likewise quiet.
+    wantsActivityTab
+      ? db.from('ghl_social_posts')
+          .select('id,summary,platforms,post_url,published_at')
+          .eq('client_id', client.id)
+          .not('published_at', 'is', null)
+          .order('published_at', { ascending: false })
+          .limit(300)
+      : Promise.resolve({ data: null }),
+    // The off-platform work, entered by hand. Only the columns a client may see: no author, no
+    // other category, never secret_enc. Before migration 223 no row can carry this category, so
+    // the read simply returns nothing.
+    wantsActivityTab
+      ? db.from('client_notes')
+          .select('id,title,content,fields,created_at')
+          .eq('client_id', client.id)
+          .eq('category', 'seo_work')
+          .order('created_at', { ascending: false })
+          .limit(300)
+      : Promise.resolve({ data: null }),
   ])
 
   // Which connectors are live, and the Search Console connection to read from.
@@ -437,6 +478,89 @@ export default async function SeoPage({
   // Scheduled work is not dated into the past, so it is always shown — it is what is coming.
   const upcomingPosts  = contentPosts.filter(p => p.status !== 'published')
   const hasContent     = publishedPosts.length > 0 || upcomingPosts.length > 0
+
+  // ── The Activity log ──────────────────────────────────────────────────────
+  // Four sources into one list, newest first. Each entry says what it was, when it landed and —
+  // where there is one — links to the thing itself.
+  type ReplyRow  = { id: string; reviewer_name: string | null; star_rating: number | null
+                     comment: string | null; reply_comment: string | null; replied_at: string | null }
+  type SocialRow = { id: string; summary: string | null; platforms: string[] | null
+                     post_url: string | null; published_at: string | null }
+  type WorkRow   = { id: string; title: string | null; content: string | null
+                     fields: Record<string, string> | null; created_at: string }
+
+  const PLATFORM_LABELS: Record<string, string> = {
+    facebook: 'Facebook', instagram: 'Instagram', google: 'Google', 'google-business': 'Google',
+    linkedin: 'LinkedIn', twitter: 'X', tiktok: 'TikTok', pinterest: 'Pinterest',
+  }
+  const platformLabel = (p: string) => PLATFORM_LABELS[p.toLowerCase()] ?? p
+
+  /** One line of a review reply or a post body, trimmed to something a log can hold. */
+  const oneLine = (t: string | null | undefined, max = 220) => {
+    const s = (t ?? '').replace(/\s+/g, ' ').trim()
+    return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s || null
+  }
+
+  const activity: ActivityItem[] = []
+
+  for (const r of ((replyData ?? []) as unknown as ReplyRow[])) {
+    if (!r.replied_at || !r.reply_comment) continue
+    const who = (r.reviewer_name ?? '').trim().split(/\s+/)[0] || 'a customer'
+    activity.push({
+      id: `reply-${r.id}`, kind: 'reply', at: r.replied_at,
+      title: `Replied to ${who}'s review`,
+      detail: oneLine(r.reply_comment),
+      stars: r.star_rating && r.star_rating > 0 ? r.star_rating : null,
+    })
+  }
+
+  for (const p of ((socialData ?? []) as unknown as SocialRow[])) {
+    if (!p.published_at) continue
+    const where = (p.platforms ?? []).map(platformLabel)
+    activity.push({
+      id: `social-${p.id}`, kind: 'social', at: p.published_at,
+      title: where.length ? `Shared to ${where.join(' and ')}` : 'Shared a post',
+      detail: oneLine(p.summary),
+      url: p.post_url,
+      chips: [],
+    })
+  }
+
+  for (const p of publishedPosts) {
+    if (!p.published_at) continue
+    activity.push({
+      id: `post-${p.id}`, kind: 'post', at: p.published_at,
+      title: p.title,
+      detail: oneLine(p.reason),
+      url: p.url,
+      chips: [
+        ...(p.keyword ? [p.keyword] : []),
+        ...(p.word_count ? [`${p.word_count.toLocaleString('en-US')} words`] : []),
+      ],
+    })
+  }
+
+  for (const n of ((workData ?? []) as unknown as WorkRow[])) {
+    const f = n.fields ?? {}
+    // The work's own date when someone recorded one; otherwise when the note was written.
+    const at = f.performed_on ? `${f.performed_on}T12:00:00Z` : n.created_at
+    if (Number.isNaN(new Date(at).getTime())) continue
+    const kindLabel = f.work_type || 'SEO work'
+    activity.push({
+      id: `work-${n.id}`, kind: 'work', at,
+      title: n.title?.trim() || (f.placed_on ? `${kindLabel} on ${f.placed_on}` : kindLabel),
+      detail: oneLine(n.content),
+      url: f.url || null,
+      chips: [
+        ...(f.work_type ? [f.work_type] : []),
+        ...(f.placed_on && !n.title ? [] : f.placed_on ? [f.placed_on] : []),
+        ...(f.target_page ? [`→ ${f.target_page}`] : []),
+      ],
+    })
+  }
+
+  activity.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+  const hasActivity = activity.length > 0
 
   const gscConnectionId = connectionIdFor('google_search_console')
   const hasGbpConn      = connectionIdFor('google_business_profile') !== null
@@ -734,6 +858,9 @@ export default async function SeoPage({
     { id: 'local',     label: 'Google listing' },
     { id: 'authority', label: 'Site strength' },
     ...(hasContent ? [{ id: 'content', label: 'Blog posts' }] : []),
+    // Always offered: it is the one tab that reports the work itself, and its empty state says
+    // so plainly rather than hiding and leaving the client to assume nothing happened.
+    { id: 'activity', label: 'Activity' },
   ]
   const tab = seoTabs.some(t => t.id === params.tab) ? (params.tab as string) : seoTabs[0].id
   const tabHref = (id: string) => {
@@ -764,12 +891,20 @@ export default async function SeoPage({
 
   return (
     <div className="seo-report min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <PageHeader title="SEO" fromDate={fromDate} toDate={toDate} compare={compare} />
+      <PageHeader
+        title="SEO"
+        fromDate={fromDate}
+        toDate={toDate}
+        compare={compare}
+        // The Activity log is lifetime. A range control that changes nothing on screen is worse
+        // than no control at all.
+        showDateRange={tab !== 'activity'}
+      />
 
       <main className="max-w-7xl mx-auto px-6 py-6 seo-page">
 
         {/* ── Headline: is our search presence growing? ─────────────────── */}
-        {headline.length > 0 && (
+        {headline.length > 0 && tab !== 'activity' && (
           <section className="seo-section">
             <SectionHead
               icon={<ChartLineUp size={17} weight="duotone" />}
@@ -1319,6 +1454,28 @@ export default async function SeoPage({
             upcoming={upcomingPosts}
             periodLabel={contentLabel}
           />
+        )}
+
+        {/* ── Activity: everything we've done, for as long as we've done it ──── */}
+        {tab === 'activity' && (
+          <section className="seo-section">
+            <SectionHead
+              icon={<ClockCounterClockwise size={17} weight="duotone" />}
+              tint="var(--green)" tintBg="var(--green-subtle)"
+              title="What we've been doing"
+              desc="Every review we answered, post we shared, article we published and link we built — for as long as we've worked together."
+              meta={hasActivity
+                ? <span className="seo-note">{activity.length.toLocaleString('en-US')} {activity.length === 1 ? 'entry' : 'entries'}, newest first</span>
+                : undefined}
+            />
+            <div className="card seo-panel">
+              <div className="seo-panel__body">
+                {hasActivity
+                  ? <ActivityLog items={activity} />
+                  : <p className="seo-empty">The log fills as work lands — replies to your reviews, posts we share, articles we publish and links we build. Nothing has been recorded here yet.</p>}
+              </div>
+            </div>
+          </section>
         )}
 
         {tab === 'authority' && (
