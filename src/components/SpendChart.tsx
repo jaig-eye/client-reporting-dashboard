@@ -113,6 +113,7 @@ export default function SpendChart({
   priorSpendLabel,
   priorConversionsLabel,
   variant                = 'currency',
+  height: heightProp,
 }: {
   data:       DailyMetric[]
   priorData?: DailyMetric[]
@@ -122,6 +123,8 @@ export default function SpendChart({
   colorPriorConversions?: string
   spendLabel?:            string
   conversionsLabel?:      string
+  /** Override the plot height. Omitted, it stays 300 on a desktop and 260 on a phone. */
+  height?: number
   /** Defaults to `Prior ${spendLabel}` — e.g. "Prior Leads" on a CRM page. */
   priorSpendLabel?:       string
   /** Defaults to `Prior ${conversionsLabel}` — e.g. "Prior Calls" on a CRM page. */
@@ -187,7 +190,7 @@ export default function SpendChart({
   // legend and tooltip carry the conversions numbers.
   const rightWidth = widthFor(convTicks.map(convAxisFormatter), 30)
 
-  const height = isNarrow ? 260 : 300
+  const height = heightProp ?? (isNarrow ? 260 : 300)
   const margin = isNarrow
     // Right margin leaves room for the centred last date label.
     ? { top: 8, right: 14, bottom: 0, left: 0 }

@@ -1091,6 +1091,29 @@ export async function upsertGhlMetrics(
   const valid = rows.filter(r => r.date)
   if (!valid.length) return 0
 
+  // What each of these days already holds. raw_data is written by more than one version of this
+  // connector — an older build knows nothing about lead_sources or attribution — and replacing the
+  // column wholesale let whichever ran last erase the other's work. Read first, merge below.
+  const dates = Array.from(new Set(valid.map(r => String(r.date).split('T')[0])))
+  const existingRaw = new Map<string, Record<string, unknown>>()
+  try {
+    for (let i = 0; i < dates.length; i += 500) {
+      const { data } = await db
+        .from('ghl_metrics')
+        .select('date,raw_data')
+        .eq('connection_id', connectionId)
+        .in('date', dates.slice(i, i + 500))
+      for (const row of (data ?? []) as { date: string; raw_data: unknown }[]) {
+        if (row.raw_data && typeof row.raw_data === 'object') {
+          existingRaw.set(String(row.date).split('T')[0], row.raw_data as Record<string, unknown>)
+        }
+      }
+    }
+  } catch (e) {
+    // A failed read must not cost the sync. Worst case we write what we have, as before.
+    console.error('[sync] ghl_metrics raw_data preload failed:', e)
+  }
+
   const mapped = valid.map(r => ({
     connection_id:    connectionId,
     client_id:        clientId,
@@ -1110,7 +1133,9 @@ export async function upsertGhlMetrics(
     won_opportunities:  r.won_opportunities,
     lost_opportunities: r.lost_opportunities,
     won_value:          r.won_value,
-    raw_data:           r.raw_data ?? {},
+    // Keys this sync produced win, including empty ones — a day with no leads has to be able to
+    // write lead_sources: {} over yesterday's. Keys it says nothing about are left alone.
+    raw_data:           { ...(existingRaw.get(String(r.date).split('T')[0]) ?? {}), ...(r.raw_data ?? {}) },
     synced_at:        new Date().toISOString(),
   }))
 

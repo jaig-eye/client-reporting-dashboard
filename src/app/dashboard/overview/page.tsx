@@ -34,18 +34,14 @@ import type { Client, ClientConnection, Connector, MetaAction, DailyMetric } fro
 import PageHeader from '@/components/dashboard/PageHeader'
 import EmptyState from '@/components/dashboard/EmptyState'
 import SparkMetricCard from '@/components/SparkMetricCard'
-import Sparkline from '@/components/Sparkline'
 import SpendChart from '@/components/SpendChart'
 import { ConnectorLogo } from '@/components/ConnectorLogo'
-import CostLeadsChart, { type CostLeadsDay } from './CostLeadsChart'
-import WeeklyTrendChart, { type WeekPoint } from './WeeklyTrendChart'
-import LeadMixDonut, { type MixSlice } from './LeadMixDonut'
 import { addLeadSources, summariseLeadSources, LEAD_SOURCES, groupOf, type LeadSourceCounts, type LeadSourceKey } from '@/lib/leadSources'
-import AlertBody, { alertPlainText } from '@/components/admin/AlertBody'
-import { PositionPill, RankChange } from '@/components/dashboard/KeywordRank'
+import Link from 'next/link'
+import { alertPlainText } from '@/components/admin/AlertBody'
 import {
   Compass, MapPin, LinkSimple, MagnifyingGlass, CursorClick, UsersThree, EnvelopeSimple, Globe,
-  TrendUp, TrendDown, Lightbulb, ArrowRight, CheckCircle, Star, CurrencyDollar, Megaphone, FileText, Prohibit, ShieldCheck, Sparkle, Info,
+  Star, Sparkle,
 } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
@@ -66,7 +62,6 @@ function fmtShortDate(d: string) {
 }
 function fmtPct(n: number) { return `${n >= 100 ? Math.round(n) : n.toFixed(1)}%` }
 /** Whole dollars for table cells, where cents on a month of spend are noise. */
-function fmtWholeDollars(n: number) { return `$${Math.round(n).toLocaleString('en-US')}` }
 
 /** Drop rows sharing a logical key — two connections to the same ad account double-count. */
 function dedupeBy<T>(rows: T[], key: (r: T) => string): T[] {
@@ -363,7 +358,6 @@ export default async function OverviewPage({
   // opens on the previous period. Picking "No comparison" still turns the deltas off.
   const compare     = params.compare ?? 'prior_period'
   const showCompare = compare !== 'none'
-  const compareNoun = compare === 'last_year' ? 'vs last year' : 'vs the previous period'
 
   const periodMs = toDate.getTime() - fromDate.getTime()
   let priorFrom: Date
@@ -579,21 +573,6 @@ export default async function OverviewPage({
     date, spend: v.calls, conversions: v.forms, clicks: 0, roas: 0,
   }))
 
-  // 12 weeks of leads, bucketed into 7-day weeks that end on the range end.
-  const rolling = sumGhl(data.ghlRolling)
-  const weekBuckets = new Map<string, { leads: number; calls: number; forms: number }>()
-  for (const [date, v] of Array.from(rolling.byDate.entries())) {
-    const offset = Math.floor((new Date(date + 'T00:00:00Z').getTime() - rollingFrom.getTime()) / 86_400_000)
-    if (offset < 0) continue
-    const weekStart = iso(addDays(rollingFrom, Math.floor(offset / 7) * 7))
-    const bucket = weekBuckets.get(weekStart) ?? { leads: 0, calls: 0, forms: 0 }
-    bucket.leads += v.leads; bucket.calls += v.calls; bucket.forms += v.forms
-    weekBuckets.set(weekStart, bucket)
-  }
-  const weekly: WeekPoint[] = Array.from(weekBuckets.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([week, v]) => ({ week, label: fmtShortDate(week), ...v }))
-
   // ── Local: Business Profile ───────────────────────────────────────────────
   const sumGbp = (rows: GbpRow[]) => rows.reduce(
     (acc, r) => ({
@@ -610,15 +589,6 @@ export default async function OverviewPage({
   const gbpViews      = gbp.search + gbp.maps
   const gbpPriorViews = gbpPrior.search + gbpPrior.maps
   const hasGbpData    = data.gbp.length > 0 && (gbp.calls > 0 || gbp.directions > 0 || gbpViews > 0)
-  // Listing views per day, for the trend line. Google reports the listing a few days behind, so the
-  // last day with figures is named rather than letting the chart trail off to zero.
-  const gbpDaily = Array.from(
-    data.gbp.reduce((m, r) => {
-      const views = (Number(r.views_search) || 0) + (Number(r.views_maps) || 0)
-      return m.set(r.date, (m.get(r.date) ?? 0) + views)
-    }, new Map<string, number>()),
-  ).sort(([a], [b]) => a.localeCompare(b))
-  const gbpLastDay = [...gbpDaily].reverse().find(([, v]) => v > 0)?.[0] ?? null
 
   // ── Website: GA4 by channel ───────────────────────────────────────────────
   // Rows with an empty channel_group are unattributed sessions GA4 itself leaves out
@@ -641,7 +611,6 @@ export default async function OverviewPage({
     return { sessions, byChannel }
   }
   const ga4        = sumGa4(data.ga4)
-  const ga4Prior   = sumGa4(data.ga4Prior)
   const hasGa4Data = ga4.sessions > 0
 
   // ── Search Console (live) + Ahrefs (weekly snapshot) ──────────────────────
@@ -651,23 +620,12 @@ export default async function OverviewPage({
 
   // Each figure from the newest week that has it: Ahrefs' newest week often has a rating but no
   // link counts yet. A change only when a comparison is set.
-  const ahrefsOf = (pick: (row: AhrefsRow) => number | null) => {
-    const rows = data.ahrefs.filter(row => pick(row) != null)
-    return {
-      value: rows[0] ? pick(rows[0]) : null,
-      delta: showCompare && rows[0] && rows[1] ? calcDelta(pick(rows[0])!, pick(rows[1])!) : undefined,
-    }
-  }
-  const ahrefsDomains = ahrefsOf(row => row.referring_domains)
-  const ahrefsRating  = ahrefsOf(row => row.domain_rating)
-  const hasAhrefsData = ahrefsDomains.value != null || ahrefsRating.value != null
 
   // ── Deltas — only when a comparison is on, and only when there is a base ───
   const delta = (curr: number, prior: number) => (showCompare ? calcDelta(curr, prior) : undefined)
 
   const qs = new URLSearchParams({ from: iso(fromDate), to: iso(toDate) })
   if (compare !== 'none') qs.set('compare', compare)
-  const link = (path: string) => `${path}?${qs.toString()}`
 
   const dayCount    = Math.max(1, Math.round(periodMs / 86_400_000) + 1)
   const periodLabel = dayCount === 1 ? 'today' : `the last ${dayCount} days`
@@ -848,45 +806,10 @@ export default async function OverviewPage({
     })
   }
 
-  const totals = channels.reduce(
-    (acc, c) => ({ cost: acc.cost + (c.cost ?? 0), visits: acc.visits + (c.visits ?? 0), leads: acc.leads + c.leads }),
-    { cost: 0, visits: 0, leads: 0 },
-  )
-  const showChannels = channels.length > 0 && (totals.leads > 0 || totals.visits > 0)
-  const mixSlices: MixSlice[] = channels
-    .filter(c => Math.round(c.leads) > 0)
-    .map(c => ({ name: c.name, value: Math.round(c.leads), color: c.color }))
-  const mixTotal = mixSlices.reduce((s, c) => s + c.value, 0)
-
-
-  // ── Cost vs leads by day ──────────────────────────────────────────────────
-  const lastCrmDate = crmDays.length > 0 ? crmDays[crmDays.length - 1][0] : null
-  const costLeads: CostLeadsDay[] = allDays.map(d => ({
-    date:   d,
-    google: google.byDate.get(d)?.spend ?? 0,
-    meta:   meta.byDate.get(d)?.spend ?? 0,
-    // Days after the CRM's last synced day have no figure yet: a gap reads truer than a drop to zero.
-    leads:  hasCrmData
-      ? (lastCrmDate && d > lastCrmDate ? null : (crm.byDate.get(d)?.leads ?? 0))
-      : (google.byDate.get(d)?.leads ?? 0) + (meta.byDate.get(d)?.leads ?? 0),
-  }))
-
-  // ── From lead to job ──────────────────────────────────────────────────────
-  // Shown whenever leads came in. With no jobs marked won, the card nudges the client to mark them:
-  // the CRM is the only place we can learn which leads turned into work.
-  const showFunnel = hasCrmData && crm.leads > 0
   const crmLabel   = settings.crm_name || 'your CRM'
-  const funnel = [
-    { label: 'Leads', value: crm.leads, tone: 'blue' },
-    ...(crm.newOpps > 0 ? [{ label: 'Opportunities', value: crm.newOpps, tone: 'violet' }] : []),
-    { label: 'Jobs won', value: crm.won, tone: 'green' },
-  ]
-
   // ── Phones ────────────────────────────────────────────────────────────────
-  const showCalls       = hasCrmData && crm.incoming > 0
   const answered        = Math.max(0, crm.incoming - crm.missed)
   const answerRate      = crm.incoming > 0 ? answered / crm.incoming : 0
-  const answerRatePrior = crmPrior.incoming > 0 ? Math.max(0, crmPrior.incoming - crmPrior.missed) / crmPrior.incoming : null
   const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
   const byWeekday = WEEKDAYS.map(() => ({ answered: 0, missed: 0 }))
   for (const [date, v] of crmDays) {
@@ -894,99 +817,12 @@ export default async function OverviewPage({
     byWeekday[dow].answered += Math.max(0, v.incoming - v.missed)
     byWeekday[dow].missed   += v.missed
   }
-  const weekdayMax = Math.max(1, ...byWeekday.map(d => Math.max(d.answered, d.missed)))
 
-  /** A small "▲ 4% vs the previous period" line for the big-number tiles. */
-  const tileDelta = (cur: number, prior: number | null, opts: { lowerIsBetter?: boolean; points?: boolean } = {}) => {
-    if (!showCompare || prior == null) return null
-    const diff = opts.points ? (cur - prior) * 100 : prior > 0 ? ((cur - prior) / prior) * 100 : null
-    if (diff == null || Math.abs(diff) < 0.5) return null
-    const up   = diff > 0
-    const good = opts.lowerIsBetter ? !up : up
-    return (
-      <span className={`ov2-bigstat__delta ov2-tone--${good ? 'good' : 'bad'}`}>
-        {up ? <TrendUp size={12} weight="bold" aria-hidden /> : <TrendDown size={12} weight="bold" aria-hidden />}
-        {opts.points ? `${Math.abs(diff).toFixed(1)} pts` : fmtPct(Math.abs(diff))} {compareNoun}
-      </span>
-    )
-  }
 
-  // ── What changed ──────────────────────────────────────────────────────────
-  type Change = { key: string; kind: 'up' | 'down' | 'fact'; tone: 'good' | 'bad' | 'neutral'; text: string; detail: string; weight: number }
-  const moves: Change[] = []
-  const addMove = (key: string, noun: string, cur: number, prior: number, higherIsGood: boolean | null, fmt: (n: number) => string) => {
-    if (!showCompare || prior <= 0) return
-    const pct = ((cur - prior) / prior) * 100
-    if (Math.abs(pct) < 5) return
-    const up = pct > 0
-    moves.push({
-      key, kind: up ? 'up' : 'down',
-      tone: higherIsGood == null ? 'neutral' : up === higherIsGood ? 'good' : 'bad',
-      text: `${noun} ${up ? 'up' : 'down'} ${fmtPct(Math.abs(pct))}`,
-      detail: `${fmt(cur)} vs ${fmt(prior)}`,
-      weight: Math.abs(pct),
-    })
-  }
-  if (hasCrmData) {
-    addMove('leads', 'Leads', crm.leads, crmPrior.leads, true, fmtInt)
-    addMove('calls', 'Phone calls', crm.calls, crmPrior.calls, true, fmtInt)
-    addMove('forms', 'Web forms', crm.forms, crmPrior.forms, true, fmtInt)
-    addMove('won', 'Jobs won', crm.won, crmPrior.won, true, fmtInt)
-  }
-  if (hasPaidData) {
-    addMove('spend', 'Ad spend', adSpend, adSpendPrior, null, fmt$)
-    if (adLeads > 0 && adLeadsPrior > 0) addMove('cpl', 'Cost per ad conversion', adCpl, adCplPrior, false, fmtCurrency)
-  }
-  const organicNow   = ga4.byChannel.get('Organic Search')
-  const organicPrior = ga4Prior.byChannel.get('Organic Search')
-  if (organicNow && organicPrior) {
-    addMove('organic', 'Organic search leads', organicNow.conversions, organicPrior.conversions, true, fmtInt)
-  }
-  if (showCalls && answerRatePrior != null && showCompare) {
-    const pts = (answerRate - answerRatePrior) * 100
-    if (Math.abs(pts) >= 3) {
-      moves.push({
-        key: 'answer', kind: pts > 0 ? 'up' : 'down', tone: pts > 0 ? 'good' : 'bad',
-        text: `Answer rate ${pts > 0 ? 'up' : 'down'} ${Math.abs(pts).toFixed(1)} pts`,
-        detail: `${Math.round(answerRate * 100)}% vs ${Math.round(answerRatePrior * 100)}%`,
-        weight: Math.abs(pts) * 2,
-      })
-    }
-  }
-  const changes: Change[] = moves.sort((a, b) => b.weight - a.weight).slice(0, 4)
-
-  const paidWithLeads = channels.filter(c => c.cost != null && c.leads >= 1)
-  if (paidWithLeads.length >= 2) {
-    const best = paidWithLeads.reduce((a, b) => (a.cost! / a.leads <= b.cost! / b.leads ? a : b))
-    changes.push({
-      key: 'best-cpl', kind: 'fact', tone: 'neutral', weight: 0,
-      text: `${best.name} had the lowest cost per lead`, detail: fmtCurrency(best.cost! / best.leads),
-    })
-  }
-  const organicRow = channels.find(c => c.key === 'ga4:Organic Search')
-  if (organicRow && totals.leads > 0 && organicRow.leads >= 1 && changes.length < 6) {
-    changes.push({
-      key: 'organic-share', kind: 'fact', tone: 'neutral', weight: 0,
-      text: `Organic search brought ${Math.round((organicRow.leads / totals.leads) * 100)}% of conversions`,
-      detail: `${fmtInt(organicRow.leads)} conversions`,
-    })
-  }
 
   // ── Keywords ──────────────────────────────────────────────────────────────
   // Two views of "are we being found for the right searches?": the terms the agency tracks (rank
   // tracker), and what people actually typed (Search Console).
-  const tracked       = data.keywords
-  const trackedRanked = tracked.filter(k => k.current_position != null)
-  const inBand = (lo: number, hi: number) => trackedRanked.filter(k => k.current_position! > lo && k.current_position! <= hi).length
-  const kwBands = [
-    { label: 'Top 3',        value: inBand(0, 3),   tone: 'top' },
-    { label: 'Page one',     value: inBand(3, 10),  tone: 'page1' },
-    { label: 'Page two',     value: inBand(10, 20), tone: 'page2' },
-    { label: 'Further back', value: tracked.length - inBand(0, 20), tone: 'rest' },
-  ]
-  const trackedShown = [...tracked]
-    .sort((a, b) => (a.current_position ?? 999) - (b.current_position ?? 999))
-    .slice(0, 6)
   const priorQueryPos = new Map((gscPrior?.queries ?? []).map(q => [q.query, q.position] as [string, number]))
   const topSearches = hasGscData && gscCurr
     ? gscCurr.queries.slice(0, 6).map(q => ({
@@ -997,47 +833,12 @@ export default async function OverviewPage({
           : undefined,
       }))
     : []
-  const showKeywords = tracked.length > 0 || topSearches.length > 0
 
   // ── Proof of progress ─────────────────────────────────────────────────────
   // A local business owner reads this page for one thing: is this working, and do these people
   // know what they're doing? So besides the results, surface the signals we control — how often
   // their ads show, how Google rates them, reviews, the work delivered — in plain words. Every
   // highlight below is picked only when it is actually true for the chosen dates.
-
-  // Search coverage: impression-weighted share of eligible searches the ads appeared for.
-  const searchCoverage = (rows: GoogleRow[]) => {
-    let weight = 0, share = 0, topWeight = 0, top = 0
-    for (const r of dedupeBy(rows, r => `${r.campaign_id}_${r.date}`)) {
-      if (assignmentMap.get(r.campaign_id)?.hidden) continue
-      const imp = Number(r.impressions) || 0
-      if (imp <= 0) continue
-      if (r.search_impression_share != null) { share += Number(r.search_impression_share) * imp; weight += imp }
-      if (r.search_top_impression_share != null) { top += Number(r.search_top_impression_share) * imp; topWeight += imp }
-    }
-    return { share: weight > 0 ? share / weight : null, top: topWeight > 0 ? top / topWeight : null }
-  }
-  const coverage      = searchCoverage(data.google)
-  const coveragePrior = searchCoverage(data.googlePrior)
-  const coverageUp    = showCompare && coverage.share != null && coveragePrior.share != null
-    ? (coverage.share - coveragePrior.share) * 100
-    : null
-
-  // Ad strength of the ads running now (each ad's latest row).
-  const latestAds = new Map<string, AdStrengthRow>()
-  for (const a of data.adStrength) {
-    if (a.ad_type !== 'AD_GROUP_PLACEHOLDER' && !latestAds.has(a.ad_id)) latestAds.set(a.ad_id, a)
-  }
-  const STRENGTHS = [
-    { key: 'EXCELLENT', label: 'Excellent', tone: 'green' },
-    { key: 'GOOD',      label: 'Good',      tone: 'blue' },
-    { key: 'AVERAGE',   label: 'Average',   tone: 'amber' },
-    { key: 'POOR',      label: 'Poor',      tone: 'red' },
-  ] as const
-  const liveAds = Array.from(latestAds.values()).filter(a => ['ENABLED', 'ACTIVE'].includes((a.ad_status ?? '').toUpperCase()))
-  const strengthCounts = STRENGTHS.map(st => ({ ...st, value: liveAds.filter(a => (a.ad_strength ?? '').toUpperCase() === st.key).length }))
-  const ratedAds = strengthCounts.reduce((t, st) => t + st.value, 0)
-  const goodAds  = strengthCounts[0].value + strengthCounts[1].value
 
   // Reputation: the reviews themselves, which carry the one thing the counts can't — whether
   // anybody replied. Hidden entirely until reviews are actually stored (migration 219 plus a sync).
@@ -1083,119 +884,7 @@ export default async function OverviewPage({
     return { count, gained, rating: count > 0 ? ratingSum / count : 0 }
   })()
 
-  // Website: the lowest uptime across their monitored sites, so a bad one is never averaged away.
-  const monitoredSites = data.sites.filter(site => site.uptime_7d != null)
-  const uptime = monitoredSites.length > 0 ? Math.min(...monitoredSites.map(site => Number(site.uptime_7d))) : null
-  const certificatesOk = data.sites.length > 0 && data.sites.every(site => site.ssl_days_remaining == null || site.ssl_days_remaining > 14)
-  const fmtUptime = (u: number) => `${u.toFixed(u >= 99.95 ? 2 : 1)}%`
 
-  const keywordsUp = tracked.filter(k => (k.position_delta ?? 0) > 0).length
-  const pctChange  = (cur: number, prior: number) => (prior > 0 ? ((cur - prior) / prior) * 100 : null)
-  const cplChange  = showCompare && adLeads > 0 && adLeadsPrior > 0 ? pctChange(adCpl, adCplPrior) : null
-
-  // ── At a glance: up to four true highlights, most persuasive first ──
-  type Highlight = { key: string; icon: 'money' | 'up' | 'star' | 'check'; figure: string; text: string }
-  const highlights: Highlight[] = []
-  const wonRatio = crm.wonValue > 0 && adSpend > 0 ? crm.wonValue / adSpend : null
-  if (wonRatio != null && wonRatio >= 1) {
-    // Two facts side by side, not a claim that ads won every job: the CRM counts all won work.
-    highlights.push({
-      key: 'won', icon: 'money',
-      figure: `$${Math.round(crm.wonValue).toLocaleString('en-US')}`,
-      text: `In jobs won, ${wonRatio.toFixed(1)} times what was spent on ads`,
-    })
-  }
-  const leadsChange = showCompare && hasCrmData ? pctChange(crm.leads, crmPrior.leads) : null
-  if (leadsChange != null && leadsChange >= 5) {
-    highlights.push({ key: 'leads', icon: 'up', figure: `+${Math.round(leadsChange)}%`, text: `More leads than ${compare === 'last_year' ? 'the same time last year' : 'the period before'}` })
-  }
-  if (cplChange != null && cplChange <= -5) {
-    highlights.push({ key: 'cpl', icon: 'up', figure: `−${Math.round(-cplChange)}%`, text: 'Lower cost for each lead from your ads' })
-  }
-  // Visits from AI assistants rank high: it's the traffic clients ask about most now.
-  // Visits from ChatGPT, Gemini, Copilot and the like, as Google Analytics' AI Assistant channel counts them.
-  const aiVisits = ga4.byChannel.get('AI Assistant')?.sessions ?? 0
-  if (aiVisits >= 5) {
-    highlights.push({ key: 'ai', icon: 'up', figure: fmtInt(aiVisits), text: 'Visits from ChatGPT and other AI assistants' })
-  }
-  if (keywordsUp > 0) {
-    highlights.push({ key: 'keywords', icon: 'up', figure: fmtInt(keywordsUp), text: `${keywordsUp === 1 ? 'Keyword' : 'Keywords'} we track moved up on Google` })
-  }
-  if (reviews.gained > 0) {
-    highlights.push({ key: 'reviews', icon: 'star', figure: `+${reviews.gained}`, text: `New Google ${reviews.gained === 1 ? 'review' : 'reviews'}, ${reviews.rating.toFixed(1)}★ average` })
-  } else if (reviews.count > 0 && reviews.rating >= 4.5) {
-    highlights.push({ key: 'reviews', icon: 'star', figure: `${reviews.rating.toFixed(1)}★`, text: `Average rating across ${fmtInt(reviews.count)} Google reviews` })
-  }
-  if (data.posts.length > 0) {
-    highlights.push({ key: 'posts', icon: 'check', figure: fmtInt(data.posts.length), text: `New ${data.posts.length === 1 ? 'page' : 'pages'} published on your website` })
-  }
-  if (showCalls && answerRate >= 0.85) {
-    highlights.push({ key: 'answered', icon: 'check', figure: `${Math.round(answerRate * 100)}%`, text: 'Of incoming calls were answered' })
-  }
-  if (coverageUp != null && coverageUp >= 3 && coverage.share != null) {
-    highlights.push({ key: 'coverage', icon: 'up', figure: `+${Math.round(coverageUp)} pts`, text: `Your ads now show for ${Math.round(coverage.share * 100)}% of the searches they could` })
-  }
-  if (ratedAds >= 2 && goodAds / ratedAds >= 0.6) {
-    highlights.push({ key: 'strength', icon: 'check', figure: `${goodAds} of ${ratedAds}`, text: 'Ads rated Good or Excellent by Google' })
-  }
-  if (uptime != null && uptime >= 99.5) {
-    highlights.push({ key: 'uptime', icon: 'check', figure: fmtUptime(uptime), text: 'Website uptime, checked around the clock' })
-  }
-  const topHighlights = highlights.slice(0, 4)
-
-  // One thing to keep an eye on: the biggest real drop, with context from their own history.
-  // No invented reasons and no promises — just where the number sits against the longer trend.
-  let watch: { text: string; context: string | null } | null = null
-  if (showCompare && hasCrmData) {
-    const perWeek = { Leads: 'leads', 'Phone calls': 'calls', 'Web forms': 'forms' } as const
-    const drops = ([
-      { noun: 'Leads' as const,       cur: crm.leads, prior: crmPrior.leads },
-      { noun: 'Phone calls' as const, cur: crm.calls, prior: crmPrior.calls },
-      { noun: 'Web forms' as const,   cur: crm.forms, prior: crmPrior.forms },
-    ])
-      .map(d => ({ ...d, pct: pctChange(d.cur, d.prior) }))
-      .filter((d): d is typeof d & { pct: number } => d.pct != null && d.pct <= -10)
-      .sort((a, b) => a.pct - b.pct)
-    const drop = drops[0]
-    if (drop) {
-      const field = perWeek[drop.noun]
-      const avgPerWeek = weekly.length > 0 ? weekly.reduce((t, w) => t + w[field], 0) / weekly.length : 0
-      const nowPerWeek = (drop.cur / Math.max(1, dayCount)) * 7
-      let context: string | null = null
-      if (drop.noun === 'Leads' && cplChange != null && cplChange <= -5) {
-        context = `Each lead from your ads cost ${Math.round(-cplChange)}% less, so the budget went further.`
-      } else if (avgPerWeek > 0) {
-        const vsAverage = ((nowPerWeek - avgPerWeek) / avgPerWeek) * 100
-        const avg = `${fmtInt(avgPerWeek)} a week`
-        context = Math.abs(vsAverage) < 10 ? `That's in line with your 12-week average of ${avg}.`
-          : vsAverage > 0 ? `That's still above your 12-week average of ${avg}.`
-          : `That's below your 12-week average of ${avg}.`
-      }
-      watch = { text: `${drop.noun} down ${Math.round(-drop.pct)}% ${compareNoun}`, context }
-    }
-  }
-
-  // ── The work behind the results ──
-  const work: { key: string; figure: string; label: string; detail: string }[] = []
-  if (data.posts.length > 0) {
-    work.push({ key: 'posts', figure: fmtInt(data.posts.length), label: data.posts.length === 1 ? 'New page published' : 'New pages published', detail: 'Written around what your customers search for' })
-  }
-  if (tracked.length > 0) {
-    work.push({ key: 'keywords', figure: fmtInt(tracked.length), label: tracked.length === 1 ? 'Keyword tracked on Google' : 'Keywords tracked on Google', detail: keywordsUp > 0 ? `${keywordsUp} moved up since the last check` : 'Positions checked regularly' })
-  }
-  if (data.negativeKeywordCount > 0) {
-    work.push({ key: 'negatives', figure: fmtInt(data.negativeKeywordCount), label: 'Irrelevant searches blocked', detail: "Keeps your ads off searches that won't become customers" })
-  }
-  if (liveAds.length > 0) {
-    work.push({ key: 'ads', figure: fmtInt(liveAds.length), label: liveAds.length === 1 ? 'Ad running on Google' : 'Ads running on Google', detail: ratedAds > 0 ? `${goodAds} rated Good or Excellent` : 'Live and serving' })
-  }
-  if (uptime != null) {
-    work.push({ key: 'site', figure: fmtUptime(uptime), label: 'Website uptime', detail: certificatesOk ? 'Monitored around the clock, security certificate valid' : 'Monitored around the clock' })
-  }
-  const showWork     = work.length > 0
-  const showAdHealth = coverage.share != null || coverage.top != null || ratedAds > 0
-
-  const showLocal = hasGbpData || hasGscData || hasAhrefsData
 
   // ── KPI row ───────────────────────────────────────────────────────────────
   const paidDays = allDays
@@ -1270,11 +959,6 @@ export default async function OverviewPage({
    * and some of those callers were already customers, not new leads. So it is "up to", never
    * "plus", and it is capped by the number of unsourced leads there actually are.
    */
-  // Only when no ad call has been credited to a contact. Once they have been, those calls are
-  // already inside the paid figure and adding the rest on top counts them a second time.
-  const adCallsUnattributed = (sourceCounts.google_ads_call ?? 0) === 0
-  const adCallsInGap = adCallsUnattributed ? Math.min(adCallCount, leadSources.untracked) : 0
-  const adLeadsHigh  = leadSources.paid + adCallsInGap
 
   /**
    * Spam that arrived through an ad. Spam is money when an ad paid for it, and the fix — a
@@ -1306,9 +990,6 @@ export default async function OverviewPage({
     </>
   ) : null
 
-  const showDailyChart = hasPaidData && allDays.length > 1
-  const showChanges    = changes.length > 0
-
   return (
     <div className="ov-scope" style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
       <PageHeader title="Overview" fromDate={fromDate} toDate={toDate} compare={compare} />
@@ -1322,665 +1003,252 @@ export default async function OverviewPage({
           />
         ) : (
           <>
-            {headline && (
-              <section className="ov-headline" aria-label="Summary">
-                <p className="ov-headline__text">{headline}</p>
+            {/* The answer, and what the team has been doing. Side by side, because each is a
+                couple of lines and stacking them spent a third of the screen on two sentences. */}
+            <div className="ov4-top">
+              <section className="ov4-lede" aria-label="Summary">
+                {headline
+                  ? <p>{headline}</p>
+                  : <p>Your results for {periodLabel}.</p>}
               </section>
-            )}
-
-            {(topHighlights.length > 0 || watch) && (
-              <section className="card ov3-glance" aria-labelledby="ov3-glance-title">
-                <div className="ov2-card-head">
-                  <h2 id="ov3-glance-title" className="section-title">At a glance</h2>
-                  <p className="section-desc">What went well over {periodLabel}</p>
-                </div>
-                {topHighlights.length > 0 && (
-                  <ul className="ov3-wins">
-                    {topHighlights.map(h => (
-                      <li key={h.key} className="ov3-win">
-                        <span className={`ov3-win__icon ov3-win__icon--${h.icon}`} aria-hidden>
-                          {h.icon === 'money' ? <CurrencyDollar size={16} weight="bold" />
-                            : h.icon === 'star' ? <Star size={16} weight="fill" />
-                            : h.icon === 'up' ? <TrendUp size={16} weight="bold" />
-                            : <CheckCircle size={16} weight="fill" />}
-                        </span>
-                        <span className="ov3-win__figure">{h.figure}</span>
-                        <span className="ov3-win__text">{h.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {watch && (
-                  <p className="ov3-watch">
-                    <span className="ov3-watch__label">Keeping an eye on</span>
-                    <span className="ov3-watch__text"><b>{watch.text}.</b>{watch.context && <> {watch.context}</>}</span>
+              {data.updates.length > 0 && (
+                <aside className="ov4-team" aria-label="From your team">
+                  <div className="ov4-team__head">
+                    <span className="ov4-team__label">From your team</span>
+                    <span className="ov4-team__count">
+                      {data.updates.length} {data.updates.length === 1 ? 'update' : 'updates'}
+                    </span>
+                  </div>
+                  <p className="ov4-team__body">
+                    <time dateTime={data.updates[0].created_at.slice(0, 10)}>
+                      {fmtShortDate(data.updates[0].created_at.slice(0, 10))}
+                    </time>
+                    {' — '}
+                    {data.updates[0].title
+                      ? `${data.updates[0].title}. `
+                      : ''}
+                    {alertPlainText(data.updates[0].content)}
                   </p>
-                )}
-              </section>
-            )}
+                </aside>
+              )}
+            </div>
 
-            {data.updates.length > 0 && (
-              <section className="card ov3-team" aria-labelledby="ov3-team-title">
-                <div className="ov3-team__head">
-                  <span className="ov3-team__icon" aria-hidden><Megaphone size={18} weight="bold" /></span>
-                  <div>
-                    <h2 id="ov3-team-title" className="section-title">From your team</h2>
-                    <p className="section-desc">What we&apos;ve been working on for you</p>
-                  </div>
+            {/* Six figures. Everything else on this page explains one of them. */}
+            <div className="ov4-figs">
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Total leads</p>
+                <p className="ov4-fig__value">
+                  {fmtInt(crm.leads)}<DeltaPill value={delta(crm.leads, crmPrior.leads)} />
+                </p>
+                <p className="ov4-fig__sub">
+                  {sourcesComplete
+                    ? `${fmtInt(leadSources.paid)} paid · ${fmtInt(leadSources.organic)} organic`
+                    : `vs ${fmtInt(crmPrior.leads)} last period`}
+                </p>
+              </div>
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Phone calls</p>
+                <p className="ov4-fig__value">
+                  {fmtInt(crm.calls)}<DeltaPill value={delta(crm.calls, crmPrior.calls)} />
+                </p>
+                <p className="ov4-fig__sub">
+                  {adCallCount > 0 ? `${fmtInt(adCallCount)} came from your ads` : 'tracked to the business'}
+                </p>
+              </div>
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Web forms</p>
+                <p className="ov4-fig__value">
+                  {fmtInt(crm.forms)}<DeltaPill value={delta(crm.forms, crmPrior.forms)} />
+                </p>
+                <p className="ov4-fig__sub">sent from your website</p>
+              </div>
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Opportunities</p>
+                <p className="ov4-fig__value">
+                  {fmtInt(crm.newOpps)}<DeltaPill value={delta(crm.newOpps, crmPrior.newOpps)} />
+                </p>
+                <p className="ov4-fig__sub">
+                  {crm.leads > 0 ? `${fmtPct((crm.newOpps / crm.leads) * 100)} of leads` : 'opened in your CRM'}
+                </p>
+              </div>
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Calls answered</p>
+                <p className="ov4-fig__value">{crm.incoming > 0 ? fmtPct(answerRate * 100) : '—'}</p>
+                <p className="ov4-fig__sub">
+                  {crm.incoming > 0 ? `${fmtInt(answered)} of ${fmtInt(crm.incoming)} picked up` : 'no incoming calls recorded'}
+                </p>
+              </div>
+              <div className="ov4-fig">
+                <p className="ov4-fig__label">Google rating</p>
+                <p className="ov4-fig__value">
+                  {reviews.rating > 0 ? reviews.rating.toFixed(1) : '—'}
+                  {reviews.rating > 0 && <Star size={15} weight="fill" className="ov4-fig__star" aria-hidden />}
+                </p>
+                <p className="ov4-fig__sub">
+                  {reviews.count > 0 ? `across ${fmtInt(reviews.count)} reviews` : 'no reviews yet'}
+                </p>
+              </div>
+            </div>
+
+            {/* How the leads arrived, and where from. */}
+            <div className="ov4-split">
+              <section className="card ov4-panel" aria-labelledby="ov4-daily-title">
+                <div className="ov4-panel__head">
+                  <h2 id="ov4-daily-title" className="ov4-panel__title">Leads day by day</h2>
+                  <p className="ov4-panel__desc">
+                    {fmtInt(crm.leads)} across {periodLabel}
+                    {allDays.length > 0 && `, an average of ${(crm.leads / allDays.length).toFixed(1)} a day`}
+                  </p>
                 </div>
-                <article className="ov3-team__latest">
-                  <div className="ov3-team__meta">
-                    {data.updates[0].title && <h3 className="ov3-team__title">{data.updates[0].title}</h3>}
-                    <span className="ov3-team__date">{fmtShortDate(data.updates[0].created_at.slice(0, 10))}</span>
-                  </div>
-                  <div className="ov3-team__body"><AlertBody body={data.updates[0].content} /></div>
-                  {data.updates[0].next_up && (
-                    <div className="ov3-team__next">
-                      <span className="ov3-team__next-label">What&apos;s next</span>
-                      <div className="ov3-team__body"><AlertBody body={data.updates[0].next_up} /></div>
+                <div className="ov4-panel__body">
+                  <SpendChart
+                    data={leadTrend}
+                    spendLabel="Leads"
+                    conversionsLabel="Web forms"
+                    variant="count"
+                    height={210}
+                  />
+                </div>
+              </section>
+
+              <section className="card ov4-panel" aria-labelledby="ov4-mix-title">
+                <div className="ov4-panel__head">
+                  <h2 id="ov4-mix-title" className="ov4-panel__title">Where your leads came from</h2>
+                  {sourcesComplete && leadSources.total > 0 && (
+                    <p className="ov4-panel__desc">
+                      {fmtPct((leadSources.paid / leadSources.total) * 100)} from ads,
+                      {' '}{fmtPct((leadSources.organic / leadSources.total) * 100)} found you themselves
+                    </p>
+                  )}
+                </div>
+                <div className="ov4-panel__body">
+                  {sourcesComplete && leadSources.total > 0 && (
+                    <div className="ov4-mixbar" role="img"
+                         aria-label={`${fmtInt(leadSources.paid)} from ads, ${fmtInt(leadSources.organic)} organic`}>
+                      <span className="ov4-mixbar__seg ov4-mixbar__seg--paid"
+                            style={{ width: `${(leadSources.paid / leadSources.total) * 100}%` }} />
+                      <span className="ov4-mixbar__seg ov4-mixbar__seg--organic"
+                            style={{ width: `${(leadSources.organic / leadSources.total) * 100}%` }} />
                     </div>
                   )}
-                </article>
-                {data.updates.length > 1 && (
-                  // Folded away by default and capped in height when open, so the card stays the
-                  // same size whether there are two updates or forty. Each one opens to its own
-                  // words — the old list showed titles the client could not read past.
-                  <details className="ov3-team__more">
-                    <summary>
-                      {data.updates.length - 1} earlier {data.updates.length - 1 === 1 ? 'update' : 'updates'}
-                    </summary>
-                    <ul className="ov3-team__earlier">
-                      {data.updates.slice(1).map(u => (
-                        <li key={u.created_at}>
-                          <details>
-                            <summary>
-                              <span className="ov3-team__earlier-title">
-                                {u.title || alertPlainText(u.content).slice(0, 90)}
-                              </span>
-                              <span className="ov3-team__date">{fmtShortDate(u.created_at.slice(0, 10))}</span>
-                            </summary>
-                            <div className="ov3-team__body"><AlertBody body={u.content} /></div>
-                            {u.next_up && (
-                              <div className="ov3-team__next">
-                                <span className="ov3-team__next-label">What&apos;s next</span>
-                                <div className="ov3-team__body"><AlertBody body={u.next_up} /></div>
-                              </div>
-                            )}
-                          </details>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </section>
-            )}
-
-            {kpis.length > 0 && <div className="stat-grid ov2-kpis" data-count={kpis.length}>{kpis}</div>}
-
-            {showChannels && (
-              <div className={mixTotal > 0 || hasLeadSources ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
-                <section className="card ov2-card ov2-channels" aria-labelledby="ov2-channels-title">
-                  <div className="ov2-card-head">
-                    <h2 id="ov2-channels-title" className="section-title">{hasLeadSources ? 'Leads by channel' : 'Performance by channel'}</h2>
-                    <p className="section-desc">{hasLeadSources ? 'Every lead your CRM recorded, and what brought them in' : <>Where this period&apos;s visits and conversions came from</>}</p>
-                  </div>
-                  <div className="table-scroll">
-                    <table className="data-table ov2-table">
-                      <thead>
-                        <tr>
-                          <th scope="col">Channel</th>
-                          <th scope="col" className="num">Cost</th>
-                          <th scope="col" className="num ov2-col-visits">Visits</th>
-                          <th scope="col" className="num">{hasLeadSources ? 'Leads' : <><span className="ov2-th-long">Conversions</span><span className="ov2-th-short">Conv.</span></>}</th>
-                          <th scope="col" className="num">
-                            {hasLeadSources
-                              ? <><span className="ov2-th-long">Cost per lead</span><span className="ov2-th-short">Per lead</span></>
-                              : <><span className="ov2-th-long">Cost per conv.</span><span className="ov2-th-short">Per conv.</span></>}
-                          </th>
-                          <th scope="col" className="ov2-trend-col">Trend</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {channels.map(c => (
-                          <tr key={c.key}>
-                            <th scope="row">
-                              <span className="ov2-chan">
-                                <span className="ov2-chan__icon" style={{ color: c.color }}>{c.icon}</span>
-                                <span className="ov2-chan__text">
-                                  {c.name}
-                                  {c.note && <span className="ov2-chan__note">{c.note}</span>}
-                                </span>
-                              </span>
-                            </th>
-                            <td className="num">{c.cost == null ? <span className="ov2-muted">—</span> : fmtWholeDollars(c.cost)}</td>
-                            <td className="num ov2-col-visits">{c.visits == null ? <span className="ov2-muted">—</span> : fmtInt(c.visits)}</td>
-                            <td className="num ov2-strong">{fmtInt(c.leads)}</td>
-                            <td className="num">
-                              {c.cost != null && c.leads >= 1 ? fmtCurrency(c.cost / c.leads) : <span className="ov2-muted">—</span>}
-                            </td>
-                            <td className="ov2-trend-col">
-                              <div className="ov2-spark"><Sparkline data={c.trend} color={c.color} height={28} /></div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      {/* No totals row. Its cost per lead divided the ad spend by every lead,
-                          including the ones nothing was spent on, which made the ads read cheaper
-                          than they were. The per-channel figure above is the one that holds up. */}
-                    </table>
-                  </div>
-                </section>
-
-                {hasLeadSources ? (
-                  <section className="card ov2-card" aria-labelledby="ov2-mix-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov2-mix-title" className="section-title">Where your leads came from</h2>
-                      <p className="section-desc">How each lead reached you, as tracked in {crmLabel}.</p>
-                    </div>
-                    <LeadMixDonut
-                      slices={[
-                        { name: 'Paid leads',      value: leadSources.paid,      color: 'var(--blue)' },
-                        { name: 'Organic leads',   value: leadSources.organic,   color: 'var(--green)' },
-                        { name: 'Not from marketing', value: leadSources.internal, color: 'var(--ov-violet)' },
-                        { name: 'No clear source', value: leadSources.untracked, color: 'var(--text-faint)' },
-                      ]}
-                      total={leadSources.total}
-                      centerLabel={leadSources.total === 1 ? 'lead' : 'leads'}
-                    />
-                    {adCallsInGap > 0 && (
-                      <p className="ov2-mix__range">
-                        <span>With ad calls counted</span>
-                        <b>{fmtInt(leadSources.paid)}–{fmtInt(adLeadsHigh)} from ads</b>
-                      </p>
-                    )}
-                  </section>
-                ) : mixTotal > 0 && (
-                  <section className="card ov2-card" aria-labelledby="ov2-mix-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov2-mix-title" className="section-title">Conversion mix</h2>
-                      <p className="section-desc">Share of reported conversions by channel</p>
-                    </div>
-                    <LeadMixDonut slices={mixSlices} total={mixTotal} centerLabel={mixTotal === 1 ? 'conversion' : 'conversions'} />
-                  </section>
-                )}
-              </div>
-            )}
-
-            {showDailyChart ? (
-              <section className="card ov2-card" aria-labelledby="ov2-daily-title">
-                <div className="ov2-card-head">
-                  <h2 id="ov2-daily-title" className="section-title">Cost vs leads by day</h2>
-                  <p className="section-desc">
-                    {hasCrmData
-                      ? 'Ad spend by platform, with every lead the CRM recorded that day'
-                      : 'Ad spend by platform, with the leads the ads reported that day'}
-                  </p>
-                </div>
-                <CostLeadsChart
-                  data={costLeads}
-                  leadsLabel={hasCrmData ? 'All leads' : 'Leads from ads'}
-                  showGoogle={hasGoogleData}
-                  showMeta={hasMetaData}
-                />
-              </section>
-            ) : hasCrmData && leadTrend.length > 1 ? (
-              <section className="card ov2-card" aria-labelledby="ov2-daily-title">
-                <div className="ov2-card-head">
-                  <h2 id="ov2-daily-title" className="section-title">Leads day by day</h2>
-                  <p className="section-desc">Phone calls and web forms, {fmtShortDate(iso(fromDate))} – {fmtShortDate(iso(toDate))}</p>
-                </div>
-                <SpendChart data={leadTrend} spendLabel="Phone calls" conversionsLabel="Web forms" variant="count" />
-              </section>
-            ) : null}
-
-            {showKeywords && (
-              <div className={tracked.length > 0 && topSearches.length > 0 ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
-                {tracked.length > 0 && (
-                  <section className="card ov2-card" aria-labelledby="ov2-kw-title">
-                    <div className="ov2-card-head ov2-card-head--split">
-                      <div>
-                        <h2 id="ov2-kw-title" className="section-title">Keywords we track</h2>
-                        <p className="section-desc">Where you rank on Google for the terms we&apos;re working on</p>
-                      </div>
-                      <a className="ov2-link ov2-head-link" href={link('/dashboard/seo')}>All keywords</a>
-                    </div>
-                    <div className="kw-bands">
-                      {kwBands.map(b => (
-                        <div key={b.label} className={`kw-band kw-band--${b.tone}`}>
-                          <span className="kw-band__value">{b.value}</span>
-                          <span className="kw-band__label">{b.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <ul className="kw-list">
-                      {trackedShown.map(k => (
-                        <li key={k.keyword} className="kw-list__row">
-                          <span className="kw-list__term" title={k.keyword}>{k.keyword}</span>
-                          <span className="kw-list__meta">{k.search_volume != null ? `${fmtInt(k.search_volume)} searches/mo` : ''}</span>
-                          <span className="kw-list__change"><RankChange change={k.position_delta} /></span>
-                          <PositionPill position={k.current_position} />
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {topSearches.length > 0 && (
-                  <section className="card ov2-card" aria-labelledby="ov2-searches-title">
-                    <div className="ov2-card-head ov2-card-head--split">
-                      <div>
-                        <h2 id="ov2-searches-title" className="section-title">Top searches on Google</h2>
-                        <p className="section-desc">
-                          {showCompare && gscPrior
-                            ? `What people searched to find you, and how each position moved ${compareNoun}`
-                            : 'What people searched to find you, by clicks'}
-                        </p>
-                      </div>
-                      <a className="ov2-link ov2-head-link" href={link('/dashboard/seo')}>All searches</a>
-                    </div>
-                    <ul className="kw-list">
-                      {topSearches.map(q => (
-                        <li key={q.query} className="kw-list__row">
-                          <span className="kw-list__term" title={q.query}>{q.query}</span>
-                          <span className="kw-list__meta">{fmtInt(q.clicks)} {q.clicks === 1 ? 'click' : 'clicks'}</span>
-                          <span className="kw-list__change"><RankChange change={q.change} decimals={1} newWhenNull /></span>
-                          <PositionPill position={q.position} />
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-              </div>
-            )}
-
-            {(showWork || showAdHealth) && (
-              <div className={showWork && showAdHealth ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
-                {showWork && (
-                  <section className="card ov2-card" aria-labelledby="ov3-work-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov3-work-title" className="section-title">The work behind your results</h2>
-                      <p className="section-desc">What&apos;s running and being looked after for you</p>
-                    </div>
-                    <ul className="ov3-work">
-                      {work.map(w => (
-                        <li key={w.key} className="ov3-work__item">
-                          <span className={`ov3-work__icon ov3-work__icon--${w.key}`} aria-hidden>
-                            {w.key === 'posts' ? <FileText size={16} weight="bold" />
-                              : w.key === 'keywords' ? <MagnifyingGlass size={16} weight="bold" />
-                              : w.key === 'negatives' ? <Prohibit size={16} weight="bold" />
-                              : w.key === 'ads' ? <CursorClick size={16} weight="bold" />
-                              : <ShieldCheck size={16} weight="bold" />}
-                          </span>
-                          <span className="ov3-work__body">
-                            <span className="ov3-work__label">{w.label}</span>
-                            <span className="ov3-work__detail">{w.detail}</span>
-                          </span>
-                          <span className="ov3-work__figure">{w.figure}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    {data.posts.length > 0 && (
-                      <div className="ov3-posts">
-                        <p className="ov3-posts__title">Published over {periodLabel}</p>
-                        <ul className="ov3-posts__list">
-                          {data.posts.map(post => (
-                            <li key={post.published_url ?? ''} className="ov3-posts__item">
-                              <a href={post.published_url ?? undefined} target="_blank" rel="noopener noreferrer" className="ov2-link ov3-posts__link">
-                                {post.title || post.published_url}
-                              </a>
-                              {post.published_at && <span className="ov3-posts__date">{fmtShortDate(post.published_at.slice(0, 10))}</span>}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </section>
-                )}
-
-                {showAdHealth && (
-                  <section className="card ov2-card" aria-labelledby="ov3-health-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov3-health-title" className="section-title">Your Google Ads health</h2>
-                      <p className="section-desc">What Google weighs when it decides whose ad to show, and where</p>
-                    </div>
-                    <div className="ov3-health">
-                      {coverage.share != null && (
-                        <div className="ov3-meter">
-                          <div className="ov3-meter__head">
-                            <span className="ov3-meter__label">Searches your ads showed up for</span>
-                            <span className="ov3-meter__value">
-                              {Math.round(coverage.share * 100)}%
-                              {coverageUp != null && Math.abs(coverageUp) >= 1 && (
-                                <span className={`ov3-meter__delta ov2-tone--${coverageUp > 0 ? 'good' : 'bad'}`}>
-                                  {coverageUp > 0 ? '+' : '−'}{Math.abs(Math.round(coverageUp))} pts
-                                </span>
-                              )}
-                            </span>
-                          </div>
-                          <span className="ov3-meter__track"><span className="ov3-meter__fill" style={{ width: `${Math.min(100, coverage.share * 100)}%` }} /></span>
-                          <p className="ov3-meter__note">Out of all the searches your ads were eligible to appear for</p>
-                        </div>
-                      )}
-                      {coverage.top != null && (
-                        <div className="ov3-meter">
-                          <div className="ov3-meter__head">
-                            <span className="ov3-meter__label">Shown above the regular results</span>
-                            <span className="ov3-meter__value">{Math.round(coverage.top * 100)}%</span>
-                          </div>
-                          <span className="ov3-meter__track"><span className="ov3-meter__fill ov3-meter__fill--top" style={{ width: `${Math.min(100, coverage.top * 100)}%` }} /></span>
-                          <p className="ov3-meter__note">The top of the page is where most people click</p>
-                        </div>
-                      )}
-                      {ratedAds > 0 && (
-                        <div className="ov3-meter">
-                          <div className="ov3-meter__head">
-                            <span className="ov3-meter__label">Ad strength</span>
-                            <span className="ov3-meter__value">{goodAds} of {ratedAds} Good or better</span>
-                          </div>
-                          <span className="ov3-strength" role="img" aria-label={strengthCounts.filter(st => st.value > 0).map(st => `${st.value} ${st.label}`).join(', ')}>
-                            {strengthCounts.filter(st => st.value > 0).map(st => (
-                              <span key={st.key} className={`ov3-strength__seg ov3-tone-bg--${st.tone}`} style={{ flexGrow: st.value }} />
-                            ))}
-                          </span>
-                          <ul className="ov3-strength__legend">
-                            {strengthCounts.filter(st => st.value > 0).map(st => (
-                              <li key={st.key}><span className={`ov3-strength__dot ov3-tone-bg--${st.tone}`} aria-hidden />{st.label} <b>{st.value}</b></li>
-                            ))}
-                          </ul>
-                          <p className="ov3-meter__note">Google&apos;s own rating of how well each ad matches what people search for</p>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                )}
-              </div>
-            )}
-
-            {(showFunnel || showChanges) && (
-              <div className={showFunnel && showChanges ? 'ov2-row ov2-row--halves' : 'ov2-row'}>
-                {showFunnel && (
-                  <section className="card ov2-card" aria-labelledby="ov2-funnel-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov2-funnel-title" className="section-title">From lead to job</h2>
-                      <p className="section-desc">Leads, opportunities opened and jobs won over {periodLabel}</p>
-                    </div>
-                    <ol className="ov2-funnel">
-                      {funnel.map((s, i) => {
-                        const prev = i > 0 ? funnel[i - 1].value : 0
-                        const rate = i > 0 && prev > 0 && s.value > 0 && s.value <= prev ? Math.round((s.value / prev) * 100) : null
+                  {channels.length > 0 ? (
+                    <ul className="ov4-mix">
+                      {channels.slice(0, 6).map(c => {
+                        const share = crm.leads > 0 ? c.leads / crm.leads : 0
                         return (
-                          <li key={s.label} className="ov2-funnel__step">
-                            {i > 0 && (
-                              <span className="ov2-funnel__rate" aria-label={rate != null ? `${rate}% of ${funnel[i - 1].label.toLowerCase()}` : undefined}>
-                                {rate != null && <span>{rate}%</span>}
-                                <ArrowRight size={14} weight="bold" aria-hidden />
-                              </span>
-                            )}
-                            <div className={`ov2-funnel__stage ov2-funnel__stage--${s.tone}`}>
-                              <span className="ov2-funnel__label">{s.label}</span>
-                              <span className="ov2-funnel__value">{fmtInt(s.value)}</span>
-                            </div>
+                          <li key={c.key} className="ov4-mix__row">
+                            <span className="ov4-mix__icon" style={{ color: c.color }}>{c.icon}</span>
+                            <span className="ov4-mix__name">{c.name}</span>
+                            <span className="ov4-mix__track" aria-hidden>
+                              <span
+                                className="ov4-mix__fill"
+                                style={{ width: `${Math.max(share * 100, 1.5)}%`, background: c.color }}
+                              />
+                            </span>
+                            <span className="ov4-mix__value">{fmtInt(c.leads)}</span>
                           </li>
                         )
                       })}
-                    </ol>
-                    {crm.won === 0 && (
-                      <p className="ov3-nudge">
-                        <Lightbulb size={16} weight="fill" aria-hidden />
-                        <span>
-                          No jobs have been marked won in {crmLabel} for these dates. When a lead becomes a job, mark it
-                          won there. That&apos;s how this page shows which leads turned into work, and what they were worth.
-                        </span>
-                      </p>
-                    )}
-                    {crm.won > 0 && crm.wonValue > 0 && (
-                      <p className="ov2-funnel__money">
-                        Jobs won are worth <b>{fmt$(crm.wonValue)}</b>, about <b>{fmt$(crm.wonValue / crm.won)}</b> each.
-                      </p>
-                    )}
-                  </section>
-                )}
-
-                {showChanges && (
-                  <section className="card ov2-card" aria-labelledby="ov2-changes-title">
-                    <div className="ov2-card-head">
-                      <h2 id="ov2-changes-title" className="section-title">What changed</h2>
-                      <p className="section-desc">{showCompare ? `The biggest moves ${compareNoun}` : 'Worth knowing about this period'}</p>
-                    </div>
-                    <ul className="ov2-changes">
-                      {changes.map(c => (
-                        <li key={c.key} className="ov2-changes__row">
-                          <span className={`ov2-changes__icon ov2-tone--${c.tone}`}>
-                            {c.kind === 'up'
-                              ? <TrendUp size={15} weight="bold" aria-hidden />
-                              : c.kind === 'down'
-                                ? <TrendDown size={15} weight="bold" aria-hidden />
-                                : <Lightbulb size={15} weight="bold" aria-hidden />}
-                          </span>
-                          <span className="ov2-changes__text">{c.text}</span>
-                          <span className="ov2-changes__detail">{c.detail}</span>
-                        </li>
-                      ))}
                     </ul>
-                  </section>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <p className="ov4-empty">No lead sources recorded for these dates.</p>
+                  )}
+                </div>
+              </section>
+            </div>
 
-            {showCalls && (
-              <div className="ov2-row ov2-row--wide">
-                <section className="card ov2-card" aria-labelledby="ov2-calls-title">
-                  <div className="ov2-card-head">
-                    <h2 id="ov2-calls-title" className="section-title">Answered vs missed, by day of the week</h2>
-                    <p className="section-desc">Incoming calls over {periodLabel}</p>
-                  </div>
-                  <div className="ov2-legend">
-                    <span className="ov2-legend__item"><span className="ov2-legend__bar" style={{ background: 'var(--green)' }} />Answered</span>
-                    <span className="ov2-legend__item"><span className="ov2-legend__bar" style={{ background: 'var(--red)' }} />Missed</span>
-                  </div>
-                  <div
-                    className="ov2-week ov2-week-wrap" role="img"
-                    aria-label={byWeekday.map((d, i) => `${WEEKDAYS[i]}: ${d.answered} answered, ${d.missed} missed`).join('; ')}
-                  >
-                    {byWeekday.map((d, i) => (
-                      <div key={WEEKDAYS[i]} className="ov2-week__day">
-                        <div className="ov2-week__bars">
-                          <span className="ov2-week__bar ov2-week__bar--answered" style={{ height: `${(d.answered / weekdayMax) * 100}%` }}>
-                            {d.answered > 0 && <span className="ov2-week__val">{d.answered}</span>}
-                          </span>
-                          <span className="ov2-week__bar ov2-week__bar--missed" style={{ height: `${(d.missed / weekdayMax) * 100}%` }}>
-                            {d.missed > 0 && <span className="ov2-week__val">{d.missed}</span>}
-                          </span>
-                        </div>
-                        <span className="ov2-week__label">{WEEKDAYS[i]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <div className="ov2-tiles">
-                  <section className="card ov2-bigstat" aria-label="Answer rate">
-                    <span className="ov2-bigstat__label">Answer rate</span>
-                    <span className={`ov2-bigstat__value ov2-tone--${answerRate >= 0.9 ? 'good' : answerRate >= 0.75 ? 'warn' : 'bad'}`}>
-                      {Math.round(answerRate * 100)}%
+            {/* One card per tab: the figure that matters, and the way through. */}
+            <div className="ov4-cards">
+              {hasPaidData && (
+                <Link href="/dashboard/paid-ads" className="card ov4-card">
+                  <span className="ov4-card__head">
+                    <span className="ov4-card__title">How your ads did</span>
+                    <span className="ov4-card__link">Paid Ads ›</span>
+                  </span>
+                  <span className="ov4-card__lead">
+                    <span className="ov4-card__lead-label">Cost per lead</span>
+                    <span className="ov4-card__lead-value">
+                      {adLeads > 0 ? fmtCurrency(adCpl) : '—'}
+                      <DeltaPill value={delta(adCpl, adCplPrior)} />
                     </span>
-                    <span className="ov2-bigstat__sub">{fmtInt(answered)} of {fmtInt(crm.incoming)} incoming calls answered</span>
-                    {tileDelta(answerRate, answerRatePrior, { points: true })}
-                  </section>
-                  <section className="card ov2-bigstat" aria-label="Missed calls">
-                    <span className="ov2-bigstat__label">Missed calls</span>
-                    <span className={`ov2-bigstat__value ov2-tone--${crm.missed === 0 ? 'good' : 'bad'}`}>{fmtInt(crm.missed)}</span>
-                    <span className="ov2-bigstat__sub">incoming calls nobody picked up</span>
-                    {tileDelta(crm.missed, crmPrior.incoming > 0 ? crmPrior.missed : null, { lowerIsBetter: true })}
-                  </section>
-                </div>
-              </div>
-            )}
+                  </span>
+                  <span className="ov4-card__rows">
+                    <span><span>Ad spend</span><b>{fmt$(adSpend)}</b></span>
+                    {sourcesComplete && <span><span>Leads from ads</span><b>{fmtInt(leadSources.paid)}</b></span>}
+                    <span><span>Conversions reported</span><b>{fmtInt(adLeads)}</b></span>
+                  </span>
+                </Link>
+              )}
 
-            {reputation && (
-              <section className="card ov2-card" aria-labelledby="ov2-rep-title">
-                <div className="ov2-card-head ov2-card-head--split">
-                  <div>
-                    <h2 id="ov2-rep-title" className="section-title">What people say about you</h2>
-                    <p className="section-desc">
-                      {reputation.inPeriod > 0
-                        ? <>
-                            <b>{fmtInt(reputation.inPeriod)}</b> new {reputation.inPeriod === 1 ? 'review' : 'reviews'} in this period
-                            {reputation.periodAvg > 0 && <>, averaging {reputation.periodAvg.toFixed(1)} stars</>}
-                          </>
-                        : 'Your Google reviews and how quickly they get a reply'}
-                    </p>
-                  </div>
-                  <a className="ov2-link" href={link('/dashboard/reputation')}>All reviews</a>
-                </div>
+              {hasGbpData && (
+                <Link href="/dashboard/seo?tab=local" className="card ov4-card">
+                  <span className="ov4-card__head">
+                    <span className="ov4-card__title">Your Google listing</span>
+                    <span className="ov4-card__link">Listing ›</span>
+                  </span>
+                  <span className="ov4-card__lead">
+                    <span className="ov4-card__lead-label">Listing views</span>
+                    <span className="ov4-card__lead-value">
+                      {fmtInt(gbpViews)}<DeltaPill value={delta(gbpViews, gbpPriorViews)} />
+                    </span>
+                  </span>
+                  <span className="ov4-card__rows">
+                    <span><span>Calls</span><b>{fmtInt(gbp.calls)}</b></span>
+                    <span><span>Direction requests</span><b>{fmtInt(gbp.directions)}</b></span>
+                    <span><span>Website visits</span><b>{fmtInt(gbp.website)}</b></span>
+                  </span>
+                </Link>
+              )}
 
-                <ul className="ov3-local">
-                  <li className="ov3-local__stat">
-                    <span className="metric-label">Rating</span>
-                    <span className="ov3-local__value">{reputation.rating > 0 ? reputation.rating.toFixed(1) : '—'}</span>
-                    <span className="ov3-local__sub">across {fmtInt(reputation.total)} reviews</span>
-                  </li>
-                  <li className="ov3-local__stat">
-                    <span className="metric-label">New reviews</span>
-                    <span className="ov3-local__value">{fmtInt(reputation.inPeriod)}</span>
-                    <span className="ov3-local__sub">left in this period</span>
-                  </li>
-                  <li className="ov3-local__stat">
-                    <span className="metric-label">Replied to</span>
-                    <span className="ov3-local__value">{reputation.replyRate.toFixed(0)}%</span>
-                    <span className="ov3-local__sub">of the reviews we hold</span>
-                  </li>
+              {hasGscData && gscCurr && (
+                <Link href="/dashboard/seo" className="card ov4-card">
+                  <span className="ov4-card__head">
+                    <span className="ov4-card__title">What people search</span>
+                    <span className="ov4-card__link">SEO ›</span>
+                  </span>
+                  <span className="ov4-card__lead">
+                    <span className="ov4-card__lead-label">Clicks from search</span>
+                    <span className="ov4-card__lead-value">
+                      {fmtInt(gscCurr.totals.clicks)}
+                      <DeltaPill value={delta(gscCurr.totals.clicks, gscPrior?.totals.clicks ?? 0)} />
+                    </span>
+                  </span>
+                  <span className="ov4-card__rows">
+                    <span><span>Times you appeared</span><b>{fmtInt(gscCurr.totals.impressions)}</b></span>
+                    {topSearches.slice(0, 2).map(q => (
+                      <span key={q.query}><span className="ov4-card__term">{q.query}</span><b>{fmtInt(q.clicks)}</b></span>
+                    ))}
+                  </span>
+                </Link>
+              )}
 
-                </ul>
-              </section>
-            )}
+              {reviews.count > 0 && (
+                <Link href="/dashboard/reputation" className="card ov4-card">
+                  <span className="ov4-card__head">
+                    <span className="ov4-card__title">What people say</span>
+                    <span className="ov4-card__link">Reviews ›</span>
+                  </span>
+                  <span className="ov4-card__lead">
+                    <span className="ov4-card__lead-label">Your rating</span>
+                    <span className="ov4-card__lead-value">
+                      {reviews.rating.toFixed(1)}
+                      <Star size={16} weight="fill" className="ov4-fig__star" aria-hidden />
+                    </span>
+                  </span>
+                  <span className="ov4-card__rows">
+                    <span><span>Across</span><b>{fmtInt(reviews.count)} reviews</b></span>
+                    <span><span>New this period</span><b>{fmtInt(reviews.gained)}</b></span>
+                    {reputation && <span><span>Replied to</span><b>{fmtPct(reputation.replyRate)}</b></span>}
+                  </span>
+                </Link>
+              )}
+            </div>
 
-            {weekly.length > 1 && (
-              <section className="card ov2-card" aria-labelledby="ov2-weekly-title">
-                <div className="ov2-card-head">
-                  <h2 id="ov2-weekly-title" className="section-title">Leads week by week</h2>
-                  <p className="section-desc">The last {ROLLING_WEEKS} weeks, whatever date range is selected above</p>
-                </div>
-                <WeeklyTrendChart data={weekly} />
-              </section>
-            )}
-
-            {showLocal && (
-              <div className={hasGbpData && (hasGscData || hasAhrefsData) ? 'ov2-row ov2-row--wide' : 'ov2-row'}>
-                {hasGbpData && (
-                  <section className="card ov2-card" aria-labelledby="ov2-local-title">
-                    <div className="ov2-card-head ov2-card-head--split">
-                      <div>
-                        <h2 id="ov2-local-title" className="section-title">Your Google listing</h2>
-                        <p className="section-desc">
-                          {gbpViews > 0
-                            ? <>Seen <b>{fmtInt(gbpViews)}</b> times on Google — {fmtInt(gbp.search)} in search results, {fmtInt(gbp.maps)} on the map</>
-                            : 'Calls and directions from people who found your listing on Google'}
-                        </p>
-                      </div>
-                      <a className="ov2-link" href={link('/dashboard/seo?tab=local')}>Listing report</a>
-                    </div>
-
-                    <ul className="ov3-local">
-                      <li className="ov3-local__stat">
-                        <span className="metric-label">Listing views</span>
-                        <span className="ov3-local__value">{fmtInt(gbpViews)}<DeltaPill value={delta(gbpViews, gbpPriorViews)} /></span>
-                        <span className="ov3-local__sub">people who saw you on Google</span>
-                      </li>
-                      <li className="ov3-local__stat">
-                        <span className="metric-label">Calls</span>
-                        <span className="ov3-local__value">{fmtInt(gbp.calls)}<DeltaPill value={delta(gbp.calls, gbpPrior.calls)} /></span>
-                        <span className="ov3-local__sub">tapped your number</span>
-                      </li>
-                      <li className="ov3-local__stat">
-                        <span className="metric-label">Directions</span>
-                        <span className="ov3-local__value">{fmtInt(gbp.directions)}<DeltaPill value={delta(gbp.directions, gbpPrior.directions)} /></span>
-                        <span className="ov3-local__sub">asked how to get to you</span>
-                      </li>
-                      <li className="ov3-local__stat">
-                        <span className="metric-label">Website visits</span>
-                        <span className="ov3-local__value">{fmtInt(gbp.website)}<DeltaPill value={delta(gbp.website, gbpPrior.website)} /></span>
-                        <span className="ov3-local__sub">came to your site from it</span>
-                      </li>
-                    </ul>
-
-                    {gbpDaily.length > 2 && (
-                      <div className="ov3-local__spark">
-                        <Sparkline data={gbpDaily.map(([, v]) => ({ v }))} color="var(--green)" height={36} />
-                      </div>
-                    )}
-
-                    {gbpViews > 0 && (
-                      <>
-                        <div className="ov3-split" role="img" aria-label={`${fmtInt(gbp.search)} views in search results, ${fmtInt(gbp.maps)} on the map`}>
-                          <span className="ov3-split__seg ov3-split__seg--search" style={{ flexGrow: Math.max(gbp.search, 1) }} />
-                          <span className="ov3-split__seg ov3-split__seg--maps"   style={{ flexGrow: Math.max(gbp.maps, 1) }} />
-                        </div>
-                        <ul className="ov3-split__legend">
-                          <li><span className="ov3-split__dot ov3-split__seg--search" aria-hidden />Google Search <b>{fmtInt(gbp.search)}</b></li>
-                          <li><span className="ov3-split__dot ov3-split__seg--maps" aria-hidden />Google Maps <b>{fmtInt(gbp.maps)}</b></li>
-                          {reviews.count > 0 && <li className="ov3-split__reviews">★ {reviews.rating.toFixed(1)} across {fmtInt(reviews.count)} reviews</li>}
-                        </ul>
-                      </>
-                    )}
-
-                    <p className="gbp-lag">
-                      <Info size={13} weight="fill" className="gbp-lag__icon" aria-hidden />
-                      <span>
-                        Google finishes counting listing activity a few days after the fact, so the
-                        most recent days read lower than they really were
-                        {gbpLastDay ? <> — these figures run to {fmtShortDate(gbpLastDay)}</> : null}.
-                      </span>
-                    </p>
-                  </section>
-                )}
-
-                {(hasGscData || hasAhrefsData) && (
-                  <section className="card ov2-card" aria-labelledby="ov2-search-title">
-                    <div className="ov2-card-head ov2-card-head--split">
-                      <div>
-                        <h2 id="ov2-search-title" className="section-title">Found on Google</h2>
-                        <p className="section-desc">
-                          {hasGscData ? 'What people searched for, and how often they picked you' : 'How strong your site looks to Google'}
-                        </p>
-                      </div>
-                      <a className="ov2-link" href={link('/dashboard/seo')}>Full SEO report</a>
-                    </div>
-
-                    <ul className="ov3-searchstats">
-                      {hasGscData && gscCurr && (
-                        <>
-                          <li>
-                            <span className="metric-label">Clicks from search</span>
-                            <span className="ov3-local__value">{fmtInt(gscCurr.totals.clicks)}<DeltaPill value={delta(gscCurr.totals.clicks, gscPrior?.totals.clicks ?? 0)} /></span>
-                          </li>
-                          <li>
-                            <span className="metric-label">Times you appeared</span>
-                            <span className="ov3-local__value">{fmtInt(gscCurr.totals.impressions)}<DeltaPill value={delta(gscCurr.totals.impressions, gscPrior?.totals.impressions ?? 0)} /></span>
-                          </li>
-                          <li>
-                            <span className="metric-label">Average position</span>
-                            <span className="ov3-local__value">{gscCurr.totals.position > 0 ? gscCurr.totals.position.toFixed(1) : '—'}</span>
-                          </li>
-                        </>
-                      )}
-                      {hasAhrefsData && (
-                        <>
-                          <li>
-                            <span className="metric-label">Sites linking to you</span>
-                            <span className="ov3-local__value">{ahrefsDomains.value != null ? fmtInt(ahrefsDomains.value) : '—'}{ahrefsDomains.delta !== undefined && <DeltaPill value={ahrefsDomains.delta} />}</span>
-                          </li>
-                          <li>
-                            <span className="metric-label">Site strength</span>
-                            <span className="ov3-local__value">{ahrefsRating.value != null ? ahrefsRating.value.toFixed(1) : '—'}{ahrefsRating.delta !== undefined && <DeltaPill value={ahrefsRating.delta} />}</span>
-                          </li>
-                        </>
-                      )}
-                    </ul>
-                  </section>
-                )}
-              </div>
-            )}
+            <p className="ov4-foot">
+              Figures cover {fmtShortDate(iso(fromDate))} – {fmtShortDate(iso(toDate))}
+              {showCompare && `, compared against the ${dayCount} days before`}.
+              {hasGbpData && ' Google finishes counting listing activity a few days after the fact, so the most recent days usually rise a little.'}
+            </p>
           </>
         )}
       </main>

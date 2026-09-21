@@ -5963,6 +5963,170 @@ select.note-field__input { cursor: pointer; }
 }
 .cp__read:hover { text-decoration: underline; }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   OVERVIEW — one screen
+
+   The page answers "is this working" without scrolling. Anything that needs a second look lives
+   on its own tab, and the four cards at the bottom are the way through to them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ov4-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+  gap: 0.875rem;
+  align-items: stretch;
+}
+.ov4-lede {
+  padding: 0.9375rem 1.125rem;
+  border: 1px solid var(--blue-border);
+  border-radius: 0.75rem;
+  background: linear-gradient(180deg, var(--blue-subtle), var(--bg-surface) 85%);
+}
+.ov4-lede p {
+  margin: 0;
+  font-size: 0.9375rem; line-height: 1.55; color: var(--text-secondary); text-wrap: pretty;
+}
+.ov4-lede b, .ov4-lede strong { color: var(--text-primary); font-weight: 650; }
+
+.ov4-team {
+  padding: 0.9375rem 1.125rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  background: var(--bg-surface);
+  min-width: 0;
+}
+.ov4-team__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.ov4-team__label { font-size: 0.6875rem; font-weight: 700; color: var(--text-muted); }
+.ov4-team__count { font-size: 0.6875rem; color: var(--text-faint); }
+.ov4-team__body {
+  margin: 0.4rem 0 0;
+  font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ov4-team__body time { color: var(--text-faint); }
+
+/* ── The six figures ──────────────────────────────────────────────────────── */
+.ov4-figs {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  border: 1px solid var(--border-subtle); border-radius: 0.75rem;
+  background: var(--bg-surface); overflow: hidden;
+}
+.ov4-fig {
+  padding: 0.8125rem 0.9375rem;
+  border-left: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+.ov4-fig:first-child { border-left: none; }
+.ov4-fig__label {
+  margin: 0; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ov4-fig__value {
+  margin: 0.25rem 0 0;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem;
+  font-size: 1.5rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+.ov4-fig__star { color: var(--amber); align-self: center; }
+.ov4-fig__sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.6875rem; line-height: 1.4; color: var(--text-muted); text-wrap: pretty;
+}
+
+/* ── The chart against the mix ────────────────────────────────────────────── */
+.ov4-split {
+  display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 0.875rem; align-items: stretch;
+}
+.ov4-panel { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.ov4-panel__head { padding: 0.875rem 1rem 0.5rem; }
+.ov4-panel__title { margin: 0; font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+.ov4-panel__desc {
+  margin: 0.15rem 0 0; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted);
+  text-wrap: pretty;
+}
+.ov4-panel__body { padding: 0 1rem 0.875rem; flex: 1; min-width: 0; }
+
+/* One row per channel: the icon we already use elsewhere, the name, a proportional bar, the count. */
+/* Paid against organic, in one bar, before the channels that make it up. */
+.ov4-mixbar {
+  display: flex; height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--bg-subtle); margin: 0.25rem 0 0.75rem;
+}
+.ov4-mixbar__seg { display: block; height: 100%; }
+.ov4-mixbar__seg--paid    { background: var(--blue); }
+.ov4-mixbar__seg--organic { background: var(--green); }
+
+.ov4-mix { list-style: none; margin: 0.25rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.4375rem; }
+.ov4-mix__row {
+  display: grid; grid-template-columns: 1.125rem minmax(5rem, auto) minmax(0, 1fr) auto;
+  align-items: center; gap: 0.5rem;
+}
+.ov4-mix__icon { display: inline-flex; line-height: 0; }
+.ov4-mix__icon svg { width: 14px; height: 14px; }
+.ov4-mix__name {
+  font-size: 0.75rem; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ov4-mix__track { height: 6px; border-radius: 999px; background: var(--bg-subtle); overflow: hidden; }
+.ov4-mix__fill  { display: block; height: 100%; border-radius: 999px; }
+.ov4-mix__value {
+  font-size: 0.75rem; font-weight: 650; color: var(--text-primary);
+  font-variant-numeric: tabular-nums; min-width: 1.75rem; text-align: right;
+}
+.ov4-empty { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
+
+/* ── Four ways through ────────────────────────────────────────────────────── */
+.ov4-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.875rem; }
+.ov4-card {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  text-decoration: none;
+  transition: border-color 0.12s ease;
+}
+.ov4-card:hover { border-color: var(--accent); }
+.ov4-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.ov4-card__title { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.ov4-card__link { font-size: 0.6875rem; font-weight: 600; color: var(--accent); white-space: nowrap; }
+.ov4-card__lead { display: flex; flex-direction: column; gap: 0.1rem; }
+.ov4-card__lead-label { font-size: 0.6875rem; color: var(--text-muted); }
+.ov4-card__lead-value {
+  display: flex; align-items: baseline; gap: 0.3rem;
+  font-size: 1.375rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+.ov4-card__rows {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  padding-top: 0.5rem; border-top: 1px solid var(--border-subtle);
+  font-size: 0.75rem; color: var(--text-muted);
+}
+.ov4-card__rows > span {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.625rem;
+}
+.ov4-card__rows b {
+  font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ov4-card__term { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ov4-foot {
+  margin: 0; font-size: 0.6875rem; line-height: 1.5; color: var(--text-faint); text-wrap: pretty;
+}
+
+@media (max-width: 1279px) {
+  .ov4-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ov4-fig:nth-child(3n+1) { border-left: none; }
+  .ov4-fig:nth-child(n+4)  { border-top: 1px solid var(--border-subtle); }
+}
+@media (max-width: 1023px) {
+  .ov4-top, .ov4-split { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 639px) {
+  .ov4-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov4-fig:nth-child(odd)  { border-left: none; }
+  .ov4-fig:nth-child(n+3)  { border-top: 1px solid var(--border-subtle); }
+  .ov4-lede, .ov4-team { padding: 0.875rem 1rem; }
+  .ov4-lede p { font-size: 0.875rem; }
+}
+
 /* ── What we shared to their pages ──────────────────────────────────────────
    A post is a small piece of published work, so each one is a row with its image, not a card in
    a grid: the copy is the point and the copy wants width.
