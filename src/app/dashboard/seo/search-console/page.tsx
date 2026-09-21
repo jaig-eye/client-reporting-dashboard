@@ -71,7 +71,7 @@ export default async function SearchConsolePage({
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo?tab=search')
 
   // Default end to yesterday (GSC data has a 2-3 day delay; today adds partial noise)
   const { fromDate, toDate } = resolveDashboardRange(params)

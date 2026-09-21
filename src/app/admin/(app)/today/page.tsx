@@ -191,32 +191,6 @@ function Row({ href, lead, title, meta, body, aside, linkLabel = 'View' }: {
   )
 }
 
-/**
- * Summary tile. tone colours the number and its line only for a genuinely bad state (red/amber);
- * "good" puts a green check on the line and leaves the number neutral.
- */
-function Tile({ href, label, value, sub, tone }: {
-  href: string; label: string; value: number | string; sub: ReactNode
-  tone?: 'red' | 'amber' | 'good'
-}) {
-  const bad  = tone === 'red' || tone === 'amber'
-  const icon = tone === 'red'   ? <WarningOctagon size={12} weight="fill" aria-hidden />
-             : tone === 'amber' ? <Warning size={12} weight="fill" aria-hidden />
-             : tone === 'good'  ? <CheckCircle size={12} weight="fill" aria-hidden />
-             : null
-  return (
-    <a href={href} className="card today-tile">
-      <p className="today-tile__label">{label}</p>
-      <p className="today-tile__value" style={{ color: bad ? `var(--${tone})` : 'var(--text-primary)' }}>
-        {value}
-      </p>
-      <p className={`today-tile__sub${tone === 'good' ? ' today-tile__sub--green' : ''}`} style={bad ? { color: `var(--${tone})` } : undefined}>
-        {icon}{sub}
-      </p>
-    </a>
-  )
-}
-
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default async function TodayPage() {
@@ -230,10 +204,9 @@ export default async function TodayPage() {
     // ── Alerts: new in the last 24h (actionable only), a 48h list, and the older backlog count
     settle(async () => {
       const count = () => db.from('admin_alerts').select('id', { count: 'exact', head: true }).is('dismissed_at', null)
-      const [newTotal, newCritical, newWarning, older, recent] = await Promise.all([
+      const [newTotal, newCritical, older, recent] = await Promise.all([
         headCount(count().gte('created_at', since24h).or(ACTIONABLE_ALERTS)),
         headCount(count().gte('created_at', since24h).or(ACTIONABLE_ALERTS).eq('severity', 'critical')),
-        headCount(count().gte('created_at', since24h).or(ACTIONABLE_ALERTS).eq('severity', 'warning')),
         headCount(count().lt('created_at', since48h)),
         db.from('admin_alerts')
           .select('id, severity, client_id, client_name, title, body, link_url, created_at')
@@ -247,7 +220,7 @@ export default async function TodayPage() {
       const list = ((recent.data ?? []) as AlertRow[]).sort((a, b) =>
         (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3) ||
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      return { newTotal, newCritical, newWarning, older, recent: list }
+      return { newTotal, newCritical, older, recent: list }
     }),
     settle(async () => {
       const { data, error } = await db.from('sync_jobs')
@@ -284,7 +257,6 @@ export default async function TodayPage() {
   const alerts      = alertsRes.ok ? alertsRes.value : null
   const newTotal    = alerts?.newTotal ?? 0
   const newCritical = alerts?.newCritical ?? 0
-  const newWarning  = alerts?.newWarning ?? 0
   const recent      = alerts?.recent ?? []
 
   // ── Sync failures, grouped by client + platform (jobs arrive newest first)
@@ -319,8 +291,6 @@ export default async function TodayPage() {
       muted:          fuelRes.ok && fuelRes.value.muted.has(r.clientId),
     }))
   const lowActive    = lowFuel.filter(r => !r.muted)
-  const negativeFuel = lowActive.filter(r => r.afBalance < 0).length
-  const mutedLow     = lowFuel.length - lowActive.length
 
   // ── Content awaiting review this month (same window as /admin/content?view=review)
   const reviewPosts = reviewRes.ok
@@ -350,7 +320,6 @@ export default async function TodayPage() {
   // ── KPI values
 
   // ── Header
-  const failed    = 'couldn’t load'
   const headline  = !alerts ? 'Here’s where things stand across every client.'
     : newTotal === 0
       ? 'No new alerts in the last 24 hours.'
@@ -364,44 +333,7 @@ export default async function TodayPage() {
         <p className="today-hello__line">{headline}</p>
       </header>
 
-      {/* ── Summary strip: red only for genuinely bad states ─────────────── */}
-      <div className="stat-grid today-strip">
-        <Tile
-          href="#attention" label="New alerts" value={alerts ? newTotal : '–'}
-          tone={!alerts ? undefined : newCritical ? 'red' : newWarning ? 'amber' : newTotal === 0 ? 'good' : undefined}
-          sub={!alerts ? failed
-            : newCritical || newWarning
-              ? [newCritical && `${newCritical} critical`, newWarning && `${newWarning} warning`].filter(Boolean).join(', ')
-              : newTotal ? 'last 24 hours, nothing urgent' : 'nothing new in 24 hours'}
-        />
-        <Tile
-          href="#syncs" label="Failed syncs" value={syncRes.ok ? syncJobs.length : '–'}
-          tone={!syncRes.ok ? undefined : syncJobs.length ? 'red' : 'good'}
-          sub={!syncRes.ok ? failed : syncJobs.length ? 'last 24 hours' : 'all succeeded in 24 hours'}
-        />
-        <Tile
-          href="#ad-fuel" label="Low Ad Fuel" value={fuelRes.ok ? lowActive.length : '–'}
-          tone={!fuelRes.ok ? undefined : negativeFuel ? 'red' : lowActive.length ? 'amber' : 'good'}
-          sub={!fuelRes.ok ? failed
-            : negativeFuel ? `${negativeFuel} below zero`
-            : lowActive.length ? 'at or below alert level'
-            : mutedLow ? `healthy, ${mutedLow} muted` : 'all balances healthy'}
-        />
-        <Tile
-          href="#content" label="Posts to review" value={reviewRes.ok ? reviewPosts.length : '–'}
-          tone={reviewRes.ok && reviewPosts.length === 0 ? 'good' : undefined}
-          sub={!reviewRes.ok ? failed : reviewPosts.length ? `due in ${reviewMonth}` : `${reviewMonth} is reviewed`}
-        />
-        <Tile
-          href="#sites" label="Sites down" value={sitesRes.ok ? sitesDown.length : '–'}
-          tone={!sitesRes.ok || sites.length === 0 ? undefined : sitesDown.length ? 'red' : 'good'}
-          sub={!sitesRes.ok ? failed
-            : sitesDown.length ? `of ${plural(sites.length, 'active site')}`
-            : sites.length ? `all ${plural(sites.length, 'site')} up` : 'no active sites'}
-        />
-      </div>
-
-<div className="today-grid">
+      <div className="today-grid">
         <div className="today-col">
           {/* ── Needs attention ──────────────────────────────────────── */}
           <Section

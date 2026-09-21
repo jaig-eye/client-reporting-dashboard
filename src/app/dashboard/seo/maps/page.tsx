@@ -24,7 +24,7 @@ export default async function GoogleMapsRankingPage() {
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo?tab=local')
 
   const url = (client as unknown as { local_dominator_url?: string | null }).local_dominator_url
 

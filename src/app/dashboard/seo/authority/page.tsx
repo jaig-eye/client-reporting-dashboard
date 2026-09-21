@@ -26,7 +26,7 @@ export default async function AuthorityPage() {
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo?tab=authority')
 
   // Phase 1: fetch connections, metrics (no date filter — snapshots are weekly, not date-range),
   // and the two most recent keyword snapshot dates (for correct date alignment).

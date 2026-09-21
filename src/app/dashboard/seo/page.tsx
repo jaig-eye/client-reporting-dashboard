@@ -276,8 +276,12 @@ export default async function SeoPage({
 
   const GBP_COLS = 'date, location_id, location_name, views_search, views_maps, website_clicks, call_clicks, direction_clicks, reviews_count, reviews_avg_rating, raw_data'
 
-  // The Activity log is lifetime and costs three reads, so only the tab that shows it pays.
-  const wantsActivityTab = params.tab === 'activity'
+  // The Activity log is lifetime and costs three reads, so only the tab that shows it pays. It is
+  // the first tab, so it is also what an unset or unrecognised ?tab= lands on. A known tab that
+  // turns out to have nothing to show falls back to Search results instead (see `tab` below), so
+  // this can be decided before the data is in and still agree with what renders.
+  const SEO_TAB_IDS = ['keywords', 'search', 'local', 'authority', 'content']
+  const wantsActivityTab = !SEO_TAB_IDS.includes(params.tab ?? '')
 
   // Phase 1 — everything that doesn't depend on another query, in parallel.
   const [
@@ -853,16 +857,20 @@ export default async function SeoPage({
   // One section at a time, chosen in the URL so a tab can be linked to and survives a date change.
   // The headline figures stay above the tabs, so the answer is always on screen.
   const seoTabs: { id: string; label: string }[] = [
+    // First: the one tab that reports the work itself. Always offered; its empty state says so
+    // plainly rather than hiding and leaving the client to assume nothing happened.
+    { id: 'activity', label: 'Activity' },
     ...(gscHasData || hasRanks ? [{ id: 'keywords', label: 'Keywords' }] : []),
     { id: 'search',    label: 'Search results' },
     { id: 'local',     label: 'Google listing' },
     { id: 'authority', label: 'Site strength' },
     ...(hasContent ? [{ id: 'content', label: 'Blog posts' }] : []),
-    // Always offered: it is the one tab that reports the work itself, and its empty state says
-    // so plainly rather than hiding and leaving the client to assume nothing happened.
-    { id: 'activity', label: 'Activity' },
   ]
-  const tab = seoTabs.some(t => t.id === params.tab) ? (params.tab as string) : seoTabs[0].id
+  // A tab that isn't on offer for this client (no blog posts, no keyword data) goes to Search
+  // results, which always exists — not to Activity, whose data was only read if it was asked for.
+  const tab = seoTabs.some(t => t.id === params.tab)
+    ? (params.tab as string)
+    : SEO_TAB_IDS.includes(params.tab ?? '') ? 'search' : 'activity'
   const tabHref = (id: string) => {
     const q = new URLSearchParams()
     if (params.from)    q.set('from', params.from)

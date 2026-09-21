@@ -1754,41 +1754,6 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 
 /* ── Today page (/admin/today) ─────────────────────────────────────────────── */
 .today { min-width: 0; }
-.today-strip { margin-bottom: 1.25rem; }
-
-.today-tile {
-  display: block;
-  padding: 0.875rem 1rem;
-  text-decoration: none;
-  color: inherit;
-  transition: border-color 0.15s ease;
-}
-.today-tile:hover { border-color: var(--text-faint); }
-.today-tile:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.today-tile__label {
-  margin: 0;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.today-tile__value {
-  margin: 0.25rem 0 0;
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-}
-.today-tile__sub {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin: 0.125rem 0 0;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
 .today-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
@@ -1918,10 +1883,6 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 @media (max-width: 639px) {
   .card.today-card { padding: 0; }
   .today-card__head, .today-row, .today-clear { padding-inline: 1rem; }
-  .today-tile { padding: 0.75rem 0.875rem; }
-  .today-tile__value { font-size: 1.25rem; }
-  .today-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .today-strip > .today-tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .today-card__head { flex-wrap: wrap; }
   .today-card__head > .today-link { margin-left: 2.375rem; margin-top: 0; }
   .today-row { flex-direction: column; gap: 0.375rem; }
@@ -2154,7 +2115,6 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 .today-hello .page-title { margin: 0.125rem 0 0; }
 .today-hello__line { margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary); }
 
-.today-tile__sub--green { color: var(--green); }
 
 .today-more {
   display: flex;

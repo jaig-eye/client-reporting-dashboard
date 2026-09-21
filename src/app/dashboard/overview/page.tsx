@@ -1201,7 +1201,7 @@ export default async function OverviewPage({
               )}
 
               {hasGscData && gscCurr && (
-                <Link href="/dashboard/seo" className="card ov4-card">
+                <Link href="/dashboard/seo?tab=keywords" className="card ov4-card">
                   <span className="ov4-card__head">
                     <span className="ov4-card__title">What people search</span>
                     <span className="ov4-card__link">SEO ›</span>
@@ -1223,10 +1223,10 @@ export default async function OverviewPage({
               )}
 
               {reviews.count > 0 && (
-                <Link href="/dashboard/reputation" className="card ov4-card">
+                <Link href="/dashboard/seo?tab=local" className="card ov4-card">
                   <span className="ov4-card__head">
                     <span className="ov4-card__title">What people say</span>
-                    <span className="ov4-card__link">Reviews ›</span>
+                    <span className="ov4-card__link">Google listing ›</span>
                   </span>
                   <span className="ov4-card__lead">
                     <span className="ov4-card__lead-label">Your rating</span>

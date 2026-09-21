@@ -49,7 +49,7 @@ export default async function GBPPage({
   if (!client) redirect('/access')
 
   // This page's content moved into the combined report on the rebuilt dashboard.
-  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo')
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo?tab=local')
 
   const { fromDate, toDate } = resolveDashboardRange(params)
   const compare  = params.compare ?? 'none'

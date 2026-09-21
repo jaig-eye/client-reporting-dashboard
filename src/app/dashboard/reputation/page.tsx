@@ -23,6 +23,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isDashboardV2 } from '@/lib/dashboardVersion'
 import { resolveDashboardRange } from '@/lib/dateRange'
 import type { Client } from '@/lib/types'
 import PageHeader from '@/components/dashboard/PageHeader'
@@ -232,6 +233,11 @@ export default async function ReputationPage({
   const { data: clientData } = await db.from('clients').select('*').eq('dashboard_token', token).maybeSingle()
   const client = clientData as Client | null
   if (!client) redirect('/access')
+
+  // Taken out of the new layout: reviews live on SEO › Google listing, and the replies we write
+  // are on SEO › Activity. Anyone arriving from an old link goes there. Same guard the other
+  // retired pages use, so the page itself stays intact for the old layout.
+  if (isDashboardV2(client, cookieStore)) redirect('/dashboard/seo?tab=local')
 
   const { fromDate, toDate } = resolveDashboardRange(params)
   const compare     = params.compare ?? 'none'
