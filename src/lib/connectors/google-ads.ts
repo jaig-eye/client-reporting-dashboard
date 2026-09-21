@@ -498,6 +498,90 @@ export interface GoogleAdsCallEvent {
   campaign_id:      string
 }
 
+/** One conversion action's contribution to a campaign's conversions on a day. */
+export interface GoogleAdsConversionActionRow {
+  campaign_id:     string
+  campaign_name:   string
+  date:            string
+  action_name:     string
+  action_category: string
+  /** Fractional under data-driven attribution. Never rounded on the way in. */
+  conversions:     number
+}
+
+/**
+ * What Google's conversion total is actually made of.
+ *
+ * Without this the dashboard can only say "Google reported 117" beside "your CRM recorded 102" and
+ * leave the client to wonder. With it the difference has a shape: so many calls from the ad, so
+ * many form submissions, and — often the real answer — an action nobody would call a lead.
+ *
+ * Best-effort. The segment is not available on every account or API version, and a failure here
+ * must not cost the rest of the sync.
+ */
+export async function fetchConversionActions(
+  externalId: string,
+  auth: Record<string, unknown>,
+  config: Record<string, unknown>,
+  dateFrom: string,
+  dateTo: string,
+): Promise<GoogleAdsConversionActionRow[]> {
+  const refreshToken = auth.refresh_token as string | undefined
+  const clientId     = auth.client_id     as string | undefined
+  const clientSecret = auth.client_secret as string | undefined
+
+  if (!auth.access_token && !refreshToken) return []
+
+  let accessToken = auth.access_token as string | undefined
+  if ((!accessToken || isExpiringSoon(auth.token_expires_at as string | undefined)) && refreshToken) {
+    const refreshed = await refreshAccessToken(refreshToken, clientId, clientSecret)
+    accessToken = refreshed.access_token
+  }
+  if (!accessToken) return []
+
+  const mccId    = (config.mcc_customer_id as string | undefined) || externalId
+  const devToken = (auth.developer_token   as string | undefined) || undefined
+
+  const rows: GoogleAdsConversionActionRow[] = []
+  try {
+    const raw = await runQuery(externalId, mccId, accessToken,
+      `SELECT campaign.id, campaign.name, segments.date,
+              segments.conversion_action_name, segments.conversion_action_category,
+              metrics.conversions
+       FROM campaign
+       WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+         AND metrics.conversions > 0`,
+      devToken)
+
+    for (const row of raw) {
+      const campaign = row.campaign as Record<string, unknown> | undefined
+      const segments = row.segments as Record<string, unknown> | undefined
+      const metrics  = row.metrics  as Record<string, unknown> | undefined
+      const date = String(segments?.date || '')
+      const name = String(segments?.conversionActionName || '')
+      if (!date || !name) continue
+      rows.push({
+        campaign_id:     String(campaign?.id   || 'unknown'),
+        campaign_name:   String(campaign?.name || ''),
+        date,
+        action_name:     name,
+        action_category: String(segments?.conversionActionCategory || ''),
+        conversions:     Number(metrics?.conversions || 0),
+      })
+    }
+
+    // The vocabulary of a live account, so the shape of the breakdown is answerable from the logs
+    // rather than guessed at — the same way the call-duration and previewLink fields were settled.
+    const byCategory: Record<string, number> = {}
+    for (const r of rows) byCategory[r.action_category || '(none)'] = (byCategory[r.action_category || '(none)'] ?? 0) + r.conversions
+    console.log(`[google-ads] conversion actions: ${rows.length} rows; by category ${JSON.stringify(byCategory)}`)
+  } catch (e) {
+    console.warn('[google-ads] conversion-action breakdown unavailable:', String(e).slice(0, 300))
+    return []
+  }
+  return rows
+}
+
 export interface GoogleAdsCallRawRow {
   date:            string
   campaign_id:     string

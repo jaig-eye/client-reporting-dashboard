@@ -16,7 +16,7 @@ import { createAdminClient } from './supabase/server'
 import { getConnectorAdapter } from './connectors/registry'
 import { fetchGoogleAdMetrics, fetchGooglePMaxAssets, fetchGoogleSearchKeywords, fetchGoogleNegativeKeywords } from './connectors/google-ads'
 import type { GooglePMaxAssetRawRow, GoogleAdsKeywordRawRow, GoogleAdsNegativeKeywordRawRow, GoogleAdsSearchTermRawRow } from './connectors/google-ads'
-import { fetchGoogleSearchTerms, fetchGoogleAdsCalls } from './connectors/google-ads'
+import { fetchGoogleSearchTerms, fetchGoogleAdsCalls, fetchConversionActions } from './connectors/google-ads'
 import { fetchMetaAdMetrics } from './connectors/meta-ads'
 import type { GhlRawRow } from './connectors/ghl'
 import { fetchSocialPosts } from './connectors/ghl'
@@ -191,14 +191,25 @@ export async function syncClient(
           result.rows as GoogleAdsRawRow[]
         )
         // Run all Google Ads sub-fetches in parallel (best-effort — each is independent)
-        const [adResult, assetResult, kwResult, negResult, stResult, callResult] = await Promise.allSettled([
+        const [adResult, assetResult, kwResult, negResult, stResult, callResult, convActionResult] = await Promise.allSettled([
           fetchGoogleAdMetrics(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGooglePMaxAssets(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchKeywords(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGoogleNegativeKeywords(connection.external_id, auth, connection.connector.config),
           fetchGoogleSearchTerms(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
           fetchGoogleAdsCalls(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo, adCallEvents),
+          fetchConversionActions(connection.external_id, auth, connection.connector.config, resolvedFrom, resolvedTo),
         ])
+
+        // What the conversion total is made of. Migration 222; before it, or on an account without
+        // the segment, this writes nothing and the breakdown simply stays hidden.
+        if (convActionResult.status === 'fulfilled' && convActionResult.value.length > 0) {
+          const stored = await upsertGoogleAdsConversionActions(
+            db, connection.id, clientId, convActionResult.value)
+          console.log(`[sync] Google Ads conversion actions: stored ${stored} for connection ${connection.id}`)
+        } else if (convActionResult.status === 'rejected') {
+          console.error('[sync] Google Ads conversion actions failed:', convActionResult.reason)
+        }
 
         if (adResult.status === 'fulfilled') {
           const adRows = adResult.value
@@ -1571,6 +1582,62 @@ export async function upsertGhlSocialPosts(
     return mapped.length
   } catch (e) {
     console.error('[sync] ghl_social_posts failed:', e)
+    return 0
+  }
+}
+
+/**
+ * Stores what each campaign's conversions were actually made of, by conversion action.
+ *
+ * Conversions are written as Google reports them, fractions and all. Under data-driven attribution
+ * a single conversion is split across the campaigns that contributed to it — 2.5 and 4.9971 are
+ * real values from a live account — and rounding them on the way in would quietly invent a
+ * precision the figure does not have.
+ *
+ * Before migration 222 the write fails quietly and the rest of the Google sync is unaffected.
+ */
+export async function upsertGoogleAdsConversionActions(
+  db: ReturnType<typeof createAdminClient>,
+  connectionId: string,
+  clientId: string,
+  rows: import('./connectors/google-ads').GoogleAdsConversionActionRow[]
+): Promise<number> {
+  const valid = rows.filter(r => r.date && r.action_name)
+  if (valid.length === 0) return 0
+  try {
+    const syncedAt = new Date().toISOString()
+    // One row per campaign-day-action; Google can return the same triple more than once across
+    // pages, and the last value for a triple is the one to keep.
+    const byKey = new Map<string, Record<string, unknown>>()
+    for (const r of valid) {
+      byKey.set(`${r.campaign_id}|${r.date}|${r.action_name}`, {
+        connection_id:   connectionId,
+        client_id:       clientId,
+        campaign_id:     r.campaign_id,
+        campaign_name:   r.campaign_name || null,
+        date:            r.date,
+        action_name:     r.action_name,
+        action_category: r.action_category || null,
+        conversions:     r.conversions,
+        synced_at:       syncedAt,
+      })
+    }
+    const mapped = Array.from(byKey.values())
+    for (let i = 0; i < mapped.length; i += 500) {
+      const { error } = await db
+        .from('google_ads_conversion_actions')
+        .upsert(mapped.slice(i, i + 500), {
+          onConflict: 'connection_id,campaign_id,date,action_name',
+          ignoreDuplicates: false,
+        })
+      if (error) {
+        console.error(`[sync] google_ads_conversion_actions upsert error (batch ${i}):`, error.message)
+        return i
+      }
+    }
+    return mapped.length
+  } catch (e) {
+    console.error('[sync] google_ads_conversion_actions failed:', e)
     return 0
   }
 }
