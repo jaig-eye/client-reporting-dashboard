@@ -20,6 +20,54 @@ export const maxDuration = 300
 const MAX_CHECKS_PER_RUN = 600
 const CONCURRENCY = 6
 
+/**
+ * How often a keyword is worth re-checking on a device, by the age of the post it belongs to.
+ *
+ * A post ranks on a curve: nothing while it indexes, months of real movement, then years of
+ * near-stillness. A flat daily sweep pays the same for the period that tells you everything and
+ * the period that tells you nothing, and the bill grows forever because the universe only ever
+ * gets bigger.
+ *
+ * Returns null when the keyword should not be checked at all on that device.
+ *
+ * age_days === null means there is no post behind the keyword — a money keyword or one added by
+ * hand. Those never mature, so they stay at the top of the ladder permanently.
+ */
+function checkIntervalDays(ageDays: number | null, device: SeoDevice): number | null {
+  if (ageDays === null)  return device === 'mobile' ? 7  : 30   // money keywords: always the climb rate
+  if (ageDays < 14)      return null                            // not indexed yet; checking buys noise
+  if (ageDays < 183)     return device === 'mobile' ? 7  : 30   // 2wk–6mo — where the movement is
+  if (ageDays < 365)     return device === 'mobile' ? 14 : 91   // 6–12mo — settling
+  if (ageDays < 1095)    return device === 'mobile' ? 91 : 182  // 1–3yr — watching for a drop
+  return device === 'mobile' ? 365 : null                       // 3yr+ — a yearly heartbeat
+}
+
+/** Small stable hash, so a keyword's slot in its interval never moves between runs. */
+function stableOffset(seed: string, modulo: number): number {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return Math.abs(h) % Math.max(1, modulo)
+}
+
+/**
+ * Whether this keyword/device is due today.
+ *
+ * Derived rather than stored: seo_keywords carries one last_checked_at for the whole keyword, not
+ * one per device, so a stored "last desktop check" does not exist. Each keyword/device instead
+ * gets a fixed offset within its interval, which spreads the universe evenly across the window
+ * instead of bunching every keyword onto the same day — the reason the 600-per-run cap used to
+ * bind at all.
+ */
+function isDue(keywordId: string, device: SeoDevice, ageDays: number | null, lastChecked: string | null, epochDay: number): boolean {
+  const interval = checkIntervalDays(ageDays, device)
+  if (interval === null) return false
+  // Never checked, and old enough to have a position worth recording: take the baseline now
+  // rather than waiting for its slot. This is the "entered at 34" reading every later
+  // comparison is measured against.
+  if (!lastChecked && (ageDays === null || ageDays >= 14)) return true
+  return (epochDay + stableOffset(keywordId + device, interval)) % interval === 0
+}
+
 export async function GET(req: NextRequest) {
   if (!verifyCronAuth(req.headers.get("authorization"))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -68,9 +116,12 @@ export async function GET(req: NextRequest) {
     lastChecked: string | null
   }
   const jobs: Job[] = []
+  const epochDay = Math.floor(Date.parse(today + 'T00:00:00Z') / 86_400_000)
+  let skippedNotDue = 0
   usable.forEach((u, i) => {
     for (const kw of keywordLists[i]) {
       for (const device of u.cfg.devices) {
+        if (!isDue(kw.id, device, kw.age_days, kw.last_checked_at, epochDay)) { skippedNotDue++; continue }
         jobs.push({
           clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
           // The connection's tracking config is the client's authoritative market. (The keyword's
@@ -89,6 +140,8 @@ export async function GET(req: NextRequest) {
   // Global rotation across ALL clients before the cap. Empty string sorts before any ISO
   // timestamp, so never-checked keywords go first, then the least-recently-checked.
   jobs.sort((a, b) => (a.lastChecked ?? '').localeCompare(b.lastChecked ?? ''))
+
+  console.log(`[cron/dataforseo-rankings] ${jobs.length} check(s) due today, ${skippedNotDue} not due`)
 
   const capped = jobs.length > MAX_CHECKS_PER_RUN
   const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)

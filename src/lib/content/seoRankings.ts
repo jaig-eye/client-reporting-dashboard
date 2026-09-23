@@ -208,6 +208,13 @@ export interface TrackedKeyword {
   location_code:   number
   language_code:   string
   last_checked_at: string | null
+  /** The post this keyword was registered for, when it came from content. */
+  content_post_id: string | null
+  /**
+   * Days since the post went live, or since the keyword was registered when there is no post.
+   * Drives the check cadence — see checkIntervalDays in the rankings cron.
+   */
+  age_days:        number | null
 }
 
 /** Tracked keywords for a client (the cron rank-checks these). Carries last_checked_at so the
@@ -218,18 +225,50 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     const db = createAdminClient()
     const { data, error } = await db
       .from('seo_keywords')
-      .select('id, keyword, location_code, language_code, last_checked_at')
+      .select('id, keyword, location_code, language_code, last_checked_at, content_post_id, created_at')
       .eq('client_id', clientId)
       .eq('is_tracked', true)
       .order('last_checked_at', { ascending: true, nullsFirst: true })
     if (error || !Array.isArray(data)) return []
-    return (data as Record<string, unknown>[]).map(k => ({
-      id:              String(k.id),
-      keyword:         String(k.keyword ?? ''),
-      location_code:   numOrNull(k.location_code) ?? 2840,
-      language_code:   String(k.language_code ?? 'en'),
-      last_checked_at: k.last_checked_at ? String(k.last_checked_at) : null,
-    }))
+    const rows = data as Record<string, unknown>[]
+
+    // A keyword's age is its post's age. Published date beats registration date: a keyword can be
+    // registered weeks before the article goes out, and it is the article's time in the index that
+    // decides how fast its position is still moving.
+    const postIds = Array.from(new Set(rows.map(r => r.content_post_id).filter((v): v is string => typeof v === 'string')))
+    const publishedAt = new Map<string, string>()
+    if (postIds.length > 0) {
+      const { data: posts } = await db
+        .from('content_posts')
+        .select('id, published_at')
+        .in('id', postIds)
+      for (const p of (posts ?? []) as { id: string; published_at: string | null }[]) {
+        if (p.published_at) publishedAt.set(p.id, p.published_at)
+      }
+    }
+
+    const daysSince = (iso: string | null): number | null => {
+      if (!iso) return null
+      const t = Date.parse(iso)
+      if (!isFinite(t)) return null
+      return Math.max(0, Math.floor((Date.now() - t) / 86_400_000))
+    }
+
+    return rows.map(k => {
+      const postId = typeof k.content_post_id === 'string' ? k.content_post_id : null
+      // No post means a money keyword or a manual one — it has no age, and the cron keeps those
+      // at the top of the ladder rather than letting them decay.
+      const anchor = postId ? (publishedAt.get(postId) ?? null) : null
+      return {
+        id:              String(k.id),
+        keyword:         String(k.keyword ?? ''),
+        location_code:   numOrNull(k.location_code) ?? 2840,
+        language_code:   String(k.language_code ?? 'en'),
+        last_checked_at: k.last_checked_at ? String(k.last_checked_at) : null,
+        content_post_id: postId,
+        age_days:        postId ? daysSince(anchor) : null,
+      }
+    })
   } catch {
     return []
   }
