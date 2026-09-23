@@ -792,7 +792,7 @@ async function runTopicGeneration({
         .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
         .replace(/\[AUDIENCE_DETAIL\]/g,   String(clientSettings.target_audience ?? ''))
         .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
-        .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
+        .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1500))
         .replace(/\[PRIMARY_KEYWORD\]/g,   topicData.target_keyword ?? '')
         .replace(/\[WORKING_TITLE\]/g,     topicData.topic ?? '')
         .replace(/\[SECONDARY_KEYWORDS\]/g, topicData.secondary_keywords ?? '(derive LSI terms from topic and primary keyword)')
@@ -850,6 +850,21 @@ async function runTopicGeneration({
     }
 
     const brief = topicData.seo_brief
+
+    // ── Length ────────────────────────────────────────────────────────────────
+    // One number decides this. The brief's target wins when it has one, otherwise the client's
+    // setting. "Approximately" is deliberately gone: measured against 50 posts it read as a floor,
+    // and the model cleared it by 35% on average.
+    const wordTarget = Math.max(300, Number(brief?.word_count_target ?? targetLength) || 1500)
+    const wordFloor  = Math.round(wordTarget * 0.9)
+    const wordCeil   = Math.round(wordTarget * 1.15)
+    const lengthInstruction =
+      `LENGTH — this is a requirement, not a guide.\n` +
+      `Write between ${wordFloor} and ${wordCeil} words. ${wordTarget} is the target.\n` +
+      `Going over ${wordCeil} words is a failure of the brief, however good the writing is. ` +
+      `Cover the brief fully within that budget: fewer sections, tighter sentences, no recap of ` +
+      `what you already said, no restating the question before answering it.`
+
     const briefLines: string[] = []
     if (brief) {
       if (brief.h2_outline?.length > 0)
@@ -1015,7 +1030,7 @@ ${competitorGapSection}
 ${editNotesSection}
 ${intentSection}
 
-Target approximately ${brief?.word_count_target ?? targetLength} words.${writingRulesReminder}`
+${lengthInstruction}${writingRulesReminder}`
 
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
@@ -1044,13 +1059,47 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // ── Minimum quality gate ──────────────────────────────────────────────────
     // Word count must be computed BEFORE FAQ schema injection so the JSON
     // text inside the script block doesn't inflate the count.
-    const wc0 = computeWordCount(parsed.content)
+    let wc0 = computeWordCount(parsed.content)
     if (!parsed.title.trim() || wc0 < 150) {
       console.error('[generate] generation failed quality gate — title empty or content too short:', { wc: wc0, title: parsed.title, topicId })
       await db.from('content_topics')
         .update({ status: 'approved', generation_error: 'AI returned empty or too-short content — please regenerate' })
         .eq('id', topicId)
       return
+    }
+
+    // ── Over-length: one tighten pass ─────────────────────────────────────────
+    // The prompt states a ceiling; models still clear it. One revision is worth its cost — the
+    // alternative is a 2,700-word post against a 1,500-word brief, which is what production has
+    // been shipping. Only one attempt: if it comes back still long, the post is kept and the
+    // overshoot is recorded rather than spending a third call.
+    let tightenedFrom: number | null = null
+    if (wc0 > wordCeil) {
+      try {
+        const tightenPrompt =
+          `The article below is ${wc0} words. The brief allows at most ${wordCeil}, targeting ${wordTarget}.\n\n` +
+          `Cut it to ${wordTarget} words. Keep every heading, every fact, the internal links, and the ` +
+          `FAQ if there is one. Remove repetition, throat-clearing openings, sentences that restate ` +
+          `the heading, and padding like "in today's world". Do not add anything new.\n\n` +
+          `Return the same JSON shape you were given.\n\n${rawText}`
+        const tightened = await callAI(provider, model, apiKey, systemPrompt, tightenPrompt, 'article', effectiveClientId)
+        const reparsed  = parseResponse(tightened)
+        const newWc     = computeWordCount(reparsed.content)
+        // Only accept a shorter result that is still a real article.
+        if (newWc >= Math.min(wordFloor, wc0) && newWc < wc0 && reparsed.title.trim()) {
+          tightenedFrom = wc0
+          parsed.title            = reparsed.title || parsed.title
+          parsed.metaDescription  = reparsed.metaDescription || parsed.metaDescription
+          parsed.content          = styleTables(stripGenericAnchorText(stripH1FromContent(
+            stripDangerousHtml(stripHallucinatedLinks(reparsed.content, allowedInternalUrls)))))
+          wc0 = computeWordCount(parsed.content)
+          console.log(`[generate] tightened topic ${topicId}: ${tightenedFrom} → ${wc0} words (target ${wordTarget})`)
+        } else {
+          console.warn(`[generate] tighten pass rejected for topic ${topicId}: ${wc0} → ${newWc} (target ${wordTarget})`)
+        }
+      } catch (e) {
+        console.warn(`[generate] tighten pass failed for topic ${topicId}:`, e)
+      }
     }
 
     // Inject FAQ JSON-LD schema after quality gate so script text doesn't inflate wc0
@@ -1484,7 +1533,7 @@ export async function POST(request: NextRequest) {
       .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
       .replace(/\[AUDIENCE_DETAIL\]/g,   String(clientSettings.target_audience ?? ''))
       .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
-      .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
+      .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1500))
       .replace(/\[PRIMARY_KEYWORD\]/g,   '')
       .replace(/\[WORKING_TITLE\]/g,     '')
       .replace(/\[SECONDARY_KEYWORDS\]/g, '(derive LSI terms from topic and primary keyword)')

@@ -180,7 +180,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date')
+    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date, posts_per_run')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -263,6 +263,7 @@ export async function GET(request: NextRequest) {
       generate_regular_pages = false,
       monthly_publish_day   = null,
       schedule_start_date   = null,
+      posts_per_run         = 1,
     } = row as {
       client_id:              string
       schedule_frequency:     string | null
@@ -274,7 +275,12 @@ export async function GET(request: NextRequest) {
       generate_regular_pages: boolean
       monthly_publish_day:    number | null
       schedule_start_date:    string | null
+      posts_per_run:          number | null
     }
+
+    // How many posts this client's cadence window should hold. Clamped to the column's own
+    // CHECK range so a bad value can't make the cron generate an unbounded run.
+    const postsPerRun = Math.min(10, Math.max(1, Number(posts_per_run ?? 1) || 1))
 
     // Legacy self-heal, server side.
     //
@@ -421,18 +427,21 @@ export async function GET(request: NextRequest) {
       // regenerate-what-you-removed loop as deletion. Rejection is a full stop for
       // the slot; the subject also stays in the avoid-list (see generateTopics.ts)
       // so it is never suggested again anywhere.
-      const { data: existing } = await db
+      const { count: onSlot } = await db
         .from('content_topics')
-        .select('id')
+        .select('id', { count: 'exact', head: true })
         .eq('client_id', client_id)
         .eq('target_publish_date', slot)
         .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
-        .limit(1)
 
-      if (existing && existing.length > 0) continue
+      // A rejected or deleted topic still counts against the quota, for the same reason the old
+      // check listed 'rejected': the slot has been dealt with, and refilling it is the
+      // regenerate-what-you-removed loop this cron already learned not to do.
+      const needed = postsPerRun - (onSlot ?? 0)
+      if (needed <= 0) continue
 
       try {
-        const result = await generateTopicsForClient(db, client_id, 1, slot, { suppressEmail: true, siloId: autoSiloId })
+        const result = await generateTopicsForClient(db, client_id, needed, slot, { suppressEmail: true, siloId: autoSiloId })
         if (result.topics.length > 0) {
           const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
           entry.items.push(...result.topics)

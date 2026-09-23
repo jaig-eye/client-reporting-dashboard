@@ -108,6 +108,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           schedule_frequency:   (d.schedule_frequency   as string | null) ?? null,
           schedule_day_of_week: (d.schedule_day_of_week as number | null) ?? null,
           weeks_ahead:          (d.weeks_ahead          as number)        ?? 6,
+          posts_per_run:        (d.posts_per_run        as number | null) ?? 1,
           schedule_start_date:  (d.schedule_start_date  as string | null) ?? null,
           auto_generate:        autoGen,
           connection_id:        (d.connection_id        as string | null) ?? null,
@@ -197,6 +198,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     schedule_day_of_week:    showDayPicker ? (form.schedule_day_of_week ?? 1) : (form.schedule_day_of_week ?? null),
     publish_time:            form.publish_time ?? null,
     weeks_ahead:             form.weeks_ahead || 6,
+    // The column's CHECK is 1..10; clamp here so a typed 0 or 99 is corrected on save rather
+    // than rejected by the database with an error nobody can act on.
+    posts_per_run:           Math.min(10, Math.max(1, Number(form.posts_per_run) || 1)),
     schedule_start_date:     form.schedule_start_date ?? null,
     auto_generate:           form.auto_generate ?? false,
     auto_approve_topics:     form.auto_approve_topics ?? false,
@@ -367,7 +371,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       <div className="card p-6 space-y-4">
         <div>
           <h2 className="section-title" style={{ marginBottom: 0 }}>Schedule &amp; Automation</h2>
-          <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically.</p>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically. Each publishing window gets the number of posts set below.</p>
         </div>
 
         <div>
@@ -377,6 +381,20 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
               <option value="">Use global default</option>
               {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>×</span>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={10}
+              style={{ width: 72 }}
+              aria-label="Posts per publishing window"
+              value={form.posts_per_run ?? 1}
+              onChange={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+            />
+            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              {(form.posts_per_run ?? 1) === 1 ? 'post' : 'posts'}
+            </span>
             {showDayPicker && (<>
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
               <select className="input" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>

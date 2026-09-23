@@ -44,13 +44,16 @@ export async function POST(request: NextRequest) {
   // ── Load saved schedule config ─────────────────────────────────────────────
   const { data: schedule } = await db
     .from('content_settings')
-    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead, schedule_start_date')
+    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead, schedule_start_date, posts_per_run')
     .eq('client_id', client_id)
     .maybeSingle()
 
   const frequency  = (schedule?.schedule_frequency ?? 'weekly')
   const dayOfWeek  = (schedule?.schedule_day_of_week ?? 1)
   const weeksAhead = weeksAheadParam ?? (schedule?.weeks_ahead ?? 6)
+  // How many posts each cadence window gets. One unless the client says otherwise; the column's
+  // own CHECK allows 1..10 and this clamps to the same range so a bad value can't widen the plan.
+  const postsPerRun = Math.min(10, Math.max(1, Number(schedule?.posts_per_run ?? 1) || 1))
 
   // Anchor precedence: an explicit start_date from the caller, then the client's saved
   // schedule_start_date, then today. The saved start date used to be ignored entirely,
@@ -69,15 +72,19 @@ export async function POST(request: NextRequest) {
     anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay, scheduleStartDate,
   })
 
-  // Skip slots that already have topics assigned — prevents duplicate topics when the
-  // wizard fires this endpoint twice (e.g. double-click, network retry).
+  // Count what each slot already holds, rather than whether it holds anything. With
+  // postsPerRun = 1 this behaves exactly as the old Set did — it still prevents duplicate topics
+  // when the wizard fires twice — and above 1 it lets a date fill up to its quota.
   const { data: existingTopics } = await db
     .from('content_topics')
     .select('target_publish_date')
     .eq('client_id', client_id)
     .in('target_publish_date', slots)
 
-  const existingDates = new Set((existingTopics ?? []).map(t => t.target_publish_date as string))
+  const topicsOnDate = new Map<string, number>()
+  for (const t of (existingTopics ?? []) as { target_publish_date: string }[]) {
+    topicsOnDate.set(t.target_publish_date, (topicsOnDate.get(t.target_publish_date) ?? 0) + 1)
+  }
 
   // Respect slots a human deliberately emptied (migration 209). Without this, manually
   // regenerating a plan resurrects exactly the dates someone just deleted — the same
@@ -103,7 +110,14 @@ export async function POST(request: NextRequest) {
     suppressedDates.clear()
   }
 
-  const openSlots = slots.filter(s => !existingDates.has(s) && !suppressedDates.has(s))
+  // One entry per post still wanted, so a date needing two posts appears twice. The assignment
+  // loop below walks this list positionally, so repeats need no special handling there.
+  const openSlots: string[] = []
+  for (const s of slots) {
+    if (suppressedDates.has(s)) continue
+    const wanted = postsPerRun - (topicsOnDate.get(s) ?? 0)
+    for (let i = 0; i < wanted; i++) openSlots.push(s)
+  }
 
   if (openSlots.length === 0) {
     return NextResponse.json({
@@ -136,14 +150,24 @@ export async function POST(request: NextRequest) {
 
       // Re-check open slots — a concurrent request may have queued its own job between
       // our sync check above and when this background task actually starts.
+      const wantedDates = Array.from(new Set(openSlots))
       const { data: nowFilled } = await db
         .from('content_topics')
         .select('target_publish_date')
         .eq('client_id', client_id)
-        .in('target_publish_date', openSlots)
+        .in('target_publish_date', wantedDates)
         .not('target_publish_date', 'is', null)
-      const filledSet = new Set((nowFilled ?? []).map(t => t.target_publish_date as string))
-      const trulyOpenSlots = openSlots.filter(s => !filledSet.has(s))
+      const filledOnDate = new Map<string, number>()
+      for (const t of (nowFilled ?? []) as { target_publish_date: string }[]) {
+        filledOnDate.set(t.target_publish_date, (filledOnDate.get(t.target_publish_date) ?? 0) + 1)
+      }
+      // Rebuilt from the same rule as openSlots, so a slot another request filled while this one
+      // waited drops out — and a slot it only part-filled keeps the remainder.
+      const trulyOpenSlots: string[] = []
+      for (const d of wantedDates.sort()) {
+        const wanted = postsPerRun - (filledOnDate.get(d) ?? 0)
+        for (let i = 0; i < wanted; i++) trulyOpenSlots.push(d)
+      }
 
       if (trulyOpenSlots.length === 0) return
 

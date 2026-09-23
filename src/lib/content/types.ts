@@ -53,6 +53,8 @@ export interface ClientScheduleSettings {
   schedule_day_of_week:  number | null
   monthly_publish_day:   number | null
   weeks_ahead:           number
+  /** Posts generated per publishing window. 1..10, enforced by the column CHECK. */
+  posts_per_run:         number
   schedule_start_date:   string | null
   auto_generate:         boolean
   connection_id:         string | null
