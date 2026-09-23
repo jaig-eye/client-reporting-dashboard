@@ -209,7 +209,7 @@ export async function GET(req: NextRequest) {
       await db.from('dfs_pending_tasks').delete().eq('id', t.id)
     }
   } catch (e) {
-    // Before migration 191 this table does not exist. Collection is then a no-op and submission
+    // Before migration 215 this table does not exist. Collection is then a no-op and submission
     // below will also find nowhere to record, which keeps the whole cron dormant rather than
     // half-working.
     console.warn('[cron/dataforseo-rankings] collect phase unavailable:', e)

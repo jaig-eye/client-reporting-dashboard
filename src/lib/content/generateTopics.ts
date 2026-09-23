@@ -320,6 +320,33 @@ export async function generateTopicsForClient(
     }
   })()
 
+  // ── The discovered candidate pool ──────────────────────────────────────────
+  // Unclaimed, untracked candidates from keyword discovery. The only source here that can
+  // propose a subject the client has never ranked for. Same dormant-safe read as the tracked
+  // rankings: no table, no pool, and selection behaves exactly as it does today.
+  type PoolKeyword = { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+  const candidatePool: PoolKeyword[] = await (async () => {
+    try {
+      const { data, error } = await db
+        .from('seo_keywords')
+        .select('keyword, search_volume, keyword_difficulty, intent')
+        .eq('client_id', clientId)
+        .eq('is_tracked', false)
+        .is('content_post_id', null)
+        .order('search_volume', { ascending: false, nullsFirst: false })
+        .limit(40)
+      if (error) return []
+      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+        keyword:    String(r.keyword ?? '').trim(),
+        volume:     r.search_volume == null ? null : Number(r.search_volume),
+        difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
+        intent:     r.intent == null ? null : String(r.intent),
+      })).filter(k => k.keyword)
+    } catch {
+      return []
+    }
+  })()
+
   const rankOwned  = trackedRanks.filter(r => r.position != null && r.position <= 10).slice(0, 15)
   const rankNear   = trackedRanks.filter(r => r.position != null && r.position > 10 && r.position <= 30).slice(0, 15)
   const rankWeak   = trackedRanks.filter(r => r.position != null && r.position > 30).slice(0, 10)
@@ -573,6 +600,17 @@ export async function generateTopicsForClient(
     : ''
 
   // The actionable band leads, because this is where a single article changes a position.
+  const poolLine = (k: PoolKeyword) => {
+    const bits: string[] = []
+    if (k.volume != null)     bits.push(`${k.volume} searches/mo`)
+    if (k.difficulty != null) bits.push(`KD ${k.difficulty}`)
+    if (k.intent)             bits.push(k.intent)
+    return `  - "${k.keyword}"${bits.length ? ` (${bits.join(', ')})` : ''}`
+  }
+  const poolText = candidatePool.length > 0
+    ? `\nDISCOVERED OPPORTUNITIES — researched for this client and not yet written about. Unlike every section above, these are NOT things the site already ranks for, so they are the only route to a subject the client sells but has no presence in. Treat them as candidates rather than instructions; every guardrail below still applies.\n${candidatePool.slice(0, 20).map(poolLine).join('\n')}`
+    : ''
+
   const rankNearText = rankNear.length > 0
     ? `\nTRACKED AT 11–30 — the band where one article moves a keyword onto page one. Write a SUPPORT article for the question behind the keyword and link it to the page listed, which is the URL Google currently ranks:\n${rankNear.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}${kwSuffix(r.keyword)}`).join('\n')}`
     : ''
@@ -814,6 +852,7 @@ No text outside the JSON array.`
 ${contextLines.join('\n')}${eeatText}
 ${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this topical cluster.` : ''}
 ${paidText}
+${poolText}
 ${rankNearText}
 ${gscGrowthText}
 ${gscQuickWinsText}

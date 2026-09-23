@@ -67,6 +67,10 @@
     {
       "path": "/api/cron/wp-reconcile",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/keyword-discovery",
+      "schedule": "0 4 * * 1"
     }
   ]
 }

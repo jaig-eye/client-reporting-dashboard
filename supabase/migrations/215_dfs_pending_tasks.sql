@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- 191: queued DataForSEO rank checks awaiting collection
+-- 215: queued DataForSEO rank checks awaiting collection
 --
 -- Rank checks move from the live/advanced endpoint to the Standard task queue, which is ~3.3x
 -- cheaper for identical data. Simulated against the real book that is the difference between

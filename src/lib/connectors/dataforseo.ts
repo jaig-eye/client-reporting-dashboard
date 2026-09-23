@@ -282,6 +282,153 @@ export async function dfsSerpRank(
   }
 }
 
+// ── Keyword discovery (DataForSEO Labs) ──────────────────────────────────────
+//
+// Response shapes below are read defensively — every field is optional and coerced — because a
+// Labs payload that changes shape must cost a discovery run, never the caller.
+
+/** A discovered keyword candidate, before anyone decides whether it is worth tracking. */
+export interface DfsKeywordCandidate {
+  keyword:            string
+  search_volume:      number | null
+  keyword_difficulty: number | null
+  cpc:                number | null
+  competition:        number | null
+  intent:             string | null
+  /** Where this came from, so the pool can be weighted and audited. */
+  source:             'site' | 'competitor' | 'idea'
+  /** Our current position for it, when the source knows. Null means not ranking or not asked. */
+  position:           number | null
+  /** Only set for 'competitor': the domain that ranks for it. */
+  competitor_domain:  string | null
+}
+
+/** Pull the common metric block out of a Labs item, wherever the endpoint happens to nest it. */
+function readKeywordMetrics(it: Record<string, unknown>) {
+  const data  = (it.keyword_data as Record<string, unknown>) ?? it
+  const info  = (data.keyword_info as Record<string, unknown>) ?? {}
+  const props = (data.keyword_properties as Record<string, unknown>) ?? {}
+  const si    = (data.search_intent_info as Record<string, unknown>) ?? {}
+  return {
+    keyword:            String(data.keyword ?? it.keyword ?? ''),
+    search_volume:      num(info.search_volume),
+    keyword_difficulty: num(props.keyword_difficulty),
+    cpc:                num(info.cpc),
+    competition:        num(info.competition),
+    intent:             si.main_intent ? String(si.main_intent) : null,
+  }
+}
+
+/** Rank of the first SERP element in a ranked-keywords item, when present. */
+function readSerpPosition(it: Record<string, unknown>): number | null {
+  const serp  = (it.ranked_serp_element as Record<string, unknown>) ?? {}
+  const el    = (serp.serp_item as Record<string, unknown>) ?? {}
+  return num(el.rank_group) ?? num(el.rank_absolute)
+}
+
+/**
+ * Everything a domain already ranks for.
+ *
+ * For the client's own domain this is the inventory GSC only partially sees; for a competitor's
+ * it is the gap, once our own keywords are subtracted.
+ */
+export async function dfsKeywordsForSite(
+  domain: string,
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; source?: 'site' | 'competitor'; onCost?: CostSink } = {},
+): Promise<DfsKeywordCandidate[]> {
+  const target = normalizeDomain(domain)
+  if (!target) return []
+  try {
+    const json = await dfsPost('/v3/dataforseo_labs/google/ranked_keywords/live', creds, {
+      target,
+      location_code: opts.locationCode ?? 2840,
+      language_code: opts.languageCode ?? 'en',
+      limit:         Math.min(1000, Math.max(1, opts.limit ?? 300)),
+      // Ignore the long tail nobody would write for.
+      filters:       [['keyword_data.keyword_info.search_volume', '>', 10]],
+      order_by:      ['keyword_data.keyword_info.search_volume,desc'],
+    })
+    if (!json) return []
+    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    const src = opts.source ?? 'site'
+    return firstResultItems(json).map(it => ({
+      ...readKeywordMetrics(it),
+      source:            src,
+      position:          readSerpPosition(it),
+      competitor_domain: src === 'competitor' ? target : null,
+    })).filter(k => k.keyword)
+  } catch (e) {
+    console.warn('[dataforseo] ranked_keywords failed:', String(e).slice(0, 180))
+    return []
+  }
+}
+
+/** Domains competing for the same keywords, so the gap can be found without anyone listing them. */
+export async function dfsCompetitorDomains(
+  domain: string,
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
+): Promise<string[]> {
+  const target = normalizeDomain(domain)
+  if (!target) return []
+  try {
+    const json = await dfsPost('/v3/dataforseo_labs/google/competitors_domain/live', creds, {
+      target,
+      location_code: opts.locationCode ?? 2840,
+      language_code: opts.languageCode ?? 'en',
+      limit:         Math.min(20, Math.max(1, opts.limit ?? 5)),
+    })
+    if (!json) return []
+    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    return firstResultItems(json)
+      .map(it => normalizeDomain(String(it.domain ?? it.target ?? '')))
+      // A domain does not compete with itself, and aggregators outrank everyone without being
+      // a competitor anyone can take business from.
+      .filter(d => d && d !== target)
+      .slice(0, opts.limit ?? 5)
+  } catch (e) {
+    console.warn('[dataforseo] competitors_domain failed:', String(e).slice(0, 180))
+    return []
+  }
+}
+
+/**
+ * Expansions around what the client actually sells.
+ *
+ * The seeds come from Brand DNA — services and geography — so a client who ranks for nothing yet
+ * still produces a list shaped like their business rather than a generic one.
+ */
+export async function dfsKeywordIdeas(
+  seeds: string[],
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
+): Promise<DfsKeywordCandidate[]> {
+  const kws = seeds.map(k => k.trim()).filter(Boolean).slice(0, 200)
+  if (!kws.length) return []
+  try {
+    const json = await dfsPost('/v3/dataforseo_labs/google/keyword_ideas/live', creds, {
+      keywords:      kws,
+      location_code: opts.locationCode ?? 2840,
+      language_code: opts.languageCode ?? 'en',
+      limit:         Math.min(1000, Math.max(1, opts.limit ?? 300)),
+      filters:       [['keyword_info.search_volume', '>', 10]],
+      order_by:      ['keyword_info.search_volume,desc'],
+    })
+    if (!json) return []
+    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    return firstResultItems(json).map(it => ({
+      ...readKeywordMetrics(it),
+      source:            'idea' as const,
+      position:          null,
+      competitor_domain: null,
+    })).filter(k => k.keyword)
+  } catch (e) {
+    console.warn('[dataforseo] keyword_ideas failed:', String(e).slice(0, 180))
+    return []
+  }
+}
+
 // ── SERP rank check, Standard priority (submit now, collect later) ───────────
 //
 // Same data as live/advanced at roughly a third of the price, in exchange for a queue. The two
