@@ -457,6 +457,13 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         <div style={{ maxWidth: 200 }}>
           <Label>Target word count</Label>
           <input className="input" type="number" min={300} max={5000} step={100} value={form.target_length ?? 1500} onChange={e => set('target_length', Number(e.target.value))} />
+          {/* The generator holds posts to this range and revises anything longer, so the number
+              needs to read as a budget rather than a suggestion. Posts averaged 135% of target
+              while this said nothing. */}
+          <p className="section-desc" style={{ marginTop: '0.25rem' }}>
+            Posts are written to {Math.round((form.target_length ?? 1500) * 0.9).toLocaleString()}–{Math.round((form.target_length ?? 1500) * 1.15).toLocaleString()} words.
+            Anything longer is shortened before it reaches you.
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
