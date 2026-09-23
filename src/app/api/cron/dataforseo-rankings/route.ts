@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpRankSubmit, dfsSerpRankCollect, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
@@ -18,7 +18,6 @@ export const maxDuration = 300
 // rotates through the whole cross-client universe instead of starving later clients (per-client
 // ordering alone let one big client monopolize the cap). Logged, never silent.
 const MAX_CHECKS_PER_RUN = 600
-const CONCURRENCY = 6
 
 /**
  * How often a keyword is worth re-checking on a device, by the age of the post it belongs to.
@@ -40,6 +39,21 @@ function checkIntervalDays(ageDays: number | null, device: SeoDevice): number | 
   if (ageDays < 365)     return device === 'mobile' ? 14 : 91   // 6–12mo — settling
   if (ageDays < 1095)    return device === 'mobile' ? 91 : 182  // 1–3yr — watching for a drop
   return device === 'mobile' ? 365 : null                       // 3yr+ — a yearly heartbeat
+}
+
+/**
+ * How deep to read the SERP, by the same age that decides the cadence.
+ *
+ * A new post typically enters between 30 and 80, and the first six months is exactly when a
+ * client asks whether it is working — so the climb window reads full depth and can report
+ * "entered at 67, now 41". A mature keyword only needs to answer "still on page one to three?",
+ * and reading 100 results to learn that costs three times as much as reading 30.
+ *
+ * Never deeper than the client's configured depth: this trims, it does not widen.
+ */
+function depthForAge(ageDays: number | null, configuredDepth: number): number {
+  if (ageDays === null || ageDays < 183) return configuredDepth
+  return Math.min(30, configuredDepth)
 }
 
 /** Small stable hash, so a keyword's slot in its interval never moves between runs. */
@@ -130,7 +144,7 @@ export async function GET(req: NextRequest) {
           // against the US SERP.)
           locationCode: u.cfg.location_code,
           languageCode: u.cfg.language_code,
-          device, depth: u.cfg.rank_depth, creds: u.creds,
+          device, depth: depthForAge(kw.age_days, u.cfg.rank_depth), creds: u.creds,
           lastChecked: kw.last_checked_at,
         })
       }
@@ -147,35 +161,112 @@ export async function GET(req: NextRequest) {
   const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)
   let checked = 0, written = 0
   const usage = new Map<string, { cost: number; units: number }>()   // real per-request cost per client
-  const checkedKeywordIds = new Set<string>()                        // for a single batched last_checked_at write
+  const submittedKeywordIds = new Set<string>()                      // for a single batched last_checked_at write
 
-  // Bounded-concurrency pool.
-  async function worker(slice: Job[]) {
-    for (const job of slice) {
-      checked++
-      const rank = await dfsSerpRank(job.domain, job.keyword, job.creds, {
-        locationCode: job.locationCode, languageCode: job.languageCode, device: job.device, depth: job.depth,
-        onCost: c => {
-          const u = usage.get(job.clientId) ?? { cost: 0, units: 0 }
-          u.cost += c; u.units += 1; usage.set(job.clientId, u)
-        },
-      })
+  // ── Phase 1: collect whatever the queue finished ──────────────────────────
+  // Runs first so a result paid for yesterday is banked before anything new is queued, and so a
+  // long submit phase can never crowd out collection.
+  const credsByClient = new Map(usable.map(u => [u.clientId, u.creds]))
+  let collected = 0, stillQueued = 0, abandoned = 0
+  try {
+    const { data: pending } = await db
+      .from('dfs_pending_tasks')
+      .select('id, client_id, keyword_id, task_id, keyword, domain, device, check_date, collect_attempts')
+      .order('submitted_at', { ascending: true })
+      .limit(MAX_CHECKS_PER_RUN)
+
+    for (const t of (pending ?? []) as Array<{
+      id: string; client_id: string; keyword_id: string; task_id: string
+      keyword: string; domain: string; device: string; check_date: string; collect_attempts: number
+    }>) {
+      const creds = credsByClient.get(t.client_id)
+      // A client whose connection was removed still has rows here; drop them rather than retry.
+      if (!creds) { await db.from('dfs_pending_tasks').delete().eq('id', t.id); abandoned++; continue }
+
+      const rank = await dfsSerpRankCollect(t.task_id, t.domain, t.keyword, creds)
+      if (!rank) {
+        // Still queued. Give it a few runs, then stop paying attention to it — a task that has
+        // not finished in three days is not going to.
+        if (t.collect_attempts >= 6) {
+          await db.from('dfs_pending_tasks').delete().eq('id', t.id)
+          abandoned++
+          console.warn(`[cron/dataforseo-rankings] abandoning task ${t.task_id} for "${t.keyword}" after ${t.collect_attempts} attempts`)
+        } else {
+          await db.from('dfs_pending_tasks').update({ collect_attempts: t.collect_attempts + 1 }).eq('id', t.id)
+          stillQueued++
+        }
+        continue
+      }
+
+      // The reading belongs to the day it was queued for, not the day it was collected.
       const ok = await upsertRanking({
-        keywordId: job.keywordId, clientId: job.clientId, date: today, device: job.device,
+        keywordId: t.keyword_id, clientId: t.client_id, date: t.check_date, device: t.device as SeoDevice,
         position: rank.position, rankAbsolute: rank.rank_absolute, url: rank.url,
         serpFeatures: rank.serp_features,
       })
-      if (ok) { written++; checkedKeywordIds.add(job.keywordId) }
+      if (ok) written++
+      collected++
+      await db.from('dfs_pending_tasks').delete().eq('id', t.id)
+    }
+  } catch (e) {
+    // Before migration 191 this table does not exist. Collection is then a no-op and submission
+    // below will also find nowhere to record, which keeps the whole cron dormant rather than
+    // half-working.
+    console.warn('[cron/dataforseo-rankings] collect phase unavailable:', e)
+  }
+
+  // ── Phase 2: queue what is due ────────────────────────────────────────────
+  // Standard priority: submitted now, collected on a later run. Nothing here waits for a result,
+  // so a slow queue costs a day of freshness rather than a dead function and a paid-for task
+  // nobody ever read.
+  const byClient = new Map<string, Job[]>()
+  for (const job of runJobs) {
+    const list = byClient.get(job.clientId) ?? []
+    list.push(job)
+    byClient.set(job.clientId, list)
+  }
+
+  for (const [clientId, clientJobs] of Array.from(byClient.entries())) {
+    // 100 tasks per call is DataForSEO's documented limit.
+    for (let i = 0; i < clientJobs.length; i += 100) {
+      const batch = clientJobs.slice(i, i + 100)
+      const tagged = batch.map((j, n) => ({
+        keyword: j.keyword, locationCode: j.locationCode, languageCode: j.languageCode,
+        device: j.device, depth: j.depth, tag: `${i + n}`,
+      }))
+      const ids = await dfsSerpRankSubmit(tagged, batch[0].creds, {
+        onCost: c => {
+          const u = usage.get(clientId) ?? { cost: 0, units: 0 }
+          u.cost += c; u.units += batch.length; usage.set(clientId, u)
+        },
+      })
+      if (ids.size === 0) continue
+
+      const rows = batch.flatMap((j, n) => {
+        const taskId = ids.get(`${i + n}`)
+        if (!taskId) return []
+        checked++
+        submittedKeywordIds.add(j.keywordId)
+        return [{
+          client_id: clientId, keyword_id: j.keywordId, task_id: taskId, keyword: j.keyword,
+          domain: j.domain, device: j.device, depth: j.depth, check_date: today,
+        }]
+      })
+      if (rows.length === 0) continue
+      // ignoreDuplicates: a re-run on the same day must not queue a second check for a keyword
+      // that already has one in flight — the unique index on (keyword, device, date) enforces it.
+      const { error: insErr } = await db.from('dfs_pending_tasks').upsert(rows, {
+        onConflict: 'keyword_id,device,check_date', ignoreDuplicates: true,
+      })
+      if (insErr) console.error('[cron/dataforseo-rankings] pending insert failed:', insErr.message)
     }
   }
-  const chunks: Job[][] = Array.from({ length: CONCURRENCY }, () => [])
-  runJobs.forEach((j, i) => chunks[i % CONCURRENCY].push(j))
-  await Promise.all(chunks.map(worker))
 
-  // One batched last_checked_at write for every keyword actually checked (drives rotation).
-  if (checkedKeywordIds.size) {
+  // last_checked_at advances on SUBMIT, not on collect: it is what the curve reads to decide
+  // due-ness, and a keyword queued today must not be queued again tomorrow while it waits.
+  if (submittedKeywordIds.size) {
     try {
-      await db.from('seo_keywords').update({ last_checked_at: new Date().toISOString() }).in('id', Array.from(checkedKeywordIds))
+      await db.from('seo_keywords').update({ last_checked_at: new Date().toISOString() }).in('id', Array.from(submittedKeywordIds))
     } catch (e) { console.warn('[cron/dataforseo-rankings] last_checked_at batch failed:', e) }
   }
 
@@ -189,5 +280,10 @@ export async function GET(req: NextRequest) {
   if (capped) {
     console.warn(`[cron/dataforseo-rankings] capped at ${MAX_CHECKS_PER_RUN}/${jobs.length} checks this run (rotates by last_checked_at)`)
   }
-  return NextResponse.json({ ok: true, clients: usable.length, checked, written, cost: Number(cost.toFixed(4)), total: jobs.length, capped })
+  console.log(`[cron/dataforseo-rankings] collected ${collected}, still queued ${stillQueued}, abandoned ${abandoned}, submitted ${checked}`)
+  return NextResponse.json({
+    ok: true, clients: usable.length,
+    submitted: checked, collected, written, stillQueued, abandoned,
+    cost: Number(cost.toFixed(4)), due: jobs.length, capped,
+  })
 }
