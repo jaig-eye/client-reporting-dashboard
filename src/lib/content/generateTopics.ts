@@ -191,6 +191,8 @@ export async function generateTopicsForClient(
     existingTopicsRes,
     existingPostsRes,
     gscRawRes,
+    paidTermsRes,
+    ahrefsKwRes,
   ] = await Promise.all([
     db.from('agency_settings')
       .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
@@ -209,6 +211,21 @@ export async function generateTopicsForClient(
       .not('page', 'ilike', '%?%')
       .not('query', 'eq', '')
       .limit(2000),
+    // Paid search terms that produced a conversion. The strongest commercial signal available:
+    // the client paid for the click and it turned into a lead.
+    db.from('google_ads_search_terms')
+      .select('search_term, clicks, conversions, spend')
+      .eq('client_id', clientId)
+      .gte('date', windowStart)
+      .gt('conversions', 0)
+      .limit(2000),
+    // Third-party organic positions. Covers queries GSC drops from a 28-day window, and carries
+    // volume and difficulty of its own.
+    db.from('ahrefs_keywords')
+      .select('keyword, position, volume, difficulty')
+      .eq('client_id', clientId)
+      .order('date', { ascending: false })
+      .limit(500),
   ])
 
   if (!settingsRes.data?.ai_api_key) {
@@ -239,6 +256,73 @@ export async function generateTopicsForClient(
       gscMap.set(key, { totalClicks: r.clicks ?? 0, totalImpr: impr, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0, count: 1 })
     }
   }
+
+  // ── Paid search terms that converted ───────────────────────────────────────
+  // Summed across the window per term, because the same term converts on many days.
+  type PaidTerm = { term: string; conversions: number; clicks: number; spend: number }
+  const paidMap = new Map<string, PaidTerm>()
+  for (const r of (paidTermsRes.data ?? []) as { search_term: string; clicks: number | null; conversions: number | null; spend: number | null }[]) {
+    const term = String(r.search_term ?? '').trim().toLowerCase()
+    if (!term) continue
+    const ex = paidMap.get(term) ?? { term, conversions: 0, clicks: 0, spend: 0 }
+    ex.conversions += Number(r.conversions) || 0
+    ex.clicks      += Number(r.clicks)      || 0
+    ex.spend       += Number(r.spend)       || 0
+    paidMap.set(term, ex)
+  }
+  const paidConverters = Array.from(paidMap.values())
+    .filter(t => t.conversions >= 1)
+    .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
+    .slice(0, 15)
+
+  // ── Ahrefs organic positions ───────────────────────────────────────────────
+  // One row per keyword — the newest date wins, since the query is ordered by date desc.
+  type AhrefsKw = { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+  const ahrefsMap = new Map<string, AhrefsKw>()
+  for (const r of (ahrefsKwRes.data ?? []) as AhrefsKw[]) {
+    const kw = String(r.keyword ?? '').trim().toLowerCase()
+    if (!kw || ahrefsMap.has(kw)) continue
+    ahrefsMap.set(kw, { keyword: kw, position: r.position, volume: r.volume, difficulty: r.difficulty })
+  }
+  // Positions 11–30 are the actionable band: close enough that an article moves them, far enough
+  // that we are not competing with a page of our own already on page one.
+  const ahrefsNearMiss = Array.from(ahrefsMap.values())
+    .filter(k => k.position != null && k.position > 10 && k.position <= 30)
+    .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
+    .slice(0, 12)
+  // Anything the client already holds on page one, from a source GSC may not surface this window.
+  const ahrefsHolding = Array.from(ahrefsMap.values())
+    .filter(k => k.position != null && k.position <= 10)
+    .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+    .slice(0, 12)
+
+  // ── Tracked rankings ───────────────────────────────────────────────────────
+  // Read separately rather than in the Promise.all above: the tables only exist from migration
+  // 190, and a missing relation must cost this section alone, not every other source with it.
+  type TrackedRank = { keyword: string; position: number | null; url: string | null }
+  const trackedRanks: TrackedRank[] = await (async () => {
+    try {
+      const { data, error } = await db
+        .from('seo_keyword_current')
+        .select('keyword, current_position, current_url')
+        .eq('client_id', clientId)
+        .not('current_position', 'is', null)
+        .order('current_position', { ascending: true })
+        .limit(300)
+      if (error) return []
+      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+        keyword:  String(r.keyword ?? '').trim().toLowerCase(),
+        position: r.current_position == null ? null : Number(r.current_position),
+        url:      r.current_url == null ? null : String(r.current_url),
+      })).filter(r => r.keyword)
+    } catch {
+      return []
+    }
+  })()
+
+  const rankOwned  = trackedRanks.filter(r => r.position != null && r.position <= 10).slice(0, 15)
+  const rankNear   = trackedRanks.filter(r => r.position != null && r.position > 10 && r.position <= 30).slice(0, 15)
+  const rankWeak   = trackedRanks.filter(r => r.position != null && r.position > 30).slice(0, 10)
 
   const topPages = Array.from(gscMap.entries())
     .map(([k, v]) => { const [page, query] = k.split('||'); return { page, query, ...v } })
@@ -314,7 +398,14 @@ export async function generateTopicsForClient(
   try {
     const dfsCtx = await getClientDfsContext(db, clientId)
     if (dfsCtx) {
-      const seeds = Array.from(new Set([...growthTargets, ...quickWins].map(t => t.query))).slice(0, 200)
+      // Paid converters lead: a term with a known cost per lead is the one whose volume and
+      // difficulty are most worth paying to learn.
+      const seeds = Array.from(new Set([
+        ...paidConverters.map(t => t.term),
+        ...growthTargets.map(t => t.query),
+        ...quickWins.map(t => t.query),
+        ...ahrefsNearMiss.map(k => k.keyword),
+      ])).slice(0, 200)
       if (seeds.length) {
         const enriched = await dfsKeywordOverview(seeds, dfsCtx.creds, {
           locationCode: dfsCtx.config.location_code,
@@ -471,6 +562,25 @@ export async function generateTopicsForClient(
     ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
+  // Paid converters. Framed as opportunities rather than support articles: a term that converts
+  // in paid is worth its own page unless we already rank for it, which the guardrails below catch.
+  const paidText = paidConverters.length > 0
+    ? `\nCONVERTS IN PAID SEARCH — highest commercial intent available. These terms produced real leads through Google Ads, so ranking organically for them has a known value. Prioritise them unless a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
+    : ''
+
+  const ahrefsNearText = ahrefsNearMiss.length > 0
+    ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${ahrefsNearMiss.map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`
+    : ''
+
+  // The actionable band leads, because this is where a single article changes a position.
+  const rankNearText = rankNear.length > 0
+    ? `\nTRACKED AT 11–30 — the band where one article moves a keyword onto page one. Write a SUPPORT article for the question behind the keyword and link it to the page listed, which is the URL Google currently ranks:\n${rankNear.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}${kwSuffix(r.keyword)}`).join('\n')}`
+    : ''
+
+  const rankWeakText = rankWeak.length > 0
+    ? `\nTRACKED BELOW 30 — a page exists but is not competitive. A sharper, more specific angle is worth trying; do not repeat the existing page's angle:\n${rankWeak.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}`).join('\n')}`
+    : ''
+
   const gscCtrText = ctrIssues.length > 0
     ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
     : ''
@@ -491,6 +601,14 @@ export async function generateTopicsForClient(
     .slice(0, 12)
   const alreadyWinningText = alreadyWinning.length > 0
     ? `\nALREADY RANKING TOP-5 — DO NOT CANNIBALIZE (live Google positions). Do NOT propose a new primary page for any of these; at most a support/cluster article that internally links to the exact ranking URL:\n${alreadyWinning.map(r => `  - "${r.query}" is already #${Math.round(r.weightedPos)} at ${stripDomain(r.page)}`).join('\n')}`
+    : ''
+
+  const ahrefsHoldingText = ahrefsHolding.length > 0
+    ? `\nALREADY ON PAGE ONE (Ahrefs) — DO NOT CANNIBALIZE. Do not propose a new primary page for any of these; at most a support article that internally links to the page already ranking:\n${ahrefsHolding.map(k => `  - "${k.keyword}" is already #${k.position}`).join('\n')}`
+    : ''
+
+  const rankOwnedText = rankOwned.length > 0
+    ? `\nTRACKED IN THE TOP 10 — DO NOT CANNIBALIZE. Google already ranks one of this client's pages for each of these. Never propose a new primary page for one, and never target it as a blog keyword. A SUPPORTING article is allowed only if it covers a genuinely narrower question and internally links to the exact URL below:\n${rankOwned.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${r.url}` : ''}`).join('\n')}`
     : ''
 
   // Self-cannibalization: the same query ranks 2+ of the client's own URLs.
@@ -695,12 +813,18 @@ No text outside the JSON array.`
   const userPrompt = `Client: ${clientName}
 ${contextLines.join('\n')}${eeatText}
 ${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this topical cluster.` : ''}
+${paidText}
+${rankNearText}
 ${gscGrowthText}
 ${gscQuickWinsText}
+${ahrefsNearText}
 ${gscCtrText}
 ${competitorText}
 ${gscTopText}
 ${alreadyWinningText}
+${ahrefsHoldingText}
+${rankOwnedText}
+${rankWeakText}
 ${cannibalizationText}
 ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
