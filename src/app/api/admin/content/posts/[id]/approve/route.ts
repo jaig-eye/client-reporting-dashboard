@@ -746,19 +746,22 @@ export async function POST(
     await db.from('content_posts').update({
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
-      // On a republish the WordPress status is deliberately NOT sent (so a live
-      // post is not knocked back to draft), which means wpPublishStatus is not
-      // what the site actually has. result.status is the value WP returned, so
-      // trust that whenever it is available.
-      wp_status:         isRepublish ? (result.status || wpPublishStatus)
-                        : isServiceArea ? result.status
-                        : wpPublishStatus,
+      // WordPress's answer wins, always. It used to win only for republishes and service
+      // areas, and a new blog post recorded wpPublishStatus — what we asked for. WordPress
+      // silently downgrades a status it won't grant (an app password without publish_posts
+      // becomes a draft) and answers 200 either way, so the two diverge without a trace.
+      wp_status:         result.status || wpPublishStatus,
       status:            'draft_saved',
       // Only a real permalink goes in published_url; the wp-admin fallback lives
       // in platform_edit_url so internal-link injection never emits it. And when
       // WP returns no link at all, keep whatever was already stored rather than
       // nulling a permalink that was previously correct.
-      ...(result.link ? { published_url: result.link } : {}),
+      //
+      // A '?p=<id>' link is WordPress's placeholder for a post that isn't public yet. Storing
+      // it makes an unpublished post look published and leaves a URL that will be wrong the
+      // moment it goes live, so it is deliberately not written here — /api/cron/wp-reconcile
+      // collects the real permalink once the post is out.
+      ...(result.link && !/[?&]p=\d+/.test(result.link) ? { published_url: result.link } : {}),
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
