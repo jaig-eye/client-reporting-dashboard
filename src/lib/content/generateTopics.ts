@@ -273,7 +273,7 @@ export async function generateTopicsForClient(
   const paidConverters = Array.from(paidMap.values())
     .filter(t => t.conversions >= 1)
     .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
-    .slice(0, 15)
+    .slice(0, 10)
 
   // ── Ahrefs organic positions ───────────────────────────────────────────────
   // One row per keyword — the newest date wins, since the query is ordered by date desc.
@@ -592,7 +592,7 @@ export async function generateTopicsForClient(
   // Paid converters. Framed as opportunities rather than support articles: a term that converts
   // in paid is worth its own page unless we already rank for it, which the guardrails below catch.
   const paidText = paidConverters.length > 0
-    ? `\nCONVERTS IN PAID SEARCH — highest commercial intent available. These terms produced real leads through Google Ads, so ranking organically for them has a known value. Prioritise them unless a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
+    ? `\nCONVERTS IN PAID SEARCH — these terms produced real leads through Google Ads, so ranking organically for them has a known value. Worth choosing when nothing above fits better, and never when a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
     : ''
 
   const ahrefsNearText = ahrefsNearMiss.length > 0
@@ -851,13 +851,13 @@ No text outside the JSON array.`
   const userPrompt = `Client: ${clientName}
 ${contextLines.join('\n')}${eeatText}
 ${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this topical cluster.` : ''}
-${paidText}
-${poolText}
-${rankNearText}
 ${gscGrowthText}
 ${gscQuickWinsText}
-${ahrefsNearText}
 ${gscCtrText}
+${paidText}
+${rankNearText}
+${ahrefsNearText}
+${poolText}
 ${competitorText}
 ${gscTopText}
 ${alreadyWinningText}

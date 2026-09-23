@@ -1084,18 +1084,42 @@ ${lengthInstruction}${writingRulesReminder}`
           `Return the same JSON shape you were given.\n\n${rawText}`
         const tightened = await callAI(provider, model, apiKey, systemPrompt, tightenPrompt, 'article', effectiveClientId)
         const reparsed  = parseResponse(tightened)
-        const newWc     = computeWordCount(reparsed.content)
-        // Only accept a shorter result that is still a real article.
-        if (newWc >= Math.min(wordFloor, wc0) && newWc < wc0 && reparsed.title.trim()) {
+
+        // Sanitise before measuring. parsed.content has already had its invented links and filler
+        // anchors removed, so counting a raw revision against it would credit links that are about
+        // to be stripped.
+        const cleaned = styleTables(stripGenericAnchorText(stripH1FromContent(
+          stripDangerousHtml(stripHallucinatedLinks(reparsed.content, allowedInternalUrls)))))
+        const newWc = computeWordCount(cleaned)
+
+        // Shorter is not the only requirement. A revision that hit the word count by deleting the
+        // internal links or collapsing the outline would be a worse article that happens to measure
+        // correctly — and internal linking is the whole point of the silo work, so losing it
+        // silently is the most expensive way this could go wrong.
+        const countLinks    = (html: string) => (html.match(/<a\s[^>]*href=/gi) ?? []).length
+        const countHeadings = (html: string) => (html.match(/<h[23][\s>]/gi) ?? []).length
+        const linksBefore    = countLinks(parsed.content)
+        const linksAfter     = countLinks(cleaned)
+        const headingsBefore = countHeadings(parsed.content)
+        const headingsAfter  = countHeadings(cleaned)
+        // Cutting words costs some headings legitimately; losing a quarter of them means the
+        // outline was rewritten rather than tightened.
+        const keptStructure = linksAfter >= linksBefore && headingsAfter >= Math.ceil(headingsBefore * 0.75)
+
+        if (newWc >= Math.min(wordFloor, wc0) && newWc < wc0 && reparsed.title.trim() && keptStructure) {
           tightenedFrom = wc0
           parsed.title            = reparsed.title || parsed.title
           parsed.metaDescription  = reparsed.metaDescription || parsed.metaDescription
-          parsed.content          = styleTables(stripGenericAnchorText(stripH1FromContent(
-            stripDangerousHtml(stripHallucinatedLinks(reparsed.content, allowedInternalUrls)))))
-          wc0 = computeWordCount(parsed.content)
+          parsed.content          = cleaned
+          wc0                     = newWc
           console.log(`[generate] tightened topic ${topicId}: ${tightenedFrom} → ${wc0} words (target ${wordTarget})`)
         } else {
-          console.warn(`[generate] tighten pass rejected for topic ${topicId}: ${wc0} → ${newWc} (target ${wordTarget})`)
+          // Rejected: the original stands. An article slightly over its budget beats one that
+          // lost its links or its shape.
+          console.warn(
+            `[generate] tighten pass rejected for topic ${topicId}: ${wc0} → ${newWc} words ` +
+            `(target ${wordTarget}), links ${linksBefore} → ${linksAfter}, headings ${headingsBefore} → ${headingsAfter}`,
+          )
         }
       } catch (e) {
         console.warn(`[generate] tighten pass failed for topic ${topicId}:`, e)
