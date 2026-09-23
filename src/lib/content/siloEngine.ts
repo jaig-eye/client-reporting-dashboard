@@ -422,9 +422,12 @@ export async function auditContent(input: AuditInput): Promise<string> {
   const termUsage: TermUsage[] = []
 
   // ── Word count score ─────────────────────────────────────────────────────
-  const wcMin    = brief.recommended_word_count_min    ?? 1000
-  const wcTarget = brief.recommended_word_count_target ?? 2000
-  const wcMax    = brief.recommended_word_count_max    ?? 5000
+  // Defaults derived from the target rather than fixed. They used to be 1000/2000/5000, which
+  // meant a 2,027-word post against a client's 1,500-word brief scored 100 on length — the audit
+  // rewarded exactly the over-writing the generator was producing.
+  const wcTarget = brief.recommended_word_count_target ?? 1500
+  const wcMin    = brief.recommended_word_count_min    ?? Math.round(wcTarget * 0.9)
+  const wcMax    = brief.recommended_word_count_max    ?? Math.round(wcTarget * 1.15)
   let wordCountScore = 0
   if (words >= wcMin && words <= wcMax) {
     wordCountScore = words >= wcTarget ? 100 : Math.round((words / wcTarget) * 100)
@@ -432,7 +435,17 @@ export async function auditContent(input: AuditInput): Promise<string> {
     wordCountScore = Math.round((words / wcMin) * 50)
     findings.push({ category: 'word_count', severity: 'high', message: `Content is ${words} words — target ${wcTarget}`, recommendation: `Add approximately ${wcTarget - words} more words.` })
   } else {
-    wordCountScore = 80 // over max but still scored
+    // Over the ceiling. Scored down in proportion to the overshoot and reported, because silence
+    // here is what let the average reach 135% of brief. A post 30% past the ceiling is as wrong
+    // as one well under it, so it carries the same 'high' severity.
+    const overBy   = words - wcMax
+    wordCountScore = Math.max(40, 100 - Math.round((overBy / Math.max(1, wcMax)) * 100))
+    findings.push({
+      category: 'word_count',
+      severity: words > wcMax * 1.3 ? 'high' : 'medium',
+      message: `Content is ${words} words — the brief allows up to ${wcMax}`,
+      recommendation: `Cut approximately ${words - wcTarget} words to reach the ${wcTarget}-word target.`,
+    })
   }
 
   // ── Exact keyword score ──────────────────────────────────────────────────

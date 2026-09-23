@@ -123,6 +123,46 @@ export interface WpPostPayload {
   meta?: Record<string, string>
 }
 
+/**
+ * Reads back the SEO meta WordPress stored, and says which keys did not stick.
+ *
+ * WordPress accepts a `meta` object and silently ignores any key not registered with
+ * `show_in_rest`, answering 200 either way — so a push can look completely successful and set
+ * nothing. This asks the question directly: fetch the post as the editor sees it and compare.
+ *
+ * Best-effort by design. A site that refuses `context=edit`, a plugin that hides the field, or
+ * any network failure returns an empty list rather than failing a publish that already worked.
+ */
+export async function verifyPostMeta(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+  expected: Record<string, string>,
+): Promise<{ key: string; sent: string; stored: string }[]> {
+  try {
+    const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
+      headers: { Authorization: authHeader(auth.username, auth.app_password) },
+    })
+    if (!res.ok) return []
+    const data  = await res.json() as { meta?: Record<string, unknown> }
+    const meta  = data.meta
+    // No meta object at all means the site doesn't expose it — that is not evidence of a problem.
+    if (!meta || typeof meta !== 'object') return []
+    const wrong: { key: string; sent: string; stored: string }[] = []
+    for (const [key, sent] of Object.entries(expected)) {
+      // A key we deliberately sent empty is not expected to come back.
+      if (!sent) continue
+      // A key absent from the response was never registered; a key present but different was
+      // registered and then overwritten. Both are worth seeing, and the value says which.
+      const stored = meta[key] == null ? '' : String(meta[key])
+      if (stored !== sent) wrong.push({ key, sent, stored })
+    }
+    return wrong
+  } catch {
+    return []
+  }
+}
+
 export interface WpPublishedPost {
   id: number
   link: string

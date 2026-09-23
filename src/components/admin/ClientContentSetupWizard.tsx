@@ -183,9 +183,62 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             publish_time?: string | null
             auto_generate?: boolean | null
             schedule_start_date?: string | null
+            business_background?: string | null
+            services?: string | null
+            target_audience?: string | null
+            geographic_focus?: string | null
+            brand_voice?: string | null
+            phone_number?: string | null
+            eeat_data?: Record<string, unknown> | null
+            weeks_ahead?: number | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
+
+          // Hydrate BRAND DNA. Without this the fields render empty on a re-run and the save at
+          // the end writes those empties over a profile someone already curated. Every value is
+          // kept only when the saved one is non-empty, so a half-filled record can still be
+          // completed by the AI analysis rather than being blocked by it.
+          const eeat = (cs.eeat_data ?? {}) as Record<string, unknown>
+          const str  = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
+          const savedBrand = {
+            business_background: str(cs.business_background),
+            services:            str(cs.services),
+            target_audience:     str(cs.target_audience),
+            geographic_focus:    str(cs.geographic_focus),
+            brand_voice:         str(cs.brand_voice),
+            phone_number:        str(cs.phone_number),
+            founded_year:        str(eeat.founded_year),
+            years_in_business:   str(eeat.years_in_business),
+            owner_details:       str(eeat.owner_details),
+            licenses:            str(eeat.licenses),
+            guarantees:          str(eeat.guarantees),
+            review_count:        str(eeat.review_count),
+          }
+          const hasSavedBrand = Object.values(savedBrand).some(v => v !== null)
+          if (hasSavedBrand) {
+            setBrand(prev => ({
+              ...prev,
+              business_background: savedBrand.business_background ?? prev.business_background,
+              services:            savedBrand.services            ?? prev.services,
+              target_audience:     savedBrand.target_audience     ?? prev.target_audience,
+              geographic_focus:    savedBrand.geographic_focus    ?? prev.geographic_focus,
+              brand_voice:         savedBrand.brand_voice         ?? prev.brand_voice,
+              phone_number:        savedBrand.phone_number        ?? prev.phone_number,
+              founded_year:        savedBrand.founded_year        ?? prev.founded_year,
+              years_in_business:   savedBrand.years_in_business   ?? prev.years_in_business,
+              owner_details:       savedBrand.owner_details       ?? prev.owner_details,
+              licenses:            savedBrand.licenses            ?? prev.licenses,
+              guarantees:          savedBrand.guarantees          ?? prev.guarantees,
+              review_count:        savedBrand.review_count        ?? prev.review_count,
+              emergency_availability: typeof eeat.emergency_availability === 'boolean'
+                ? eeat.emergency_availability
+                : prev.emergency_availability,
+            }))
+            // The profile exists, so the wizard should not insist on a fresh scan before
+            // letting someone move on.
+            setBrandLoaded(true)
+          }
 
           // Hydrate the SCHEDULE too. Step 5's state was initialised to a hardcoded
           // weekly/Monday and never read the saved values, so re-opening the wizard on

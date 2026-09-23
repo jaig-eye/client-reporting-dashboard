@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta } from '@/lib/connectors/wordpress'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
@@ -721,6 +721,22 @@ export async function POST(
             categories:     postCategoryIds,
             meta:           wpMeta,
           })
+
+      // Did the SEO meta actually stick?
+      //
+      // WordPress answers 200 whether it stored a meta key or silently dropped it, so a push can
+      // look perfect and set nothing. Measured on a live client post: the description came back
+      // byte-identical while the SEO title never took effect, and nothing here noticed.
+      //
+      // Read-only and best-effort — it never fails a push that already succeeded.
+      const metaMiss = await verifyPostMeta(siteUrl, auth, result.id, wpMeta)
+      if (metaMiss.length > 0) {
+        console.warn(
+          `[approve] WordPress did not store ${metaMiss.length} SEO field(s) for post ${id} (wp ${result.id}, ${siteUrl}): ` +
+          metaMiss.map(m => `${m.key} sent ${m.sent.length} chars, stored ${m.stored ? `"${m.stored.slice(0, 40)}"` : 'nothing'}`).join('; ') +
+          '. Rank Math fields must be registered with show_in_rest on the site to be writable.',
+        )
+      }
     }
 
     const wpEditUrl = isServiceArea
