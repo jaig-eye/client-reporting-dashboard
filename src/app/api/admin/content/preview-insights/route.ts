@@ -9,8 +9,13 @@
 //
 // Open it in a browser while signed in as admin:
 //
+//   /api/admin/content/preview-insights                     ← lists clients to pick from
 //   /api/admin/content/preview-insights?client_id=<uuid>
-//   /api/admin/content/preview-insights                  ← lists clients to pick from
+//   /api/admin/content/preview-insights?client_id=<uuid>&live=1   ← also CALLS DataForSEO
+//
+// ?live=1 is the only thing here that costs money — about five cents, and only when asked for.
+// It runs the five calls the pipeline depends on against the client's real connection and shows
+// what each returned. It still writes nothing: no candidates, no snapshot, no usage row.
 //
 // It answers the two questions that matter before merging:
 //
@@ -29,6 +34,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
+import {
+  resolveDfsCreds, resolveSeoConfig, dfsAccountBalance, dfsKeywordsForSite,
+  dfsCompetitorDomains, dfsKeywordIdeas, dfsSerpRank, type DfsCreds,
+} from '@/lib/connectors/dataforseo'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,7 +82,7 @@ export async function GET(req: NextRequest) {
   const [clientRes, settingsRes, paidRes, ahrefsRes, gscRes, trackedRes, researchRes, postsRes] = await Promise.all([
     safe('client',   db.from('clients').select('name').eq('id', clientId).limit(1)),
     safe('settings', db.from('content_settings')
-      .select('target_length, posts_per_run, schedule_frequency, schedule_day_of_week, publish_time')
+      .select('target_length, posts_per_run, schedule_frequency, schedule_day_of_week, publish_time, services')
       .eq('client_id', clientId).limit(1)),
     safe('paid', db.from('google_ads_search_terms')
       .select('search_term, conversions').eq('client_id', clientId).gte('date', since90).gt('conversions', 0).limit(500)),
@@ -154,6 +163,94 @@ export async function GET(req: NextRequest) {
       <td class="muted">${note ? esc(note) : esc(sample)}</td>
     </tr>`
 
+  // ── Optional: actually call DataForSEO ────────────────────────────────────
+  const live = req.nextUrl.searchParams.get('live') === '1'
+  let liveHtml = `<h2>Live DataForSEO test</h2>
+    <p class="muted">Not run. Add <code>&amp;live=1</code> to the URL to call DataForSEO for real —
+    roughly five cents, and it still writes nothing.</p>`
+
+  if (live) {
+    // Credentials resolved exactly as clientResearch resolves them.
+    let creds: DfsCreds | null = null
+    let domain = ''
+    let cfg = resolveSeoConfig(null, null)
+    const { rows: connRows, note: connNote } = await safe('conn', db
+      .from('client_connections')
+      .select('external_id, config, connector:connectors(type, auth, config)')
+      .eq('client_id', clientId))
+    for (const row of connRows) {
+      const conn = Array.isArray(row.connector) ? row.connector[0] : row.connector
+      const c = conn as Row | null
+      if (c?.type !== 'dataforseo') continue
+      creds  = resolveDfsCreds((c.auth ?? {}) as Row)
+      domain = String(row.external_id ?? '').trim()
+      cfg    = resolveSeoConfig(c.config as Row, row.config as Row)
+      break
+    }
+
+    if (!creds || !domain) {
+      liveHtml = `<h2>Live DataForSEO test</h2>
+        <p class="warn">No usable DataForSEO connection for this client${connNote ? ` (${esc(connNote)})` : ''}.
+        Needs a dataforseo connector with credentials and the client's domain in <code>external_id</code>.</p>`
+    } else {
+      let cost = 0
+      const onCost = (c: number) => { cost += c }
+      const opts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
+      const results: string[] = []
+      const step = (name: string, detail: string, ok: boolean) =>
+        results.push(`<tr><td>${esc(name)}</td><td class="${ok ? 'ok' : 'warn'}">${ok ? 'ok' : 'nothing returned'}</td><td class="muted">${esc(detail)}</td></tr>`)
+
+      // 1. Credentials.
+      const balance = await dfsAccountBalance(creds)
+      step('Account balance', balance == null ? 'could not read — check credentials' : `$${balance.toFixed(2)} remaining`, balance != null)
+
+      // 2. What the domain ranks for — the research seed AND the ranking snapshot.
+      const own = await dfsKeywordsForSite(domain, creds, { ...opts, source: 'site', limit: 25 })
+      step('ranked_keywords (own domain)',
+        own.length ? `${own.length} keywords; e.g. ${own.slice(0, 3).map(k => `${k.keyword}${k.position ? ` #${k.position}` : ''}`).join(', ')}` : 'no keywords returned',
+        own.length > 0)
+
+      // 3. Competitors, then what they rank for — the gap.
+      const comps = await dfsCompetitorDomains(domain, creds, { ...opts, limit: 3 })
+      step('competitors_domain', comps.length ? comps.join(', ') : 'no competitors returned', comps.length > 0)
+
+      let gap: Awaited<ReturnType<typeof dfsKeywordsForSite>> = []
+      if (comps.length) {
+        gap = await dfsKeywordsForSite(comps[0], creds, { ...opts, source: 'competitor', limit: 25 })
+        step(`ranked_keywords (${comps[0]})`,
+          gap.length ? `${gap.length} keywords; e.g. ${gap.slice(0, 3).map(k => k.keyword).join(', ')}` : 'no keywords returned',
+          gap.length > 0)
+      }
+
+      // 4. Ideas from what the client actually sells — the new-client path.
+      const services = String((s.services ?? '') as string).split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 5)
+      if (services.length) {
+        const ideas = await dfsKeywordIdeas(services, creds, { ...opts, limit: 25 })
+        step('keyword_ideas (from services)',
+          ideas.length ? `${ideas.length} ideas; e.g. ${ideas.slice(0, 3).map(k => `${k.keyword} (${k.search_volume ?? '?'}/mo)`).join(', ')}` : 'no ideas returned',
+          ideas.length > 0)
+      } else {
+        step('keyword_ideas (from services)', 'skipped — no services set in content settings', false)
+      }
+
+      // 5. One live rank check, the shape the rankings cron uses.
+      const probeKw = String((trackedRes.rows[0] as Row | undefined)?.keyword ?? own[0]?.keyword ?? '')
+      if (probeKw) {
+        const rank = await dfsSerpRank(domain, probeKw, creds, { ...opts, device: 'mobile', depth: 30 })
+        step(`Live rank check "${probeKw}" (mobile, depth 30)`,
+          rank.position != null ? `position ${rank.position}${rank.url ? ` — ${rank.url}` : ''}`
+            : `not in the top 30${rank.serp_features.length ? ` (SERP features: ${rank.serp_features.slice(0, 4).join(', ')})` : ''}`,
+          true)
+      }
+
+      liveHtml = `<h2>Live DataForSEO test</h2>
+        <p>Ran against <strong>${esc(domain)}</strong>. Reported cost: <strong>$${cost.toFixed(4)}</strong>. Nothing was stored.</p>
+        <table><tr><th>Call</th><th>Result</th><th>Detail</th></tr>${results.join('')}</table>
+        <p class="muted">These are the exact functions research and the rankings cron use. If every row
+        is ok, the integration works; what remains untested is only the scheduling around it.</p>`
+    }
+  }
+
   return html(`
     <h1>${clientName}</h1>
     <p class="muted">Read-only. Nothing here calls an AI or DataForSEO, and nothing is written.</p>
@@ -193,6 +290,8 @@ export async function GET(req: NextRequest) {
       <tr><td>Tracked top-10 (DataForSEO)</td><td class="n">${trackedRes.rows.length}</td>
           <td class="muted">${esc(trackedRes.rows.slice(0, 4).map(r => String(r.keyword)).join(', ')) || '—'}</td></tr>
     </table>
+
+    ${liveHtml}
 
     <h2>Output — the last ${posts.length} generated posts</h2>
     <p>Average <strong>${avg.toLocaleString()}</strong> words against a ${target.toLocaleString()} target.
