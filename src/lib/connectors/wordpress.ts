@@ -130,6 +130,10 @@ export interface WpPostPayload {
  * `show_in_rest`, answering 200 either way — so a push can look completely successful and set
  * nothing. This asks the question directly: fetch the post as the editor sees it and compare.
  *
+ * The repair for a key that does not stick is site-side: Rank Math never registers these keys with
+ * `show_in_rest`, and its own REST namespace is read-only, so WordPress discards them. Installing
+ * wordpress-plugin/rank-math-rest-meta.php registers them and the same push starts working.
+ *
  * Best-effort by design. A site that refuses `context=edit`, a plugin that hides the field, or
  * any network failure returns an empty list rather than failing a publish that already worked.
  */
@@ -138,9 +142,11 @@ export async function verifyPostMeta(
   auth: { username: string; app_password: string },
   postId: number,
   expected: Record<string, string>,
+  // Service-area pages carry the same Rank Math fields and live on a different REST route.
+  postType: 'posts' | 'pages' = 'posts',
 ): Promise<{ key: string; sent: string; stored: string }[]> {
   try {
-    const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
+    const res = await fetch(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
       headers: { Authorization: authHeader(auth.username, auth.app_password) },
     })
     if (!res.ok) return []

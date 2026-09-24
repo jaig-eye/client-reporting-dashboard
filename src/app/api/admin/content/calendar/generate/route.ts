@@ -201,7 +201,11 @@ export async function POST(request: NextRequest) {
     })()
   )
 
-  return NextResponse.json({ ok: true, queued: true, slots: openSlots })
+  // slots carries one entry per post, so a date wanting two posts appears twice; dates is what a
+  // human means by "publish dates". Both are returned — the count of work and the count of days.
+  return NextResponse.json({
+    ok: true, queued: true, slots: openSlots, dates: new Set(openSlots).size,
+  })
 }
 
 // ── Slot computation ───────────────────────────────────────────────────────

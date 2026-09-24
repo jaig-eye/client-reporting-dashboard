@@ -123,5 +123,9 @@ export function isForbiddenBlogKeyword(kw: string | null | undefined): boolean {
   const k = kw.toLowerCase()
   if (/\bnear me\b/.test(k)) return true
   if (/\b(quote|hire|book|appointment|company|contractor)\b/.test(k)) return true
+  // Unambiguously transactional modifiers. Deliberately narrow: "cost", "best" and "how much" are
+  // all excellent informational subjects ("how much does a new roof cost" is exactly the article
+  // we want), so only terms with no informational reading at all belong here.
+  if (/\b(open now|cheap|cheapest|discount|coupon|for sale|buy)\b/.test(k)) return true
   return false
 }

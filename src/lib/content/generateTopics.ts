@@ -37,6 +37,19 @@ interface TopicIdea {
   cluster_group?:      string
 }
 
+/**
+ * Compare keywords the way a search engine would treat them as the same request: case, spacing
+ * and punctuation carry no meaning here.
+ */
+function normalizeKeyword(kw: string | null | undefined): string {
+  return String(kw ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Escape a keyword for use inside a RegExp — keywords are data and can contain anything. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function extractSitemapLocs(xml: string): string[] {
   return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
 }
@@ -592,7 +605,7 @@ export async function generateTopicsForClient(
   // Paid converters. Framed as opportunities rather than support articles: a term that converts
   // in paid is worth its own page unless we already rank for it, which the guardrails below catch.
   const paidText = paidConverters.length > 0
-    ? `\nCONVERTS IN PAID SEARCH — these terms produced real leads through Google Ads, so ranking organically for them has a known value. Worth choosing when nothing above fits better, and never when a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
+    ? `\nCONVERTS IN PAID SEARCH — these terms produced real leads through Google Ads, so the subject behind them has proven commercial value. They are buying queries, not article subjects: do NOT target one directly, because the page that should rank for it is the client's service page, and a blog post competing with that page costs more than it earns. Target the informational question a searcher asks on the way to it — "cheap ac repair" becomes what actually drives AC repair cost. Worth choosing when nothing above fits better, and never when a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
     : ''
 
   const ahrefsNearText = ahrefsNearMiss.length > 0
@@ -924,6 +937,77 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     }
     if (!topics.length) {
       return { topics: [], clientName, count: 0, error: 'All generated topics were transactional/near-me intent — none suitable for a blog. Try again.' }
+    }
+  }
+
+  // ── Cannibalization guard (enforced, not requested) ───────────────────────
+  //
+  // Everything above this point is instruction. This is the check: whatever the model returned
+  // is compared against what the client already ranks for, and a topic that would compete with
+  // a winning page is either dropped or demoted to a supporting article.
+  //
+  // Built from all three ranking sources so it works whichever ones a client has: GSC positions
+  // (always available), Ahrefs (when synced), and tracked DataForSEO ranks (when connected).
+  const protectedKeywords = new Map<string, { position: number; url: string | null }>()
+  const protect = (kw: string, position: number, url: string | null) => {
+    const key = normalizeKeyword(kw)
+    if (!key) return
+    const existing = protectedKeywords.get(key)
+    // Keep the best position we know about, and any URL we have — the strongest claim wins.
+    if (!existing || position < existing.position) {
+      protectedKeywords.set(key, { position, url: url ?? existing?.url ?? null })
+    } else if (!existing.url && url) {
+      existing.url = url
+    }
+  }
+  for (const r of alreadyWinning) protect(r.query,   Math.round(r.weightedPos), r.page)
+  for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          null)
+  for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? null)
+
+  if (protectedKeywords.size > 0) {
+    const dropped: string[] = []
+    const demoted: string[] = []
+    topics = topics.filter(t => {
+      const kw = normalizeKeyword(t.target_keyword)
+      if (!kw) return true
+
+      // Exact collision: a new primary page for a keyword already on page one.
+      const direct = protectedKeywords.get(kw)
+      if (direct) {
+        dropped.push(`"${t.target_keyword}" (already #${direct.position}${direct.url ? ` at ${direct.url}` : ''})`)
+        return false
+      }
+
+      // A longer variant of a protected keyword — "lawn care" protected, "lawn care in winter"
+      // proposed. That is a legitimate article, but only as a supporting one. Whole-phrase match
+      // so "careers" never matches "care".
+      for (const [prot, info] of Array.from(protectedKeywords.entries())) {
+        if (kw === prot) continue
+        if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
+        const directive =
+          `SUPPORTING ARTICLE — the client already ranks #${info.position} for "${prot}"` +
+          `${info.url ? ` at ${info.url}` : ''}. This must not compete with that page: cover a` +
+          ` genuinely narrower question and link to it${info.url ? ` (${info.url})` : ''} as the primary internal link.`
+        t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
+        demoted.push(`"${t.target_keyword}" → supports "${prot}"`)
+        break
+      }
+      return true
+    })
+
+    if (dropped.length > 0) {
+      console.warn(`[generateTopics] cannibalization: dropped ${dropped.length} topic(s) for client ${clientId}: ${dropped.join('; ')}`)
+    }
+    if (demoted.length > 0) {
+      console.log(`[generateTopics] cannibalization: demoted ${demoted.length} topic(s) to supporting for client ${clientId}: ${demoted.join('; ')}`)
+    }
+    if (!topics.length) {
+      // Every proposal collided. Saying so beats saving nothing silently or, worse, saving the
+      // collisions.
+      return {
+        topics: [], clientName, count: 0,
+        error: 'Every generated topic targeted a keyword this client already ranks on page one for. Nothing was saved — try again, or widen the silo.',
+      }
     }
   }
 

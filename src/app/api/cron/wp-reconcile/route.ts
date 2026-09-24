@@ -70,6 +70,11 @@ export async function GET(req: NextRequest) {
 
   // WordPress credentials live on the connection, so group the work by site and read each
   // connection once rather than per post.
+  //
+  // A post can have no connection_id and still have published: the push path prefers the stored
+  // one and falls back to any active WordPress connection for the client. Reconcile has to follow
+  // the same rule or it silently skips the posts that took the fallback — which is most of the
+  // ones it exists to fix.
   const connectionIds = Array.from(new Set(posts.map(p => p.connection_id).filter((c): c is string => !!c)))
   const authByConnection = new Map<string, { username: string; app_password: string }>()
   if (connectionIds.length > 0) {
@@ -94,10 +99,38 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // The per-client fallback, resolved once for the clients that need it.
+  const fallbackByClient = new Map<string, { username: string; app_password: string }>()
+  const clientsNeedingFallback = Array.from(new Set(
+    posts.filter(p => !p.connection_id || !authByConnection.has(p.connection_id)).map(p => p.client_id),
+  ))
+  if (clientsNeedingFallback.length > 0) {
+    const { data: conns } = await db
+      .from('client_connections')
+      .select('client_id, auth, connector:connectors(type, config)')
+      .in('client_id', clientsNeedingFallback)
+    type FallbackRow = {
+      client_id: string
+      auth: Record<string, unknown> | null
+      connector: { type?: string; config?: Record<string, unknown> | null }
+               | { type?: string; config?: Record<string, unknown> | null }[] | null
+    }
+    for (const c of (conns ?? []) as FallbackRow[]) {
+      const conn = Array.isArray(c.connector) ? c.connector[0] : c.connector
+      if (conn?.type !== 'wordpress') continue
+      if (fallbackByClient.has(c.client_id)) continue
+      const config   = conn.config ?? {}
+      const username = String(config.username     ?? c.auth?.username     ?? '')
+      const appPass  = String(config.app_password ?? c.auth?.app_password ?? '')
+      if (username && appPass) fallbackByClient.set(c.client_id, { username, app_password: appPass })
+    }
+  }
+
   let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0
 
   for (const post of posts) {
-    const auth    = post.connection_id ? authByConnection.get(post.connection_id) : undefined
+    const auth    = (post.connection_id ? authByConnection.get(post.connection_id) : undefined)
+                 ?? fallbackByClient.get(post.client_id)
     const siteUrl = post.wp_site_url
     if (!auth || !siteUrl || post.wp_post_id == null) { unreadable++; continue }
 

@@ -16,6 +16,79 @@ import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 import { isPublicPermalink }   from '@/lib/content/postLinks'
 
+/**
+ * WordPress's pre-publication placeholder link shape.
+ *
+ * Only a placeholder while the post is not public — a site on plain permalinks serves exactly this
+ * as its permanent URL, so the status has to be checked alongside it.
+ */
+function isPlaceholderPermalink(url: string): boolean {
+  return /[?&]p=\d+/.test(url)
+}
+
+/**
+ * The Rank Math block sent with every post and page.
+ *
+ * One builder rather than the three identical literals this file used to carry — they had
+ * already started to drift, and a field added to one copy is a field silently missing from the
+ * others.
+ */
+function rankMathMeta(p: Record<string, unknown>): Record<string, string> {
+  return {
+    rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+    rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+    rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+  }
+}
+
+/**
+ * Read the SEO meta back and report anything WordPress did not store.
+ *
+ * WordPress answers 200 whether it stored a meta key or discarded it, so a push can look
+ * completely successful and set nothing. Rank Math never registers its keys with show_in_rest and
+ * its own REST namespace is read-only, so an unprepared site drops all three every time.
+ *
+ * The result goes to the activity log as well as the console. A console warning is not a report:
+ * it lives in Vercel logs nobody opens, which is how a year of posts went out with no SEO title
+ * before anyone noticed.
+ *
+ * Never throws and never fails a push that already succeeded.
+ */
+async function reportMetaMisses(
+  args: {
+    postRowId: string; clientId: string; siteUrl: string
+    auth: { username: string; app_password: string }
+    wpId: number; expected: Record<string, string>; postType: 'posts' | 'pages'
+  },
+): Promise<void> {
+  try {
+    const missed = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, args.expected, args.postType)
+    if (missed.length === 0) return
+
+    const summary = missed
+      .map(m => `${m.key}: sent ${m.sent.length} chars, stored ${m.stored ? `"${m.stored.slice(0, 40)}"` : 'nothing'}`)
+      .join('; ')
+    console.warn(
+      `[approve] WordPress did not store ${missed.length} SEO field(s) for ${args.postType} ${args.wpId} ` +
+      `on ${args.siteUrl}: ${summary}. Install wordpress-plugin/rank-math-rest-meta.php on the site.`,
+    )
+    logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
+      resourceId: args.postRowId,
+      clientId:   args.clientId || undefined,
+      meta: {
+        site:     args.siteUrl,
+        wp_id:    args.wpId,
+        wp_type:  args.postType,
+        fields:   missed.map(m => m.key),
+        detail:   summary,
+        // Named here so whoever reads the log knows the fix without going to find it.
+        fix:      'Install wordpress-plugin/rank-math-rest-meta.php in wp-content/mu-plugins/ on this site.',
+      },
+    })
+  } catch (e) {
+    console.warn('[approve] SEO meta verification skipped:', e)
+  }
+}
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -421,6 +494,41 @@ export async function POST(
   const publishTime    = cs?.publish_time   ?? '09:00'
   const wpPublishMode  = cs?.wp_publish_mode ?? 'scheduled_draft'
 
+  // Two posts on one date must not go out at the same minute.
+  //
+  // publish_time is a single value per client, which was right while a cadence window held one
+  // post. With posts_per_run above 1 it put every post on that date at exactly 09:00 — they
+  // compete with each other in the feed and in the index on the day they most need the
+  // attention. Each post shifts by its position on the date.
+  //
+  // Ordered by id. The sequence is arbitrary and that is fine — what matters is that the posts on
+  // a date get different times and that a post's own time never moves, because re-pushing must not
+  // reschedule a live URL. A UUID key gives both; updated_at would give neither, and created_at
+  // does not exist on this table.
+  const STAGGER_MINUTES = 120
+  let slotOffsetMinutes = 0
+  if (p.target_publish_date) {
+    const { data: sameDay } = await db
+      .from('content_posts')
+      .select('id')
+      .eq('client_id', String(p.client_id ?? ''))
+      .eq('target_publish_date', String(p.target_publish_date))
+      .order('id', { ascending: true })
+    const siblings = (sameDay ?? []) as { id: string }[]
+    const position = siblings.findIndex(s => s.id === id)
+    if (position > 0) slotOffsetMinutes = position * STAGGER_MINUTES
+  }
+
+  /** publish_time plus this post's stagger, clamped inside the same day. */
+  const staggeredTime = (base: string): string => {
+    const [h, m] = base.split(':').map(Number)
+    if (!isFinite(h) || !isFinite(m)) return base
+    // Never roll into the next day: a post scheduled past midnight would publish on a date the
+    // calendar never planned, which is worse than two posts sharing an hour.
+    const total = Math.min(h * 60 + m + slotOffsetMinutes, 23 * 60 + 59)
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+  }
+
   // Determine WP status and scheduled date from target_publish_date
   let wpPublishStatus: 'draft' | 'future' | 'publish' = 'draft'
   let wpDate: string | undefined
@@ -429,7 +537,7 @@ export async function POST(
     wpPublishStatus = 'draft'
     wpDate = undefined
   } else if (p.target_publish_date) {
-    wpDate = `${String(p.target_publish_date)}T${publishTime}:00`
+    wpDate = `${String(p.target_publish_date)}T${staggeredTime(publishTime)}:00`
     wpPublishStatus = new Date(wpDate) > new Date() ? 'future' : 'publish'
   }
 
@@ -551,7 +659,7 @@ export async function POST(
         // Auto-push from cron or explicit publish mode — go live immediately
         saStatus = 'publish'
       } else if (saPublishMode !== 'draft_only' && p.target_publish_date) {
-        saDate   = `${String(p.target_publish_date)}T${saPublishTime}:00`
+        saDate   = `${String(p.target_publish_date)}T${staggeredTime(saPublishTime)}:00`
         saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
       }
 
@@ -583,6 +691,8 @@ export async function POST(
         wpParent = parentId
       }
 
+      const pageMeta = rankMathMeta(p)
+
       result = existingWpId !== null
         // `status` is deliberately omitted, exactly as in the blog branch below:
         // saStatus defaults to 'draft', so sending it would UN-PUBLISH a live
@@ -594,11 +704,7 @@ export async function POST(
             // must not move a URL that already has inbound links pointing at it.
             // The Rank Math block goes with it, so a re-push also refreshes the
             // live SEO title/description rather than leaving the first version.
-            meta: {
-              rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-              rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-              rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-            },
+            meta: pageMeta,
           })
         : await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
@@ -607,11 +713,15 @@ export async function POST(
         date:    saDate,
         slug:    wpSlug,
         parent:  wpParent,
-        meta: {
-          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-        },
+        meta: pageMeta,
+      })
+
+      // Same read-back as the blog branch. Service-area pages push the same three fields and
+      // had no check at all, so a page whose SEO title never landed looked identical to one
+      // whose did.
+      await reportMetaMisses({
+        postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
+        wpId: result.id, expected: pageMeta, postType: 'pages',
       })
     } else {
       const authorId = p.wp_author_id
@@ -683,11 +793,7 @@ export async function POST(
         }
       }
 
-      const wpMeta = {
-        rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-        rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-        rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-      }
+      const wpMeta = rankMathMeta(p)
 
       result = existingWpId !== null
         // Already live — overwrite in place so the URL and any links to it survive.
@@ -722,21 +828,10 @@ export async function POST(
             meta:           wpMeta,
           })
 
-      // Did the SEO meta actually stick?
-      //
-      // WordPress answers 200 whether it stored a meta key or silently dropped it, so a push can
-      // look perfect and set nothing. Measured on a live client post: the description came back
-      // byte-identical while the SEO title never took effect, and nothing here noticed.
-      //
-      // Read-only and best-effort — it never fails a push that already succeeded.
-      const metaMiss = await verifyPostMeta(siteUrl, auth, result.id, wpMeta)
-      if (metaMiss.length > 0) {
-        console.warn(
-          `[approve] WordPress did not store ${metaMiss.length} SEO field(s) for post ${id} (wp ${result.id}, ${siteUrl}): ` +
-          metaMiss.map(m => `${m.key} sent ${m.sent.length} chars, stored ${m.stored ? `"${m.stored.slice(0, 40)}"` : 'nothing'}`).join('; ') +
-          '. Rank Math fields must be registered with show_in_rest on the site to be writable.',
-        )
-      }
+      await reportMetaMisses({
+        postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
+        wpId: result.id, expected: wpMeta, postType: 'posts',
+      })
     }
 
     const wpEditUrl = isServiceArea
@@ -757,11 +852,17 @@ export async function POST(
       // WP returns no link at all, keep whatever was already stored rather than
       // nulling a permalink that was previously correct.
       //
-      // A '?p=<id>' link is WordPress's placeholder for a post that isn't public yet. Storing
-      // it makes an unpublished post look published and leaves a URL that will be wrong the
-      // moment it goes live, so it is deliberately not written here — /api/cron/wp-reconcile
+      // A '?p=<id>' link is WordPress's placeholder for a post that isn't public yet. Storing it
+      // makes an unpublished post look published and leaves a URL that will be wrong the moment it
+      // goes live, so it is not written while the post is unpublished — /api/cron/wp-reconcile
       // collects the real permalink once the post is out.
-      ...(result.link && !/[?&]p=\d+/.test(result.link) ? { published_url: result.link } : {}),
+      //
+      // Once the post IS public that same shape is the real thing: a site left on plain permalinks
+      // serves '?p=123' permanently, and refusing it there would leave that client with no
+      // published_url at all.
+      ...(result.link && !(isPlaceholderPermalink(result.link) && (result.status || wpPublishStatus) !== 'publish')
+        ? { published_url: result.link }
+        : {}),
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
