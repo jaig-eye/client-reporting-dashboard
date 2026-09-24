@@ -92,21 +92,20 @@ export async function GET(req: NextRequest) {
   if (connectionIds.length > 0) {
     const { data: conns } = await db
       .from('client_connections')
-      .select('id, auth, connector:connectors(config)')
+      .select('id, connector:connectors(auth, config)')
       .in('id', connectionIds)
-    type ConnRow = {
-      id: string
-      auth: Record<string, unknown> | null
-      connector: { config: Record<string, unknown> | null } | { config: Record<string, unknown> | null }[] | null
-    }
+    // auth and config both live on the connector, not on the client_connections row.
+    type Conn = { auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
+    type ConnRow = { id: string; connector: Conn | Conn[] | null }
     for (const c of (conns ?? []) as ConnRow[]) {
       // Credentials sit in either place depending on how the connection was set up — the push
       // path reads config first, then auth, and this has to agree with it or a site that works
       // for publishing would silently fail to reconcile.
       const conn   = Array.isArray(c.connector) ? c.connector[0] : c.connector
       const config = conn?.config ?? {}
-      const username = String(config.username     ?? c.auth?.username     ?? '')
-      const appPass  = String(config.app_password ?? c.auth?.app_password ?? '')
+      const auth   = conn?.auth   ?? {}
+      const username = String(config.username     ?? auth.username     ?? '')
+      const appPass  = String(config.app_password ?? auth.app_password ?? '')
       if (username && appPass) authByConnection.set(c.id, { username, app_password: appPass })
     }
   }
@@ -123,24 +122,24 @@ export async function GET(req: NextRequest) {
   if (clientsNeedingFallback.length > 0) {
     const { data: conns } = await db
       .from('client_connections')
-      .select('client_id, external_id, auth, connector:connectors(type, config)')
+      .select('client_id, external_id, connector:connectors(type, auth, config)')
       .in('client_id', clientsNeedingFallback)
       // The push path's fallback filters the same way; a paused connection is not a credential
       // source there and must not become one here.
       .eq('status', 'active')
+    type FallbackConn = { type?: string; auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
     type FallbackRow = {
       client_id: string
       external_id: string | null
-      auth: Record<string, unknown> | null
-      connector: { type?: string; config?: Record<string, unknown> | null }
-               | { type?: string; config?: Record<string, unknown> | null }[] | null
+      connector: FallbackConn | FallbackConn[] | null
     }
     for (const c of (conns ?? []) as FallbackRow[]) {
       const conn = Array.isArray(c.connector) ? c.connector[0] : c.connector
       if (conn?.type !== 'wordpress') continue
       const config   = conn.config ?? {}
-      const username = String(config.username     ?? c.auth?.username     ?? '')
-      const appPass  = String(config.app_password ?? c.auth?.app_password ?? '')
+      const connAuth = conn.auth   ?? {}
+      const username = String(config.username     ?? connAuth.username     ?? '')
+      const appPass  = String(config.app_password ?? connAuth.app_password ?? '')
       if (!username || !appPass) continue
       // Site resolved exactly as the push path resolves it.
       const site = String(config.site_url ?? c.external_id ?? '')
