@@ -347,6 +347,91 @@ function GscSection({
   )
 }
 
+// The other three sources topic selection reads (/api/admin/content/keyword-sources).
+interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
+interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[] }
+
+/** One column of a source table. `align` defaults to right, because most of these are numbers. */
+interface SourceColumn<T> {
+  label:  string
+  render: (row: T) => React.ReactNode
+  left?:  boolean
+}
+
+/**
+ * A titled, badged table for one keyword source.
+ *
+ * Renders nothing when the source has no rows, so a client without Ahrefs sees no Ahrefs card
+ * rather than an empty one — same behaviour as the Search Console sections above.
+ */
+function SourceSection<T>({
+  badge, badgeColor, badgeBg, provider, note, columns, rows, search, searchOn, unit = 'keyword',
+}: {
+  badge: string; badgeColor: string; badgeBg: string; provider: string; note?: string
+  columns: SourceColumn<T>[]; rows: T[]; search: string
+  searchOn: (row: T) => string
+  unit?: string
+}) {
+  const filtered = rows.filter(r => !search || searchOn(r).toLowerCase().includes(search.toLowerCase()))
+  if (filtered.length === 0) return null
+
+  return (
+    <div className="card p-5" style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 10 }}>
+        <span style={{
+          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          background: badgeBg, color: badgeColor,
+        }}>
+          {badge}
+        </span>
+        <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>{provider}</span>
+        <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+          {filtered.length} {unit}{filtered.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+      {note && (
+        <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{note}</p>
+      )}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              {columns.map(c => (
+                <th key={c.label} style={{
+                  padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
+                  fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
+                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+                }}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 25).map((row, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                {columns.map(c => (
+                  <td key={c.label} style={{
+                    padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
+                    color: c.left ? 'var(--text-primary)' : 'var(--text-muted)',
+                    fontVariantNumeric: c.left ? undefined : 'tabular-nums',
+                  }}>{c.render(row)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {filtered.length > 25 && (
+        <p style={{ margin: '8px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+          Showing the top 25 of {filtered.length}.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // Keyword rank row from the DataForSEO datastream (/api/admin/content/keyword-rankings).
 interface KeywordRankRow {
   keyword_id:         string
@@ -367,6 +452,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
+  const [sources, setSources]       = useState<SourcesPayload | null>(null)
 
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
@@ -381,6 +467,19 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
       .catch(() => { if (!cancelled) setRanks([]) })
     return () => { cancelled = true }
   }, [isActive, ranks, clientId])
+
+  // The other three sources, loaded the same way. Separate from the ranks call so a slow or
+  // missing one never blocks the other.
+  useEffect(() => {
+    if (!isActive || sources !== null) return
+    let cancelled = false
+    const empty: SourcesPayload = { paidTerms: [], ahrefs: [], researched: [] }
+    fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : empty)
+      .then(d => { if (!cancelled) setSources({ ...empty, ...(d as Partial<SourcesPayload>) }) })
+      .catch(() => { if (!cancelled) setSources(empty) })
+    return () => { cancelled = true }
+  }, [isActive, sources, clientId])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -405,7 +504,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics</h3>
           <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Search Console demand signals and DataForSEO keyword rank tracking. Keywords ranked below position 20 are the strongest candidates for new articles.
+            Every keyword source topic selection reads. Search Console is the primary driver; the rest widen what it can choose from. Keywords ranked below position 20 are the strongest candidates for new articles.
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -443,6 +542,46 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
         </div>
         <KeywordRankTable ranks={filteredRanks} loading={ranks === null} />
       </div>
+
+      {/* ── The sources that feed topic selection ──────────────────────────── */}
+      <SourceSection<PaidTermRow>
+        badge="Converted in Paid" badgeColor="#9f1239" badgeBg="#ffe4e6" provider="Google Ads"
+        note="Search terms that produced real leads in the last 90 days. Ranking for these organically has a known value — cost per lead is what we currently pay for the same visit."
+        rows={sources?.paidTerms ?? []} search={search} unit="term"
+        searchOn={r => r.term}
+        columns={[
+          { label: 'Search term', left: true, render: r => r.term },
+          { label: 'Leads',       render: r => r.conversions.toFixed(1) },
+          { label: 'Spend',       render: r => `$${r.spend.toFixed(2)}` },
+          { label: 'Cost / lead', render: r => r.costPerLead == null ? '—' : `$${r.costPerLead.toFixed(2)}` },
+        ]}
+      />
+
+      <SourceSection<AhrefsRow>
+        badge="Organic Positions" badgeColor="#115e59" badgeBg="#ccfbf1" provider="Ahrefs"
+        note="Where the site sits on terms Search Console under-reports. Positions 11–30 are the near-misses worth an article."
+        rows={sources?.ahrefs ?? []} search={search}
+        searchOn={r => r.keyword}
+        columns={[
+          { label: 'Keyword',    left: true, render: r => r.keyword },
+          { label: 'Position',   render: r => r.position   == null ? '—' : `#${r.position}` },
+          { label: 'Volume',     render: r => r.volume     == null ? '—' : r.volume.toLocaleString() },
+          { label: 'Difficulty', render: r => r.difficulty == null ? '—' : String(r.difficulty) },
+        ]}
+      />
+
+      <SourceSection<ResearchRow>
+        badge="Researched" badgeColor="#334155" badgeBg="#f1f5f9" provider="DataForSEO"
+        note="Candidates found from the domain, its competitors and the client's own services. Nothing has been written for these yet — they are the only source that can propose a subject the site has no presence in."
+        rows={sources?.researched ?? []} search={search}
+        searchOn={r => r.keyword}
+        columns={[
+          { label: 'Keyword',    left: true, render: r => r.keyword },
+          { label: 'Volume',     render: r => r.volume     == null ? '—' : r.volume.toLocaleString() },
+          { label: 'Difficulty', render: r => r.difficulty == null ? '—' : String(r.difficulty) },
+          { label: 'Intent',     render: r => r.intent ?? '—' },
+        ]}
+      />
 
       {/* ── Search Console insights ────────────────────────────────────────── */}
       {isEmpty ? (

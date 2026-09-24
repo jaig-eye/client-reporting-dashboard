@@ -1,0 +1,128 @@
+// /api/admin/content/keyword-sources?client_id=…
+//
+// The keyword sources topic selection reads, so the Analytics tab can show them.
+//
+// Search Console and tracked ranks already have a home in that tab. These three did not: they
+// shaped every topic decision and were invisible, so there was no way to check what the system
+// saw before it chose. That is the gap this closes — it surfaces data already being collected and
+// makes no external calls.
+//
+// Every query soft-fails independently. A client without Ahrefs still sees their paid terms, and a
+// client with none of it sees an empty panel rather than an error.
+
+import { NextRequest, NextResponse } from 'next/server'
+import { isAdminAuthed } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/server'
+
+export const dynamic = 'force-dynamic'
+
+/** Matches the window topic selection uses when it reads converting paid terms. */
+const PAID_WINDOW_DAYS = 90
+
+export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
+export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+
+export async function GET(req: NextRequest) {
+  if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const clientId = req.nextUrl.searchParams.get('client_id')
+  if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
+
+  const db = createAdminClient()
+
+  // ── Google Ads: terms that actually produced leads ────────────────────────
+  // Aggregated here rather than in SQL because PostgREST has no GROUP BY; the row count is
+  // bounded by the same limit topic selection uses.
+  const paidTerms: PaidTermRow[] = await (async () => {
+    try {
+      const since = new Date(Date.now() - PAID_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10)
+      const { data } = await db
+        .from('google_ads_search_terms')
+        .select('search_term, conversions, spend')
+        .eq('client_id', clientId)
+        .gte('date', since)
+        .gt('conversions', 0)
+        .limit(2000)
+      const byTerm = new Map<string, { conversions: number; spend: number }>()
+      for (const r of (data ?? []) as { search_term: string; conversions: number | null; spend: number | null }[]) {
+        const term = String(r.search_term ?? '').trim()
+        if (!term) continue
+        const agg = byTerm.get(term) ?? { conversions: 0, spend: 0 }
+        agg.conversions += Number(r.conversions) || 0
+        agg.spend       += Number(r.spend)       || 0
+        byTerm.set(term, agg)
+      }
+      return Array.from(byTerm.entries())
+        .map(([term, a]) => ({
+          term,
+          conversions: Number(a.conversions.toFixed(2)),
+          spend:       Number(a.spend.toFixed(2)),
+          // What a lead from this term actually cost — the number that says whether ranking for
+          // it organically is worth an article.
+          costPerLead: a.conversions > 0 ? Number((a.spend / a.conversions).toFixed(2)) : null,
+        }))
+        .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
+        .slice(0, 50)
+    } catch { return [] }
+  })()
+
+  // ── Ahrefs: organic positions GSC under-reports ───────────────────────────
+  const ahrefs: AhrefsRow[] = await (async () => {
+    try {
+      const { data } = await db
+        .from('ahrefs_keywords')
+        .select('keyword, position, volume, difficulty, date')
+        .eq('client_id', clientId)
+        .order('date', { ascending: false })
+        .limit(500)
+      // Newest row wins per keyword — the query is already newest-first.
+      const seen = new Map<string, AhrefsRow>()
+      for (const r of (data ?? []) as Record<string, unknown>[]) {
+        const keyword = String(r.keyword ?? '').trim()
+        if (!keyword || seen.has(keyword.toLowerCase())) continue
+        seen.set(keyword.toLowerCase(), {
+          keyword,
+          position:   r.position   == null ? null : Number(r.position),
+          volume:     r.volume     == null ? null : Number(r.volume),
+          difficulty: r.difficulty == null ? null : Number(r.difficulty),
+        })
+      }
+      return Array.from(seen.values())
+        .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+        .slice(0, 100)
+    } catch { return [] }
+  })()
+
+  // ── DataForSEO research: candidates nothing has been written for yet ──────
+  const researched: ResearchRow[] = await (async () => {
+    try {
+      const { data, error } = await db
+        .from('seo_keywords')
+        .select('keyword, search_volume, keyword_difficulty, intent')
+        .eq('client_id', clientId)
+        .eq('is_tracked', false)
+        .is('content_post_id', null)
+        .limit(60)
+      // PostgREST reports a bad query by RETURNING an error, not by throwing, so a bare catch
+      // sees nothing and the panel silently renders empty. Say so instead.
+      if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return [] }
+      // Sorted here, not in the query. A server-side
+      // `.order('search_volume', { nullsFirst: false })` on this exact select returned an empty
+      // array against local PostgREST — no error, just nothing — while the identical query
+      // without it returned every row. Sixty rows sort for nothing, so this sidesteps the
+      // question rather than depending on an answer I could not pin down.
+      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+        keyword:    String(r.keyword ?? '').trim(),
+        volume:     r.search_volume      == null ? null : Number(r.search_volume),
+        difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
+        intent:     r.intent             == null ? null : String(r.intent),
+      }))
+        .filter(k => k.keyword)
+        .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+    } catch { return [] }   // seo_keywords only exists from migration 189
+  })()
+
+  return NextResponse.json({ paidTerms, ahrefs, researched })
+}
