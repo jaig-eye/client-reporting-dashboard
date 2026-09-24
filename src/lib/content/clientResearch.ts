@@ -13,16 +13,23 @@
 //   · paid search terms that converted     (google_ads_search_terms — already in the database)
 //   · organic positions from Ahrefs        (ahrefs_keywords — already in the database)
 //
+// TWO JOBS, ONE CALL
+//
+// ranked_keywords answers "what does this domain rank for", and every row it returns carries that
+// keyword's POSITION. So the same call that seeds research is also a complete ranking snapshot of
+// the site — broader than per-keyword tracking, because it covers pages nobody registered a
+// keyword for. Recording it costs nothing extra.
+//
+// Those positions come from DataForSEO's index: refreshed weekly, over a SERP database that lags
+// 30-90 days on low-popularity queries — which is most of what a local business ranks for. Good
+// enough for a baseline, not good enough to tell whether last week's post is moving. Recent posts
+// get a live check in the rankings cron for that.
+//
 // WHAT THIS DOES NOT DO
 //
-// Nothing here starts tracking a keyword or commissions a post. Candidates land with
-// is_tracked = false and no linked post, which is the whole point: discovery produces a list for
-// a person to choose from. Tracking every candidate would multiply the rank-check bill by the
-// size of a Labs response, and writing from every candidate would hand topic selection to
-// whatever a keyword tool returned that morning.
-//
-// Rows already claimed by a post are never touched — a keyword's registration belongs to the
-// article that targets it.
+// Nothing here commissions a post. Candidates are a list for a person to choose from, not a
+// queue. Rows already claimed by a post are never touched — a keyword's registration belongs to
+// the article that targets it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/server'
@@ -34,6 +41,15 @@ import { recordDfsUsage } from './dataforseoUsage'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
 const MAX_COMPETITORS = 3
+/**
+ * Research older than this is redone; anything newer is reused as-is.
+ *
+ * Six Labs calls is roughly six cents, so the saving is small — the real reason is stability.
+ * Re-researching on every topic run would shift the candidate set week to week and make topic
+ * selection jump around, when what a content plan wants is coherent coverage of a theme across
+ * several posts.
+ */
+const RESEARCH_MAX_AGE_DAYS = 30
 /** Ceiling on what one run will store, so a broad market can't write thousands of rows. */
 const MAX_CANDIDATES = 400
 
@@ -42,6 +58,8 @@ export interface DiscoveryResult {
   reason?:    string
   discovered: number
   stored:     number
+  /** Own-domain positions recorded from the same ranked_keywords rows. */
+  snapshotted: number
   bySource:   Record<string, number>
   cost:       number
 }
@@ -74,7 +92,7 @@ function score(c: Candidate, paidConversions: number): number {
  * sources are still read, so a client without a connection gets a smaller pool rather than none.
  */
 export async function discoverKeywords(clientId: string): Promise<DiscoveryResult> {
-  const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, bySource: {}, cost: 0 }
+  const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, snapshotted: 0, bySource: {}, cost: 0 }
   if (!clientId) return { ...empty, reason: 'no client' }
 
   const db = createAdminClient()
@@ -165,10 +183,16 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   } catch { /* skip */ }
 
   // ── DataForSEO Labs (only when connected) ─────────────────────────────────
+  // ownRanked is kept aside: those rows carry this client's own positions, and recording them is
+  // the site-wide ranking snapshot.
+  const ownRanked: DfsKeywordCandidate[] = []
   if (creds && domain) {
     const labsOpts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
 
-    for (const c of await dfsKeywordsForSite(domain, creds, { ...labsOpts, source: 'site', limit: 300 })) add(c)
+    for (const c of await dfsKeywordsForSite(domain, creds, { ...labsOpts, source: 'site', limit: 300 })) {
+      ownRanked.push(c)
+      add(c)
+    }
 
     const competitors = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
     for (const comp of competitors) {
@@ -204,6 +228,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // ── Store, without disturbing anything a post already claimed ─────────────
   let stored = 0
+  let snapshotted = 0
   const bySource: Record<string, number> = {}
   try {
     const { data: existing } = await db
@@ -233,9 +258,12 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
     for (let i = 0; i < rows.length; i += 200) {
       const { error } = await db.from('seo_keywords').insert(rows.slice(i, i + 200))
-      if (error) { console.error('[discovery] insert failed:', error.message); break }
+      if (error) { console.error('[research] insert failed:', error.message); break }
       stored += rows.slice(i, i + 200).length
     }
+
+    // The ranking snapshot, from rows already paid for.
+    snapshotted = await recordOwnRankings(clientId, ownRanked)
   } catch (e) {
     // seo_keywords only exists from migration 189.
     console.warn('[discovery] cannot store candidates (apply migrations 189/190):', e)
@@ -244,27 +272,114 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   if (cost > 0) await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost, units: ranked.length, date: new Date().toISOString().slice(0, 10) })
 
-  console.log(`[discovery] client ${clientId}: ${ranked.length} candidates, ${stored} new, $${cost.toFixed(4)}`)
-  return { ok: true, discovered: ranked.length, stored, bySource, cost: Number(cost.toFixed(4)) }
+  console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
+  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)) }
 }
 
 /**
- * How many unclaimed candidates a client still has.
+ * Record this client's own positions from the ranked_keywords rows research already fetched.
  *
- * Drives the refill trigger: discovery runs when the pool is thin rather than on a calendar, so a
- * client publishing twice a week refills sooner than one publishing monthly, with no rule to tune.
+ * Every keyword needs a seo_keywords row to hang a ranking off, and research has just written
+ * them, so this resolves ids by normalized keyword and upserts one snapshot per keyword.
+ *
+ * device 'desktop' because Labs data is desktop-based, and provider 'dataforseo_labs' so a
+ * snapshot is never confused with a live check — they have very different freshness.
  */
-export async function unclaimedPoolSize(clientId: string): Promise<number> {
+async function recordOwnRankings(
+  clientId: string,
+  ownRanked: DfsKeywordCandidate[],
+): Promise<number> {
+  const ranked = ownRanked.filter(c => c.position != null && c.keyword.trim())
+  if (ranked.length === 0) return 0
   try {
     const db = createAdminClient()
-    const { count } = await db
+    const byNormalized = new Map(ranked.map(c => [normalize(c.keyword), c]))
+    const { data } = await db
       .from('seo_keywords')
-      .select('id', { count: 'exact', head: true })
+      .select('id, normalized_keyword')
+      .eq('client_id', clientId)
+      .in('normalized_keyword', Array.from(byNormalized.keys()))
+
+    const today = new Date().toISOString().slice(0, 10)
+    const rows = ((data ?? []) as { id: string; normalized_keyword: string }[])
+      .map(k => {
+        const c = byNormalized.get(k.normalized_keyword)
+        if (!c) return null
+        return {
+          keyword_id:    k.id,
+          client_id:     clientId,
+          date:          today,
+          device:        'desktop',
+          position:      c.position,
+          rank_absolute: null,
+          url:           null,
+          serp_features: null,
+          search_volume: c.search_volume,
+          provider:      'dataforseo_labs',
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+
+    let written = 0
+    for (let i = 0; i < rows.length; i += 200) {
+      const chunk = rows.slice(i, i + 200)
+      const { error } = await db.from('seo_rankings').upsert(chunk, { onConflict: 'keyword_id,date,device' })
+      if (error) { console.error('[research] snapshot failed:', error.message); break }
+      written += chunk.length
+    }
+    return written
+  } catch (e) {
+    // seo_rankings only exists from migration 190.
+    console.warn('[research] cannot record positions (apply migration 190):', e)
+    return 0
+  }
+}
+
+/**
+ * Candidates for topic selection, researching first only when what we have has gone stale.
+ *
+ * This is the entry point topic selection calls. Reuse is the normal path: research runs at most
+ * once every RESEARCH_MAX_AGE_DAYS per client, so the cost is a few cents a month and the
+ * candidate set stays stable enough to plan a run of posts around.
+ */
+export async function getResearchCandidates(clientId: string): Promise<{
+  candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null }>
+  refreshed:  boolean
+}> {
+  const read = async () => {
+    const { data } = await createAdminClient()
+      .from('seo_keywords')
+      .select('keyword, search_volume, keyword_difficulty, intent')
       .eq('client_id', clientId)
       .eq('is_tracked', false)
       .is('content_post_id', null)
-    return count ?? 0
-  } catch {
-    return 0
+      .order('search_volume', { ascending: false, nullsFirst: false })
+      .limit(40)
+    return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+      keyword:    String(r.keyword ?? '').trim(),
+      volume:     r.search_volume      == null ? null : Number(r.search_volume),
+      difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
+      intent:     r.intent             == null ? null : String(r.intent),
+    })).filter(k => k.keyword)
   }
+
+  try {
+    const db = createAdminClient()
+    const cutoff = new Date(Date.now() - RESEARCH_MAX_AGE_DAYS * 86_400_000).toISOString()
+    const { data: fresh } = await db
+      .from('seo_keywords')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('source', 'dataforseo')
+      .gte('created_at', cutoff)
+      .limit(1)
+
+    if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
+  } catch {
+    // Table missing (migration 189 unapplied) — research below will soft-fail the same way.
+    return { candidates: [], refreshed: false }
+  }
+
+  await discoverKeywords(clientId)
+  return { candidates: await read(), refreshed: true }
 }

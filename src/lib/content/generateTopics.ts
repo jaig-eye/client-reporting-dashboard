@@ -23,6 +23,7 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { getClientDfsContext } from '@/lib/content/competitiveIntel'
 import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
+import { getResearchCandidates } from '@/lib/content/clientResearch'
 
 interface TopicIdea {
   topic:               string
@@ -333,29 +334,22 @@ export async function generateTopicsForClient(
     }
   })()
 
-  // ── The discovered candidate pool ──────────────────────────────────────────
-  // Unclaimed, untracked candidates from keyword discovery. The only source here that can
-  // propose a subject the client has never ranked for. Same dormant-safe read as the tracked
-  // rankings: no table, no pool, and selection behaves exactly as it does today.
+  // ── Researched candidates ─────────────────────────────────────────────────
+  // The only source here that can propose a subject the client has never ranked for — everything
+  // else describes ground they already hold. Research runs inline when what is stored has aged
+  // past its window, and is reused otherwise; the same call also refreshes the site-wide ranking
+  // snapshot, so this is where both come from.
+  //
+  // Soft-fails to an empty list, exactly like every other DataForSEO path: without a connection
+  // or the migrations, selection behaves as it does today.
   type PoolKeyword = { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
   const candidatePool: PoolKeyword[] = await (async () => {
     try {
-      const { data, error } = await db
-        .from('seo_keywords')
-        .select('keyword, search_volume, keyword_difficulty, intent')
-        .eq('client_id', clientId)
-        .eq('is_tracked', false)
-        .is('content_post_id', null)
-        .order('search_volume', { ascending: false, nullsFirst: false })
-        .limit(40)
-      if (error) return []
-      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
-        keyword:    String(r.keyword ?? '').trim(),
-        volume:     r.search_volume == null ? null : Number(r.search_volume),
-        difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
-        intent:     r.intent == null ? null : String(r.intent),
-      })).filter(k => k.keyword)
-    } catch {
+      const { candidates, refreshed } = await getResearchCandidates(clientId)
+      if (refreshed) console.log(`[generateTopics] refreshed research for client ${clientId}: ${candidates.length} candidate(s)`)
+      return candidates
+    } catch (e) {
+      console.warn('[generateTopics] research unavailable:', e)
       return []
     }
   })()
@@ -621,7 +615,7 @@ export async function generateTopicsForClient(
     return `  - "${k.keyword}"${bits.length ? ` (${bits.join(', ')})` : ''}`
   }
   const poolText = candidatePool.length > 0
-    ? `\nDISCOVERED OPPORTUNITIES — researched for this client and not yet written about. Unlike every section above, these are NOT things the site already ranks for, so they are the only route to a subject the client sells but has no presence in. Treat them as candidates rather than instructions; every guardrail below still applies.\n${candidatePool.slice(0, 20).map(poolLine).join('\n')}`
+    ? `\nRESEARCHED OPPORTUNITIES — found for this client and not yet written about. Unlike every section above, these are NOT things the site already ranks for, so they are the only route to a subject the client sells but has no presence in. Treat them as candidates rather than instructions; every guardrail below still applies.\n${candidatePool.slice(0, 20).map(poolLine).join('\n')}`
     : ''
 
   const rankNearText = rankNear.length > 0
