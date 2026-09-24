@@ -155,13 +155,17 @@ export async function verifyPostMeta(
     // No meta object at all means the site doesn't expose it — that is not evidence of a problem.
     if (!meta || typeof meta !== 'object') return []
     const wrong: { key: string; sent: string; stored: string }[] = []
+    // WordPress sanitizes on the way in — sanitize_text_field collapses whitespace — so a title
+    // with a double space comes back legitimately different. Comparing raw would report that as
+    // "not stored", and a report that cries wolf is worse than no report.
+    const comparable = (v: string) => v.replace(/\s+/g, ' ').trim()
     for (const [key, sent] of Object.entries(expected)) {
       // A key we deliberately sent empty is not expected to come back.
       if (!sent) continue
       // A key absent from the response was never registered; a key present but different was
       // registered and then overwritten. Both are worth seeing, and the value says which.
       const stored = meta[key] == null ? '' : String(meta[key])
-      if (stored !== sent) wrong.push({ key, sent, stored })
+      if (comparable(stored) !== comparable(sent)) wrong.push({ key, sent, stored })
     }
     return wrong
   } catch {

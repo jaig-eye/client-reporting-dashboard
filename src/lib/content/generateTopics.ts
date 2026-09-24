@@ -981,16 +981,26 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       // A longer variant of a protected keyword — "lawn care" protected, "lawn care in winter"
       // proposed. That is a legitimate article, but only as a supporting one. Whole-phrase match
       // so "careers" never matches "care".
+      //
+      // The LONGEST match wins, not the first. Map order is insertion order — GSC, then Ahrefs,
+      // then tracked ranks — which says nothing about specificity, so first-match could tell a
+      // "lawn care in winter" article to support "care" and link to that page instead. A
+      // directive naming the wrong URL is worse than none: it points the internal link at the
+      // weaker page.
+      let best: { prot: string; info: { position: number; url: string | null } } | null = null
       for (const [prot, info] of Array.from(protectedKeywords.entries())) {
         if (kw === prot) continue
         if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
+        if (!best || prot.length > best.prot.length) best = { prot, info }
+      }
+      if (best) {
+        const { prot, info } = best
         const directive =
           `SUPPORTING ARTICLE — the client already ranks #${info.position} for "${prot}"` +
           `${info.url ? ` at ${info.url}` : ''}. This must not compete with that page: cover a` +
           ` genuinely narrower question and link to it${info.url ? ` (${info.url})` : ''} as the primary internal link.`
         t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
         demoted.push(`"${t.target_keyword}" → supports "${prot}"`)
-        break
       }
       return true
     })

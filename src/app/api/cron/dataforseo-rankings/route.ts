@@ -72,7 +72,14 @@ function stableOffset(seed: string, modulo: number): number {
  * instead of bunching every keyword onto the same day — the reason the 600-per-run cap used to
  * bind at all.
  */
-function isDue(keywordId: string, device: SeoDevice, ageDays: number | null, lastChecked: string | null, epochDay: number): boolean {
+function isDue(
+  keywordId: string, device: SeoDevice, ageDays: number | null,
+  lastChecked: string | null, epochDay: number, awaitingPublish = false,
+): boolean {
+  // Nothing to find yet. A keyword is claimed when its article is generated, which is days or
+  // weeks before that article goes out, so without this every pending post's keyword would be
+  // checked at the top of the ladder for the whole wait — paying for a guaranteed "not found".
+  if (awaitingPublish) return false
   const interval = checkIntervalDays(ageDays, device)
   if (interval === null) return false
   // Never checked, and old enough to have a position worth recording: take the baseline now
@@ -135,7 +142,7 @@ export async function GET(req: NextRequest) {
   usable.forEach((u, i) => {
     for (const kw of keywordLists[i]) {
       for (const device of u.cfg.devices) {
-        if (!isDue(kw.id, device, kw.age_days, kw.last_checked_at, epochDay)) { skippedNotDue++; continue }
+        if (!isDue(kw.id, device, kw.age_days, kw.last_checked_at, epochDay, kw.awaiting_publish)) { skippedNotDue++; continue }
         jobs.push({
           clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
           // The connection's tracking config is the client's authoritative market. (The keyword's

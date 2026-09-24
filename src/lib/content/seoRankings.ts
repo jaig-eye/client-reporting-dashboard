@@ -68,19 +68,28 @@ export async function registerKeyword(params: {
     const db = createAdminClient()
     const { data: existing } = await db
       .from('seo_keywords')
-      .select('id, content_post_id')
+      .select('id, content_post_id, is_tracked')
       .eq('client_id', params.clientId)
       .eq('normalized_keyword', normalized)
       .eq('location_code', location_code)
       .eq('language_code', language_code)
       .maybeSingle()
 
-    const row = existing as { id?: string; content_post_id?: string | null } | null
+    const row = existing as { id?: string; content_post_id?: string | null; is_tracked?: boolean | null } | null
     if (row?.id) {
       // Fill the post link only if empty — never overwrite an earlier post's claim.
       if (params.contentPostId && !row.content_post_id) {
         await db.from('seo_keywords')
-          .update({ content_post_id: params.contentPostId, updated_at: new Date().toISOString() })
+          .update({
+            content_post_id: params.contentPostId,
+            // Writing the article is what turns a candidate into something worth measuring.
+            // Discovery deliberately stores its suggestions untracked so nobody is billed to
+            // rank-check a list a tool produced; without this, a keyword we researched, chose and
+            // wrote for stayed untracked forever while one the model invented was tracked by
+            // default. Only ever set here, never cleared — un-tracking stays a human decision.
+            is_tracked:      true,
+            updated_at:      new Date().toISOString(),
+          })
           .eq('id', row.id)
       }
       return row.id
@@ -211,10 +220,19 @@ export interface TrackedKeyword {
   /** The post this keyword was registered for, when it came from content. */
   content_post_id: string | null
   /**
-   * Days since the post went live, or since the keyword was registered when there is no post.
+   * Days since the post went live. Null when no post backs this keyword — a money keyword or a
+   * manual one, which never matures and stays at the top of the cadence ladder.
    * Drives the check cadence — see checkIntervalDays in the rankings cron.
    */
   age_days:        number | null
+  /**
+   * A post is attached but has not published yet.
+   *
+   * Distinct from age_days === null, which means there is no post at all. A draft has nothing to
+   * rank, so checking it buys a guaranteed miss — and keywords are claimed at generation, often
+   * weeks before publication, so this is the common case rather than an edge one.
+   */
+  awaiting_publish: boolean
 }
 
 /** Tracked keywords for a client (the cron rank-checks these). Carries last_checked_at so the
@@ -260,13 +278,15 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
       // at the top of the ladder rather than letting them decay.
       const anchor = postId ? (publishedAt.get(postId) ?? null) : null
       return {
-        id:              String(k.id),
-        keyword:         String(k.keyword ?? ''),
-        location_code:   numOrNull(k.location_code) ?? 2840,
-        language_code:   String(k.language_code ?? 'en'),
-        last_checked_at: k.last_checked_at ? String(k.last_checked_at) : null,
-        content_post_id: postId,
-        age_days:        postId ? daysSince(anchor) : null,
+        id:               String(k.id),
+        keyword:          String(k.keyword ?? ''),
+        location_code:    numOrNull(k.location_code) ?? 2840,
+        language_code:    String(k.language_code ?? 'en'),
+        last_checked_at:  k.last_checked_at ? String(k.last_checked_at) : null,
+        content_post_id:  postId,
+        age_days:         postId ? daysSince(anchor) : null,
+        // A post that exists but has never published. Its keyword has nothing to rank yet.
+        awaiting_publish: !!postId && anchor === null,
       }
     })
   } catch {

@@ -14,6 +14,10 @@
 //   · scheduled, and the date has passed — either it published (collect the permalink) or it
 //     missed its slot and is still sitting there, which is worth seeing rather than assuming.
 //   · a stored '?p=' placeholder — WordPress only serves that before a post is public.
+//   · a stored wp-admin URL — an editor link that predates the split between published_url and
+//     platform_edit_url. Current code cannot write one, but rows carrying one are still out there,
+//     and internal-link injection reads published_url: left alone, a client article can end up
+//     linking readers to a login screen.
 //
 // Read-only against WordPress. Nothing is published, unpublished or rescheduled here; a post that
 // genuinely missed its schedule is reported, not forced out, because publishing a week-late post
@@ -57,7 +61,15 @@ export async function GET(req: NextRequest) {
     .from('content_posts')
     .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id')
     .not('wp_post_id', 'is', null)
-    .or(`and(wp_status.eq.future,target_publish_date.lte.${today}),published_url.like.*?p=*`)
+    // LIKE cannot express the '&p=' form, so this is fractionally narrower than
+    // isPlaceholderLink below. That is the safe direction: a candidate missed costs a stale row,
+    // a candidate wrongly matched costs a write. WordPress emits '?p=' anyway — it is the first
+    // query parameter — so the two agree in practice.
+    .or(
+      `and(wp_status.eq.future,target_publish_date.lte.${today}),` +
+      `published_url.like.*?p=*,` +
+      `published_url.like.*wp-admin*`,
+    )
     .limit(MAX_POSTS_PER_RUN)
 
   if (error) {
@@ -100,17 +112,25 @@ export async function GET(req: NextRequest) {
   }
 
   // The per-client fallback, resolved once for the clients that need it.
-  const fallbackByClient = new Map<string, { username: string; app_password: string }>()
+  //
+  // Keyed by client, but a client can have more than one WordPress site, so each candidate keeps
+  // the site it belongs to. Borrowing the other site's credentials fails the read and counts the
+  // post unreadable — silently reopening the gap this fallback was added to close.
+  const fallbackByClient = new Map<string, Array<{ site: string; auth: { username: string; app_password: string } }>>()
   const clientsNeedingFallback = Array.from(new Set(
     posts.filter(p => !p.connection_id || !authByConnection.has(p.connection_id)).map(p => p.client_id),
   ))
   if (clientsNeedingFallback.length > 0) {
     const { data: conns } = await db
       .from('client_connections')
-      .select('client_id, auth, connector:connectors(type, config)')
+      .select('client_id, external_id, auth, connector:connectors(type, config)')
       .in('client_id', clientsNeedingFallback)
+      // The push path's fallback filters the same way; a paused connection is not a credential
+      // source there and must not become one here.
+      .eq('status', 'active')
     type FallbackRow = {
       client_id: string
+      external_id: string | null
       auth: Record<string, unknown> | null
       connector: { type?: string; config?: Record<string, unknown> | null }
                | { type?: string; config?: Record<string, unknown> | null }[] | null
@@ -118,19 +138,33 @@ export async function GET(req: NextRequest) {
     for (const c of (conns ?? []) as FallbackRow[]) {
       const conn = Array.isArray(c.connector) ? c.connector[0] : c.connector
       if (conn?.type !== 'wordpress') continue
-      if (fallbackByClient.has(c.client_id)) continue
       const config   = conn.config ?? {}
       const username = String(config.username     ?? c.auth?.username     ?? '')
       const appPass  = String(config.app_password ?? c.auth?.app_password ?? '')
-      if (username && appPass) fallbackByClient.set(c.client_id, { username, app_password: appPass })
+      if (!username || !appPass) continue
+      // Site resolved exactly as the push path resolves it.
+      const site = String(config.site_url ?? c.external_id ?? '')
+      const list = fallbackByClient.get(c.client_id) ?? []
+      list.push({ site, auth: { username, app_password: appPass } })
+      fallbackByClient.set(c.client_id, list)
     }
+  }
+
+  /** Compare sites the way a human would: protocol, case and trailing slash carry no meaning. */
+  const sameSite = (a: string, b: string) => {
+    const norm = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '')
+    return !!a && !!b && norm(a) === norm(b)
   }
 
   let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0
 
   for (const post of posts) {
+    const candidates = fallbackByClient.get(post.client_id) ?? []
     const auth    = (post.connection_id ? authByConnection.get(post.connection_id) : undefined)
-                 ?? fallbackByClient.get(post.client_id)
+                 // Prefer the connection for the site this post actually lives on; only fall back
+                 // to the client's single WordPress connection when there is no better match.
+                 ?? candidates.find(c => sameSite(c.site, post.wp_site_url ?? ''))?.auth
+                 ?? (candidates.length === 1 ? candidates[0].auth : undefined)
     const siteUrl = post.wp_site_url
     if (!auth || !siteUrl || post.wp_post_id == null) { unreadable++; continue }
 

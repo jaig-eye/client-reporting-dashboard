@@ -381,20 +381,27 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
               <option value="">Use global default</option>
               {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>×</span>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={10}
-              style={{ width: 72 }}
-              aria-label="Posts per publishing window"
-              value={form.posts_per_run ?? 1}
-              onChange={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
-            />
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-              {(form.posts_per_run ?? 1) === 1 ? 'post' : 'posts'}
-            </span>
+            {/* One phrase, so a wrap never strands the "×" on the end of a line. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>×</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                style={{ width: 72 }}
+                aria-label="Posts per publishing window"
+                value={form.posts_per_run ?? 1}
+                // Ceiling on change, floor on blur. Clamping the floor per keystroke made the
+                // field impossible to clear — delete it and Number('') || 1 wrote a 1 straight
+                // back — while correcting an empty field when focus leaves is expected.
+                onChange={e => set('posts_per_run', Math.min(10, Math.max(0, Number(e.target.value) || 0)))}
+                onBlur={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+              />
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                {(form.posts_per_run ?? 1) === 1 ? 'post' : 'posts'}
+              </span>
+            </div>
             {showDayPicker && (<>
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
               <select className="input" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
