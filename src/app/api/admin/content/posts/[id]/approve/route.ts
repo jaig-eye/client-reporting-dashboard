@@ -8,6 +8,7 @@ import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta } from '@/lib/connectors/wordpress'
+import { xmlrpcSetPostMeta } from '@/lib/connectors/wordpressXmlrpc'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
@@ -65,12 +66,31 @@ async function reportMetaMisses(
     const missed = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, args.expected, args.postType)
     if (missed.length === 0) return
 
-    const summary = missed
+    // REST dropped these. Write them over XML-RPC, which does not consult show_in_rest, then ask
+    // WordPress again rather than trusting the write — the whole reason this code exists is that a
+    // successful-looking response proved nothing.
+    const repair: Record<string, string> = {}
+    for (const m of missed) repair[m.key] = m.sent
+    const wrote = await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair)
+
+    const stillMissing = wrote
+      ? await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType)
+      : missed
+
+    if (stillMissing.length === 0) {
+      console.log(
+        `[approve] repaired ${missed.length} SEO field(s) over XML-RPC for ${args.postType} ${args.wpId} on ${args.siteUrl}`,
+      )
+      return
+    }
+
+    const summary = stillMissing
       .map(m => `${m.key}: sent ${m.sent.length} chars, stored ${m.stored ? `"${m.stored.slice(0, 40)}"` : 'nothing'}`)
       .join('; ')
     console.warn(
-      `[approve] WordPress did not store ${missed.length} SEO field(s) for ${args.postType} ${args.wpId} ` +
-      `on ${args.siteUrl}: ${summary}. Install wordpress-plugin/rank-math-rest-meta.php on the site.`,
+      `[approve] ${stillMissing.length} SEO field(s) could not be stored for ${args.postType} ${args.wpId} ` +
+      `on ${args.siteUrl}: ${summary}. REST drops them (Rank Math does not register its keys) and ` +
+      `XML-RPC ${wrote ? 'accepted the write without it taking effect' : 'is unavailable'}.`,
     )
     logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
       resourceId: args.postRowId,
@@ -79,10 +99,11 @@ async function reportMetaMisses(
         site:     args.siteUrl,
         wp_id:    args.wpId,
         wp_type:  args.postType,
-        fields:   missed.map(m => m.key),
+        fields:   stillMissing.map(m => m.key),
         detail:   summary,
-        // Named here so whoever reads the log knows the fix without going to find it.
-        fix:      'Install wordpress-plugin/rank-math-rest-meta.php in wp-content/mu-plugins/ on this site.',
+        // What was tried, so nobody re-investigates from scratch.
+        rest:     'rejected — Rank Math does not register its meta keys with show_in_rest',
+        xmlrpc:   wrote ? 'accepted the write but the value did not stick' : 'unavailable (xmlrpc.php disabled or blocked)',
       },
     })
   } catch (e) {
@@ -484,11 +505,14 @@ export async function POST(
   const auth = { username, app_password: appPassword }
 
   // Fetch publish time and wp_publish_mode from content settings
-  const { data: csRow } = await db
+  const { data: csRow, error: csErr } = await db
     .from('content_settings')
     .select('publish_time, wp_publish_mode, default_author_id, default_category_ids')
     .eq('client_id', String(p.client_id))
     .maybeSingle()
+  // Falling through to defaults here silently publishes at 09:00 in 'scheduled_draft' mode, which
+  // may be nothing like what the client configured.
+  if (csErr) console.warn('[approve] cannot read publish settings, using defaults:', csErr.message)
   type CsRow = { publish_time?: string | null; wp_publish_mode?: string | null; default_author_id?: number | null; default_category_ids?: number[] | null }
   const cs             = csRow as CsRow | null
   const publishTime    = cs?.publish_time   ?? '09:00'

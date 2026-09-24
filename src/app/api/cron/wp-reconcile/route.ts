@@ -90,10 +90,13 @@ export async function GET(req: NextRequest) {
   const connectionIds = Array.from(new Set(posts.map(p => p.connection_id).filter((c): c is string => !!c)))
   const authByConnection = new Map<string, { username: string; app_password: string }>()
   if (connectionIds.length > 0) {
-    const { data: conns } = await db
+    const { data: conns, error: connErr } = await db
       .from('client_connections')
       .select('id, connector:connectors(auth, config)')
       .in('id', connectionIds)
+    // This exact query once selected a column that does not exist. It returned no rows and no
+    // exception, every post counted unreadable, and the cron reported ok:true having done nothing.
+    if (connErr) console.error('[cron/wp-reconcile] connection lookup failed:', connErr.message)
     // auth and config both live on the connector, not on the client_connections row.
     type Conn = { auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
     type ConnRow = { id: string; connector: Conn | Conn[] | null }
@@ -120,13 +123,14 @@ export async function GET(req: NextRequest) {
     posts.filter(p => !p.connection_id || !authByConnection.has(p.connection_id)).map(p => p.client_id),
   ))
   if (clientsNeedingFallback.length > 0) {
-    const { data: conns } = await db
+    const { data: conns, error: fbErr } = await db
       .from('client_connections')
       .select('client_id, external_id, connector:connectors(type, auth, config)')
       .in('client_id', clientsNeedingFallback)
       // The push path's fallback filters the same way; a paused connection is not a credential
       // source there and must not become one here.
       .eq('status', 'active')
+    if (fbErr) console.error('[cron/wp-reconcile] fallback connection lookup failed:', fbErr.message)
     type FallbackConn = { type?: string; auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
     type FallbackRow = {
       client_id: string

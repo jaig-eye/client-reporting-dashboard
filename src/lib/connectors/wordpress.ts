@@ -130,9 +130,9 @@ export interface WpPostPayload {
  * `show_in_rest`, answering 200 either way — so a push can look completely successful and set
  * nothing. This asks the question directly: fetch the post as the editor sees it and compare.
  *
- * The repair for a key that does not stick is site-side: Rank Math never registers these keys with
- * `show_in_rest`, and its own REST namespace is read-only, so WordPress discards them. Installing
- * wordpress-plugin/rank-math-rest-meta.php registers them and the same push starts working.
+ * A key that does not stick is repaired over XML-RPC — see lib/connectors/wordpressXmlrpc.ts.
+ * Rank Math never registers these keys with `show_in_rest` and its own REST namespace is
+ * read-only, so REST will always discard them; wp.editPost writes the meta directly instead.
  *
  * Best-effort by design. A site that refuses `context=edit`, a plugin that hides the field, or
  * any network failure returns an empty list rather than failing a publish that already worked.

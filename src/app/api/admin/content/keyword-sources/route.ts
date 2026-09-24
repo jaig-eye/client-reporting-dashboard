@@ -38,13 +38,14 @@ export async function GET(req: NextRequest) {
   const paidTerms: PaidTermRow[] = await (async () => {
     try {
       const since = new Date(Date.now() - PAID_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10)
-      const { data } = await db
+      const { data, error } = await db
         .from('google_ads_search_terms')
         .select('search_term, conversions, spend')
         .eq('client_id', clientId)
         .gte('date', since)
         .gt('conversions', 0)
         .limit(2000)
+      if (error) { console.warn('[keyword-sources] paid terms query failed:', error.message); return [] }
       const byTerm = new Map<string, { conversions: number; spend: number }>()
       for (const r of (data ?? []) as { search_term: string; conversions: number | null; spend: number | null }[]) {
         const term = String(r.search_term ?? '').trim()
@@ -71,12 +72,13 @@ export async function GET(req: NextRequest) {
   // ── Ahrefs: organic positions GSC under-reports ───────────────────────────
   const ahrefs: AhrefsRow[] = await (async () => {
     try {
-      const { data } = await db
+      const { data, error } = await db
         .from('ahrefs_keywords')
         .select('keyword, position, volume, difficulty, date')
         .eq('client_id', clientId)
         .order('date', { ascending: false })
         .limit(500)
+      if (error) { console.warn('[keyword-sources] ahrefs query failed:', error.message); return [] }
       // Newest row wins per keyword — the query is already newest-first.
       const seen = new Map<string, AhrefsRow>()
       for (const r of (data ?? []) as Record<string, unknown>[]) {

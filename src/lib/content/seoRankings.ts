@@ -256,10 +256,14 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     const postIds = Array.from(new Set(rows.map(r => r.content_post_id).filter((v): v is string => typeof v === 'string')))
     const publishedAt = new Map<string, string>()
     if (postIds.length > 0) {
-      const { data: posts } = await db
+      const { data: posts, error: postsErr } = await db
         .from('content_posts')
         .select('id, published_at')
         .in('id', postIds)
+      // Ages drive the whole cadence. A failure leaves every age null, which reads as "money
+      // keyword" and puts the entire universe on the fastest check interval — the expensive
+      // direction, silently.
+      if (postsErr) console.warn('[seoRankings] cannot read post dates, ages unavailable:', postsErr.message)
       for (const p of (posts ?? []) as { id: string; published_at: string | null }[]) {
         if (p.published_at) publishedAt.set(p.id, p.published_at)
       }

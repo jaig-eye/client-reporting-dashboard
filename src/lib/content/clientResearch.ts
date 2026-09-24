@@ -104,10 +104,13 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   let domain = ''
   let cfg: SeoTrackingConfig = resolveSeoConfig(null, null)
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from('client_connections')
       .select('external_id, config, connector:connectors(type, auth, config)')
       .eq('client_id', clientId)
+    // Without this, an unreadable connection is indistinguishable from "not connected" and the
+    // client quietly gets database-only research forever.
+    if (error) console.warn('[research] cannot read connections:', error.message)
     type Row = {
       external_id: string | null
       config: Record<string, unknown> | null
@@ -148,13 +151,14 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   const windowStart = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
   const paidConversions = new Map<string, number>()
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from('google_ads_search_terms')
       .select('search_term, conversions')
       .eq('client_id', clientId)
       .gte('date', windowStart)
       .gt('conversions', 0)
       .limit(2000)
+    if (error) console.warn('[research] paid terms unavailable:', error.message)
     for (const r of (data ?? []) as { search_term: string; conversions: number | null }[]) {
       const k = normalize(String(r.search_term ?? ''))
       if (!k) continue
@@ -167,12 +171,13 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   } catch { /* table missing or unreadable — skip this source */ }
 
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from('ahrefs_keywords')
       .select('keyword, position, volume, difficulty')
       .eq('client_id', clientId)
       .order('date', { ascending: false })
       .limit(500)
+    if (error) console.warn('[research] ahrefs unavailable:', error.message)
     for (const r of (data ?? []) as { keyword: string; position: number | null; volume: number | null; difficulty: number | null }[]) {
       add({
         keyword: String(r.keyword ?? ''), search_volume: r.volume, keyword_difficulty: r.difficulty,
@@ -202,11 +207,14 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // Seeds from what the client actually sells, so a domain with no history still produces a
     // list shaped like the business.
     try {
-      const { data: cs } = await db
+      const { data: cs, error: csErr } = await db
         .from('content_settings')
         .select('services, geographic_focus')
         .eq('client_id', clientId)
         .maybeSingle()
+      // No seeds means no keyword_ideas call, which is the source that works for a client with no
+      // ranking history — the one this whole path exists for.
+      if (csErr) console.warn('[research] cannot read services for idea seeds:', csErr.message)
       const services = String((cs as Record<string, unknown> | null)?.services ?? '')
         .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
       const geo = String((cs as Record<string, unknown> | null)?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
@@ -231,11 +239,14 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   let snapshotted = 0
   const bySource: Record<string, number> = {}
   try {
-    const { data: existing } = await db
+    const { data: existing, error: existingErr } = await db
       .from('seo_keywords')
       .select('normalized_keyword')
       .eq('client_id', clientId)
       .in('normalized_keyword', ranked.map(c => c.normalized))
+    // An empty result here reads as "we hold none of these", so a failure would insert the whole
+    // batch again on every run.
+    if (existingErr) console.warn('[research] cannot read existing keywords:', existingErr.message)
     const known = new Set(((existing ?? []) as { normalized_keyword: string }[]).map(r => r.normalized_keyword))
 
     const rows = ranked.filter(c => !known.has(c.normalized)).map(c => ({
@@ -294,11 +305,12 @@ async function recordOwnRankings(
   try {
     const db = createAdminClient()
     const byNormalized = new Map(ranked.map(c => [normalize(c.keyword), c]))
-    const { data } = await db
+    const { data, error } = await db
       .from('seo_keywords')
       .select('id, normalized_keyword')
       .eq('client_id', clientId)
       .in('normalized_keyword', Array.from(byNormalized.keys()))
+    if (error) { console.warn('[research] cannot resolve keyword ids for snapshot:', error.message); return 0 }
 
     const today = new Date().toISOString().slice(0, 10)
     const rows = ((data ?? []) as { id: string; normalized_keyword: string }[])
@@ -366,13 +378,19 @@ export async function getResearchCandidates(clientId: string): Promise<{
   try {
     const db = createAdminClient()
     const cutoff = new Date(Date.now() - RESEARCH_MAX_AGE_DAYS * 86_400_000).toISOString()
-    const { data: fresh } = await db
+    const { data: fresh, error: freshErr } = await db
       .from('seo_keywords')
       .select('id')
       .eq('client_id', clientId)
       .eq('source', 'dataforseo')
       .gte('created_at', cutoff)
       .limit(1)
+    // This one costs money to get wrong: a failure looks like "nothing recent", so research would
+    // re-run its six Labs calls on every single topic generation instead of monthly.
+    if (freshErr) {
+      console.warn('[research] staleness check failed, reusing what is stored:', freshErr.message)
+      return { candidates: await read(), refreshed: false }
+    }
 
     if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
   } catch {

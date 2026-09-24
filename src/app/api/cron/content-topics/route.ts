@@ -427,13 +427,20 @@ export async function GET(request: NextRequest) {
       // regenerate-what-you-removed loop as deletion. Rejection is a full stop for
       // the slot; the subject also stays in the avoid-list (see generateTopics.ts)
       // so it is never suggested again anywhere.
-      const { count: onSlot } = await db
+      const { count: onSlot, error: onSlotErr } = await db
         .from('content_topics')
         .select('id', { count: 'exact', head: true })
         .eq('client_id', client_id)
         .eq('target_publish_date', slot)
         .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
 
+      // A failed count reads as an empty slot, which would generate a full quota of topics on top
+      // of whatever is already there. Skipping the slot is the safe direction: a missed window
+      // costs one late post, a double-filled one costs duplicate articles nobody asked for.
+      if (onSlotErr) {
+        console.warn(`[cron/content-topics] slot count failed for ${client_id} on ${slot}, skipping:`, onSlotErr.message)
+        continue
+      }
       // A rejected or deleted topic still counts against the quota, for the same reason the old
       // check listed 'rejected': the slot has been dealt with, and refilling it is the
       // regenerate-what-you-removed loop this cron already learned not to do.
