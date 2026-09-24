@@ -293,6 +293,22 @@ export async function GET(req: NextRequest) {
 
     ${liveHtml}
 
+    <h2>Testing without touching a live site</h2>
+    <table>
+      <tr><th>Generating a post</th>
+          <td><strong>Cannot reach the site.</strong> A generated post is saved with status
+              <code>for_review</code>, and auto-push only ever selects <code>approved</code> posts.
+              Nothing leaves the dashboard until a person clicks Approve &amp; Push.</td></tr>
+      <tr><th>Testing the SEO-meta repair</th>
+          <td>That only runs on a push, so it needs a real site. Set
+              <strong>Publish mode → Draft only</strong> in content settings first: the post is
+              created in WordPress as a draft, never published, and you can check the Rank Math
+              fields in wp-admin and then bin it.</td></tr>
+      <tr><th>This page</th>
+          <td>Read-only. Even with <code>&amp;live=1</code> it writes nothing — no candidates,
+              no rankings, no usage row.</td></tr>
+    </table>
+
     <h2>Output — the last ${posts.length} generated posts</h2>
     <p>Average <strong>${avg.toLocaleString()}</strong> words against a ${target.toLocaleString()} target.
        <strong>${over}</strong> over the ${ceil.toLocaleString()} ceiling, <strong>${under}</strong> under ${floor.toLocaleString()}.</p>
