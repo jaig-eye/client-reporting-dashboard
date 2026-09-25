@@ -1713,13 +1713,13 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
                 {research?.connected
                   ? (research.reason
                       ? 'Competitors are only listed on a fresh run — re-run research to see them.'
-                      : 'DataForSEO found no competing domains it could name for this site. Directories and marketplaces are excluded on purpose; a site with little search footprint may not have overlapping rivals in the index yet.')
+                      : 'No competing sites found for these seeds in DataForSEO\u2019s index. Directories and marketplaces are excluded on purpose \u2014 try more specific seed terms and re-run.')
                   : 'Connect DataForSEO for this client to see who they compete with.'}
               </div>
             ) : (
               <>
                 <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
-                  Sites that rank for the same searches, by overlap. Their ranking keywords are part of the pool.
+                  Sites ranking for the seed searches in this market, strongest first. The top three&apos;s own ranking keywords join the pool.
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {research!.competitors.map((c, i) => (

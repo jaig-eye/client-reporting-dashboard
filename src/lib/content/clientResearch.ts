@@ -34,7 +34,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import {
-  resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsKeywordIdeas,
+  resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsSerpCompetitors, dfsKeywordIdeas,
   type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig,
 } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from './dataforseoUsage'
@@ -263,6 +263,47 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // ownRanked is kept aside: those rows carry this client's own positions, and recording them is
   // the site-wide ranking snapshot.
   const ownRanked: DfsKeywordCandidate[] = []
+  // ── Seeds: what the business sells, in the operator's words ─────────────────
+  // Read before any DataForSEO call now, because competitors are found FROM the seeds (see
+  // dfsSerpCompetitors) rather than from a domain overlap a new site does not have.
+  let seeds: string[] = []
+  let geo = ''
+  try {
+    // Asked for with the optional column, then without it. PostgREST fails the whole select
+    // when foundational_keywords is missing (migration 222), which would silently drop the
+    // keyword_ideas source — the one source that works for a client with no ranking history.
+    let { data: cs, error: csErr } = await db
+      .from('content_settings')
+      .select('services, geographic_focus, foundational_keywords')
+      .eq('client_id', clientId)
+      .maybeSingle()
+    if (csErr && /foundational_keywords/i.test(csErr.message)) {
+      ;({ data: cs, error: csErr } = await db
+        .from('content_settings')
+        .select('services, geographic_focus')
+        .eq('client_id', clientId)
+        .maybeSingle())
+    }
+    if (csErr) console.warn('[research] cannot read services for seeds:', csErr.message)
+    const settings = cs as Record<string, unknown> | null
+    const services = String(settings?.services ?? '')
+      .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
+    geo = String(settings?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
+    // What the operator said this business should be found for, before any data existed. Seeds
+    // only: they widen what gets discovered and then take no further part — the results are
+    // ranked on volume, difficulty and proven paid conversions like everything else, so a term
+    // typed at onboarding cannot quietly become the content plan.
+    const foundational = (Array.isArray(settings?.foundational_keywords)
+      ? settings.foundational_keywords as unknown[]
+      : []
+    ).map(v => String(v).trim()).filter(v => v.length > 2).slice(0, 25)
+    // The geo variants matter twice over: they make the SERPs local, so the competitors found
+    // are the ones down the road, and they give keyword_ideas a local angle to expand from.
+    const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
+    seeds = Array.from(new Set([...foundational, ...fromServices]))
+    seedMatcher = buildSeedMatcher([...foundational, ...services], geo)
+  } catch { /* no settings — no seeds, and the sources below that need them are skipped */ }
+
   if (creds && domain) {
     const labsOpts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
 
@@ -271,56 +312,41 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       add(c)
     }
 
-    const competitors = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
-    competitorDomains = competitors.slice()
-    for (const comp of competitors) {
-      for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) add(c)
+    // ── Competitors: who ranks for the seeds, then who overlaps the domain ────
+    // The seed SERPs come first because they answer the question for every client, including
+    // one with no rankings yet. Domain overlap is kept as a supplement: once a site has a
+    // footprint it can surface a rival the seeds did not, and it costs one call.
+    const bySerp    = seeds.length ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain }) : []
+    const byOverlap = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
+    const ordered   = Array.from(new Set([...bySerp.map(c => c.domain), ...byOverlap]))
+    competitorDomains = ordered.slice(0, 8)
+    console.log(`[research] competitors: ${bySerp.length} from seed SERPs, ${byOverlap.length} from domain overlap` +
+      (bySerp.length ? ` — top: ${bySerp.slice(0, 3).map(c => `${c.domain} (${c.keywords_count ?? '?'} kw)`).join(', ')}` : ''))
+
+    for (const comp of ordered.slice(0, MAX_COMPETITORS)) {
+      // A rival's own brand terms are theirs, not an opportunity: "jellyfish lighting cost" is
+      // not a subject this client can rank for. Compared with spaces removed so a two-word
+      // brand matches its one-word domain label.
+      const label = comp.split('.')[0]
+      let skipped = 0
+      for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) {
+        if (label.length >= 4 && c.keyword.toLowerCase().replace(/\s+/g, '').includes(label)) { skipped++; continue }
+        add(c)
+      }
+      if (skipped) console.log(`[research] ${comp}: dropped ${skipped} of its own brand terms`)
     }
 
-    // Seeds from what the client actually sells, so a domain with no history still produces a
-    // list shaped like the business.
-    try {
-      // Asked for with the optional column, then without it. PostgREST fails the whole select
-      // when foundational_keywords is missing (migration 222), which would silently drop the
-      // keyword_ideas source — the one source that works for a client with no ranking history.
-      let { data: cs, error: csErr } = await db
-        .from('content_settings')
-        .select('services, geographic_focus, foundational_keywords')
-        .eq('client_id', clientId)
-        .maybeSingle()
-      if (csErr && /foundational_keywords/i.test(csErr.message)) {
-        ;({ data: cs, error: csErr } = await db
-          .from('content_settings')
-          .select('services, geographic_focus')
-          .eq('client_id', clientId)
-          .maybeSingle())
-      }
-      // No seeds means no keyword_ideas call, which is the source that works for a client with no
-      // ranking history — the one this whole path exists for.
-      if (csErr) console.warn('[research] cannot read services for idea seeds:', csErr.message)
-      const settings = cs as Record<string, unknown> | null
-      const services = String(settings?.services ?? '')
-        .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
-      const geo = String(settings?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
-      // What the operator said this business should be found for, before any data existed. Seeds
-      // only: they widen what gets discovered and then take no further part — the results are
-      // ranked on volume, difficulty and proven paid conversions like everything else, so a term
-      // typed at onboarding cannot quietly become the content plan.
-      const foundational = (Array.isArray(settings?.foundational_keywords)
-        ? settings.foundational_keywords as unknown[]
-        : []
-      ).map(v => String(v).trim()).filter(v => v.length > 2).slice(0, 25)
-      const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
-      const seeds = Array.from(new Set([...foundational, ...fromServices]))
-      seedMatcher = buildSeedMatcher([...foundational, ...services], geo)
+    // ── Ideas: the category expansion, filtered back to the business ──────────
+    if (seeds.length && seedMatcher) {
+      const matcher = seedMatcher
       // Filtered, unlike the domain and competitor sources: those are what real sites rank for,
       // this is a category guess and needs to prove it is about the business.
       let kept = 0, dropped = 0
       for (const c of await dfsKeywordIdeas(seeds, creds, { ...labsOpts, limit: 300 })) {
-        if (seedMatcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
+        if (matcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
       }
       console.log(`[research] keyword_ideas: kept ${kept}, dropped ${dropped} off-topic`)
-    } catch { /* no settings — ideas skipped */ }
+    }
   }
 
   /**

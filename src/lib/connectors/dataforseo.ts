@@ -420,6 +420,62 @@ export async function dfsCompetitorDomains(
   }
 }
 
+/** A domain that ranks for the keywords a business wants, and how strongly. */
+export interface DfsSerpCompetitor {
+  domain:         string
+  keywords_count: number | null
+  avg_position:   number | null
+  visibility:     number | null
+}
+
+/**
+ * Who ranks for THESE keywords — competitors defined by the market, not by the client's footprint.
+ *
+ * competitors_domain answers "who ranks for what this domain already ranks for", which is empty
+ * by construction for a new site, and a new site is exactly who needs a competitor list. This
+ * asks the other question: given the seed searches (which carry the client's geography), which
+ * domains keep appearing in the results. It works on day one and it describes the actual field.
+ *
+ * Labs endpoint, one task for up to 200 keywords. Organic only — a paid placement is a budget,
+ * not a rival. Ordered by DataForSEO's rating (sum of 100 - position over the set), so a site on
+ * page one for many of the seeds outranks one on page five for all of them. Aggregators and
+ * the client's own domain are dropped here so callers get competitors, not a directory list.
+ */
+export async function dfsSerpCompetitors(
+  keywords: string[],
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; exclude?: string; onCost?: CostSink } = {},
+): Promise<DfsSerpCompetitor[]> {
+  const kws = Array.from(new Set(keywords.map(k => k.trim()).filter(Boolean))).slice(0, 200)
+  if (kws.length === 0) return []
+  const self = normalizeDomain(opts.exclude ?? '')
+  try {
+    const json = await dfsPost('/v3/dataforseo_labs/google/serp_competitors/live', creds, {
+      keywords:      kws,
+      location_code: opts.locationCode ?? 2840,
+      language_code: opts.languageCode ?? 'en',
+      item_types:    ['organic'],
+      // Over-fetch: aggregators and the client itself are removed after the answer arrives.
+      limit:         Math.min(100, Math.max(20, (opts.limit ?? 10) * 3)),
+      order_by:      ['rating,desc'],
+    })
+    if (!json) return []
+    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    return firstResultItems(json)
+      .map(it => ({
+        domain:         normalizeDomain(String(it.domain ?? '')),
+        keywords_count: num(it.keywords_count),
+        avg_position:   num(it.avg_position),
+        visibility:     num(it.visibility),
+      }))
+      .filter(c => c.domain && c.domain !== self && !isAggregatorDomain(c.domain))
+      .slice(0, opts.limit ?? 10)
+  } catch (e) {
+    console.warn('[dataforseo] serp_competitors failed:', String(e).slice(0, 180))
+    return []
+  }
+}
+
 /**
  * Expansions around what the client actually sells.
  *
