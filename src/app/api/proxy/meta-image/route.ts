@@ -48,11 +48,23 @@ async function resolveMetaToken(clientId: string): Promise<string | null> {
   return (auth.system_user_token ?? auth.access_token ?? null) as string | null
 }
 
-function getFreshMetaImageUrl(adId: string, clientId: string) {
+/**
+ * Resolve a live Meta CDN URL, caching ONLY a success.
+ *
+ * This used to return null on failure from inside unstable_cache, which cached the null for the
+ * full 30 minutes. When the agency Meta token expired, every ad anyone loaded during the outage
+ * had a failure pinned under its key — so re-authorising fixed nothing for another half hour,
+ * and each fresh page view during that window re-armed the clock. A broken minute poisoned the
+ * library long after it was repaired.
+ *
+ * Throwing instead keeps the cache clean: Next does not cache a rejected call, so the very next
+ * request after the token is fixed asks Meta again.
+ */
+function getFreshMetaImageUrl(adId: string, clientId: string): Promise<string | null> {
   return unstable_cache(
     async () => {
       const accessToken = await resolveMetaToken(clientId)
-      if (!accessToken) return null
+      if (!accessToken) throw new Error('no-meta-token')
 
       const url = new URL(`${BASE_URL}/${adId}`)
       url.searchParams.set('fields', 'creative{image_url,thumbnail_url}')
@@ -64,16 +76,20 @@ function getFreshMetaImageUrl(adId: string, clientId: string) {
         headers: { Authorization: `Bearer ${accessToken}` },
         next: { revalidate: 0 },
       })
-      if (!res.ok) return null
+      if (!res.ok) throw new Error(`meta-${res.status}`)
 
       const data = await res.json() as Record<string, unknown>
       const creative = data.creative as Record<string, unknown> | undefined
       // Prefer static image_url; fall back to thumbnail (may be 1080px if Meta honours the size params)
-      return (creative?.image_url ?? creative?.thumbnail_url ?? null) as string | null
+      const fresh = (creative?.image_url ?? creative?.thumbnail_url ?? null) as string | null
+      // An ad with genuinely no creative image is still not worth caching as a failure: it is
+      // rare, and a wrong "no image" outlives the reason far longer than one extra call costs.
+      if (!fresh) throw new Error('no-creative-image')
+      return fresh
     },
     [`meta-img-${adId}-${clientId}`],
-    { revalidate: 1800 }  // 30 min
-  )()
+    { revalidate: 1800 }  // 30 min, successes only
+  )().catch(() => null)
 }
 
 export async function GET(request: NextRequest) {

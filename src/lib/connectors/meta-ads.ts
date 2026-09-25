@@ -27,11 +27,21 @@ const BASE_URL = `https://graph.facebook.com/${API_VERSION}`
 // OAuth helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Exchange an authorization code for a long-lived (60-day) token. */
+/**
+ * Exchange an authorization code for a long-lived (60-day) token.
+ *
+ * Returns token_expires_at alongside it. Meta answers with `expires_in` seconds and the field was
+ * simply dropped — so nothing in the system knew when the only agency token was due to die, and
+ * there was no way to warn before it did. A user token has no refresh path (refreshAuth is
+ * undefined for this connector by design), so the expiry date is the only warning available.
+ *
+ * A System User token never expires and returns no expires_in; that case stores no date, which
+ * is exactly right — there is nothing to warn about.
+ */
 export async function exchangeMetaCode(
   code: string,
   redirectUri: string
-): Promise<{ access_token: string }> {
+): Promise<{ access_token: string; token_expires_at?: string }> {
   const shortLived = new URLSearchParams({
     client_id: process.env.META_APP_ID!,
     client_secret: process.env.META_APP_SECRET!,
@@ -51,11 +61,21 @@ export async function exchangeMetaCode(
   })
   const llRes = await fetch(`${BASE_URL}/oauth/access_token?${longLived}`)
   const llData = (await llRes.json()) as Record<string, unknown>
+  /** Meta returns expires_in seconds. Absent means it does not expire — store nothing. */
+  const expiryFrom = (v: unknown): string | undefined => {
+    const secs = Number(v)
+    if (!Number.isFinite(secs) || secs <= 0) return undefined
+    return new Date(Date.now() + secs * 1000).toISOString()
+  }
+
   if (!llRes.ok || llData.error) {
     console.warn('Meta long-lived token exchange failed:', llData.error ?? llRes.status, '— falling back to short-lived token')
-    return { access_token: String(data.access_token) }
+    return { access_token: String(data.access_token), token_expires_at: expiryFrom(data.expires_in) }
   }
-  return { access_token: String(llData.access_token || data.access_token) }
+  return {
+    access_token:     String(llData.access_token || data.access_token),
+    token_expires_at: expiryFrom(llData.expires_in ?? data.expires_in),
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

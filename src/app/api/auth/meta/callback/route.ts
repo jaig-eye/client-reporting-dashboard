@@ -12,9 +12,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const redirectUri    = `${appUrl}/api/auth/meta/callback`
-    const { access_token } = await exchangeMetaCode(code, redirectUri)
+    const { access_token, token_expires_at } = await exchangeMetaCode(code, redirectUri)
 
-    const auth = { access_token }
+    // token_expires_at is what makes the 60-day expiry visible before it bites. Meta user tokens
+    // have no refresh path here (refreshAuth is undefined for this connector), so recording the
+    // date is the only way anything can warn ahead of it.
+    const auth = { access_token, ...(token_expires_at ? { token_expires_at } : {}) }
     const db   = createAdminClient()
 
     // Preserve existing config (e.g. Business Manager ID) when re-authorizing

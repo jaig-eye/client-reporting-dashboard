@@ -11,9 +11,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { getConnectorAdapter }       from '@/lib/connectors/registry'
+import { sendDiscordMessage }        from '@/lib/discord'
+import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import type { Connector, ConnectorType } from '@/lib/types'
 
 export const maxDuration = 120
+
+/** Warn this many days before a stored token expires. */
+const TOKEN_WARN_DAYS = 10
 
 /**
  * Connector types whose accounts are worth re-discovering daily.
@@ -94,5 +99,113 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ refreshed: results.length, results })
+  const health = await reportConnectorHealth(db)
+
+  return NextResponse.json({ refreshed: results.length, results, health })
+}
+
+/**
+ * Say when a connector has stopped working, or is about to.
+ *
+ * Two failures went unreported for exactly as long as it took a human to notice something
+ * missing. The agency Meta token expired at 09:02 one morning and every sync for seventeen
+ * clients failed from that minute; sync_jobs recorded the reason perfectly — OAuthException code
+ * 190, "Session has expired" — and nothing read it. The connections page meanwhile showed
+ * "connected", because that reads a stored status column set when somebody first authorised and
+ * never re-checked since.
+ *
+ * The sync cron DOES have an auth alert, wired to the same sync_connector_error setting — but it
+ * only fires when syncClient REJECTS. Per-connection failures are caught inside and recorded as a
+ * sync_jobs row, so the promise fulfils, the auth branch never runs, and the alert that exists for
+ * exactly this went unsent for all seventeen. Reading the rows rather than the rejections is what
+ * closes that.
+ *
+ * So this looks at both ends: tokens with a known expiry date coming up, and auth failures that
+ * have already happened.
+ */
+async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
+  const problems: string[] = []
+
+  // ── Expiring soon ─────────────────────────────────────────────────────────
+  try {
+    const { data: conns } = await db.from('connectors').select('type, auth')
+    const horizon = new Date(Date.now() + TOKEN_WARN_DAYS * 86_400_000).toISOString()
+    const now     = new Date().toISOString()
+    for (const c of (conns ?? []) as { type: string; auth: Record<string, unknown> | null }[]) {
+      const exp = c.auth?.token_expires_at
+      if (typeof exp !== 'string' || !exp) continue
+      if (exp > horizon) continue
+      const days = Math.round((Date.parse(exp) - Date.now()) / 86_400_000)
+      problems.push(exp < now
+        ? `${c.type}: token EXPIRED ${Math.abs(days)} day(s) ago — reconnect in Agency Settings`
+        : `${c.type}: token expires in ${days} day(s) — reconnect before it does`)
+    }
+  } catch (e) {
+    console.warn('[refresh-accounts] token expiry check failed:', e)
+  }
+
+  // ── Already failing ───────────────────────────────────────────────────────
+  // Grouped by connector type rather than listed per client: one expired agency token produces a
+  // failure row for every client using it, and seventeen identical lines is a worse alert than one.
+  try {
+    const since = new Date(Date.now() - 86_400_000).toISOString()
+    const { data: failures } = await db
+      .from('sync_jobs')
+      .select('error_message, connection_id, client_connections(connectors(type))')
+      .eq('status', 'error')
+      .gte('started_at', since)
+      .limit(500)
+
+    const authFailures = new Map<string, number>()
+    for (const row of (failures ?? []) as { error_message: string | null; client_connections: unknown }[]) {
+      const msg = row.error_message ?? ''
+      // The signatures that mean "our credential is dead", not "this one request went wrong".
+      if (!/OAuthException|code\D*190|access token|token has expired|invalid_grant|401|invalid_client/i.test(msg)) continue
+      const cc   = row.client_connections as { connectors?: { type?: string } | { type?: string }[] } | null
+      const conn = Array.isArray(cc?.connectors) ? cc?.connectors[0] : cc?.connectors
+      const type = conn?.type ?? 'unknown'
+      authFailures.set(type, (authFailures.get(type) ?? 0) + 1)
+    }
+    for (const [type, count] of Array.from(authFailures)) {
+      problems.push(`${type}: ${count} sync(s) failed authentication in the last 24h — the credential needs reconnecting`)
+    }
+  } catch (e) {
+    console.warn('[refresh-accounts] auth failure scan failed:', e)
+  }
+
+  if (problems.length === 0) return { problems: 0 }
+
+  const body = problems.join('\n')
+  console.error(`[refresh-accounts] CONNECTOR HEALTH:\n${body}`)
+
+  // In-app alert first: it is the one channel that cannot be misconfigured, and an agency with
+  // no Discord set up would otherwise get nothing at all.
+  const { error: alertErr } = await db.from('admin_alerts').insert({
+    type:     'system',
+    severity: 'critical',
+    title:    `${problems.length} connector credential${problems.length === 1 ? '' : 's'} need attention`,
+    body,
+    link_url: '/admin/connections',
+  })
+  if (alertErr) console.error('[refresh-accounts] admin_alerts insert failed:', alertErr.message)
+
+  try {
+    const { data: settings } = await db
+      .from('agency_settings')
+      .select('discord_bot_token, discord_ops_channel_id, notification_config')
+      .maybeSingle()
+    const notif = getNotif((settings?.notification_config ?? null) as NotifConfig | null, 'sync_connector_error')
+    if (notif.agency) {
+      const botToken   = (settings?.discord_bot_token as string | null) ?? null
+      const opsChannel = ((settings?.discord_ops_channel_id as string | null) ?? process.env.DISCORD_OPS_CHANNEL_ID) ?? null
+      if (botToken && opsChannel) {
+        await sendDiscordMessage(botToken, opsChannel, `**Connector credentials need attention**
+${body}`)
+      }
+    }
+  } catch (e) {
+    console.warn('[refresh-accounts] could not send connector health notice:', e)
+  }
+
+  return { problems: problems.length, detail: problems }
 }
