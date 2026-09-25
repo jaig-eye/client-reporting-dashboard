@@ -35,6 +35,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import {
   resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsSerpCompetitors, dfsKeywordIdeas,
+  dfsKeywordSuggestions,
   type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig,
 } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from './dataforseoUsage'
@@ -124,28 +125,47 @@ function buildSeedMatcher(phrases: string[], geo: string) {
 }
 type SeedMatcher = ReturnType<typeof buildSeedMatcher>
 
+/** Words that say "hire someone to do this" — the searches a service business wants to be found for. */
+const SERVICE_WORDS = /\b(install(?:ation|ations|er|ers|ing)?|contractors?|compan(?:y|ies)|services?|near me|costs?|prices?|pricing|quotes?|estimates?|hire|professionals?|repairs?|maintenance|design(?:er|ers)?|specialists?|experts?)\b/
+/** Words that say "buy this thing" — a product search, which a service business cannot rank for and should not write for. */
+const PRODUCT_WORDS = /\b(buy|cheap(?:est)?|amazon|walmart|home depot|lowes|costco|wayfair|bulk|packs?|watts?|lumens?|bulbs?|batter(?:y|ies)|plug[- ]?in|kits?|sets?|reviews?|vs|sale|wholesale|diy|extension cords?|strips?|rgb|smart)\b/
+
 /**
  * Score a candidate so the pool arrives ordered by what is worth writing about.
  *
- * Deliberately simple and readable rather than tuned: volume carries it, difficulty subtracts,
- * and a term that converted in paid outranks both because the client has already proved someone
- * buys from it. A keyword we already rank well for scores low — it needs a supporting article at
- * most, not a new page.
+ * The score is STORED on the row (metadata.research_score) and every read of the pool sorts by
+ * it, so what this function prefers is what topic selection sees first and what the wizard
+ * shows at the top. It used to decide only which four hundred survived, and then every read
+ * re-sorted by raw volume — which put "outdoor solar lights" (33,000 searches, Amazon's
+ * customer) above "christmas light installation los angeles" (a few hundred, this client's).
+ *
+ * Weights, in the order they matter for a local service business:
+ *   proven     up to +80   a paid term that converted — the client has already paid to learn it works
+ *   volume     up to ~100  log-compressed hard: 100/mo scores 40, 100,000/mo scores 100
+ *   branded        -40     navigational intent is someone who has already chosen a brand
+ *   product        -30     buy / bulbs / kit / amazon — a shopping search
+ *   service        +25     install / company / near me / cost — a hiring search
+ *   local          +20     names the client's geography
+ *   difficulty  up to -40  KD * 0.4
+ *   owned          -50     we already rank top ten for it; it needs a supporting piece at most
+ *   nearMiss       +25     we sit at 11–30; one good article can move it
  */
 function score(c: Candidate, paidConversions: number, mentionsGeo: boolean): number {
-  const volume     = Math.log10(Math.max(1, c.search_volume ?? 0) + 1) * 30
-  // A local business wins local searches. Small next to volume on purpose: it separates two
-  // otherwise-equal terms, it does not let "los angeles" outrank a converting head term.
-  const local      = mentionsGeo ? 15 : 0
+  const kw         = c.keyword.toLowerCase()
+  const volume     = Math.log10(Math.max(1, c.search_volume ?? 0) + 1) * 20
   const difficulty = (c.keyword_difficulty ?? 50) * 0.4
   const proven     = paidConversions > 0 ? 40 + Math.min(40, paidConversions * 4) : 0
+  const local      = mentionsGeo ? 20 : 0
+  const service    = SERVICE_WORDS.test(kw) ? 25 : 0
+  const product    = PRODUCT_WORDS.test(kw) ? -30 : 0
+  const branded    = String(c.intent ?? '').toLowerCase() === 'navigational' ? -40 : 0
   // Only OUR position may adjust the score. A competitor row carries the competitor's rank in
   // the same field, so reading it unconditionally punished a keyword by 50 for a rival holding
   // it at #5 — precisely the keyword worth writing about — and rewarded one they held at #20.
   const ourPosition = c.source === 'competitor' ? null : c.position
   const owned      = ourPosition != null && ourPosition <= 10 ? -50 : 0
   const nearMiss   = ourPosition != null && ourPosition > 10 && ourPosition <= 30 ? 25 : 0
-  return Math.round(volume - difficulty + proven + owned + nearMiss + local)
+  return Math.round(volume - difficulty + proven + owned + nearMiss + local + service + product + branded)
 }
 
 /**
@@ -347,6 +367,22 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       }
       console.log(`[research] keyword_ideas: kept ${kept}, dropped ${dropped} off-topic`)
     }
+
+    // ── Local phrases: what people in this city actually type ────────────────
+    // keyword_ideas cannot produce these — it expands by category and the city gets lost.
+    // Phrase-match suggestions for the geo-suffixed seeds return only searches that contain
+    // the seed, city included. One Labs task per seed, so the count is capped.
+    if (geo && seeds.length && seedMatcher) {
+      const matcher  = seedMatcher
+      const geoSeeds = seeds.filter(sd => sd.toLowerCase().endsWith(geo.toLowerCase())).slice(0, 5)
+      let localKept = 0
+      for (const sd of geoSeeds) {
+        for (const c of await dfsKeywordSuggestions(sd, creds, { ...labsOpts, limit: 60 })) {
+          if (matcher.isRelevant(c.keyword)) { add(c); localKept++ }
+        }
+      }
+      console.log(`[research] local suggestions: ${localKept} from ${geoSeeds.length} geo seed(s)`)
+    }
   }
 
   /**
@@ -372,11 +408,12 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   }
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
-  const ranked = Array.from(candidates.values())
+  const scored = Array.from(candidates.values())
     .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, MAX_CANDIDATES)
-    .map(r => r.c)
+  const ranked  = scored.map(r => r.c)
+  const scoreOf = new Map(scored.map(r => [r.c.normalized, r.s] as const))
 
   // ── Store, without disturbing anything a post already claimed ─────────────
   let stored = 0
@@ -411,6 +448,9 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       language_code:      cfg.language_code,
       // The point of the pool: discovered, not yet chosen, and costing nothing to hold.
       is_tracked:         false,
+      // The score, so reads can rank by it instead of by raw volume, and where the candidate
+      // came from within the run (site / competitor / idea) for anyone reading the row later.
+      metadata:           { research_score: scoreOf.get(c.normalized) ?? null, found_via: c.source },
     }))
 
     for (const c of ranked) bySource[c.source] = (bySource[c.source] ?? 0) + 1
@@ -506,15 +546,21 @@ async function recordOwnRankings(
  * once every RESEARCH_MAX_AGE_DAYS per client, so the cost is a few cents a month and the
  * candidate set stays stable enough to plan a run of posts around.
  */
+/** metadata.research_score as a number, or null for rows stored before the score was kept. */
+export function researchScoreOf(metadata: unknown): number | null {
+  const v = (metadata as Record<string, unknown> | null | undefined)?.research_score
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
 export async function getResearchCandidates(clientId: string): Promise<{
-  candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null }>
+  candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null }>
   refreshed:  boolean
 }> {
   const read = async () => {
     const db = createAdminClient()
     const base = () => db
       .from('seo_keywords')
-      .select('keyword, search_volume, keyword_difficulty, intent')
+      .select('keyword, search_volume, keyword_difficulty, intent, metadata')
       .eq('client_id', clientId)
       .eq('is_tracked', false)
       .is('content_post_id', null)
@@ -534,9 +580,12 @@ export async function getResearchCandidates(clientId: string): Promise<{
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
+      score:      researchScoreOf(r.metadata),
     }))
       .filter(k => k.keyword)
-      .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+      // By the research score, which is what the pool was built to prefer; volume breaks ties
+      // and carries rows written before the score was stored.
+      .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
       .slice(0, 40)
   }
 

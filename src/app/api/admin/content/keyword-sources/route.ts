@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
+import { researchScoreOf } from '@/lib/content/clientResearch'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +28,7 @@ const PAID_WINDOW_DAYS = 90
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null }
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest) {
     try {
       const base = () => db
         .from('seo_keywords')
-        .select('keyword, search_volume, keyword_difficulty, intent')
+        .select('keyword, search_volume, keyword_difficulty, intent, metadata')
         .eq('client_id', clientId)
         .eq('is_tracked', false)
         .is('content_post_id', null)
@@ -129,9 +130,10 @@ export async function GET(req: NextRequest) {
         volume:     r.search_volume      == null ? null : Number(r.search_volume),
         difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
         intent:     r.intent             == null ? null : String(r.intent),
+        score:      researchScoreOf(r.metadata),
       }))
         .filter(k => k.keyword)
-        .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+        .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
     } catch { return [] }   // seo_keywords only exists from migration 189
   })()
 

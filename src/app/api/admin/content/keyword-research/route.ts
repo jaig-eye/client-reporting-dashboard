@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords, resetResearchPool } from '@/lib/content/clientResearch'
+import { discoverKeywords, resetResearchPool, researchScoreOf } from '@/lib/content/clientResearch'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
@@ -36,7 +36,7 @@ const RESEARCH_REUSE_DAYS = 30
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
-  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null }>
+  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null }>
   competitors:  string[]
   /** Present and false when DataForSEO is not connected for this client. */
   connected:    boolean
@@ -53,7 +53,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
   try {
     const base = () => db
       .from('seo_keywords')
-      .select('keyword, search_volume, keyword_difficulty, intent, source')
+      .select('keyword, search_volume, keyword_difficulty, intent, source, metadata')
       .eq('client_id', clientId)
     // Dismissed rows are not shown. With-filter first, then without, for a database that has
     // not run migration 223 yet.
@@ -68,9 +68,11 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
       source:     r.source             == null ? null : String(r.source),
+      score:      researchScoreOf(r.metadata),
     }))
       .filter(k => k.keyword)
-      .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+      // Research score first — the order the pool was built to prefer — volume as tie-break.
+      .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
       .slice(0, 60)
   } catch {
     // seo_keywords arrives with migration 189; until then there is simply nothing to show.

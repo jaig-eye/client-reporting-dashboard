@@ -512,6 +512,46 @@ export async function dfsKeywordIdeas(
   }
 }
 
+/**
+ * Keywords that CONTAIN the seed phrase — the long tail of one specific search.
+ *
+ * keyword_ideas expands by category and orders by volume, so a seed like "landscape lighting
+ * los angeles" contributes its category (Lighting) and loses its city: the local phrases are
+ * low-volume and never reach the top of the list. keyword_suggestions is the other tool —
+ * every result contains the seed verbatim, so "landscape lighting los angeles" returns
+ * "landscape lighting los angeles ca", "landscape lighting installation los angeles" and the
+ * rest of what people in that city actually type. One Labs task per seed, single keyword only.
+ */
+export async function dfsKeywordSuggestions(
+  seed: string,
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; onCost?: CostSink } = {},
+): Promise<DfsKeywordCandidate[]> {
+  const keyword = seed.trim()
+  if (!keyword) return []
+  try {
+    const json = await dfsPost('/v3/dataforseo_labs/google/keyword_suggestions/live', creds, {
+      keyword,
+      location_code: opts.locationCode ?? 2840,
+      language_code: opts.languageCode ?? 'en',
+      limit:         Math.min(1000, Math.max(1, opts.limit ?? 100)),
+      filters:       [['keyword_info.search_volume', '>', 10]],
+      order_by:      ['keyword_info.search_volume,desc'],
+    })
+    if (!json) return []
+    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    return firstResultItems(json).map(it => ({
+      ...readKeywordMetrics(it),
+      source:            'idea' as const,
+      position:          null,
+      competitor_domain: null,
+    })).filter(k => k.keyword)
+  } catch (e) {
+    console.warn('[dataforseo] keyword_suggestions failed:', String(e).slice(0, 180))
+    return []
+  }
+}
+
 // ── SERP intelligence (one call → PAA + AI-Overview sources + related + organic) ──
 // The creation engine's data source: what real questions searchers ask (PAA) and which
 // pages Google's AI Overview cites. `load_async_ai_overview` surfaces the AIO element

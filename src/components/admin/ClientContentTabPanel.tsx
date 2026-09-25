@@ -82,6 +82,10 @@ export default function ClientContentTabPanel({
   const [activeTab,    setActiveTab]    = useState<SubTab>(initial)
   const [visited,      setVisited]      = useState<Set<SubTab>>(() => new Set([initial]))
   const [animatingTab, setAnimatingTab] = useState<SubTab | null>(initial)
+  // Bumped when the setup wizard closes, so the Analytics tab drops its cached keyword data and
+  // refetches. Research run inside the wizard — a modal over this page — used to stay invisible
+  // there until a hard reload, which read as "research did nothing".
+  const [researchEpoch, setResearchEpoch] = useState(0)
   const [showWizard, setShowWizard] = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
     const alreadySetUp = s?.wizard_completed || s?.business_background || s?.services
@@ -133,7 +137,7 @@ export default function ClientContentTabPanel({
         <ClientContentSetupWizard
           clientId={clientId}
           clientName={clientName}
-          onComplete={() => { setShowWizard(false); router.refresh() }}
+          onComplete={() => { setShowWizard(false); setResearchEpoch(e => e + 1); router.refresh() }}
         />
       )}
 
@@ -219,7 +223,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('analytics') && (
           <div style={{ display: activeTab === 'analytics' ? 'block' : 'none' }} className={animatingTab === 'analytics' ? 'cc-tab-content' : ''}>
-            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} isActive={activeTab === 'analytics'} />
+            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} isActive={activeTab === 'analytics'} epoch={researchEpoch} />
           </div>
         )}
       </div>
@@ -350,7 +354,7 @@ function GscSection({
 // The other three sources topic selection reads (/api/admin/content/keyword-sources).
 interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
 interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null }
 interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[] }
 
 /** One column of a source table. `align` defaults to right, because most of these are numbers. */
@@ -447,12 +451,106 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean }) {
+function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number }) {
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
   const [sources, setSources]       = useState<SourcesPayload | null>(null)
+
+  // ── Research seeds + re-run, here rather than only inside the wizard ───────
+  // Correcting the seeds and looking again should not require walking eight wizard steps.
+  const [seeds, setSeeds]                 = useState('')
+  const [seedsLoaded, setSeedsLoaded]     = useState(false)
+  const [researchedAt, setResearchedAt]   = useState<string | null>(null)
+  const [researchBusy, setResearchBusy]   = useState<'idle' | 'saving' | 'running'>('idle')
+  const [researchMsg, setResearchMsg]     = useState<string | null>(null)
+
+  // The wizard closed (epoch moved): forget what was loaded so the effects below fetch again —
+  // the keyword tables and the seeds box, since the wizard edits seeds too. Runs once on mount
+  // as well, where clearing already-empty state changes nothing.
+  useEffect(() => { setRanks(null); setSources(null); setSeedsLoaded(false) }, [epoch])
+
+  useEffect(() => {
+    if (!isActive || seedsLoaded) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [cs, kr] = await Promise.all([
+          fetch(`/api/admin/content/client-settings?client_id=${clientId}`).then(r => r.ok ? r.json() : {}),
+          fetch(`/api/admin/content/keyword-research?client_id=${clientId}`).then(r => r.ok ? r.json() : {}),
+        ])
+        if (cancelled) return
+        const fk = (cs as { foundational_keywords?: unknown }).foundational_keywords
+        if (Array.isArray(fk) && fk.length) setSeeds(fk.map(String).join(', '))
+        const at = (kr as { researchedAt?: string | null }).researchedAt
+        setResearchedAt(at ?? null)
+      } catch { /* the panel still works; the box is just empty */ }
+      finally { if (!cancelled) setSeedsLoaded(true) }
+    })()
+    return () => { cancelled = true }
+  }, [isActive, seedsLoaded, clientId])
+
+  const seedList = () => seeds.split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25)
+
+  async function saveSeeds(): Promise<boolean> {
+    const res = await fetch('/api/admin/content/client-settings', {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ client_id: clientId, foundational_keywords: seedList() }),
+    })
+    return res.ok
+  }
+
+  async function handleSaveSeeds() {
+    setResearchBusy('saving'); setResearchMsg(null)
+    try {
+      setResearchMsg((await saveSeeds()) ? 'Seeds saved.' : 'Could not save the seeds.')
+    } catch { setResearchMsg('Could not save the seeds.') }
+    finally { setResearchBusy('idle') }
+  }
+
+  /** Save the seeds, clear the pool, research again. Spends a few cents. */
+  async function handleRerun() {
+    setResearchBusy('running'); setResearchMsg(null)
+    try {
+      await saveSeeds()
+      const res  = await fetch('/api/admin/content/keyword-research', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, force: true }),
+      })
+      const d = await res.json() as { discovered?: number; cost?: number; competitors?: string[]; researchedAt?: string | null; connected?: boolean; error?: string }
+      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
+      setResearchedAt(d.researchedAt ?? new Date().toISOString())
+      setResearchMsg(d.connected === false
+        ? 'No DataForSEO connection for this client, so only the free database sources ran.'
+        : `${(d.discovered ?? 0).toLocaleString()} candidate${d.discovered === 1 ? '' : 's'}` +
+          `${d.competitors?.length ? `, ${d.competitors.length} competitor${d.competitors.length === 1 ? '' : 's'}` : ''}` +
+          `${d.cost != null && d.cost > 0 ? ` · $${d.cost.toFixed(2)}` : ''}.`)
+      // Both tables below read the pool: make them fetch it again.
+      setSources(null); setRanks(null)
+    } catch (e) {
+      setResearchMsg(`Research failed: ${e instanceof Error ? e.message : 'unknown error'}`)
+    } finally { setResearchBusy('idle') }
+  }
+
+  /** "Not this one." Optimistic; a refused write puts it back by refetching. */
+  async function handleDismiss(keyword: string) {
+    setSources(prev => prev ? { ...prev, researched: prev.researched.filter(r => r.keyword !== keyword) } : prev)
+    try {
+      const res = await fetch('/api/admin/content/keyword-research', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, keyword, dismissed: true }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string }
+        setResearchMsg(d.error ?? `Could not dismiss (${res.status})`)
+        setSources(null)
+      }
+    } catch { setSources(null) }
+  }
 
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
@@ -576,6 +674,65 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
         ]}
       />
 
+      {/* ── Research seeds — what the candidates below were found from ───────── */}
+      <div className="card p-5" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            background: '#f1f5f9', color: '#334155',
+          }}>
+            Research seeds
+          </span>
+          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>DataForSEO</span>
+          {researchedAt && (
+            <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+              last researched {new Date(researchedAt).toLocaleString()}
+            </span>
+          )}
+        </div>
+        <p style={{ margin: '0 0 8px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          What this business should be found for. Research widens out from these — competitors are
+          the sites ranking for them, local phrases are built on them, and category ideas that share
+          none of their words are dropped. Edit and re-run to rebuild the candidates below.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <textarea
+            className="input"
+            rows={2}
+            value={seeds}
+            onChange={e => setSeeds(e.target.value)}
+            placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
+            style={{ flex: 1, resize: 'vertical', fontSize: '0.8125rem' }}
+            disabled={researchBusy !== 'idle' || !seedsLoaded}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleSaveSeeds}
+            disabled={researchBusy !== 'idle' || !seedsLoaded}
+            style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
+          >
+            {researchBusy === 'saving' ? 'Saving…' : 'Save seeds'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleRerun}
+            disabled={researchBusy !== 'idle' || !seedsLoaded || !seeds.trim()}
+            title="Clears the current candidates and researches again from these seeds. Costs a few cents."
+            style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
+          >
+            {researchBusy === 'running' ? 'Researching…' : 'Re-run research'}
+          </button>
+        </div>
+        {researchMsg && (
+          <p style={{ margin: '8px 0 0', fontSize: '0.75rem', color: /failed|could not|needs/i.test(researchMsg) ? 'var(--red)' : 'var(--text-muted)' }}>
+            {researchMsg}
+          </p>
+        )}
+      </div>
+
       <SourceSection<ResearchRow>
         badge="Researched" badgeColor="#334155" badgeBg="#f1f5f9" provider="DataForSEO"
         note="Candidates found from the domain, its competitors and the client's own services. Nothing has been written for these yet — they are the only source that can propose a subject the site has no presence in."
@@ -586,6 +743,19 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
           { label: 'Volume',     render: r => r.volume     == null ? '—' : r.volume.toLocaleString() },
           { label: 'Difficulty', render: r => r.difficulty == null ? '—' : String(r.difficulty) },
           { label: 'Intent',     render: r => r.intent ?? '—' },
+          // The number the table is ordered by, so the order is explicable rather than magic.
+          { label: 'Score',      render: r => r.score == null ? '—' : String(Math.round(r.score)) },
+          { label: '',           render: r => (
+            <button
+              type="button"
+              onClick={() => handleDismiss(r.keyword)}
+              title="Not this business. Removes it from the candidates for good."
+              aria-label={`Dismiss ${r.keyword}`}
+              style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px' }}
+            >
+              ×
+            </button>
+          ) },
         ]}
       />
 
