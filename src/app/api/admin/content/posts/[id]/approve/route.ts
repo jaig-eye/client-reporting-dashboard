@@ -537,6 +537,11 @@ export async function POST(
       .select('id')
       .eq('client_id', String(p.client_id ?? ''))
       .eq('target_publish_date', String(p.target_publish_date))
+      // Only posts that will actually go out hold a slot. Counting rejected, archived and
+      // still-drafting rows meant a client publishing one post a day could land it at 11:00
+      // because two dead rows sat ahead of it in UUID order — a stagger built for a crowded
+      // date, applied to a date with nothing on it.
+      .in('status', ['approved', 'for_review', 'draft_saved', 'generated', 'scheduled', 'published'])
       .order('id', { ascending: true })
     const siblings = (sameDay ?? []) as { id: string }[]
     const position = siblings.findIndex(s => s.id === id)

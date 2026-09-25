@@ -1214,9 +1214,16 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, f
   }
   function markServicePages() {
     // Only the pages this actually changes are sent; the endpoint's bulk path takes the list.
-    const newly = pages.filter(p => p.url.includes('/service') && !p.isPriority).map(p => p.url)
-    setPages(pages.map(p => ({ ...p, isPriority: p.url.includes('/service') || p.isPriority })))
-    if (newly.length) void persist({ urls: newly, is_priority: true })
+    const isService = (url: string) => url.includes('/service')
+    const newly = pages.filter(p => isService(p.url) && !p.isPriority).map(p => p.url)
+    setPages(pages.map(p => ({ ...p, isPriority: isService(p.url) || p.isPriority })))
+    if (newly.length) {
+      void persist({ urls: newly, is_priority: true })
+      // The button is a classification, not just a ranking. is_service_page is what the sitemap
+      // tab reads and what tells the generator these are commercial pages rather than articles;
+      // sending only is_priority recorded half of what the operator just said.
+      void persist({ urls: newly, is_service_page: true })
+    }
   }
 
   return (
