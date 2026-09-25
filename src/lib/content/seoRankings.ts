@@ -322,6 +322,8 @@ export async function upsertRanking(params: {
   serpFeatures?: string[]
   searchVolume?: number | null
   provider?:     string
+  /** Where the reading was taken (location_code, location_name) and anything else worth keeping with it. */
+  metadata?:     Record<string, unknown>
 }): Promise<boolean> {
   try {
     const db = createAdminClient()
@@ -336,6 +338,7 @@ export async function upsertRanking(params: {
       serp_features: params.serpFeatures ?? null,
       search_volume: params.searchVolume ?? null,
       provider:      params.provider ?? 'dataforseo',
+      ...(params.metadata ? { metadata: params.metadata } : {}),
     }, { onConflict: 'keyword_id,date,device' })
     if (error) { console.error('[seoRankings] upsertRanking:', error.message); return false }
     return true

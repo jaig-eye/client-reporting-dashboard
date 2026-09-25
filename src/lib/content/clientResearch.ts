@@ -36,8 +36,9 @@ import { createAdminClient } from '@/lib/supabase/server'
 import {
   resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsSerpCompetitors, dfsKeywordIdeas,
   dfsKeywordSuggestions, dfsLocalSerp, dfsLocalSearchVolume, isAggregatorDomain, normalizeDomain, readResearchLocation,
-  type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig, type ResearchLocation,
+  type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig, type ResearchLocation, type DfsSerpSnapshot,
 } from '@/lib/connectors/dataforseo'
+import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
 import { recordDfsUsage } from './dataforseoUsage'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
@@ -74,6 +75,8 @@ export interface DiscoveryResult {
   competitors: string[]
   /** The research location's name when the run was local, for the display to say so. */
   location?: string | null
+  /** The best-rated businesses in the local pack for the seed services, when the run was local. */
+  localPack?: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
 }
 
 /** Which system a candidate came from. Stored as seo_keywords.source, so it must be honest. */
@@ -334,6 +337,9 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   let location: ResearchLocation | null = null
   // 0 until a local volume call has run; then the market's share of national demand.
   let localShare = 0
+  // What Google showed for each probed seed, keyed by normalised seed; stored on the seed's row.
+  const serpBySeed = new Map<string, DfsSerpSnapshot>()
+  const packByTitle = new Map<string, { title: string; domain: string | null; rating: number | null; votes: number | null }>()
   try {
     // Asked for with the optional column, then without it. PostgREST fails the whole select
     // when foundational_keywords is missing (migration 222), which would silently drop the
@@ -396,6 +402,15 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       for (const sd of probe) {
         const serp = await dfsLocalSerp(sd, creds, { locationCode: location.code, languageCode: cfg.language_code, depth: 20, onCost })
         if (!serp) continue
+        serpBySeed.set(normalize(sd), serp)
+        // The seed itself belongs in the pool: it is what the operator said the business should be
+        // found for, and it now carries what Google shows for it. Metrics fill in from the other
+        // sources and the local volume call.
+        add({ keyword: sd, search_volume: null, keyword_difficulty: null, cpc: null, competition: null, intent: null, source: 'idea', position: null, competitor_domain: null })
+        for (const p of serp.localPack) {
+          const prev = packByTitle.get(p.title.toLowerCase())
+          if (!prev || (p.votes ?? 0) > (prev.votes ?? 0)) packByTitle.set(p.title.toLowerCase(), { title: p.title, domain: p.domain, rating: p.rating, votes: p.votes })
+        }
         for (const o of serp.organic) {
           if (o.rank > 20 || o.domain === own || o.domain.endsWith('.' + own) || isAggregatorDomain(o.domain)) continue
           tally.set(o.domain, (tally.get(o.domain) ?? 0) + (21 - o.rank) / 20)
@@ -521,6 +536,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   const ranked  = scored.map(r => r.c)
   const scoreOf = new Map(scored.map(r => [r.c.normalized, r.s] as const))
 
+  const localPack = Array.from(packByTitle.values())
+    .filter(p => p.title && !isAggregatorDomain(p.domain ?? ''))
+    .sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0) || (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 6)
   // ── Store, without disturbing anything a post already claimed ─────────────
   let stored = 0
   let snapshotted = 0
@@ -561,6 +580,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
         found_via:         c.source,
         // The market's own number, and where it was measured. Absent on a country-level run.
         ...(location ? { local_volume: c.local_volume ?? null, research_location: location.code } : {}),
+        // What Google showed for a probed seed — the talking points, kept for the Analytics tab.
+        ...(location && serpBySeed.has(c.normalized)
+          ? { serp: toSerpInsight(serpBySeed.get(c.normalized) as DfsSerpSnapshot, { query: c.keyword, locationCode: location.code, location: location.name }) }
+          : {}),
       },
     }))
 
@@ -570,6 +593,26 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       const { error } = await db.from('seo_keywords').insert(rows.slice(i, i + 200))
       if (error) { console.error('[research] insert failed:', error.message); break }
       stored += rows.slice(i, i + 200).length
+    }
+
+    // Paid for, discovered, and not kept. Reported as a failure — not stamped, so the next run
+    // tries again — because "nothing found" would send the operator back to buy it again.
+    if (rows.length > 0 && stored === 0) {
+      console.error('[research] nothing stored (apply migrations 189/222)')
+      return { ...empty, ok: false, reason: 'storage failed', discovered: ranked.length, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }
+    }
+
+    // Probed seeds that already had a row — tracked or claimed, so the reset left them — get
+    // what Google showed for them and their local volume too.
+    if (location) {
+      for (const [norm, snap] of Array.from(serpBySeed.entries())) {
+        if (!known.has(norm)) continue
+        const c = candidates.get(norm)
+        await patchKeywordMetadata(db, clientId, norm, {
+          serp: toSerpInsight(snap, { query: norm, locationCode: location.code, location: location.name }),
+          ...(c && c.local_volume !== undefined ? { local_volume: c.local_volume } : {}),
+        })
+      }
     }
 
     // The ranking snapshot, from rows already paid for.
@@ -587,7 +630,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   await stampResearchRun()
 
   console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
-  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null }
+  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }
 }
 
 /**

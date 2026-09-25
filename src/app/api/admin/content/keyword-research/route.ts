@@ -39,6 +39,8 @@ const RESEARCH_REUSE_DAYS = 30
 interface ResearchPayload {
   keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null }>
   competitors:  string[]
+  /** Best-rated businesses in the local pack for the seed services; only on a fresh local run. */
+  localPack?:   Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
   /** Present and false when DataForSEO is not connected for this client. */
   connected:    boolean
   /** Why nothing came back, when nothing came back. */
@@ -118,7 +120,9 @@ export async function GET(request: NextRequest) {
     // path called the same client disconnected.
     connected:    keywords.length > 0,
     researchedAt: meta.at,
-    researchLocation: meta.location,
+    // The location the STORED pool was measured in, not the current setting: a pool from before
+    // the location was set carries no local numbers and must not be labelled with it.
+    researchLocation: keywords.some(k => k.local_volume != null) ? meta.location : null,
   }
   return NextResponse.json(payload)
 }
@@ -161,7 +165,7 @@ export async function POST(request: NextRequest) {
         connected:    keywords.length > 0,
         reason:       'Reusing research from the last 30 days',
         researchedAt: at,
-        researchLocation: location,
+        researchLocation: keywords.some(k => k.local_volume != null) ? location : null,
       } satisfies ResearchPayload)
     }
   }
@@ -180,6 +184,7 @@ export async function POST(request: NextRequest) {
   const payload: ResearchPayload = {
     keywords:     await readStored(clientId),
     competitors:  result.competitors,
+    localPack:    result.localPack ?? [],
     // `ok` with no cost and no competitors means the database-only sources answered, which is
     // what a client without a DataForSEO connection gets. Say so rather than showing a thin
     // list as though it were the whole market.
@@ -188,7 +193,7 @@ export async function POST(request: NextRequest) {
     discovered:   result.discovered,
     cost:         result.cost,
     researchedAt: meta.at,
-    researchLocation: result.location ?? meta.location,
+    researchLocation: result.location ?? null,
   }
   return NextResponse.json(payload)
 }

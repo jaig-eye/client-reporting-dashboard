@@ -28,9 +28,15 @@ Everything stays inert until a client actually has a `dataforseo` connection wit
 
 Three places, and it is worth knowing which is which when reading `dataforseo_usage`:
 
-**Research, inline at topic selection** — six Labs calls, roughly six cents, at most once every
-30 days per client (`RESEARCH_MAX_AGE_DAYS` in `lib/content/clientResearch.ts`). Reuse is the
-normal path.
+**Research** — from the setup wizard, Brand DNA's "Look again", or inline at topic selection when
+nothing fresh exists: around ten Labs calls (roughly ten cents) and, when a research location is
+set (224), five live SERPs of the starting keywords (~2¢) plus one Google Ads local-volume task
+(9¢). At most once every 30 days per client (`RESEARCH_MAX_AGE_DAYS` in
+`lib/content/clientResearch.ts`) unless someone presses Look again. Reuse is the normal path.
+
+**One live SERP per generated post** — `gatherCompetitorGap` in `lib/content/competitiveIntel.ts`,
+for the post's target keyword, in the research location when set: the talking points the writer is
+handed and the Analytics tab's "What Google shows" card. Under a cent each.
 
 **The site-wide ranking snapshot** — free. It is the same `ranked_keywords` response research
 already fetched; every row carries a position, so recording them costs no extra call. Written as

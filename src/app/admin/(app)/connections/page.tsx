@@ -302,11 +302,10 @@ export default async function ConnectionsPage({
           initialDepth={dfsDepth}
           initialDevices={dfsDevices}
         />
-        {/* DataForSEO usage + spend (only once credentials exist) */}
-        {/* DataForSeoUsagePanel is deliberately not rendered here for now: spend belongs on a
-            reporting surface, not among the connection cards. The component and its route stay
-            (src/components/admin/DataForSeoUsagePanel.tsx, /api/admin/dataforseo-usage) for
-            when it gets a home — and it only has data once migration 191 is applied anyway. */}
+        {/* DataForSEO usage and spend is not shown here for now: spend belongs on a reporting
+            surface, not among the connection cards. The component and its route stay
+            (src/components/admin/DataForSeoUsagePanel.tsx, /api/admin/dataforseo-usage) for when
+            it gets a home. */}
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard
           initialApiKey={agencySettings?.serp_api_key ? SECRET_MASK : ''}

@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
+import { readResearchLocation } from '@/lib/connectors/dataforseo'
 
 export const dynamic = 'force-dynamic'
 
@@ -138,5 +139,12 @@ export async function GET(req: NextRequest) {
     } catch { return [] }   // seo_keywords only exists from migration 189
   })()
 
-  return NextResponse.json({ paidTerms, ahrefs, researched })
+  // Where the researched numbers were measured (migration 224), so the tab can say so.
+  let researchLocation: string | null = null
+  try {
+    const { data: cs } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+    researchLocation = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)?.name ?? null
+  } catch { /* column absent */ }
+
+  return NextResponse.json({ paidTerms, ahrefs, researched, researchLocation })
 }

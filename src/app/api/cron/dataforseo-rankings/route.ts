@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
   // Where each client's searcher is. A research location (migration 224) makes the live check
   // local: the position that matters for a county-wide business is the one its own market sees,
   // not the national one Labs reports.
-  const localCode = new Map<string, number>()
+  const localCode = new Map<string, { code: number; name: string }>()
   try {
     const { data: locs } = await db
       .from('content_settings')
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
       .in('client_id', usable.map(u => u.clientId))
     for (const r of (locs ?? []) as { client_id: string; research_location: unknown }[]) {
       const loc = readResearchLocation(r.research_location)
-      if (loc) localCode.set(r.client_id, loc.code)
+      if (loc) localCode.set(r.client_id, { code: loc.code, name: loc.name })
     }
   } catch { /* column absent — country-level checks, as before */ }
 
@@ -145,7 +145,7 @@ export async function GET(req: NextRequest) {
           clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
           // The connection's tracking config is the client's authoritative market; the keyword's
           // stored location is only a registration default.
-          locationCode: localCode.get(u.clientId) ?? u.cfg.location_code,
+          locationCode: localCode.get(u.clientId)?.code ?? u.cfg.location_code,
           languageCode: u.cfg.language_code,
           device,
           depth: firstRead ? FIRST_READ_DEPTH : Math.min(ROUTINE_DEPTH, u.cfg.rank_depth),
@@ -210,10 +210,14 @@ export async function GET(req: NextRequest) {
 
       // A keyword that is genuinely not in the top N is recorded as null, not skipped: "not
       // ranking" is a reading, and a gap in the history would read as "we stopped looking".
+      // Where the reading was taken. A series that switches from national to local when a
+      // research location is set is two series; the row says which.
+      const at = localCode.get(job.clientId)
       const ok = await upsertRanking({
         keywordId: job.keywordId, clientId: job.clientId, date: today, device: job.device,
         position: rank.position, rankAbsolute: rank.rank_absolute, url: rank.url,
         serpFeatures: rank.serp_features,
+        metadata: at ? { location_code: at.code, location_name: at.name } : {},
       })
       if (ok) written++
     } catch (e) {

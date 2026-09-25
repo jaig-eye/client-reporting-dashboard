@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
+import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP } from '@/lib/content/researchCopy'
 import type { EeatData }       from '@/lib/content/types'
 
 interface SiteOption {
@@ -103,6 +104,7 @@ export default function ClientContentSettingsForm({
   const [researching, setResearching]   = useState(false)
   const [researchMsg, setResearchMsg]   = useState<string | null>(null)
   const [researchLocation, setResearchLocation] = useState<ResearchLocationValue | null>(null)
+  const [confirmRerun, setConfirmRerun] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -245,7 +247,7 @@ export default function ClientContentSettingsForm({
   async function rerunResearch() {
     setResearching(true); setResearchMsg(null)
     try {
-      if (!(await save())) throw new Error('Brand DNA did not save, so research was not run')
+      if (!(await save())) throw new Error('unsaved')
       const res = await fetch('/api/admin/content/keyword-research', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -253,19 +255,29 @@ export default function ClientContentSettingsForm({
       })
       const d = await res.json().catch(() => ({})) as {
         discovered?: number; cost?: number; competitors?: string[]
-        researchedAt?: string | null; connected?: boolean; error?: string
+        researchedAt?: string | null; connected?: boolean; error?: string; reason?: string
       }
-      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
+      if (!res.ok) throw new Error('failed')
+      if (d.reason === 'storage failed') throw new Error('unstored')
       setResearchedAt(d.researchedAt ?? new Date().toISOString())
+      const ideas = d.discovered ?? 0
+      const sites = d.competitors?.length ?? 0
       setResearchMsg(d.connected === false
-        ? 'No DataForSEO connection for this client, so only the free database sources ran.'
-        : `${(d.discovered ?? 0).toLocaleString()} candidate${d.discovered === 1 ? '' : 's'}`
-          + (d.competitors?.length ? `, ${d.competitors.length} competitor${d.competitors.length === 1 ? '' : 's'}` : '')
-          + (d.cost != null && d.cost > 0 ? ` · $${d.cost.toFixed(2)}` : '')
-          + '. The Analytics tab shows the new pool.')
+        ? 'DataForSEO isn’t connected for this client, so this used Google Ads and Ahrefs data only. Connect it on the client’s Integrations tab for search volumes and competing sites.'
+        : `Found ${ideas.toLocaleString()} keyword idea${ideas === 1 ? '' : 's'}`
+          + (sites ? ` and ${sites} competing site${sites === 1 ? '' : 's'}` : '')
+          + (d.cost != null && d.cost > 0 ? ` for $${d.cost.toFixed(2)}` : '')
+          + '. They’re on the Analytics tab now.')
       onResearchRun?.()
     } catch (e) {
-      setResearchMsg(`Research failed: ${e instanceof Error ? e.message : 'unknown error'}`)
+      // The real reason goes to the console; the operator gets a sentence they can act on.
+      console.warn('[brand-dna] research failed:', e)
+      const why = e instanceof Error ? e.message : ''
+      setResearchMsg(why === 'unsaved'
+        ? 'Brand DNA did not save, so nothing was researched. Fix the error above and try again.'
+        : why === 'unstored'
+        ? 'Research ran but the results couldn’t be saved. Nothing to fix on your side — tell your admin the keyword tables aren’t ready yet.'
+        : 'Research didn’t finish. Try again in a minute — if it keeps happening, check the DataForSEO connection on the Integrations page.')
     } finally {
       setResearching(false)
     }
@@ -399,15 +411,13 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label hint="where volumes, competitors and rankings are measured">Research Location</Label>
+          <Label hint="the one place we measure search demand and rankings in">Research Location</Label>
           <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            A city, county or state. Leave empty for a nationwide business &mdash; research then uses country-wide numbers.
-          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{RESEARCH_LOCATION_HELP}</p>
         </div>
 
         <div>
-          <Label hint="comma-separated — what this business should be found for">Foundational Keywords</Label>
+          <Label hint="comma-separated">Starting keywords</Label>
           <textarea
             className="input"
             rows={2}
@@ -416,24 +426,34 @@ export default function ClientContentSettingsForm({
             onChange={e => setSeeds(e.target.value)}
             placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
           />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            {STARTING_KEYWORDS_HELP}
+            {researchedAt ? ` Last researched ${new Date(researchedAt).toLocaleDateString()}.` : ' Not researched yet.'}
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
             <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220 }}>
-              Keyword research widens out from these and from Services Offered.
-              {researchedAt ? ` Last researched ${new Date(researchedAt).toLocaleDateString()}.` : ' Not researched yet.'}
+              Looking again replaces this client&apos;s keyword ideas and uses your DataForSEO balance &mdash; usually well under a dollar.
             </p>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
-              onClick={rerunResearch}
-              disabled={researching || saving || !seeds.trim()}
-              title="Saves Brand DNA, clears the researched candidates and looks at the market again. Costs a few cents."
-            >
-              {researching ? 'Researching…' : 'Re-run keyword research'}
-            </button>
+            {confirmRerun ? (
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
+                Replace the current keyword ideas?
+                <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }} onClick={() => setConfirmRerun(false)}>Cancel</button>
+                <button type="button" className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }} onClick={() => { setConfirmRerun(false); void rerunResearch() }}>Yes, look again</button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
+                onClick={() => { if (researchedAt) setConfirmRerun(true); else void rerunResearch() }}
+                disabled={researching || saving || !seeds.trim()}
+              >
+                {researching ? 'Looking…' : 'Look again'}
+              </button>
+            )}
           </div>
           {researchMsg && (
-            <p className="text-xs mt-1" style={{ color: /failed/i.test(researchMsg) ? 'var(--red)' : 'var(--text-muted)' }}>{researchMsg}</p>
+            <p className="text-xs mt-1" style={{ color: /didn|did not|couldn/i.test(researchMsg) ? 'var(--red)' : 'var(--text-muted)' }}>{researchMsg}</p>
           )}
         </div>
 

@@ -110,7 +110,7 @@ export default function DataForSeoAgencyCard({
         </div>
         <div>
           <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-            Default rank depth <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— routine checks read to page 3 (30) at most; set below 30 to spend less. A keyword&apos;s first read always goes to 100.</span>
+            How deep we look <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— how far down Google&apos;s results we check for each keyword. 30 (page 3) is plenty for most clients and costs the least; a keyword&apos;s very first check always goes to 100.</span>
           </label>
           <input type="number" min={10} max={100} step={10} className="input" value={depth}
             onChange={e => setDepth(Number(e.target.value))} style={{ width: 120 }} />
@@ -126,7 +126,7 @@ export default function DataForSeoAgencyCard({
             ))}
           </div>
           <p style={{ fontSize: '0.68rem', color: 'var(--text-faint)', margin: '4px 0 0' }}>
-            Each device is a separate daily SERP check. Depth and devices are per-client-overridable.
+            Checking both desktop and mobile doubles the daily cost. You can change either setting for an individual client on their Integrations tab.
           </p>
         </div>
       </IntegrationModal>

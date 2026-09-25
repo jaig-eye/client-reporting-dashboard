@@ -21,11 +21,19 @@
 import type { createAdminClient } from '@/lib/supabase/server'
 import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors, type CompetitorResearch } from './competitorResearch'
 import { recordDfsUsage } from './dataforseoUsage'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, readResearchLocation, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, readResearchLocation, type DfsCreds, type SeoTrackingConfig, type ResearchLocation } from '@/lib/connectors/dataforseo'
+import { toSerpInsight, saveSerpInsight, type SerpInsight } from './serpInsights'
 
 type Db = ReturnType<typeof createAdminClient>
 
-interface DfsContext { creds: DfsCreds; domain: string | null; config: SeoTrackingConfig }
+interface DfsContext {
+  creds:    DfsCreds
+  domain:   string | null
+  /** Labs config. location_code here is a COUNTRY — Labs refuses anything finer. */
+  config:   SeoTrackingConfig
+  /** The client's market (migration 224), for the SERP calls that do take a city or county. */
+  location: ResearchLocation | null
+}
 
 /**
  * Resolve DataForSEO credentials + tracking config for a client. Requires an actual
@@ -45,25 +53,25 @@ export async function getClientDfsContext(db: Db, clientId: string): Promise<Dfs
     const creds = resolveDfsCreds(dfsRow.connector?.auth ?? {})   // env fills the password if absent
     if (!creds) return null
     const config = resolveSeoConfig(dfsRow.connector?.config, dfsRow.config)
-    // A research location (migration 224) makes the SERP intel local: People-Also-Ask and the
-    // competing pages as a searcher in the service area sees them.
+    // Kept apart from config: keyword_overview (Labs) must still get the country, while the
+    // SERP intel below is what a searcher in the service area sees.
+    let location: ResearchLocation | null = null
     try {
       const { data: cs } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
-      const loc = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)
-      if (loc) config.location_code = loc.code
+      location = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)
     } catch { /* column absent */ }
-    return { creds, domain: dfsRow.external_id ?? null, config }
+    return { creds, domain: dfsRow.external_id ?? null, config, location }
   } catch {
     return null
   }
 }
 
 /**
- * Build the competitor-gap prompt block for a keyword using the best available provider,
- * in priority order: DataForSEO (when the client is connected) → topic-time stored SerpAPI
- * research → live SerpAPI → GSC demand signals. Pass `serpApiKey: null` to skip the live
- * SerpAPI tier (e.g. topic-time research already tried it); pass `storedResearch` so a
- * populated capture is preferred over the weaker GSC fallback.
+ * Build the competitor-gap prompt block for a keyword: topic-time stored research → live SerpAPI
+ * → GSC demand signals, exactly as before DataForSEO existed. When the client has DataForSEO,
+ * a SERP-talking-points block is APPENDED (and its organic results feed the heading scrape only
+ * when nothing was stored). Pass `serpApiKey: null` to skip the live SerpAPI tier (e.g.
+ * topic-time research already tried it).
  */
 export async function gatherCompetitorGap(params: {
   db:              Db
@@ -72,51 +80,61 @@ export async function gatherCompetitorGap(params: {
   serpApiKey?:     string | null
   storedResearch?: CompetitorResearch | null
   serpTimeoutMs?:  number   // bound the DataForSEO SERP call for synchronous callers (see dfsSerpIntel)
+  /** Receives the SERP insight when DataForSEO answered, so the caller can file it on the post's keyword row. */
+  onInsight?:      (insight: SerpInsight) => void
 }): Promise<string> {
   const keyword = params.keyword?.trim()
   if (!keyword) return ''
 
-  // Tier 1 — DataForSEO (only when the client is connected): ONE SERP call yields competitor
-  // coverage AND SERP intelligence (People-Also-Ask + AI-Overview cited sources), together.
+  // ── The "fill the gaps" block: exactly what the writer got before DataForSEO existed ──────
+  // Stored topic-time research first (already captured, already paid for), then live SerpAPI,
+  // then Search Console. DataForSEO is NOT allowed to replace this: when it was, a client with
+  // DataForSEO connected lost the stored competitor headings for a keyword the moment a live SERP
+  // came back with anything at all — the post got different input, not more.
+  let gap = params.storedResearch ? formatCompetitorGap(params.storedResearch) : ''
+
+  // ── What DataForSEO adds: talking points from the SERP, and a scrape only when nothing was stored ──
+  // ONE live SERP as the client's market sees it: People-Also-Ask, related searches, who the AI
+  // Overview cites, who holds the featured snippet. Reference material for the writer, kept for
+  // the Analytics tab. The organic URLs feed the heading scrape only when no research was stored.
+  let talkingPoints = ''
   try {
     const dfs = await getClientDfsContext(params.db, params.clientId)
     if (dfs) {
+      const serpLocation = dfs.location?.code ?? dfs.config.location_code
       const intel = await dfsSerpIntel(keyword, dfs.creds, {
-        locationCode: dfs.config.location_code,
+        locationCode: serpLocation,
         languageCode: dfs.config.language_code,
         limit:        5,
         aiOverview:   true,
         timeoutMs:    params.serpTimeoutMs,
         onCost:       c => { void recordDfsUsage({ operation: 'serp_intel', cost: c, clientId: params.clientId || null }) },
       })
-      const gap = formatCompetitorGap(await buildCompetitorResearch(keyword, intel.organicUrls))
-      const si  = formatSerpIntel(intel, keyword)
-      const combined = [gap, si].filter(Boolean).join('\n')
-      if (combined) return combined
+      // Only an actual page is kept: a timeout or refusal used to overwrite a stored insight
+      // with an empty one.
+      if (intel.answered) {
+        const insight = toSerpInsight(intel, { query: keyword, locationCode: serpLocation, location: dfs.location?.name ?? null })
+        // On the keyword's own row when it already has one (a researched topic); otherwise the
+        // caller files it on the row registerKeyword() creates for the post.
+        void saveSerpInsight(params.db, params.clientId, keyword, insight)
+        params.onInsight?.(insight)
+        talkingPoints = formatSerpIntel(intel, keyword)
+        if (!gap) gap = formatCompetitorGap(await buildCompetitorResearch(keyword, intel.organicUrls))
+      }
     }
-  } catch { /* fall through */ }
+  } catch { /* DataForSEO adds nothing this time */ }
 
-  // Tier 1.5 — topic-time stored SerpAPI research (already captured; beats the GSC fallback).
-  if (params.storedResearch) {
-    const gap = formatCompetitorGap(params.storedResearch)
-    if (gap) return gap
+  // Live SerpAPI, when topic-time research never ran.
+  if (!gap && params.serpApiKey) {
+    try { gap = formatCompetitorGap(await researchCompetitors(keyword, params.serpApiKey)) } catch { /* fall through */ }
   }
 
-  // Tier 2 — live SerpAPI
-  if (params.serpApiKey) {
-    try {
-      const gap = formatCompetitorGap(await researchCompetitors(keyword, params.serpApiKey))
-      if (gap) return gap
-    } catch { /* fall through */ }
+  // Search Console demand signals, when no competitor tool answered.
+  if (!gap) {
+    try { gap = await gscDemandGap(params.db, params.clientId, keyword) } catch { /* nothing */ }
   }
 
-  // Tier 3 — Google Search Console demand signals
-  try {
-    const gsc = await gscDemandGap(params.db, params.clientId, keyword)
-    if (gsc) return gsc
-  } catch { /* fall through */ }
-
-  return ''
+  return [gap, talkingPoints].filter(Boolean).join('\n')
 }
 
 /** Fallback context from the client's own GSC queries when no competitor tool is available. */

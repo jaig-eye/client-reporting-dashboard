@@ -115,6 +115,20 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
+
+  // A moved research location changes what a live rank check measures, so each tracked keyword's
+  // next read must be a fresh baseline rather than a "movement" across two markets. Compared
+  // before the write; applied only if the write kept the column.
+  let locationMoved = false
+  if ('research_location' in row) {
+    try {
+      const { data: cur } = await db.from('content_settings').select('research_location').eq('client_id', String(client_id)).maybeSingle()
+      const was = readResearchLocation((cur as { research_location?: unknown } | null)?.research_location)?.code ?? null
+      const now = (row.research_location as { code?: number } | null)?.code ?? null
+      locationMoved = was !== now
+    } catch { /* column absent — nothing moves */ }
+  }
+
   let { error } = await db
     .from('content_settings')
     .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false })
@@ -122,17 +136,30 @@ export async function PUT(request: NextRequest) {
   // Same shape as the read: without migration 222 the whole upsert fails, so a wizard that sent
   // seed keywords would have saved NOTHING — schedule, brand answers and all. Drop the field the
   // database does not know about and save the rest.
-  for (const col of ['research_location', 'foundational_keywords'] as const) {
-    if (error && col in row && new RegExp(col, 'i').test(error.message)) {
-      console.warn(`[client-settings] ${col} missing (apply migration ${col === 'research_location' ? 224 : 222}) — saving without it`)
-      delete row[col]
-      ;({ error } = await db
-        .from('content_settings')
-        .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false }))
-    }
+  // PostgREST names ONE unknown column per response, so this repeats until the error stops naming
+  // one of ours. A single pass per column answered 500 when both 222 and 224 were missing — and
+  // saved nothing. Bounded: every pass deletes a key.
+  const OPTIONAL = ['foundational_keywords', 'research_location'] as const
+  while (error) {
+    const message = error.message
+    const col = OPTIONAL.find(c => c in row && new RegExp(c, 'i').test(message))
+    if (!col) break
+    console.warn(`[client-settings] ${col} missing (apply migration ${col === 'research_location' ? 224 : 222}) — saving without it`)
+    delete row[col]
+    ;({ error } = await db
+      .from('content_settings')
+      .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false }))
   }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if (locationMoved && 'research_location' in row) {
+    const { error: resetErr } = await db.from('seo_keywords')
+      .update({ last_checked_at: null })
+      .eq('client_id', String(client_id))
+      .eq('is_tracked', true)
+    if (resetErr) console.warn('[client-settings] could not reset rank baselines after a location change:', resetErr.message)
+  }
 
   // Keep clients.phone in sync with content_settings.phone_number
   if (Object.prototype.hasOwnProperty.call(body, 'phone_number')) {

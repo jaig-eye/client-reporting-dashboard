@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
+import { intentLabel, intentHint } from '@/lib/content/intentLabels'
+import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP, GEOGRAPHIC_FOCUS_HELP } from '@/lib/content/researchCopy'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,8 +56,12 @@ interface ResearchData {
   discovered?:  number
   cost?:        number
   researchedAt?: string | null
+  /** The request itself failed (network, 5xx) — distinct from a run that found nothing. */
+  failed?: boolean
   /** Where the pool was measured, when a research location is set. */
   researchLocation?: string | null
+  /** Best-rated businesses in the map pack for the starting keywords; only on a fresh local run. */
+  localPack?: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
 }
 
 interface Props {
@@ -483,7 +489,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   const researchStarted = useRef(false)
 
   useEffect(() => {
-    if (step !== 7 || researchStarted.current) return
+    // On the research step itself — the screen that says this uses the DataForSEO balance —
+    // not the step before it, which used to run a paid call while telling the operator that
+    // "nothing here is saved".
+    if (step !== 8 || researchStarted.current) return
     researchStarted.current = true
     void (async () => {
       try {
@@ -500,9 +509,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           body:    JSON.stringify({ client_id: clientId }),
         })
         const data = await res.json() as ResearchData
-        setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+        setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
       } catch {
-        setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+        setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
       } finally {
         setResearchDone(true)
       }
@@ -529,9 +538,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         body:    JSON.stringify({ client_id: clientId, force: true }),
       })
       const data = await res.json() as ResearchData
-      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
     } catch {
-      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
     } finally {
       setRerunning(false)
       setResearchDone(true)
@@ -794,7 +803,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               schedule={schedule}
               pagesCount={pages.length}
               hasGsc={hasGsc ?? false}
-              hasResearch={research?.connected ?? false}
+              hasResearch={(research?.keywords.length ?? 0) > 0}
               saving={saving}
               saveMsg={saveMsg}
               onSave={handleSave}
@@ -1164,7 +1173,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           <Field label="Target Audience">
             <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
-          <Field label="Foundational Keywords">
+          <Field label="Starting keywords">
             <input
               type="text"
               value={foundationalKeywords}
@@ -1173,19 +1182,20 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               placeholder="mobile detailing, ceramic coating, paint correction"
             />
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              Terms this business should be found for. Used to widen keyword research — they are a
-              starting point, not a content plan, and the research can rank other opportunities above them.
+              {STARTING_KEYWORDS_HELP}
             </p>
           </Field>
 
           <Field label="Geographic Focus">
-            <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin, TX" />
+            <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin and the surrounding Hill Country" />
+            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              {GEOGRAPHIC_FOCUS_HELP}
+            </p>
           </Field>
           <Field label="Research Location">
             <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} inputStyle={inputStyle} />
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              Where volumes, competitors and rankings are measured: a city, county or state. Leave empty
-              for a nationwide business.
+              {RESEARCH_LOCATION_HELP}
             </p>
           </Field>
           <Field label="Brand Voice">
@@ -1590,7 +1600,7 @@ function StepContentTypes({
       </div>
 
       <p style={{ marginTop: 16, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-        Press Continue. This step saves nothing yet.
+        Press Skip to move on. This step saves nothing yet.
       </p>
     </div>
   )
@@ -1608,26 +1618,41 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
   onDismiss: (keyword: string) => void
 }) {
   const busy = !done || rerunning
-  const sourceLabel: Record<string, string> = { dataforseo: 'DataForSEO', ahrefs: 'Ahrefs', google_ads: 'Google Ads' }
+  const [confirming, setConfirming] = useState(false)
+  const keywords     = research?.keywords ?? []
+  const shown        = keywords.slice(0, 60)
+  const competitors  = research?.competitors ?? []
+  const localPack    = research?.localPack ?? []
+  const reused       = !!research?.reason && /reusing/i.test(research.reason)
+  const failed       = !!research?.failed
+  // Discovered but not kept: the database behind the pool is not ready. Not a seeds problem.
+  const notStored    = research?.reason === 'storage failed'
+  const found        = research?.discovered ?? keywords.length
+  const researchedOn = research?.researchedAt ? new Date(research.researchedAt).toLocaleDateString() : null
+  const place        = research?.researchLocation ? research.researchLocation.split(',')[0] : null
+  // DataForSEO is the default source and goes unsaid; the others are worth knowing.
+  const provenance: Record<string, string> = { ahrefs: 'from Ahrefs', google_ads: 'from Google Ads' }
+  const difficultyTone = (d: number) => (d <= 30 ? 'green' : d <= 60 ? 'amber' : 'red')
+
   return (
     <div>
-      <StepTitle>Researching your market</StepTitle>
+      <StepTitle>Your keyword shortlist</StepTitle>
       <StepSub>
-        Keyword opportunities and competing sites for this client. Remove anything that is not this
-        business, or change the seed terms and look again.
+        Keyword ideas and competing sites for this client. Remove anything that isn&apos;t this business,
+        or change the starting keywords and look again.
       </StepSub>
 
-      {/* Seeds + re-run: the two things an operator can do about a bad list */}
+      {/* Starting keywords + look again: the two things an operator can do about a bad list */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: 12, background: 'var(--bg-subtle)' }}>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-          Seed terms
+        <label htmlFor="wizard-starting-keywords" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+          Starting keywords
         </label>
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 6px', lineHeight: 1.5 }}>
-          What this business should be found for. Research widens out from these; results that share
-          none of their words are dropped. They do not become topics on their own.
+          {STARTING_KEYWORDS_HELP} Same field as step 3 &mdash; edit here to look again.
         </p>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <textarea
+            id="wizard-starting-keywords"
             className="input"
             rows={2}
             value={seeds}
@@ -1636,73 +1661,109 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
             style={{ flex: 1, resize: 'vertical', fontSize: '0.8125rem' }}
             disabled={busy}
           />
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onRerun}
-            disabled={busy || !seeds.trim()}
-            title="Clears the current candidates and researches again from these seeds. Costs a few cents."
-            style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
-          >
-            {rerunning ? 'Researching…' : 'Re-run research'}
-          </button>
+          {confirming ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200 }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
+                Replace the {keywords.length} keyword{keywords.length === 1 ? '' : 's'} listed now?
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => setConfirming(false)}>Cancel</button>
+                <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => { setConfirming(false); onRerun() }}>Yes, look again</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => (keywords.length ? setConfirming(true) : onRerun())}
+              disabled={busy || !seeds.trim()}
+              style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
+            >
+              {rerunning ? 'Looking…' : 'Look again'}
+            </button>
+          )}
         </div>
+        <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
+          Looking again clears the list below and searches from these keywords. Uses your DataForSEO
+          balance &mdash; usually well under a dollar.
+        </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        {/* Keywords panel */}
+        {/* Keyword ideas */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Keyword Research</span>
-            {done && !rerunning && research && research.keywords.length > 0 && (
-              <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>{research.keywords.length} shown</span>
+            <span>Keyword ideas{place ? ` in ${place}` : ''}</span>
+            {done && !rerunning && keywords.length > 0 && (
+              <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>
+                {shown.length < keywords.length ? `${shown.length} of ${keywords.length}` : keywords.length}
+              </span>
             )}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
             {busy ? (
-              <StatusRow label={rerunning ? 'Researching again from the new seeds…' : 'Researching the market…'} status="loading" />
-            ) : !research?.connected ? (
-              <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
-                No DataForSEO connection for this client, so this is built from ad and Ahrefs data
-                already in the dashboard. Connect DataForSEO for volumes, difficulty and competitors.
+              <StatusRow
+                label={rerunning
+                  ? 'Looking again from the new keywords — usually 20–40 seconds…'
+                  : 'Looking at this market — usually 20–40 seconds. This uses your DataForSEO balance.'}
+                status="loading"
+              />
+            ) : failed ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--red)', lineHeight: 1.5 }}>
+                Research didn&apos;t finish. Look again to retry.
               </div>
-            ) : research.keywords.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-                {research.reason ?? 'No keyword data found.'}
+            ) : notStored ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--red)', lineHeight: 1.5 }}>
+                Research ran but the results couldn&apos;t be saved. Nothing to fix on your side &mdash; tell your admin
+                the keyword tables aren&apos;t ready yet.
+              </div>
+            ) : !research?.connected && keywords.length === 0 ? (
+              <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
+                DataForSEO isn&apos;t connected for this client, so there is nothing to search with yet.
+                Connect it on the client&apos;s Integrations tab for keyword ideas, search volumes and competing sites.
+              </div>
+            ) : keywords.length === 0 ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                No usable keywords came back. Try broader starting keywords and look again.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 300, overflowY: 'auto' }}>
-                {research.keywords.slice(0, 60).map(kw => (
+                {shown.map(kw => (
                   <div key={kw.keyword} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kw.keyword}>
                         {kw.keyword}
                       </div>
                       <div style={{ fontSize: '0.625rem', color: 'var(--text-faint)', display: 'flex', gap: 6 }}>
-                        {kw.intent && <span>{kw.intent}</span>}
-                        {kw.source && <span>{sourceLabel[kw.source] ?? kw.source}</span>}
+                        {intentLabel(kw.intent) && <span title={intentHint(kw.intent)}>{intentLabel(kw.intent)}</span>}
+                        {kw.source && provenance[kw.source] && <span>{provenance[kw.source]}</span>}
                       </div>
                     </div>
-                    {(kw.local_volume != null || kw.volume != null) && (
+                    {kw.local_volume != null ? (
                       <span
                         style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-                        title={kw.local_volume != null && kw.volume != null ? `${kw.volume.toLocaleString()}/mo nationally` : undefined}
+                        title={kw.volume != null ? `${kw.volume.toLocaleString()} searches a month nationally` : 'Searches a month in the research location'}
                       >
-                        {kw.local_volume != null ? `${kw.local_volume.toLocaleString()}/mo local` : `${(kw.volume ?? 0).toLocaleString()}/mo`}
+                        {kw.local_volume.toLocaleString()}/mo
                       </span>
-                    )}
+                    ) : kw.volume != null ? (
+                      <span
+                        style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+                        title={place ? 'Searches a month nationally — too few locally for Google to report' : 'Searches a month'}
+                      >
+                        {kw.volume.toLocaleString()}/mo{place ? ' (national)' : ''}
+                      </span>
+                    ) : null}
                     {kw.difficulty != null && (
-                      <span style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, whiteSpace: 'nowrap',
-                        background: kw.difficulty <= 30 ? '#dcfce7' : kw.difficulty <= 60 ? '#fef3c7' : '#fee2e2',
-                        color:      kw.difficulty <= 30 ? '#166534' : kw.difficulty <= 60 ? '#92400e' : '#991b1b' }}>
-                        KD {Math.round(kw.difficulty)}
+                      <span className={`badge badge-${difficultyTone(kw.difficulty)}`} style={{ whiteSpace: 'nowrap' }} title="How hard it is to rank, 0–100. Under 30 is winnable quickly.">
+                        Difficulty {Math.round(kw.difficulty)}
                       </span>
                     )}
                     <button
                       type="button"
                       onClick={() => onDismiss(kw.keyword)}
-                      title="Not this business. Removes it from the candidates for good."
-                      aria-label={`Dismiss ${kw.keyword}`}
+                      title="Remove — this keyword won't be suggested again"
+                      aria-label={`Remove ${kw.keyword}`}
                       style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.875rem', lineHeight: 1, padding: '0 2px' }}
                     >
                       ×
@@ -1711,60 +1772,95 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
                 ))}
               </div>
             )}
-            {done && !rerunning && research && (
-              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5 }}>
-                {research.discovered != null && (
-                  <>{research.discovered.toLocaleString()} candidate{research.discovered === 1 ? '' : 's'} found
-                  {research.cost != null && research.cost > 0 ? ` · $${research.cost.toFixed(2)}` : ''}. </>
-                )}
-                {research.reason && research.keywords.length > 0 ? `${research.reason}. ` : ''}
-                Content generation reads this pool for the next 30 days.
-              </div>
+            {done && !rerunning && shown.length < keywords.length && (
+              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                Showing the top 60. All {keywords.length} are saved and used when choosing topics.
+              </p>
+            )}
+            {done && !rerunning && research && keywords.length > 0 && (
+              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                {reused && researchedOn
+                  ? `Using the research from ${researchedOn}. `
+                  : research.discovered != null
+                    ? `${research.discovered.toLocaleString()} keyword idea${research.discovered === 1 ? '' : 's'} found${research.cost != null && research.cost > 0 ? ` · this run cost $${research.cost.toFixed(2)}` : ''}. `
+                    : ''}
+                These are what topics are chosen from for the next 30 days.
+              </p>
             )}
           </div>
         </div>
 
-        {/* Competitors panel */}
+        {/* Competing sites */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-            Competitor Analysis{research?.researchLocation ? ` — ${research.researchLocation.split(',')[0]}` : ''}
+            Competing sites{place ? ` in ${place}` : ''}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
             {busy ? (
-              <StatusRow label="Finding competitors…" status="loading" />
-            ) : (research?.competitors ?? []).length === 0 ? (
+              <StatusRow label="Finding competing sites…" status="loading" />
+            ) : competitors.length === 0 && localPack.length === 0 ? (
               <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                {research?.connected
-                  ? (research.reason
-                      ? 'Competitors are only listed on a fresh run — re-run research to see them.'
-                      : 'No competing sites found for these seeds in DataForSEO\u2019s index. Directories and marketplaces are excluded on purpose \u2014 try more specific seed terms and re-run.')
-                  : 'Connect DataForSEO for this client to see who they compete with.'}
+                {failed
+                  ? 'Research didn’t finish.'
+                  : !research?.connected
+                  ? 'Connect DataForSEO for this client to see who they compete with.'
+                  : reused
+                    ? `Using the research from ${researchedOn ?? 'earlier'} — competing sites are only captured on a new run.`
+                    : 'No competing sites found for these keywords. Directories and marketplaces are left out on purpose — try more specific starting keywords and look again.'}
               </div>
             ) : (
               <>
-                <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
-                  {research?.researchLocation
-                    ? `Who a searcher in ${research.researchLocation.split(',')[0]} sees for the seed services \u2014 organic results and the local pack, strongest first.`
-                    : 'Sites ranking for the seed searches in this market, strongest first.'}
-                  {' '}The top three&apos;s own ranking keywords join the pool.
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {research!.competitors.map((c, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
-                      <a href={`https://${c}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace', textDecoration: 'none' }}>{c}</a>
+                {competitors.length > 0 && (
+                  <>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                      {place
+                        ? `Who a searcher in ${place} sees for the starting keywords — search results and the map pack, strongest first.`
+                        : 'Sites ranking for the starting keywords, strongest first.'}
+                      {' '}The top three&apos;s own keywords join the list.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {competitors.map((c, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                          <a href={`https://${c}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace', textDecoration: 'none' }}>{c}</a>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                )}
+                {localPack.length > 0 && (
+                  <div style={{ marginTop: competitors.length ? 12 : 0 }}>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                      Top rated in the map pack
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {localPack.map((p, i) => (
+                        <div key={i} style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                          {p.domain
+                            ? <a href={`https://${p.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-primary)', textDecoration: 'none' }}>{p.title}</a>
+                            : <span>{p.title}</span>}
+                          {p.rating != null && (
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>
+                              ★ {p.rating.toFixed(1)}{p.votes != null ? ` (${p.votes.toLocaleString()})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
       </div>
 
-      {done && !rerunning && (
+      {done && !rerunning && research && keywords.length > 0 && (
         <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', fontSize: '0.8125rem', color: '#166534' }}>
-          Research complete. Topic selection reads these candidates alongside Search Console, Ads and Ahrefs.
+          Done &mdash; {found.toLocaleString()} keyword idea{found === 1 ? '' : 's'} saved{shown.length < found ? `, showing the top ${shown.length}` : ''}.
+          {research.connected
+            ? ' Topics will be chosen from these alongside Search Console, Google Ads and Ahrefs.'
+            : ' These came from Google Ads and Ahrefs data already in the dashboard; connect DataForSEO for search volumes and competing sites.'}
         </div>
       )}
     </div>
@@ -1805,8 +1901,8 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
   ]
 
   const statusChecks = [
-    { label: 'Brand DNA',     ok: !!brand.business_background },
-    { label: 'GSC Connected', ok: hasGsc },
+    { label: 'Business profile',      ok: !!brand.business_background },
+    { label: 'Google Search Console', ok: hasGsc },
     { label: 'Keyword research', ok: hasResearch },
     { label: 'Sitemap',       ok: pagesCount > 0 },
   ]
@@ -1830,7 +1926,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
         </div>
 
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
-          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Data Sources</div>
+          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>What we have for this client</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {statusChecks.map(c => (
               <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>

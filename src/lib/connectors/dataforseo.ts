@@ -183,14 +183,26 @@ export interface DfsRankResult {
   serp_features:  string[]
 }
 
-interface DfsSerpSource { url: string; domain: string; title: string }
-export interface DfsSerpIntel {
+export interface DfsSerpSource { url: string; domain: string; title: string }
+
+/** Everything worth keeping from one SERP page: what Google shows for the search, and to whom. */
+export interface DfsSerpSnapshot {
+  /** Element types present: ai_overview, featured_snippet, local_pack, people_also_ask, video, … */
+  features:        string[]
+  organic:         Array<{ domain: string; url: string; title: string; rank: number }>
+  /** The map pack — where a service business's real rivals are listed. Domain is often absent. */
+  localPack:       Array<{ title: string; domain: string | null; rating: number | null; votes: number | null; rank: number }>
   paa:             string[]                                              // People-Also-Ask questions
-  related:         string[]                                             // related_searches strings
+  related:         string[]                                              // related_searches strings
   aiOverview:      { present: boolean; sources: DfsSerpSource[] } | null // AI Overview citations (text intentionally omitted — untrusted)
   featuredSnippet: DfsSerpSource | null
-  organicUrls:     string[]                                             // reused for competitor-heading scrape (avoids a 2nd SERP call)
-  features:        string[]                                            // element types present (ai_overview, featured_snippet, …)
+}
+
+/** The snapshot plus the organic URLs the competitor-heading scrape reads (avoids a 2nd SERP call). */
+export interface DfsSerpIntel extends DfsSerpSnapshot {
+  organicUrls: string[]
+  /** False when DataForSEO did not answer (timeout, refusal, empty page) — nothing here is a reading. */
+  answered:    boolean
 }
 
 // ── Keyword overview (volume + difficulty + intent in one Labs call) ──────────
@@ -592,30 +604,35 @@ function asArr(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v) ? (v as Record<string, unknown>[]) : []
 }
 
-export async function dfsSerpIntel(
-  keyword: string,
-  creds: DfsCreds,
-  opts: { locationCode?: number; languageCode?: string; limit?: number; aiOverview?: boolean; onCost?: CostSink; timeoutMs?: number } = {},
-): Promise<DfsSerpIntel> {
-  const empty: DfsSerpIntel = { paa: [], related: [], aiOverview: null, featuredSnippet: null, organicUrls: [], features: [] }
-  if (!keyword.trim()) return empty
-  const depth = Math.max(10, opts.limit ?? 10)
-  // timeoutMs lets a synchronous caller bound the call so its result is USED (not raced-and-
-  // discarded by an outer deadline while the request still completes and bills). On timeout
-  // dfsPost returns null → onCost never fires → no wasted spend.
-  const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
-    keyword:                keyword.trim(),
-    location_code:          opts.locationCode ?? 2840,
-    language_code:          opts.languageCode ?? 'en',
-    device:                 'desktop',
-    depth,
-    load_async_ai_overview: opts.aiOverview ?? true,
-  }, opts.timeoutMs ?? 15_000)
-  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth) + 0.002)
-  const items = firstResultItems(json)
-  if (!items.length) return empty
-
+/** One SERP page's items, read defensively — a shape change must cost a field, never the caller. */
+function parseSerp(items: Record<string, unknown>[]): DfsSerpSnapshot {
   const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
+
+  const organic = items
+    .filter(i => i.type === 'organic')
+    .map(i => ({
+      domain: normalizeDomain(String(i.domain ?? '') || String(i.url ?? '')),
+      url:    String(i.url ?? ''),
+      title:  String(i.title ?? ''),
+      rank:   num(i.rank_group) ?? 999,
+    }))
+    .filter(o => o.domain)
+
+  // One local_pack item per business.
+  const localPack = items
+    .filter(i => i.type === 'local_pack')
+    .map(i => {
+      const rating = (i.rating as Record<string, unknown> | null) ?? null
+      const dom = i.domain ? normalizeDomain(String(i.domain)) : i.url ? normalizeDomain(String(i.url)) : ''
+      return {
+        title:  String(i.title ?? ''),
+        domain: dom || null,
+        rating: num(rating?.value),
+        votes:  num(rating?.votes_count),
+        rank:   num(i.rank_group) ?? 999,
+      }
+    })
+    .filter(p => p.title)
 
   // People Also Ask → nested items[].title
   const paa = items
@@ -630,7 +647,7 @@ export async function dfsSerpIntel(
     .filter(Boolean).slice(0, 12)
 
   // AI Overview → cited source references (text intentionally NOT extracted — untrusted prose)
-  let aiOverview: DfsSerpIntel['aiOverview'] = null
+  let aiOverview: DfsSerpSnapshot['aiOverview'] = null
   const ao = items.find(i => i.type === 'ai_overview')
   if (ao) {
     const refs = asArr(ao.references).length
@@ -643,13 +660,43 @@ export async function dfsSerpIntel(
   const fs = items.find(i => i.type === 'featured_snippet')
   const featuredSnippet = fs ? toSource(fs) : null
 
-  const organicUrls = items
-    .filter(i => i.type === 'organic' && i.url)
-    .map(i => String(i.url))
-    .filter(u => !u.includes('youtube.com') && !u.includes('wikipedia.org'))
-    .slice(0, opts.limit ?? 5)
+  return { features, organic, localPack, paa, related, aiOverview, featuredSnippet }
+}
 
-  return { paa, related, aiOverview, featuredSnippet, organicUrls, features }
+export async function dfsSerpIntel(
+  keyword: string,
+  creds: DfsCreds,
+  opts: { locationCode?: number; languageCode?: string; limit?: number; aiOverview?: boolean; onCost?: CostSink; timeoutMs?: number } = {},
+): Promise<DfsSerpIntel> {
+  const empty: DfsSerpIntel = { features: [], organic: [], localPack: [], paa: [], related: [], aiOverview: null, featuredSnippet: null, organicUrls: [], answered: false }
+  if (!keyword.trim()) return empty
+  const depth = Math.max(10, opts.limit ?? 10)
+  // timeoutMs lets a synchronous caller bound the call so its result is USED (not raced-and-
+  // discarded by an outer deadline while the request still completes and bills). On timeout
+  // dfsPost returns null → onCost never fires → no wasted spend.
+  const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
+    keyword:                keyword.trim(),
+    location_code:          opts.locationCode ?? 2840,
+    language_code:          opts.languageCode ?? 'en',
+    device:                 'desktop',
+    depth,
+    load_async_ai_overview: opts.aiOverview ?? true,
+  }, opts.timeoutMs ?? 15_000)
+  const refused = firstTaskError(json)
+  // A refused task is not billed by DataForSEO and must not be billed by the ledger either.
+  if (refused) { console.warn(`[dataforseo] serp intel refused for "${keyword}": ${refused}`); return empty }
+  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth) + 0.002)
+  const items = firstResultItems(json)
+  if (!items.length) return empty
+  const snap = parseSerp(items)
+  // Asked for and absent is a fact worth keeping ("no AI answer"); not asked for is not.
+  if ((opts.aiOverview ?? true) && !snap.aiOverview) snap.aiOverview = { present: false, sources: [] }
+  // Reused for the competitor-heading scrape, so the reference sites are left out of it.
+  const organicUrls = snap.organic
+    .map(o => o.url)
+    .filter(u => u && !u.includes('youtube.com') && !u.includes('wikipedia.org'))
+    .slice(0, opts.limit ?? 5)
+  return { ...snap, organicUrls, answered: true }
 }
 
 // ── Locality ──────────────────────────────────────────────────────────────────
@@ -768,9 +815,9 @@ export async function dfsLocalSearchVolume(
     search_partners: false,
   }, 60_000)
   if (!json) return out
-  opts.onCost?.(readTopCost(json) || DFS_GOOGLE_ADS_TASK_COST)
   const err = firstTaskError(json)
-  if (err) console.warn(`[dataforseo] google_ads search_volume refused: ${err}`)
+  if (err) { console.warn(`[dataforseo] google_ads search_volume refused: ${err}`); return out }
+  opts.onCost?.(readTopCost(json) || DFS_GOOGLE_ADS_TASK_COST)
   for (const r of firstResultArray(json)) {
     const kw = String(r.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
     if (!kw) continue
@@ -779,23 +826,17 @@ export async function dfsLocalSearchVolume(
   return out
 }
 
-export interface DfsLocalSerp {
-  organic:   Array<{ domain: string; url: string; title: string; rank: number }>
-  /** The map pack: where a service business's real rivals are listed. Domain is often absent. */
-  localPack: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null; rank: number }>
-  /** Element types present, so a caller can tell a local-pack SERP from a national-looking one. */
-  features:  string[]
-}
 
 /**
- * One live SERP as a searcher in `locationCode` sees it: organic results and the local pack.
+ * One live SERP as a searcher in `locationCode` sees it: organic results, the local pack, and
+ * the talking points (People-Also-Ask, related searches, AI Overview sources).
  * depth 20 is two pages, $0.004. Null when DataForSEO did not answer.
  */
 export async function dfsLocalSerp(
   keyword: string,
   creds: DfsCreds,
   opts: { locationCode: number; languageCode?: string; depth?: number; device?: SeoDevice; onCost?: CostSink },
-): Promise<DfsLocalSerp | null> {
+): Promise<DfsSerpSnapshot | null> {
   if (!keyword.trim()) return null
   const depth = opts.depth ?? 20
   const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
@@ -806,35 +847,12 @@ export async function dfsLocalSerp(
     depth,
   })
   if (!json) return null
-  opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))
   const err = firstTaskError(json)
-  if (err) console.warn(`[dataforseo] local SERP refused for "${keyword}": ${err}`)
+  // A refused task is not billed by DataForSEO and must not be billed by the ledger either.
+  if (err) { console.warn(`[dataforseo] local SERP refused for "${keyword}": ${err}`); return null }
+  opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))
   const items = firstResultItems(json)
-  const organic = items
-    .filter(i => i.type === 'organic')
-    .map(i => ({
-      domain: normalizeDomain(String(i.domain ?? '') || String(i.url ?? '')),
-      url:    String(i.url ?? ''),
-      title:  String(i.title ?? ''),
-      rank:   num(i.rank_group) ?? 999,
-    }))
-    .filter(o => o.domain)
-  const localPack = items
-    .filter(i => i.type === 'local_pack')
-    .map(i => {
-      const rating = (i.rating as Record<string, unknown> | null) ?? null
-      const dom = i.domain ? normalizeDomain(String(i.domain)) : i.url ? normalizeDomain(String(i.url)) : ''
-      return {
-        title:  String(i.title ?? ''),
-        domain: dom || null,
-        rating: num(rating?.value),
-        votes:  num(rating?.votes_count),
-        rank:   num(i.rank_group) ?? 999,
-      }
-    })
-    .filter(p => p.title)
-  const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
-  return { organic, localPack, features }
+  return items.length ? parseSerp(items) : null
 }
 
 // ── Account balance (free) — used by testConnection ───────────────────────────

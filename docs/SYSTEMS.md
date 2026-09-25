@@ -199,7 +199,9 @@ Columns: `id`, `client_id` (FK), `source` (google_ads|meta_ads), `campaign_id`, 
 ### Content Tables
 
 **`content_settings`** (one row per client, or client_id IS NULL for global)
-Key columns: `client_id`, `background`, `services`, `target_audience`, `geographic_focus`, `brand_voice`, `phone_number`, `cta_list`, `sitemap_urls` (TEXT[]), `manual_link_urls` (TEXT[]), `eeat_data` (JSONB — 15 fields), `auto_generate`, `auto_approve_topics`, `auto_push_posts`, `schedule_frequency`, `schedule_day_of_week`, `monthly_publish_day`, `topics_per_run`, `posts_per_run`, `weeks_ahead`, `target_length`, `publish_time`, `wp_publish_mode` (scheduled_draft|draft_only), `topic_guidelines`, `wizard_completed`, `post_structure`, `notification_email`.
+Key columns: `client_id`, `background`, `services`, `target_audience`, `geographic_focus`, `brand_voice`, `phone_number`, `cta_list`, `sitemap_urls` (TEXT[]), `manual_link_urls` (TEXT[]), `eeat_data` (JSONB — 15 fields), `auto_generate`, `auto_approve_topics`, `auto_push_posts`, `schedule_frequency`, `schedule_day_of_week`, `monthly_publish_day`, `topics_per_run`, `posts_per_run`, `weeks_ahead`, `target_length`, `publish_time`, `wp_publish_mode` (scheduled_draft|draft_only), `topic_guidelines`, `wizard_completed`, `post_structure`, `notification_email`, `foundational_keywords` (TEXT[] — "Starting keywords", migration 222), `last_keyword_research_at` (222), `research_location` (JSONB `{ code, name, type }` — the Google geo target research and live rank checks are measured in; null = country-level; migration 224).
+
+**`seo_keywords`** (migration 189) — the keyword registry: researched candidates, tracked post keywords. `metadata` (JSONB) carries `research_score`, `found_via`, `local_volume` (Google Ads volume in the research location), and `serp` (what Google showed for the search — PAA, related searches, AI Overview sources, featured snippet, local pack, top organic — written by `saveSerpInsight()` at post generation and by research for starting keywords). `dismissed_at` (223) hides a candidate from selection.
 
 **`content_topics`**
 Key columns: `id`, `client_id` (FK), `content_type` (blog|service_area), `status` (pending|approved|rejected|generating|generated|scheduled), `topic`, `target_keyword`, `search_intent`, `secondary_keywords`, `keyword_opportunity`, `ranking_strategy`, `audience_intent`, `why_now`, `competition_level`, `cluster_group`, `seo_brief` (JSONB — 28 fields), `competitors_researched` (JSONB), `edit_notes`, `target_publish_date`, `auto_approved_at`, `generation_error`, `city`, `state_abbr`, `service_name`, `created_at`, `updated_at`.
@@ -388,6 +390,10 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 - `POST /api/admin/content/regenerate` — AI re-edit a post
 - `POST /api/admin/content/posts/[id]/generate-image` — AI image generation
 - `POST /api/admin/content/posts/[id]/upload-image` — manual image upload
+- `GET POST PATCH /api/admin/content/keyword-research` — read the researched keyword pool (free) / run research (`force: true` clears and re-runs; spends DataForSEO) / dismiss or restore a keyword
+- `GET /api/admin/content/keyword-sources` — the sources the Analytics tab shows: paid converters, Ahrefs positions, researched pool (+ `researchLocation`)
+- `GET /api/admin/content/serp-insights` — stored "what Google shows" per keyword (`seo_keywords.metadata.serp`); read-only
+- `GET /api/admin/content/dfs-locations?q=` — Google geo targets matching `q`, for the research-location picker; free, agency credentials, cached in-process
 
 ### Stripe
 - `POST /api/admin/stripe/sync` — pull Stripe invoice history for a client

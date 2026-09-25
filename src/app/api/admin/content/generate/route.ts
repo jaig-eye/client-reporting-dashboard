@@ -24,6 +24,7 @@ import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
 import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES } from '@/lib/content/blogStrategy'
 import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
+import { saveSerpInsightById, type SerpInsight } from '@/lib/content/serpInsights'
 import { registerKeyword } from '@/lib/content/seoRankings'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
@@ -976,10 +977,13 @@ LINKING RULES:
     // their own fetch timeouts — no withDeadline (which would abandon and still bill a call).
     // Skip the live SerpAPI tier if topic-time research already ran.
     const serpAlreadyTried = topicData.competitors_researched != null
+    // What Google showed for the target keyword, filed on the post's keyword row once it exists.
+    const serp: { insight: SerpInsight | null } = { insight: null }
     const competitorGapSection = await gatherCompetitorGap({
       db, clientId: effectiveClientId, keyword: topicData.target_keyword,
       serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
       storedResearch: topicData.competitors_researched,
+      onInsight: i => { serp.insight = i },
     })
 
     // ── Editor direction notes ────────────────────────────────────────────────
@@ -1254,13 +1258,16 @@ ${lengthInstruction}${writingRulesReminder}`
     // once DataForSEO is connected, rank checks surface on this post's card and editor.
     // Soft-fails if the seo_keywords table isn't present yet (migration 189 pending).
     if (parsed.focusKeyword) {
-      await registerKeyword({
+      const keywordId = await registerKeyword({
         clientId:      effectiveClientId,
         keyword:       parsed.focusKeyword,
         source:        'topic',
         contentPostId: savedPost.id,
         intent:        topicData.search_intent ?? null,
       })
+      // The talking points this post was written from, for the Analytics tab. The insight
+      // records which phrase was searched, since the writer may have pivoted the focus keyword.
+      if (keywordId && serp.insight) void saveSerpInsightById(db, keywordId, serp.insight)
     }
 
     logActivity(adminSession ?? null, 'generated', 'post', {
@@ -1588,8 +1595,9 @@ export async function POST(request: NextRequest) {
   // serpTimeoutMs — NOT an outer deadline race, which would abandon the result while the
   // paid call still completes and bills (the scrape/SerpAPI tiers self-bound already).
   const manualSeed = extractManualSeed(prompt)
+  const manualSerp: { insight: SerpInsight | null } = { insight: null }
   const manualCompetitorSection = looksKeywordLike(manualSeed)
-    ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000 })
+    ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000, onInsight: i => { manualSerp.insight = i } })
     : ''
 
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null,
@@ -1718,12 +1726,13 @@ export async function POST(request: NextRequest) {
     // Register the target keyword in the SEO datastream (see Path A). Soft-fails if
     // seo_keywords isn't present yet (migration 189 pending).
     if (postId && parsed.focusKeyword) {
-      await registerKeyword({
+      const keywordId = await registerKeyword({
         clientId:      effectiveClientId,
         keyword:       parsed.focusKeyword,
         source:        'manual',
         contentPostId: postId,
       })
+      if (keywordId && manualSerp.insight) void saveSerpInsightById(db, keywordId, manualSerp.insight)
     }
 
     // Auto-generate featured image in background
