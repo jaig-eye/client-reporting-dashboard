@@ -167,7 +167,19 @@ type SeedMatcher = ReturnType<typeof buildSeedMatcher>
 /** Words that say "hire someone to do this" — the searches a service business wants to be found for. */
 const SERVICE_WORDS = /\b(install(?:ation|ations|er|ers|ing)?|contractors?|compan(?:y|ies)|services?|near me|costs?|prices?|pricing|quotes?|estimates?|hire|professionals?|repairs?|maintenance|design(?:er|ers)?|specialists?|experts?)\b/
 /** Words that say "buy this thing" — a product search, which a service business cannot rank for and should not write for. */
-const PRODUCT_WORDS = /\b(buy|cheap(?:est)?|amazon|walmart|home depot|lowes|costco|wayfair|bulk|packs?|watts?|lumens?|bulbs?|batter(?:y|ies)|plug[- ]?in|kits?|sets?|reviews?|vs|sale|wholesale|diy|extension cords?|strips?|rgb|smart)\b/
+const PRODUCT_WORDS = /\b(buy|cheap(?:est)?|bulk|packs?|watts?|lumens?|bulbs?|batter(?:y|ies)|plug[- ]?in|kits?|sets?|reviews?|vs|sale|for sale|wholesale|diy|extension cords?|strips?|rgb|smart|fairy|string|rope|net|icicle|tree lights?|c[679]|testers?|fuses?|clips?|hooks?|timers?|dimmers?|sockets?|replacement|coupons?|discounts?|clearance)\b/
+/** Retailers, marketplaces and shopping events. A search that names one is a search for a shop. */
+const RETAILER_WORDS = /\b(amazon|prime day|walmart|home ?depot|lowe'?s|costco|wayfair|menards|ikea|etsy|ebay|temu|ace hardware|harbor freight|best buy|sam'?s club)\b/
+
+/**
+ * Never a content target, whatever the numbers: a search for a brand or a shop. Google's own
+ * navigational label catches most brands ("govee outdoor lights"); the retailer list catches
+ * the rest ("lowes christmas lights"). Dropped rather than demoted — a 450,000-a-month brand
+ * term out-scored every service phrase even at -40.
+ */
+function isExcluded(c: Candidate): boolean {
+  return String(c.intent ?? '').toLowerCase() === 'navigational' || RETAILER_WORDS.test(c.keyword.toLowerCase())
+}
 
 /**
  * Score a candidate so the pool arrives ordered by what is worth writing about.
@@ -440,13 +452,18 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       // A rival's own brand terms are theirs, not an opportunity: "jellyfish lighting cost" is
       // not a subject this client can rank for. Compared with spaces removed so a two-word
       // brand matches its one-word domain label.
-      const label = comp.split('.')[0]
-      let skipped = 0
+      // The registrable label — "govee" from us.govee.com, not "us" — so the check actually
+      // fires on a subdomain. And a rival's ranked list is its whole catalogue: a lighting
+      // brand's includes humidifiers and gaming rooms. Only what is about this business joins.
+      const parts = comp.split('.')
+      const label = (parts.length >= 2 ? parts[parts.length - 2] : parts[0]).toLowerCase()
+      let skipped = 0, offTopic = 0
       for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) {
         if (label.length >= 4 && c.keyword.toLowerCase().replace(/\s+/g, '').includes(label)) { skipped++; continue }
+        if (seedMatcher && !seedMatcher.isRelevant(c.keyword)) { offTopic++; continue }
         add(c)
       }
-      if (skipped) console.log(`[research] ${comp}: dropped ${skipped} of its own brand terms`)
+      if (skipped || offTopic) console.log(`[research] ${comp}: dropped ${skipped} brand term(s), ${offTopic} off-topic`)
     }
 
     // ── Ideas: the category expansion, filtered back to the business ──────────
@@ -530,6 +547,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
   const scored = Array.from(candidates.values())
+    .filter(c => !isExcluded(c))
     .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false, localShare) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, MAX_CANDIDATES)

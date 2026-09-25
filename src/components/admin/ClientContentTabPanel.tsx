@@ -484,20 +484,27 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
   const [removed, setRemoved]         = useState<ResearchRow[]>([])
   const [refreshNote, setRefreshNote] = useState<string | null>(null)
 
-  // Research ran elsewhere (epoch moved): forget what was loaded so the effects below fetch
-  // again. Runs once on mount as well, where clearing already-empty state changes nothing.
+  // Research ran elsewhere (epoch moved): forget what was loaded so the loading state shows
+  // while the effects below fetch again. Runs once on mount as well, where clearing
+  // already-empty state changes nothing.
   useEffect(() => { setRanks(null); setSources(null); setInsights(null); setRemoved([]) }, [epoch])
 
-  // What Google showed for keywords this client has written for or researched. Same lazy shape.
+  // Every table is fetched each time this tab is shown, and again on epoch or Refresh. A tab
+  // that fetched once and then trusted itself showed a list from before a "Look again" run
+  // until the page was reloaded — the old rows stayed on screen while a fetch is in flight.
+  const [loadTick, setLoadTick] = useState(0)
+  useEffect(() => { if (isActive) setLoadTick(t => t + 1) }, [isActive, epoch])
+
+  // What Google showed for keywords this client has written for or researched.
   useEffect(() => {
-    if (!isActive || insights !== null) return
+    if (!loadTick) return
     let cancelled = false
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { insights: [] })
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
       .catch(() => { if (!cancelled) setInsights([]) })
     return () => { cancelled = true }
-  }, [isActive, insights, clientId])
+  }, [loadTick, clientId])
 
   // A local run stores the market's own volume; the column only appears when there is one.
   const hasLocalVolume = (sources?.researched ?? []).some(r => r.local_volume != null)
@@ -547,19 +554,19 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
   }
 
   useEffect(() => {
-    if (!isActive || ranks !== null) return
+    if (!loadTick) return
     let cancelled = false
     fetch(`/api/admin/content/keyword-rankings?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { rankings: [] })
       .then(d => { if (!cancelled) setRanks((d.rankings ?? []) as KeywordRankRow[]) })
       .catch(() => { if (!cancelled) setRanks([]) })
     return () => { cancelled = true }
-  }, [isActive, ranks, clientId])
+  }, [loadTick, clientId])
 
   // The other three sources, loaded the same way. Separate from the ranks call so a slow or
   // missing one never blocks the other.
   useEffect(() => {
-    if (!isActive || sources !== null) return
+    if (!loadTick) return
     let cancelled = false
     const empty: SourcesPayload = { paidTerms: [], ahrefs: [], researched: [] }
     fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
@@ -567,7 +574,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
       .then(d => { if (!cancelled) setSources({ ...empty, ...(d as Partial<SourcesPayload>) }) })
       .catch(() => { if (!cancelled) setSources(empty) })
     return () => { cancelled = true }
-  }, [isActive, sources, clientId])
+  }, [loadTick, clientId])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -579,6 +586,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
     setRanks(null)
     setSources(null)
     setInsights(null)
+    setLoadTick(t => t + 1)
     try {
       const res = await fetch('/api/admin/sync', {
         method: 'POST',

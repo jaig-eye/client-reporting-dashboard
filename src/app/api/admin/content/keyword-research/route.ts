@@ -60,6 +60,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       .from('seo_keywords')
       .select('keyword, search_volume, keyword_difficulty, intent, source, metadata')
       .eq('client_id', clientId)
+      .or('intent.is.null,intent.neq.navigational')
     // Dismissed rows are not shown. With-filter first, then without, for a database that has
     // not run migration 223 yet.
     let { data, error } = await base().is('dismissed_at', null).limit(200)

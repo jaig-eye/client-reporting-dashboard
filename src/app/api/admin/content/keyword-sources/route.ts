@@ -114,6 +114,8 @@ export async function GET(req: NextRequest) {
         .eq('client_id', clientId)
         .eq('is_tracked', false)
         .is('content_post_id', null)
+        // A brand search is never a content target; rows from before the pool excluded them.
+        .or('intent.is.null,intent.neq.navigational')
       // Dismissed candidates are not "researched opportunities" any more. Filter first, then
       // without, for a database that has not run migration 223.
       let { data, error } = await base().is('dismissed_at', null).limit(60)
