@@ -36,6 +36,13 @@ function slugify(text: string): string {
 }
 
 // Returns bare slug segments only (no prefix). Prefix is for display only.
+/** `/services` + `drain-cleaning` → `services/drain-cleaning`; an empty prefix changes nothing. */
+function joinSlug(prefix: string, slug: string): string {
+  const p = prefix.replace(/^\/+|\/+$/g, '')
+  const t = slug.replace(/^\/+|\/+$/g, '')
+  return p ? `${p}/${t}` : t
+}
+
 function parseLines(raw: string): PageEntry[] {
   return raw
     .split('\n')
@@ -127,7 +134,16 @@ export default function PageGenerationWizard({
         body: JSON.stringify({
           client_id:        clientId,
           content_type:     contentType,
-          pages:            pages.map(p => ({ title: p.title, slug: p.slug })),
+          // Send the prefix the operator was shown. Both preview panes render
+          // `{slugPrefix}/{slug}`, but only the bare slug was ever submitted — so a page
+          // previewed at /services/drain-cleaning published at /drain-cleaning, and nothing
+          // recorded the prefix afterwards to notice by.
+          //
+          // The publish path already understands a multi-segment slug: it takes the last
+          // segment as the WordPress slug and resolves the earlier ones to page parents
+          // (approve/route.ts). So the preview was describing behaviour the pipeline supports
+          // and the form simply withheld.
+          pages:            pages.map(p => ({ title: p.title, slug: joinSlug(slugPrefix, p.slug) })),
           delivery,
           space_interval:   delivery === 'spaced' ? spaceInterval  : undefined,
           space_start_date: delivery === 'spaced' ? spaceStartDate : undefined,
@@ -142,7 +158,7 @@ export default function PageGenerationWizard({
       setError(e instanceof Error ? e.message : 'Unknown error')
       setSubmitting(false)
     }
-  }, [clientId, contentType, pages, delivery, spaceInterval, spaceStartDate, onSuccess])
+  }, [clientId, contentType, pages, delivery, spaceInterval, spaceStartDate, slugPrefix, onSuccess])
 
   // ── Shared style tokens ────────────────────────────────────────────────────
   const s = {

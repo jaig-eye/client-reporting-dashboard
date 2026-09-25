@@ -16,7 +16,13 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
-/** Matches the window topic selection uses when it reads converting paid terms. */
+/**
+ * How far back to read converting paid terms for this panel.
+ *
+ * NOT the window topic selection uses — generateTopics reads 28 days. This is a wider view on
+ * purpose, so the panel shows a quarter of paid evidence rather than a month, but the two
+ * numbers will not agree and the comment used to claim they did.
+ */
 const PAID_WINDOW_DAYS = 90
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }

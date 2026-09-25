@@ -26,7 +26,10 @@ import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { discoverKeywords } from '@/lib/content/clientResearch'
 
-export const maxDuration = 120
+// Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
+// kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
+// generation buys it all again.
+export const maxDuration = 300
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {

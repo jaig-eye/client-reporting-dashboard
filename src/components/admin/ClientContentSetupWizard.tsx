@@ -296,13 +296,17 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           if (cs.schedule_start_date) setExistingStartDate(cs.schedule_start_date)
           if (cs.service_page_topic_guidelines) setSpGuidelinesWiz(cs.service_page_topic_guidelines)
           if (cs.regular_page_topic_guidelines) setRpGuidelinesWiz(cs.regular_page_topic_guidelines)
-          // Fall back to previously-saved sitemap URL when connections didn't provide a site URL
-          if (cs.sitemap_url && !connectionDetectedUrl) {
+          // A SAVED sitemap URL always wins over the /sitemap_index.xml guess made from a
+          // detected connection. It used to apply only when no connection was found, so a client
+          // whose real sitemap is /wp-sitemap.xml or /sitemap.xml had it silently replaced with
+          // the guess on every re-run — and the save at the end wrote the guess back.
+          if (cs.sitemap_url) {
             setSitemapUrl(cs.sitemap_url)
             // Derive site URL from saved sitemap — strip any sitemap-like filename
             // (covers /sitemap_index.xml, /wp-sitemap.xml, /post-sitemap.xml, etc.)
             const derivedSite = cs.sitemap_url.replace(/\/[^/]*sitemap[^/]*\.xml$/i, '').replace(/\/$/, '')
-            if (derivedSite) setAnalyzeUrl(derivedSite)
+            // Only when a live connection did not already give us a better site URL.
+            if (derivedSite && !connectionDetectedUrl) setAnalyzeUrl(derivedSite)
           }
         }
       } catch { /* ignore */ }
@@ -512,8 +516,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         // Keep the existing anchor on a re-run; only stamp today on first setup.
         schedule_start_date:  existingStartDate ?? new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
-        topics_per_run:  1,
         auto_generate:   schedule.autoGenerate,
+        // Sent WITH auto_generate, or the single tick in this wizard becomes one-way: the
+        // content-topics cron treats a lagging sub-flag as a legacy row and heals it to true,
+        // so unticking the box here never actually turned auto-approve or auto-push back off.
+        auto_approve_topics: schedule.autoGenerate,
+        auto_push_posts:     schedule.autoGenerate,
         generate_service_pages:         enableServicePages,
         service_page_topic_guidelines:  spGuidelinesWiz || null,
         generate_regular_pages:         enableRegularPages,
@@ -555,10 +563,11 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
       const res = await fetch('/api/admin/content/calendar/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id:  clientId,
-          start_date: new Date().toISOString().slice(0, 10),
-        }),
+        // No start_date. saveSettings above deliberately keeps existingStartDate so a re-run
+        // does not move a client's publish anchor — and calendar/generate gives an explicit
+        // start_date precedence over the saved one, so passing today undid that immediately and
+        // re-anchored the whole series off-cadence.
+        body: JSON.stringify({ client_id: clientId }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string }
