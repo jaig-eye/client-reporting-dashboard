@@ -156,7 +156,24 @@ export async function GET(req: NextRequest) {
   const usage = new Map<string, { cost: number; units: number }>()
   const checkedKeywordIds = new Set<string>()
 
+  /**
+   * Stop before the platform does.
+   *
+   * The checks run one at a time against a live SERP endpoint, so 400 of them cannot finish
+   * inside maxDuration — and everything after the loop (the last_checked_at stamp, the usage
+   * ledger) was lost when the function was killed. The spend still happened: DataForSEO had
+   * been paid for every check made. Worse, an unstamped keyword still reads as never-checked,
+   * so the next run re-bought the same depth-100 first reads, every day, forever.
+   *
+   * Leaving headroom for the bookkeeping below is what makes a partial run progress rather
+   * than repeat.
+   */
+  const startedAt = Date.now()
+  const TIME_BUDGET_MS = 240_000
+  let stoppedEarly = false
+
   for (const job of runJobs) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) { stoppedEarly = true; break }
     try {
       const rank = await dfsSerpRank(job.domain, job.keyword, job.creds, {
         locationCode: job.locationCode,
@@ -197,8 +214,12 @@ export async function GET(req: NextRequest) {
     await recordDfsUsage({ operation: 'rank_check', clientId, cost: u.cost, units: u.units, date: today })
   }
 
+  if (stoppedEarly) {
+    console.warn(`[cron/dataforseo-rankings] stopped at the time budget after ${checked} check(s); the rest roll to the next run`)
+  }
+
   return NextResponse.json({
-    ok: true, checked, written, capped,
+    ok: true, checked, written, capped, stoppedEarly,
     skipped: { outsideWindow: skippedOld, notDue: skippedNotDue, awaitingPublish: skippedUnpublished },
     cost: Number(totalCost.toFixed(4)),
   })

@@ -258,14 +258,19 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     if (postIds.length > 0) {
       const { data: posts, error: postsErr } = await db
         .from('content_posts')
-        .select('id, published_at')
+        .select('id, published_at, last_pushed_at')
         .in('id', postIds)
       // Ages drive the whole cadence. A failure leaves every age null, which reads as "money
       // keyword" and puts the entire universe on the fastest check interval — the expensive
       // direction, silently.
       if (postsErr) console.warn('[seoRankings] cannot read post dates, ages unavailable:', postsErr.message)
-      for (const p of (posts ?? []) as { id: string; published_at: string | null }[]) {
-        if (p.published_at) publishedAt.set(p.id, p.published_at)
+      // published_at is only written by the legacy /content/publish route. Everything that goes
+      // out through Approve & Push — which is everything, in practice — stamps last_pushed_at
+      // instead, so reading published_at alone left every real post looking unpublished:
+      // awaiting_publish stayed true and the rankings cron skipped the entire universe.
+      for (const p of (posts ?? []) as { id: string; published_at: string | null; last_pushed_at: string | null }[]) {
+        const anchor = p.published_at ?? p.last_pushed_at
+        if (anchor) publishedAt.set(p.id, anchor)
       }
     }
 
@@ -278,8 +283,11 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
 
     return rows.map(k => {
       const postId = typeof k.content_post_id === 'string' ? k.content_post_id : null
-      // No post means a money keyword or a manual one — it has no age, and the cron keeps those
-      // at the top of the ladder rather than letting them decay.
+      // No post means a money keyword or a manual one, and it has no age. The rankings cron
+      // SKIPS those (`age_days === null`) and leaves them to the free site-wide snapshot rather
+      // than paying for a live check — this comment used to claim the opposite, which is worth
+      // knowing if the policy is ever revisited: the snapshot only covers terms the domain
+      // already ranks for, so a money keyword it has not broken into yet is never measured.
       const anchor = postId ? (publishedAt.get(postId) ?? null) : null
       return {
         id:               String(k.id),
