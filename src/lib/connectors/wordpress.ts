@@ -146,8 +146,11 @@ export async function verifyPostMeta(
   postType: 'posts' | 'pages' = 'posts',
 ): Promise<{ key: string; sent: string; stored: string }[]> {
   try {
+    // The only fetch in this file that had no timeout, and it is awaited twice per push — so an
+    // unresponsive client site hung the approve request AFTER the post was already live.
     const res = await fetch(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
-      headers: { Authorization: authHeader(auth.username, auth.app_password) },
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
     })
     if (!res.ok) return []
     const data  = await res.json() as { meta?: Record<string, unknown> }
@@ -334,12 +337,21 @@ export async function updatePost(
 }
 
 /** Read one post — used by the published_url backfill. */
+/**
+ * Read one post or page back.
+ *
+ * `kind` matters: a service-area row stores a WordPress PAGE id, and /wp/v2/posts/{pageId}
+ * answers 404 for it. Reconcile read every row through /posts and took that 404 as proof the
+ * content had been deleted, writing wp_status 'deleted' over live pages.
+ */
 export async function fetchPost(
   siteUrl: string,
   auth: { username: string; app_password: string },
   postId: number,
+  kind: 'post' | 'page' = 'post',
 ): Promise<{ id: number; link: string; status: string } | null> {
-  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
+  const base = kind === 'page' ? 'pages' : 'posts'
+  const res = await fetch(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
     headers: wpHeaders(auth),
     signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })

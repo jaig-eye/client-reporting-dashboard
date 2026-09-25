@@ -44,6 +44,8 @@ type PostRow = {
   published_url: string | null
   target_publish_date: string | null
   connection_id: string | null
+  /** 'service_area' rows hold a WordPress PAGE id; everything else holds a post id. */
+  content_type: string | null
 }
 
 const isPlaceholderLink = (url: string | null) => !!url && /[?&]p=\d+/.test(url)
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
   // Candidates: anything whose recorded state cannot still be accurate.
   const { data: rows, error } = await db
     .from('content_posts')
-    .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id')
+    .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id, content_type')
     .not('wp_post_id', 'is', null)
     // LIKE cannot express the '&p=' form, so this is fractionally narrower than
     // isPlaceholderLink below. That is the safe direction: a candidate missed costs a stale row,
@@ -173,7 +175,9 @@ export async function GET(req: NextRequest) {
 
     try {
       checked++
-      const live = await fetchPost(siteUrl, auth, post.wp_post_id)
+      // Service-area rows hold a PAGE id; asking /posts for one returns 404, which this loop
+      // would record as "deleted from WordPress" against a page that is live.
+      const live = await fetchPost(siteUrl, auth, post.wp_post_id, post.content_type === 'service_area' ? 'page' : 'post')
 
       // Gone from WordPress. Someone deleted it there; say so rather than keep claiming it exists.
       if (!live) {
@@ -202,7 +206,10 @@ export async function GET(req: NextRequest) {
       // Still scheduled after its date means WordPress never ran the job — the classic missed
       // schedule. Reported, never auto-published: a post going out a week late without anyone
       // deciding to is worse than one sitting still.
-      if (live.status === 'future' && post.target_publish_date && post.target_publish_date <= today) {
+      // Strictly BEFORE today. Comparing dates with <= called every post still 'future' on the
+      // morning of its own publish day a missed schedule — and all day for staggered siblings
+      // whose slot had not come round yet.
+      if (live.status === 'future' && post.target_publish_date && post.target_publish_date < today) {
         missedSchedule++
         console.warn(
           `[cron/wp-reconcile] MISSED SCHEDULE — "${post.title ?? post.id}" was due ${post.target_publish_date} ` +
