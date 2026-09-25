@@ -3,15 +3,16 @@
 Migrations that exist in `supabase/migrations/` and have **not** been applied to production.
 Apply them in numeric order, oldest first.
 
-Both are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
+All three are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
 live dashboard reads either until the tables exist, so applying them changes nothing on its own.
 
 | File | What it adds | What stays broken without it |
 |---|---|---|
 | `189_openseo_connector.sql` | `seo_keywords`, the keyword registry | Research stores nothing; topic selection loses the researched-opportunities section |
 | `190_dataforseo_tracking.sql` | `seo_rankings` and the tracking config | No rank history — neither the site-wide snapshot nor the live checks have anywhere to write |
+| `222_foundational_keywords.sql` | `content_settings.foundational_keywords` + `last_keyword_research_at`; widens `seo_keywords.source` to allow `google_ads` | Seed keywords from the wizard are dropped on save; the 30-day research reuse gate falls back to row ages; database-only research rows fail the `source` check. The code tolerates all three being absent, but each logs a warning naming this file |
 
-`190` builds on `seo_keywords`, so `189` has to land first. Applying out of order fails loudly
+`190` builds on `seo_keywords`, so `189` has to land first, and `222` after `190` — its `seo_keywords` change is guarded so it cannot fail if run early, but the guard means that part silently does nothing until the table exists. Applying out of order fails loudly
 rather than silently, but there is no reason to find that out.
 
 ## After applying
