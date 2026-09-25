@@ -575,6 +575,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
           {step === 5 && (
             <StepSitemap
+              clientId={clientId}
               sitemapUrl={sitemapUrl}
               setSitemapUrl={setSitemapUrl}
               onFetch={handleFetchPages}
@@ -1043,7 +1044,8 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
 
 // ─── Step 4: Sitemap ──────────────────────────────────────────────────────────
 
-function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, pages, setPages }: {
+function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, pages, setPages }: {
+  clientId: string
   sitemapUrl: string
   setSitemapUrl: (v: string) => void
   onFetch: () => void
@@ -1052,14 +1054,55 @@ function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, p
   pages: SitemapPage[]
   setPages: (p: SitemapPage[]) => void
 }) {
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+
+  /**
+   * Persist a flag change.
+   *
+   * These toggles used to set React state and nothing else. sitemap-parse stores the URLs but
+   * deliberately leaves is_priority / is_excluded alone so a re-parse cannot wipe them, and the
+   * wizard never wrote them either — so every page came out of onboarding unflagged. The
+   * exclusions never reached the client's sitemap tab, and, more quietly, no page was ever
+   * marked priority, which is what the generator's "link to at least 2 priority pages"
+   * instruction reads. Same endpoint the sitemap tab uses, so both surfaces now agree.
+   *
+   * Written per toggle rather than batched on step change: the wizard can be closed at any
+   * step, and a flag the user set should survive that.
+   */
+  async function persist(body: Record<string, unknown>) {
+    try {
+      const res = await fetch('/api/admin/content/sitemap-pages', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, ...body }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? `Save failed (${res.status})`)
+      }
+      setSaveErr(null)
+    } catch (e) {
+      // Keep the optimistic state on screen but say it did not stick, rather than silently
+      // showing a checkbox that means nothing.
+      setSaveErr(e instanceof Error ? e.message : 'Could not save that change')
+    }
+  }
+
   function togglePriority(idx: number) {
-    setPages(pages.map((p, i) => i === idx ? { ...p, isPriority: !p.isPriority } : p))
+    const next = !pages[idx].isPriority
+    setPages(pages.map((p, i) => i === idx ? { ...p, isPriority: next } : p))
+    void persist({ url: pages[idx].url, is_priority: next })
   }
   function toggleExclude(idx: number) {
-    setPages(pages.map((p, i) => i === idx ? { ...p, isExcluded: !p.isExcluded } : p))
+    const next = !pages[idx].isExcluded
+    setPages(pages.map((p, i) => i === idx ? { ...p, isExcluded: next } : p))
+    void persist({ url: pages[idx].url, is_excluded: next })
   }
   function markServicePages() {
+    // Only the pages this actually changes are sent; the endpoint's bulk path takes the list.
+    const newly = pages.filter(p => p.url.includes('/service') && !p.isPriority).map(p => p.url)
     setPages(pages.map(p => ({ ...p, isPriority: p.url.includes('/service') || p.isPriority })))
+    if (newly.length) void persist({ urls: newly, is_priority: true })
   }
 
   return (
@@ -1088,6 +1131,12 @@ function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, p
       {fetchMsg && (
         <p style={{ fontSize: '0.8125rem', color: fetchMsg.includes('ailed') ? 'var(--red)' : 'var(--text-muted)', marginBottom: 10 }}>
           {fetchMsg}
+        </p>
+      )}
+
+      {saveErr && (
+        <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 10 }}>
+          {saveErr} — the ticks below may not have been saved.
         </p>
       )}
 
