@@ -210,15 +210,20 @@ function normalizeDomain(input: string): string {
   return input.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').toLowerCase()
 }
 
-// Live single check. The rankings cron uses the Standard queue instead (3.3x cheaper for the
-// same data), so this is kept for on-demand use — a "check this keyword now" action, where a
-// person is waiting and one synchronous call is worth the premium.
+// Live single check, billed at live rates. This IS what the rankings cron calls — there is no
+// task_post/task_get (Standard queue) code in this repo, whatever older comments claimed.
+//
+// Returns null when DataForSEO did not answer (HTTP error, timeout, dead credential). That is
+// distinct from the empty result for "answered, and the domain is not in the top N": the
+// first is not a reading and must not be recorded as one. The cron used to treat both as
+// "not ranking", so one rate-limited morning wrote a false drop-out for every keyword touched
+// and burned each keyword's one depth-100 baseline read on nothing.
 export async function dfsSerpRank(
   domain: string,
   keyword: string,
   creds: DfsCreds,
   opts: { locationCode?: number; languageCode?: string; device?: SeoDevice; depth?: number; onCost?: CostSink } = {},
-): Promise<DfsRankResult> {
+): Promise<DfsRankResult | null> {
   const empty: DfsRankResult = { keyword, position: null, rank_absolute: null, url: null, serp_features: [] }
   const target = normalizeDomain(domain)
   if (!target || !keyword.trim()) return empty
@@ -229,7 +234,8 @@ export async function dfsSerpRank(
     device:        opts.device ?? 'desktop',
     depth:         opts.depth ?? 100,
   })
-  if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(opts.depth ?? 100))
+  if (!json) return null   // no answer — not a reading
+  opts.onCost?.(readTopCost(json) || estimateSerpCost(opts.depth ?? 100))
   const items = firstResultItems(json)
   if (!items.length) return empty
   const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
@@ -445,11 +451,6 @@ export async function dfsKeywordIdeas(
     return []
   }
 }
-
-// ── SERP rank check, Standard priority (submit now, collect later) ───────────
-//
-// Same data as live/advanced at roughly a third of the price, in exchange for a queue. The two
-// halves are deliberately separate calls so a submit and a collect can happen on different days.
 
 // ── SERP intelligence (one call → PAA + AI-Overview sources + related + organic) ──
 // The creation engine's data source: what real questions searchers ask (PAA) and which

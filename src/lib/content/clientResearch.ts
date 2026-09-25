@@ -71,7 +71,10 @@ export interface DiscoveryResult {
   competitors: string[]
 }
 
-type Candidate = DfsKeywordCandidate & { normalized: string }
+/** Which system a candidate came from. Stored as seo_keywords.source, so it must be honest. */
+type KeywordOrigin = 'dataforseo' | 'ahrefs' | 'google_ads'
+
+type Candidate = DfsKeywordCandidate & { normalized: string; origin: KeywordOrigin }
 
 const normalize = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
 
@@ -144,7 +147,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   }
 
   const candidates = new Map<string, Candidate>()
-  const add = (c: DfsKeywordCandidate) => {
+  const add = (c: DfsKeywordCandidate, origin: KeywordOrigin = 'dataforseo') => {
     const normalized = normalize(c.keyword)
     if (!normalized || normalized.length < 3) return
     const existing = candidates.get(normalized)
@@ -154,10 +157,15 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       existing.keyword_difficulty ??= c.keyword_difficulty
       existing.cpc                ??= c.cpc
       existing.intent             ??= c.intent
-      existing.position           ??= c.position
+      // Never a competitor's position. A converting paid term arrives first with position null;
+      // if the same keyword then comes back from a rival's ranked list at #5, filling the gap
+      // here would hand score() the rival's rank as ours — and the guard in score() only reads
+      // c.source, which is still 'idea'. That converting keyword the competitor owns is exactly
+      // the one worth writing about, and it was being sent to the bottom of the pool.
+      if (c.source !== 'competitor') existing.position ??= c.position
       return
     }
-    candidates.set(normalized, { ...c, keyword: c.keyword.trim(), normalized })
+    candidates.set(normalized, { ...c, keyword: c.keyword.trim(), normalized, origin })
   }
 
   // ── Sources already in the database (free, and they work without DataForSEO) ──
@@ -179,7 +187,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       add({
         keyword: String(r.search_term), search_volume: null, keyword_difficulty: null, cpc: null,
         competition: null, intent: 'transactional', source: 'idea', position: null, competitor_domain: null,
-      })
+      }, 'google_ads')
     }
   } catch { /* table missing or unreadable — skip this source */ }
 
@@ -196,7 +204,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
         keyword: String(r.keyword ?? ''), search_volume: r.volume, keyword_difficulty: r.difficulty,
         cpc: null, competition: null, intent: null, source: 'site',
         position: r.position, competitor_domain: null,
-      })
+      }, 'ahrefs')
     }
   } catch { /* skip */ }
 
@@ -305,7 +313,11 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       client_id:          clientId,
       keyword:            c.keyword,
       normalized_keyword: c.normalized,
-      source:             'dataforseo',
+      // The system it actually came from. Every row used to say 'dataforseo', including the
+      // Ads and Ahrefs rows a database-only run stores — which satisfied the created_at
+      // freshness fallback and made an unconnected client look researched for 30 days, and
+      // filed those rows under the DataForSEO badge in the Analytics tab.
+      source:             c.origin,
       search_volume:      c.search_volume,
       keyword_difficulty: c.keyword_difficulty,
       cpc:                c.cpc,
@@ -421,14 +433,21 @@ export async function getResearchCandidates(clientId: string): Promise<{
       .eq('client_id', clientId)
       .eq('is_tracked', false)
       .is('content_post_id', null)
-      .order('search_volume', { ascending: false, nullsFirst: false })
-      .limit(40)
+      .limit(200)
+    // Sorted here, not in the query. keyword-sources/route.ts observed that a server-side
+    // `.order('search_volume', { nullsFirst: false })` on this same select returned an empty
+    // array with no error, and worked around it — but the same clause was left here, on the
+    // one read that feeds the writer prompt. If the observation holds, this is the difference
+    // between "researched opportunities" reaching topic selection and silently never doing so.
     return ((data ?? []) as Record<string, unknown>[]).map(r => ({
       keyword:    String(r.keyword ?? '').trim(),
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
-    })).filter(k => k.keyword)
+    }))
+      .filter(k => k.keyword)
+      .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+      .slice(0, 40)
   }
 
   try {

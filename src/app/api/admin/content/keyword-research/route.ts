@@ -55,14 +55,18 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       .from('seo_keywords')
       .select('keyword, search_volume, keyword_difficulty, intent')
       .eq('client_id', clientId)
-      .order('search_volume', { ascending: false, nullsFirst: false })
-      .limit(60)
+      .limit(200)
+    // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
+    // this select has been observed returning nothing at all, silently.
     return ((data ?? []) as Record<string, unknown>[]).map(r => ({
       keyword:    String(r.keyword ?? '').trim(),
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
-    })).filter(k => k.keyword)
+    }))
+      .filter(k => k.keyword)
+      .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
+      .slice(0, 60)
   } catch {
     // seo_keywords arrives with migration 189; until then there is simply nothing to show.
     return []

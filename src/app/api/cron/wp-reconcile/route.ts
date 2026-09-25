@@ -72,6 +72,12 @@ export async function GET(req: NextRequest) {
       `published_url.like.*?p=*,` +
       `published_url.like.*wp-admin*`,
     )
+    // Overdue first. Without an order, PostgREST hands back an arbitrary slice of the
+    // candidates, and a row that can never be fixed — a '?p=' placeholder on a post WordPress
+    // still holds as a draft — matches every run and could crowd out the 'future and overdue'
+    // posts this cron exists for. The cap is far above today's volume, but the order makes the
+    // important case first regardless.
+    .order('target_publish_date', { ascending: true, nullsFirst: false })
     .limit(MAX_POSTS_PER_RUN)
 
   if (error) {
@@ -182,7 +188,11 @@ export async function GET(req: NextRequest) {
       // Gone from WordPress. Someone deleted it there; say so rather than keep claiming it exists.
       if (!live) {
         await db.from('content_posts')
-          .update({ wp_status: 'deleted', updated_at: new Date().toISOString() })
+          // No updated_at. Migration 206's trigger discards it on bookkeeping writes anyway, and
+          // on a database with 200 but not 206 an explicit stamp pushes updated_at past
+          // last_pushed_at — which the editor reads as "live copy is out of date" and the cron
+          // reads as eligible for re-push. Reconcile records what WordPress said; it edits nothing.
+          .update({ wp_status: 'deleted' })
           .eq('id', post.id)
         updated++
         console.warn(`[cron/wp-reconcile] post ${post.id} (wp ${post.wp_post_id}) no longer exists on ${siteUrl}`)
@@ -197,7 +207,6 @@ export async function GET(req: NextRequest) {
       }
 
       if (Object.keys(patch).length > 0) {
-        patch.updated_at = new Date().toISOString()
         const { error: updErr } = await db.from('content_posts').update(patch).eq('id', post.id)
         if (updErr) console.error(`[cron/wp-reconcile] update failed for ${post.id}:`, updErr.message)
         else { updated++; console.log(`[cron/wp-reconcile] ${post.id}: ${JSON.stringify(patch)}`) }

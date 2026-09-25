@@ -497,7 +497,11 @@ export async function GET(request: NextRequest) {
         .from('content_topics')
         .select('target_publish_date')
         .eq('client_id', client_id)
-        .in('status', ['approved', 'generating', 'generated'])
+        // The same list generation uses to decide a slot is taken (minus 'pending', which is
+        // what is being approved from). Counting fewer statuses here than there meant a slot
+        // generation had already declared full — say, holding a 'published' or 'rejected' topic
+        // — still looked free to approval, and a second post landed on the date.
+        .in('status', ['approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
         .not('target_publish_date', 'is', null)
         // Scoped and bounded. Unfiltered, PostgREST's default row cap can silently truncate the
         // count, which reads as "this slot is free" and reintroduces the double-approval this

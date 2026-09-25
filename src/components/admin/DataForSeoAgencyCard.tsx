@@ -110,7 +110,7 @@ export default function DataForSeoAgencyCard({
         </div>
         <div>
           <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-            Default rank depth <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— 20 = page 1–2 (cheapest), 100 = full</span>
+            Default rank depth <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— routine checks read to page 3 (30) at most; set below 30 to spend less. A keyword&apos;s first read always goes to 100.</span>
           </label>
           <input type="number" min={10} max={100} step={10} className="input" value={depth}
             onChange={e => setDepth(Number(e.target.value))} style={{ width: 120 }} />

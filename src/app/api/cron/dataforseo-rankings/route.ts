@@ -152,7 +152,7 @@ export async function GET(req: NextRequest) {
     `${skippedNotDue} not due, ${skippedUnpublished} awaiting publication`,
   )
 
-  let checked = 0, written = 0
+  let checked = 0, written = 0, unanswered = 0
   const usage = new Map<string, { cost: number; units: number }>()
   const checkedKeywordIds = new Set<string>()
 
@@ -186,6 +186,10 @@ export async function GET(req: NextRequest) {
           usage.set(job.clientId, u)
         },
       })
+      // null means DataForSEO did not answer. That is not a reading: recording it would write a
+      // false "dropped out" into the history, and stamping the keyword would spend its one
+      // depth-100 baseline read on nothing. Leave both untouched so the next run asks again.
+      if (!rank) { unanswered++; continue }
       checked++
       checkedKeywordIds.add(job.keywordId)
 
@@ -228,8 +232,12 @@ export async function GET(req: NextRequest) {
     console.warn(`[cron/dataforseo-rankings] stopped at the time budget after ${checked} check(s); the rest roll to the next run`)
   }
 
+  if (unanswered > 0) {
+    console.warn(`[cron/dataforseo-rankings] ${unanswered} check(s) got no answer from DataForSEO and were left for the next run`)
+  }
+
   return NextResponse.json({
-    ok: true, checked, written, capped, stoppedEarly,
+    ok: true, checked, written, unanswered, capped, stoppedEarly,
     skipped: { outsideWindow: skippedOld, notDue: skippedNotDue, awaitingPublish: skippedUnpublished },
     cost: Number(totalCost.toFixed(4)),
   })

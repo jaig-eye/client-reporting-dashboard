@@ -237,10 +237,16 @@ export async function GET(req: NextRequest) {
       const probeKw = String((trackedRes.rows[0] as Row | undefined)?.keyword ?? own[0]?.keyword ?? '')
       if (probeKw) {
         const rank = await dfsSerpRank(domain, probeKw, creds, { ...opts, device: 'mobile', depth: 30 })
-        step(`Live rank check "${probeKw}" (mobile, depth 30)`,
-          rank.position != null ? `position ${rank.position}${rank.url ? ` — ${rank.url}` : ''}`
-            : `not in the top 30${rank.serp_features.length ? ` (SERP features: ${rank.serp_features.slice(0, 4).join(', ')})` : ''}`,
-          true)
+        // null is "DataForSEO did not answer" — a different fact from "not in the top 30", and
+        // on a test page the one most worth seeing.
+        if (!rank) {
+          step(`Live rank check "${probeKw}" (mobile, depth 30)`, 'DataForSEO did not answer (no reading) — check the credentials and balance above', false)
+        } else {
+          step(`Live rank check "${probeKw}" (mobile, depth 30)`,
+            rank.position != null ? `position ${rank.position}${rank.url ? ` — ${rank.url}` : ''}`
+              : `not in the top 30${rank.serp_features.length ? ` (SERP features: ${rank.serp_features.slice(0, 4).join(', ')})` : ''}`,
+            true)
+        }
       }
 
       liveHtml = `<h2>Live DataForSEO test</h2>
