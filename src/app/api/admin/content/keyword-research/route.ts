@@ -58,7 +58,8 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
     // Dismissed rows are not shown. With-filter first, then without, for a database that has
     // not run migration 223 yet.
     let { data, error } = await base().is('dismissed_at', null).limit(200)
-    if (error && /dismissed_at/i.test(error.message)) ({ data } = await base().limit(200))
+    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(200))
+    if (error) console.warn('[keyword-research] stored read failed:', error.message)
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
     return ((data ?? []) as Record<string, unknown>[]).map(r => ({

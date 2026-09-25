@@ -496,7 +496,8 @@ export async function getResearchCandidates(clientId: string): Promise<{
     // database that has not run migration 223 still reads (and still shows dismissed rows —
     // there is nothing else it could do).
     let { data, error } = await base().is('dismissed_at', null).limit(200)
-    if (error && /dismissed_at/i.test(error.message)) ({ data } = await base().limit(200))
+    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(200))
+    if (error) console.warn('[research] candidate read failed:', error.message)
     // Sorted here, not in the query. keyword-sources/route.ts observed that a server-side
     // `.order('search_volume', { nullsFirst: false })` on this same select returned an empty
     // array with no error, and worked around it — but the same clause was left here, on the

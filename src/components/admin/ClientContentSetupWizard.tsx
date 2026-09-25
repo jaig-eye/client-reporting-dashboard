@@ -463,6 +463,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     if (fromServices.length === 0) return
     seedsPrefilled.current = true
     setFoundationalKeywords(fromServices.join(', '))
+    // foundationalKeywords is read as a guard, not a trigger: the pre-fill must run when the
+    // SERVICES change, never because the operator typed in the box it fills.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brand.services])
 
   // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
