@@ -427,6 +427,24 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * geography and the seed terms from content_settings, so an unsaved wizard would research the
    * wrong business.
    */
+  /**
+   * Seed the foundational keywords from the services once, when there is nothing to lose.
+   *
+   * The services are already used as research seeds either way — this only puts them in front of
+   * the operator so they can be corrected before anything is spent, rather than being applied
+   * invisibly. Runs only while the box is untouched and empty, so a saved value and anything
+   * typed by hand both survive; clearing the box deliberately leaves it cleared.
+   */
+  const seedsPrefilled = useRef(false)
+  useEffect(() => {
+    if (seedsPrefilled.current || foundationalKeywords.trim()) return
+    const fromServices = brand.services
+      .split(/[,;\n]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
+    if (fromServices.length === 0) return
+    seedsPrefilled.current = true
+    setFoundationalKeywords(fromServices.join(', '))
+  }, [brand.services, foundationalKeywords])
+
   // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
   // step reads to stop showing a spinner, and using one value for both made the spinner
   // unreachable — it was set before the awaits, so the panel rendered its empty state while the

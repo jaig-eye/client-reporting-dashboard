@@ -87,8 +87,12 @@ function score(c: Candidate, paidConversions: number): number {
   const volume     = Math.log10(Math.max(1, c.search_volume ?? 0) + 1) * 30
   const difficulty = (c.keyword_difficulty ?? 50) * 0.4
   const proven     = paidConversions > 0 ? 40 + Math.min(40, paidConversions * 4) : 0
-  const owned      = c.position != null && c.position <= 10 ? -50 : 0
-  const nearMiss   = c.position != null && c.position > 10 && c.position <= 30 ? 25 : 0
+  // Only OUR position may adjust the score. A competitor row carries the competitor's rank in
+  // the same field, so reading it unconditionally punished a keyword by 50 for a rival holding
+  // it at #5 — precisely the keyword worth writing about — and rewarded one they held at #20.
+  const ourPosition = c.source === 'competitor' ? null : c.position
+  const owned      = ourPosition != null && ourPosition <= 10 ? -50 : 0
+  const nearMiss   = ourPosition != null && ourPosition > 10 && ourPosition <= 30 ? 25 : 0
   return Math.round(volume - difficulty + proven + owned + nearMiss)
 }
 

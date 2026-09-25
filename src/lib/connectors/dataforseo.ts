@@ -333,6 +333,55 @@ export async function dfsKeywordsForSite(
 }
 
 /** Domains competing for the same keywords, so the gap can be found without anyone listing them. */
+/**
+ * Domains that rank for everything and compete with nobody.
+ *
+ * competitors_domain ranks by keyword overlap, and a directory, marketplace or encyclopedia
+ * overlaps with every local business in its category — so left alone it routinely returns Yelp
+ * ahead of the actual competitor down the road. That matters beyond a tidy list: research then
+ * mines 200 keywords from each competitor, and the scorer weights a directory's terms exactly
+ * like a real rival's, so one aggregator can swamp the candidate pool with keywords no small
+ * business can win.
+ *
+ * Matched on the registrable domain and any subdomain of it, never as a substring: a client
+ * genuinely called "yelpconsulting.com" is not Yelp. Deliberately a small, obvious list rather
+ * than an attempt at completeness — a real competitor wrongly excluded is a worse error than an
+ * aggregator that slips through, and the list is cheap to extend.
+ */
+const AGGREGATOR_DOMAINS = new Set([
+  // Search, social and video
+  'google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'youtube.com',
+  'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'linkedin.com',
+  'pinterest.com', 'tiktok.com', 'reddit.com', 'quora.com', 'nextdoor.com',
+  // Reference
+  'wikipedia.org', 'wikihow.com', 'britannica.com',
+  // Directories and review sites
+  'yelp.com', 'yellowpages.com', 'bbb.org', 'angi.com', 'angieslist.com',
+  'thumbtack.com', 'homeadvisor.com', 'houzz.com', 'porch.com', 'manta.com',
+  'mapquest.com', 'foursquare.com', 'trustpilot.com', 'glassdoor.com',
+  'tripadvisor.com', 'yellowbook.com', 'superpages.com', 'chamberofcommerce.com',
+  // Marketplaces and classifieds
+  'amazon.com', 'ebay.com', 'etsy.com', 'walmart.com', 'craigslist.org',
+  'alibaba.com', 'wayfair.com', 'homedepot.com', 'lowes.com',
+  // Jobs and listings
+  'indeed.com', 'ziprecruiter.com', 'zillow.com', 'realtor.com', 'redfin.com',
+])
+
+/** True when `domain` is an aggregator or a subdomain of one. Never a substring match. */
+export function isAggregatorDomain(domain: string): boolean {
+  const d = normalizeDomain(domain)
+  if (!d) return false
+  if (AGGREGATOR_DOMAINS.has(d)) return true
+  return Array.from(AGGREGATOR_DOMAINS).some(agg => {
+    // A subdomain of one: maps.google.com, business.yelp.com.
+    if (d.endsWith('.' + agg)) return true
+    // A country variant: google.co.uk, amazon.ca, yelp.fr. The trailing dot is what keeps a
+    // real business out of it — "lowesplumbing.com" does not start with "lowes.".
+    const stem = agg.slice(0, agg.indexOf('.'))
+    return stem.length > 3 && d.startsWith(stem + '.')
+  })
+}
+
 export async function dfsCompetitorDomains(
   domain: string,
   creds: DfsCreds,
@@ -353,7 +402,7 @@ export async function dfsCompetitorDomains(
       .map(it => normalizeDomain(String(it.domain ?? it.target ?? '')))
       // A domain does not compete with itself, and aggregators outrank everyone without being
       // a competitor anyone can take business from.
-      .filter(d => d && d !== target)
+      .filter(d => d && d !== target && !isAggregatorDomain(d))
       .slice(0, opts.limit ?? 5)
   } catch (e) {
     console.warn('[dataforseo] competitors_domain failed:', String(e).slice(0, 180))
