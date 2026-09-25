@@ -62,6 +62,13 @@ export interface DiscoveryResult {
   snapshotted: number
   bySource:   Record<string, number>
   cost:       number
+  /**
+   * The competitor domains DataForSEO named, carried out for display.
+   *
+   * Already paid for by the competitors_domain call inside this run — returning them costs
+   * nothing and saves the setup wizard buying the same answer again to show it.
+   */
+  competitors: string[]
 }
 
 type Candidate = DfsKeywordCandidate & { normalized: string }
@@ -92,7 +99,9 @@ function score(c: Candidate, paidConversions: number): number {
  * sources are still read, so a client without a connection gets a smaller pool rather than none.
  */
 export async function discoverKeywords(clientId: string): Promise<DiscoveryResult> {
-  const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, snapshotted: 0, bySource: {}, cost: 0 }
+  const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, snapshotted: 0, bySource: {}, cost: 0, competitors: [] }
+  // Hoisted so the competitor list survives the block that fetches it and can be returned.
+  let competitorDomains: string[] = []
   if (!clientId) return { ...empty, reason: 'no client' }
 
   const db = createAdminClient()
@@ -200,6 +209,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     }
 
     const competitors = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
+    competitorDomains = competitors.slice()
     for (const comp of competitors) {
       for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) add(c)
     }
@@ -209,22 +219,50 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     try {
       const { data: cs, error: csErr } = await db
         .from('content_settings')
-        .select('services, geographic_focus')
+        .select('services, geographic_focus, foundational_keywords')
         .eq('client_id', clientId)
         .maybeSingle()
       // No seeds means no keyword_ideas call, which is the source that works for a client with no
       // ranking history — the one this whole path exists for.
       if (csErr) console.warn('[research] cannot read services for idea seeds:', csErr.message)
-      const services = String((cs as Record<string, unknown> | null)?.services ?? '')
+      const settings = cs as Record<string, unknown> | null
+      const services = String(settings?.services ?? '')
         .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
-      const geo = String((cs as Record<string, unknown> | null)?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
-      const seeds = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
+      const geo = String(settings?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
+      // What the operator said this business should be found for, before any data existed. Seeds
+      // only: they widen what gets discovered and then take no further part — the results are
+      // ranked on volume, difficulty and proven paid conversions like everything else, so a term
+      // typed at onboarding cannot quietly become the content plan.
+      const foundational = (Array.isArray(settings?.foundational_keywords)
+        ? settings.foundational_keywords as unknown[]
+        : []
+      ).map(v => String(v).trim()).filter(v => v.length > 2).slice(0, 25)
+      const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
+      const seeds = Array.from(new Set([...foundational, ...fromServices]))
       for (const c of await dfsKeywordIdeas(seeds, creds, { ...labsOpts, limit: 300 })) add(c)
     } catch { /* no settings — ideas skipped */ }
   }
 
+  /**
+   * Record that research ran, so the reuse gate has something truthful to read.
+   *
+   * Best-effort: the column arrives with migration 222, and a client whose settings row does not
+   * exist yet simply updates nothing. Failing here must not fail the research that just succeeded.
+   */
+  const stampResearchRun = async () => {
+    try {
+      await db.from('content_settings')
+        .update({ last_keyword_research_at: new Date().toISOString() })
+        .eq('client_id', clientId)
+    } catch { /* column or row missing — the gate falls back to row ages */ }
+  }
+
   if (candidates.size === 0) {
-    return { ...empty, ok: true, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources' }
+    // A run that asked DataForSEO and got nothing back still answered the question, so it counts
+    // against the 30-day window. A client with no connection has not been researched at all, so
+    // it does not — otherwise connecting DataForSEO later would wait a month to take effect.
+    if (creds) await stampResearchRun()
+    return { ...empty, ok: true, competitors: competitorDomains, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources' }
   }
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
@@ -278,13 +316,17 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   } catch (e) {
     // seo_keywords only exists from migration 189.
     console.warn('[discovery] cannot store candidates (apply migrations 189/190):', e)
-    return { ...empty, ok: false, reason: 'seo_keywords unavailable', discovered: ranked.length, cost }
+    return { ...empty, ok: false, reason: 'seo_keywords unavailable', discovered: ranked.length, cost, competitors: competitorDomains }
   }
 
   if (cost > 0) await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost, units: ranked.length, date: new Date().toISOString().slice(0, 10) })
 
+  // Stamped even when `stored` is 0. A well-covered client discovers nothing new for months, and
+  // inferring freshness from row ages made that look like "never researched".
+  await stampResearchRun()
+
   console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
-  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)) }
+  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains }
 }
 
 /**
@@ -378,21 +420,44 @@ export async function getResearchCandidates(clientId: string): Promise<{
   try {
     const db = createAdminClient()
     const cutoff = new Date(Date.now() - RESEARCH_MAX_AGE_DAYS * 86_400_000).toISOString()
-    const { data: fresh, error: freshErr } = await db
-      .from('seo_keywords')
-      .select('id')
+
+    // When research last RAN, not when a keyword was last stored.
+    //
+    // This used to ask whether any seo_keywords row was created inside the window, which only
+    // tracks freshness while the pool is still growing. discoverKeywords() inserts unknown
+    // keywords only, so a client whose market is well covered stores nothing, no row gets a new
+    // created_at, and the gate reported "stale" on every call — six billable Labs calls per topic
+    // generation rather than one run a month. The timestamp is written by the run itself.
+    const { data: cs, error: csErr } = await db
+      .from('content_settings')
+      .select('last_keyword_research_at')
       .eq('client_id', clientId)
-      .eq('source', 'dataforseo')
-      .gte('created_at', cutoff)
-      .limit(1)
+      .maybeSingle()
+
     // This one costs money to get wrong: a failure looks like "nothing recent", so research would
     // re-run its six Labs calls on every single topic generation instead of monthly.
-    if (freshErr) {
-      console.warn('[research] staleness check failed, reusing what is stored:', freshErr.message)
+    if (csErr) {
+      console.warn('[research] staleness check failed, reusing what is stored:', csErr.message)
       return { candidates: await read(), refreshed: false }
     }
 
-    if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
+    const lastRun = (cs as Record<string, unknown> | null)?.last_keyword_research_at
+    if (lastRun && String(lastRun) >= cutoff) return { candidates: await read(), refreshed: false }
+
+    // No timestamp yet: either this client has never been researched, or migration 222 has not
+    // landed. Fall back to the row-age question so an existing pool is not re-bought on the first
+    // call after deploying — it is the weaker signal, but it only has to hold until the first run
+    // writes a timestamp.
+    if (lastRun == null) {
+      const { data: fresh } = await db
+        .from('seo_keywords')
+        .select('id')
+        .eq('client_id', clientId)
+        .eq('source', 'dataforseo')
+        .gte('created_at', cutoff)
+        .limit(1)
+      if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
+    }
   } catch {
     // Table missing (migration 189 unapplied) — research below will soft-fail the same way.
     return { candidates: [], refreshed: false }

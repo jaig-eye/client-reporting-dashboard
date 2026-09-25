@@ -35,15 +35,21 @@ interface Schedule {
 }
 
 interface KeywordResult {
-  keyword: string
-  relatedSearches: string[]
+  keyword:    string
+  volume:     number | null
+  difficulty: number | null
+  intent:     string | null
 }
 
 interface ResearchData {
-  keywords: KeywordResult[]
-  competitors: string[]
-  hasSerpApi: boolean
-  seeds: string[]
+  keywords:     KeywordResult[]
+  competitors:  string[]
+  /** False when the client has no DataForSEO connection — the pool is then database-only. */
+  connected:    boolean
+  reason?:      string
+  discovered?:  number
+  cost?:        number
+  researchedAt?: string | null
 }
 
 interface Props {
@@ -123,6 +129,15 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   // Step 7 state
   const [research,       setResearch]       = useState<ResearchData | null>(null)
+  /**
+   * Terms the operator knows the business should be found for, before any data exists.
+   *
+   * Seeds for research and nothing more: they widen what DataForSEO is asked about, then the
+   * results are ranked on volume, difficulty and proven paid conversions like everything else.
+   * A term typed here does not become a commissioned article — that is what makes it safe to
+   * guess in this box.
+   */
+  const [foundationalKeywords, setFoundationalKeywords] = useState('')
   const [researchDone,   setResearchDone]   = useState(false)
 
   // Saving state
@@ -191,9 +206,15 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             phone_number?: string | null
             eeat_data?: Record<string, unknown> | null
             weeks_ahead?: number | null
+            foundational_keywords?: string[] | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
+          // Re-runs must show what was entered before, or the save at the end writes an empty
+          // array over seeds someone chose.
+          if (Array.isArray(cs.foundational_keywords) && cs.foundational_keywords.length > 0) {
+            setFoundationalKeywords(cs.foundational_keywords.join(', '))
+          }
 
           // Hydrate BRAND DNA. Without this the fields render empty on a re-run and the save at
           // the end writes those empties over a profile someone already curated. Every value is
@@ -377,22 +398,35 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     }
   }
 
+  /**
+   * Run the real research for this client.
+   *
+   * POST because it spends: this is the DataForSEO discovery topic selection would otherwise buy
+   * later, moved to where somebody is watching. What it stores is what generation reads, so the
+   * first content run reuses this rather than researching again.
+   *
+   * Brand answers and foundational keywords are saved first — the research reads services,
+   * geography and the seed terms from content_settings, so an unsaved wizard would research the
+   * wrong business.
+   */
   const loadResearch = useCallback(async () => {
     if (researchDone) return
+    setResearchDone(true)
     try {
-      // Pass in-memory brand data so the API can use it even if not yet saved to DB
-      const params = new URLSearchParams({ client_id: clientId })
-      if (brand.services)        params.set('services', brand.services)
-      if (brand.geographic_focus) params.set('geo',     brand.geographic_focus)
-      const res  = await fetch(`/api/admin/content/keyword-research?${params.toString()}`)
+      await saveSettings(false)
+      const res  = await fetch('/api/admin/content/keyword-research', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId }),
+      })
       const data = await res.json() as ResearchData
-      setResearch(data)
+      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
     } catch {
-      setResearch({ keywords: [], competitors: [], hasSerpApi: false, seeds: [] })
-    } finally {
-      setResearchDone(true)
+      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
     }
-  }, [clientId, researchDone, brand.services, brand.geographic_focus])
+    // saveSettings is a hoisted declaration and never changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, researchDone])
 
   useEffect(() => {
     if (step === 7) loadResearch()
@@ -421,6 +455,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         geographic_focus:     brand.geographic_focus,
         brand_voice:          brand.brand_voice,
         phone_number:         brand.phone_number,
+        // Seeds for research, not a content plan — see migration 222.
+        foundational_keywords: foundationalKeywords
+          .split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25),
         sitemap_url:          sitemapUrl || undefined,
         schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
@@ -570,6 +607,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brand={brand}
               setBrand={setBrand}
               brandLoaded={brandLoaded}
+              foundationalKeywords={foundationalKeywords}
+              setFoundationalKeywords={setFoundationalKeywords}
             />
           )}
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
@@ -615,7 +654,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               schedule={schedule}
               pagesCount={pages.length}
               hasGsc={hasGsc ?? false}
-              hasSerpApi={research?.hasSerpApi ?? false}
+              hasResearch={research?.connected ?? false}
               saving={saving}
               saveMsg={saveMsg}
               onSave={handleSave}
@@ -929,7 +968,7 @@ function StepWpConnect({
 
 // ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
-function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded }: {
+function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords }: {
   analyzeUrl: string
   setAnalyzeUrl: (v: string) => void
   onAnalyze: () => void
@@ -938,6 +977,8 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brand: BrandDna
   setBrand: (b: BrandDna) => void
   brandLoaded: boolean
+  foundationalKeywords: string
+  setFoundationalKeywords: (v: string) => void
 }) {
   return (
     <div>
@@ -979,6 +1020,20 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           <Field label="Target Audience">
             <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
+          <Field label="Foundational Keywords">
+            <input
+              type="text"
+              value={foundationalKeywords}
+              onChange={e => setFoundationalKeywords(e.target.value)}
+              style={inputStyle}
+              placeholder="mobile detailing, ceramic coating, paint correction"
+            />
+            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              Terms this business should be found for. Used to widen keyword research — they are a
+              starting point, not a content plan, and the research can rank other opportunities above them.
+            </p>
+          </Field>
+
           <Field label="Geographic Focus">
             <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin, TX" />
           </Field>
@@ -1383,25 +1438,44 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
             {!done ? (
-              <StatusRow label="Searching keywords…" status="loading" />
-            ) : !research?.hasSerpApi ? (
+              <StatusRow label="Researching the market…" status="loading" />
+            ) : !research?.connected ? (
               <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
-                Add a SerpAPI key in Agency Settings for richer keyword research.
+                No DataForSEO connection for this client, so this is built from ad and Ahrefs data
+                already in the dashboard. Connect DataForSEO for volumes, difficulty and competitors.
               </div>
             ) : research.keywords.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>No keyword data found.</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+                {research.reason ?? 'No keyword data found.'}
+              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {research.keywords.map((kw, i) => (
-                  <div key={i}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>{kw.keyword}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {kw.relatedSearches.slice(0, 4).map((q, j) => (
-                        <span key={j} style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8' }}>{q}</span>
-                      ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
+                {research.keywords.slice(0, 40).map((kw, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {kw.keyword}
                     </div>
+                    {kw.volume != null && (
+                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {kw.volume.toLocaleString()}/mo
+                      </span>
+                    )}
+                    {kw.difficulty != null && (
+                      <span style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, whiteSpace: 'nowrap',
+                        background: kw.difficulty <= 30 ? '#dcfce7' : kw.difficulty <= 60 ? '#fef3c7' : '#fee2e2',
+                        color:      kw.difficulty <= 30 ? '#166534' : kw.difficulty <= 60 ? '#92400e' : '#991b1b' }}>
+                        KD {Math.round(kw.difficulty)}
+                      </span>
+                    )}
                   </div>
                 ))}
+              </div>
+            )}
+            {done && research?.discovered != null && (
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 8 }}>
+                {research.discovered.toLocaleString()} candidate{research.discovered === 1 ? '' : 's'} found
+                {research.cost != null && research.cost > 0 ? ` · $${research.cost.toFixed(2)}` : ''}
+                . Content generation reuses this for the next 30 days.
               </div>
             )}
           </div>
@@ -1417,7 +1491,9 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
               <StatusRow label="Finding competitors…" status="loading" />
             ) : (research?.competitors ?? []).length === 0 ? (
               <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-                {research?.hasSerpApi ? 'No competitors found for these keywords.' : 'Connect SerpAPI to enable competitor analysis.'}
+                {research?.connected
+                  ? 'DataForSEO named no competing domains for this site yet.'
+                  : 'Connect DataForSEO for this client to see who they compete with.'}
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1455,13 +1531,13 @@ function StatusRow({ label, status }: { label: string; status: 'loading' | 'done
 
 // ─── Step 8: Ready ────────────────────────────────────────────────────────────
 
-function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi, saving, saveMsg, onSave, onSaveAndGenerate }: {
+function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearch, saving, saveMsg, onSave, onSaveAndGenerate }: {
   clientName: string
   brand: BrandDna
   schedule: Schedule
   pagesCount: number
   hasGsc: boolean
-  hasSerpApi: boolean
+  hasResearch: boolean
   saving: boolean
   saveMsg: string
   onSave: () => void
@@ -1478,7 +1554,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
   const statusChecks = [
     { label: 'Brand DNA',     ok: !!brand.business_background },
     { label: 'GSC Connected', ok: hasGsc },
-    { label: 'SerpAPI',       ok: hasSerpApi },
+    { label: 'Keyword research', ok: hasResearch },
     { label: 'Sitemap',       ok: pagesCount > 0 },
   ]
 
