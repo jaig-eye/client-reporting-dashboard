@@ -78,6 +78,52 @@ type Candidate = DfsKeywordCandidate & { normalized: string; origin: KeywordOrig
 
 const normalize = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
 
+/** Filler that says nothing about what a business does. */
+const SEED_STOP = new Set(['and', 'the', 'for', 'with', 'your', 'our', 'from', 'near', 'this', 'that', 'into', 'you', 'all'])
+
+/**
+ * Decide whether a keyword_ideas result is actually about this business.
+ *
+ * keyword_ideas is DataForSEO's CATEGORY expansion: it answers "what else is searched in the
+ * Google Ads categories these seeds belong to", ordered by volume. For "landscape lighting
+ * installation" that category is Lighting, and the highest-volume terms in Lighting are
+ * "macbook stage light effect", "govee lights" and "light bulb". The first real run for an
+ * outdoor-lighting installer stored three hundred of those and nothing about outdoor lighting.
+ *
+ * So a result has to share the seeds' vocabulary. Two topic words, or one topic word plus the
+ * client's geography, or a seed phrase intact — one shared word is not enough, because that one
+ * word is nearly always "light". Matching is on prefixes so "lighting", "lights" and "light"
+ * agree, and geography words never count as topic words on their own ("los angeles weather").
+ */
+function buildSeedMatcher(phrases: string[], geo: string) {
+  const tokenize = (v: string) =>
+    v.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length >= 3 && !SEED_STOP.has(t))
+  const geoTokens = new Set(tokenize(geo))
+  const topic   = new Set<string>()
+  const bigrams = new Set<string>()
+  for (const p of phrases) {
+    const t = tokenize(p).filter(x => !geoTokens.has(x))
+    t.forEach(x => topic.add(x))
+    for (let i = 0; i + 1 < t.length; i++) bigrams.add(`${t[i]} ${t[i + 1]}`)
+  }
+  const same = (a: string, b: string) =>
+    a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)))
+  const topicWords = Array.from(topic)
+  const isTopic = (t: string) => topicWords.some(w => same(t, w))
+  return {
+    mentionsGeo: (kw: string) => tokenize(kw).some(t => geoTokens.has(t)),
+    isRelevant:  (kw: string) => {
+      const t = tokenize(kw)
+      const hits = t.filter(isTopic).length
+      if (hits >= 2) return true
+      if (hits >= 1 && t.some(x => geoTokens.has(x))) return true
+      for (let i = 0; i + 1 < t.length; i++) if (bigrams.has(`${t[i]} ${t[i + 1]}`)) return true
+      return false
+    },
+  }
+}
+type SeedMatcher = ReturnType<typeof buildSeedMatcher>
+
 /**
  * Score a candidate so the pool arrives ordered by what is worth writing about.
  *
@@ -86,8 +132,11 @@ const normalize = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
  * buys from it. A keyword we already rank well for scores low — it needs a supporting article at
  * most, not a new page.
  */
-function score(c: Candidate, paidConversions: number): number {
+function score(c: Candidate, paidConversions: number, mentionsGeo: boolean): number {
   const volume     = Math.log10(Math.max(1, c.search_volume ?? 0) + 1) * 30
+  // A local business wins local searches. Small next to volume on purpose: it separates two
+  // otherwise-equal terms, it does not let "los angeles" outrank a converting head term.
+  const local      = mentionsGeo ? 15 : 0
   const difficulty = (c.keyword_difficulty ?? 50) * 0.4
   const proven     = paidConversions > 0 ? 40 + Math.min(40, paidConversions * 4) : 0
   // Only OUR position may adjust the score. A competitor row carries the competitor's rank in
@@ -96,7 +145,7 @@ function score(c: Candidate, paidConversions: number): number {
   const ourPosition = c.source === 'competitor' ? null : c.position
   const owned      = ourPosition != null && ourPosition <= 10 ? -50 : 0
   const nearMiss   = ourPosition != null && ourPosition > 10 && ourPosition <= 30 ? 25 : 0
-  return Math.round(volume - difficulty + proven + owned + nearMiss)
+  return Math.round(volume - difficulty + proven + owned + nearMiss + local)
 }
 
 /**
@@ -109,6 +158,8 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, snapshotted: 0, bySource: {}, cost: 0, competitors: [] }
   // Hoisted so the competitor list survives the block that fetches it and can be returned.
   let competitorDomains: string[] = []
+  // Built from the seeds once they are read; null on a run that never reaches them.
+  let seedMatcher: SeedMatcher | null = null
   if (!clientId) return { ...empty, reason: 'no client' }
 
   const db = createAdminClient()
@@ -261,7 +312,14 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       ).map(v => String(v).trim()).filter(v => v.length > 2).slice(0, 25)
       const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
       const seeds = Array.from(new Set([...foundational, ...fromServices]))
-      for (const c of await dfsKeywordIdeas(seeds, creds, { ...labsOpts, limit: 300 })) add(c)
+      seedMatcher = buildSeedMatcher([...foundational, ...services], geo)
+      // Filtered, unlike the domain and competitor sources: those are what real sites rank for,
+      // this is a category guess and needs to prove it is about the business.
+      let kept = 0, dropped = 0
+      for (const c of await dfsKeywordIdeas(seeds, creds, { ...labsOpts, limit: 300 })) {
+        if (seedMatcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
+      }
+      console.log(`[research] keyword_ideas: kept ${kept}, dropped ${dropped} off-topic`)
     } catch { /* no settings — ideas skipped */ }
   }
 
@@ -289,7 +347,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
   const ranked = Array.from(candidates.values())
-    .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0) }))
+    .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, MAX_CANDIDATES)
     .map(r => r.c)
@@ -427,13 +485,18 @@ export async function getResearchCandidates(clientId: string): Promise<{
   refreshed:  boolean
 }> {
   const read = async () => {
-    const { data } = await createAdminClient()
+    const db = createAdminClient()
+    const base = () => db
       .from('seo_keywords')
       .select('keyword, search_volume, keyword_difficulty, intent')
       .eq('client_id', clientId)
       .eq('is_tracked', false)
       .is('content_post_id', null)
-      .limit(200)
+    // Dismissed candidates stay out of the prompt. Asked with the filter, then without it, so a
+    // database that has not run migration 223 still reads (and still shows dismissed rows —
+    // there is nothing else it could do).
+    let { data, error } = await base().is('dismissed_at', null).limit(200)
+    if (error && /dismissed_at/i.test(error.message)) ({ data } = await base().limit(200))
     // Sorted here, not in the query. keyword-sources/route.ts observed that a server-side
     // `.order('search_volume', { nullsFirst: false })` on this same select returned an empty
     // array with no error, and worked around it — but the same clause was left here, on the
@@ -501,4 +564,46 @@ export async function getResearchCandidates(clientId: string): Promise<{
 
   await discoverKeywords(clientId)
   return { candidates: await read(), refreshed: true }
+}
+
+
+/**
+ * Throw the candidate pool away so the next discovery rebuilds it from the current seeds.
+ *
+ * Discovery inserts unknown keywords only, so changing the seeds never removed what a previous
+ * run had already stored — the operator could feed it better keywords and still be looking at
+ * the old list. This is the other half of "re-run": it clears what research put there and
+ * nothing else. Tracked keywords, keywords a post has claimed, and dismissed keywords all stay
+ * — the first two belong to articles, and the third is a decision the next run must not undo.
+ *
+ * Rankings hanging off the removed candidates go first, so this works whichever way the
+ * foreign key was declared. Returns how many candidates were removed.
+ */
+export async function resetResearchPool(clientId: string): Promise<number> {
+  if (!clientId) return 0
+  const db = createAdminClient()
+  try {
+    const base = () => db
+      .from('seo_keywords')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('is_tracked', false)
+      .is('content_post_id', null)
+    let { data, error } = await base().is('dismissed_at', null)
+    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base())
+    if (error) { console.warn('[research] reset: cannot list candidates:', error.message); return 0 }
+    const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
+    if (ids.length === 0) return 0
+    for (let i = 0; i < ids.length; i += 200) {
+      const slice = ids.slice(i, i + 200)
+      await db.from('seo_rankings').delete().in('keyword_id', slice)
+      const { error: delErr } = await db.from('seo_keywords').delete().in('id', slice)
+      if (delErr) { console.error('[research] reset: delete failed:', delErr.message); return i }
+    }
+    console.log(`[research] reset pool for ${clientId}: removed ${ids.length} candidate(s)`)
+    return ids.length
+  } catch (e) {
+    console.warn('[research] reset failed:', e)
+    return 0
+  }
 }

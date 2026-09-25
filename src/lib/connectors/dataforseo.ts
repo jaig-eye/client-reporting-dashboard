@@ -400,7 +400,11 @@ export async function dfsCompetitorDomains(
       target,
       location_code: opts.locationCode ?? 2840,
       language_code: opts.languageCode ?? 'en',
-      limit:         Math.min(20, Math.max(1, opts.limit ?? 5)),
+      // Ask for more than we will keep. The aggregator filter below runs AFTER the API answers,
+      // and for a local trade the top few by keyword overlap are routinely Yelp, Houzz and Angi
+      // — so requesting exactly opts.limit let the filter remove every one of them and return
+      // nothing. That is what "DataForSEO named no competing domains" was.
+      limit:         Math.min(20, Math.max(10, (opts.limit ?? 5) * 4)),
     })
     if (!json) return []
     opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)

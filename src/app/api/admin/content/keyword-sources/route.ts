@@ -106,13 +106,16 @@ export async function GET(req: NextRequest) {
   // ── DataForSEO research: candidates nothing has been written for yet ──────
   const researched: ResearchRow[] = await (async () => {
     try {
-      const { data, error } = await db
+      const base = () => db
         .from('seo_keywords')
         .select('keyword, search_volume, keyword_difficulty, intent')
         .eq('client_id', clientId)
         .eq('is_tracked', false)
         .is('content_post_id', null)
-        .limit(60)
+      // Dismissed candidates are not "researched opportunities" any more. Filter first, then
+      // without, for a database that has not run migration 223.
+      let { data, error } = await base().is('dismissed_at', null).limit(60)
+      if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(60))
       // PostgREST reports a bad query by RETURNING an error, not by throwing, so a bare catch
       // sees nothing and the panel silently renders empty. Say so instead.
       if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return [] }

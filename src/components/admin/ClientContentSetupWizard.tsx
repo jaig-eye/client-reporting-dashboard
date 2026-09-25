@@ -39,6 +39,7 @@ interface KeywordResult {
   volume:     number | null
   difficulty: number | null
   intent:     string | null
+  source?:    string | null
 }
 
 interface ResearchData {
@@ -156,6 +157,21 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // ── Load initial data on mount ─────────────────────────────────────────────
   useEffect(() => {
     async function loadInit() {
+      // Pages already imported for this client are shown, not hidden behind "Fetch Pages". The
+      // step used to start empty on every visit, so a client whose sitemap had been imported
+      // last week looked like it had never been — and fetching again was the only way to see the
+      // ticks that were already saved.
+      try {
+        const res = await fetch(`/api/admin/content/sitemap-pages?client_id=${clientId}`)
+        if (res.ok) {
+          const list = await res.json() as Array<{ url: string; title: string | null; isPriority: boolean; isExcluded: boolean }>
+          if (Array.isArray(list) && list.length > 0) {
+            setPages(list.map(p => ({ url: p.url, title: p.title ?? null, isPriority: !!p.isPriority, isExcluded: !!p.isExcluded })))
+            setSitemapMsg(`${list.length} page${list.length === 1 ? '' : 's'} already imported. Fetch again to pick up new ones.`)
+          }
+        }
+      } catch { /* the step still works from scratch */ }
+
       // Multi-source URL detection: WP → BC → GSC priority order (B1)
       let connectionDetectedUrl = ''
       try {
@@ -484,6 +500,45 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
 
+  const [rerunning, setRerunning] = useState(false)
+
+  /**
+   * Look again, with the seeds as they are now. Spends — this is the deliberate re-run the
+   * automatic one is not — and rebuilds the pool rather than adding to it, so a corrected seed
+   * list produces a corrected list, not the old list plus a few extras.
+   */
+  async function rerunResearch() {
+    if (rerunning) return
+    setRerunning(true)
+    try {
+      await saveSettings(false)
+      const res  = await fetch('/api/admin/content/keyword-research', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, force: true }),
+      })
+      const data = await res.json() as ResearchData
+      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+    } catch {
+      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+    } finally {
+      setRerunning(false)
+      setResearchDone(true)
+    }
+  }
+
+  /** "Not this one." Gone from the list now, and from every read of the pool once the server agrees. */
+  async function dismissKeyword(keyword: string) {
+    setResearch(prev => prev ? { ...prev, keywords: prev.keywords.filter(k => k.keyword !== keyword) } : prev)
+    try {
+      await fetch('/api/admin/content/keyword-research', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, keyword, dismissed: true }),
+      })
+    } catch { /* optimistic; it will still be in the pool next time, and can be dismissed again */ }
+  }
+
   async function saveSettings(wizardCompleted: boolean) {
     const eeatData = {
       founded_year:           brand.founded_year,
@@ -706,7 +761,17 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setRpGuidelines={setRpGuidelinesWiz}
             />
           )}
-          {step === 8 && <StepResearch research={research} done={researchDone} />}
+          {step === 8 && (
+            <StepResearch
+              research={research}
+              done={researchDone}
+              seeds={foundationalKeywords}
+              setSeeds={v => { seedsPrefilled.current = true; setFoundationalKeywords(v) }}
+              onRerun={rerunResearch}
+              rerunning={rerunning}
+              onDismiss={dismissKeyword}
+            />
+          )}
           {step === 9 && (
             <StepReady
               clientName={clientName}
@@ -1425,12 +1490,21 @@ function StepContentTypes({
 }) {
   return (
     <div>
-      <StepTitle>Additional Content Types</StepTitle>
+      <StepTitle>
+        Additional Content Types
+        <span style={{ marginLeft: 10, verticalAlign: 'middle', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 8px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
+          Coming soon
+        </span>
+      </StepTitle>
       <StepSub>
-        Optionally enable AI-generated Service Pages and Regular Pages alongside your blog posts.
-        You can also configure these later from the Content Schedule tab.
+        AI-generated Service Pages and Regular Pages alongside blog posts. Not switched on yet —
+        the options below are shown so you can see what is planned, and nothing here is saved.
+        Pages can still be generated on demand from the Pipeline tab today.
       </StepSub>
 
+      {/* Disabled until the automation behind these exists: the content-topics cron reads the
+          two flags and deliberately discards them, so a tick here has never driven anything. */}
+      <div aria-disabled="true" style={{ opacity: 0.45, pointerEvents: 'none', userSelect: 'none' }}>
       {/* Service Pages */}
       <div className="card p-4" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
@@ -1489,30 +1563,80 @@ function StepContentTypes({
         )}
       </div>
 
+      </div>
+
       <p style={{ marginTop: 16, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-        You can skip this step — additional content types can be enabled at any time from the Content Schedule tab.
+        Press Continue. This step saves nothing yet.
       </p>
     </div>
   )
 }
 
-// ─── Step 7: Research ─────────────────────────────────────────────────────────
+// --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done }: { research: ResearchData | null; done: boolean }) {
+function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onDismiss }: {
+  research:  ResearchData | null
+  done:      boolean
+  seeds:     string
+  setSeeds:  (v: string) => void
+  onRerun:   () => void
+  rerunning: boolean
+  onDismiss: (keyword: string) => void
+}) {
+  const busy = !done || rerunning
+  const sourceLabel: Record<string, string> = { dataforseo: 'DataForSEO', ahrefs: 'Ahrefs', google_ads: 'Google Ads' }
   return (
     <div>
       <StepTitle>Researching your market</StepTitle>
-      <StepSub>We&apos;re looking up keyword opportunities and competitor content for this client. This runs in the background.</StepSub>
+      <StepSub>
+        Keyword opportunities and competing sites for this client. Remove anything that is not this
+        business, or change the seed terms and look again.
+      </StepSub>
+
+      {/* Seeds + re-run: the two things an operator can do about a bad list */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: 12, background: 'var(--bg-subtle)' }}>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+          Seed terms
+        </label>
+        <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 6px', lineHeight: 1.5 }}>
+          What this business should be found for. Research widens out from these; results that share
+          none of their words are dropped. They do not become topics on their own.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <textarea
+            className="input"
+            rows={2}
+            value={seeds}
+            onChange={e => setSeeds(e.target.value)}
+            placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
+            style={{ flex: 1, resize: 'vertical', fontSize: '0.8125rem' }}
+            disabled={busy}
+          />
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={onRerun}
+            disabled={busy || !seeds.trim()}
+            title="Clears the current candidates and researches again from these seeds. Costs a few cents."
+            style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
+          >
+            {rerunning ? 'Researching…' : 'Re-run research'}
+          </button>
+        </div>
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         {/* Keywords panel */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-          <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-            Keyword Research
+          <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Keyword Research</span>
+            {done && !rerunning && research && research.keywords.length > 0 && (
+              <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>{research.keywords.length} shown</span>
+            )}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
-            {!done ? (
-              <StatusRow label="Researching the market…" status="loading" />
+            {busy ? (
+              <StatusRow label={rerunning ? 'Researching again from the new seeds…' : 'Researching the market…'} status="loading" />
             ) : !research?.connected ? (
               <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
                 No DataForSEO connection for this client, so this is built from ad and Ahrefs data
@@ -1523,11 +1647,17 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
                 {research.reason ?? 'No keyword data found.'}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
-                {research.keywords.slice(0, 40).map((kw, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {kw.keyword}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 300, overflowY: 'auto' }}>
+                {research.keywords.slice(0, 60).map(kw => (
+                  <div key={kw.keyword} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kw.keyword}>
+                        {kw.keyword}
+                      </div>
+                      <div style={{ fontSize: '0.625rem', color: 'var(--text-faint)', display: 'flex', gap: 6 }}>
+                        {kw.intent && <span>{kw.intent}</span>}
+                        {kw.source && <span>{sourceLabel[kw.source] ?? kw.source}</span>}
+                      </div>
                     </div>
                     {kw.volume != null && (
                       <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -1541,15 +1671,27 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
                         KD {Math.round(kw.difficulty)}
                       </span>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => onDismiss(kw.keyword)}
+                      title="Not this business. Removes it from the candidates for good."
+                      aria-label={`Dismiss ${kw.keyword}`}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.875rem', lineHeight: 1, padding: '0 2px' }}
+                    >
+                      ×
+                    </button>
                   </div>
                 ))}
               </div>
             )}
-            {done && research?.discovered != null && (
-              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 8 }}>
-                {research.discovered.toLocaleString()} candidate{research.discovered === 1 ? '' : 's'} found
-                {research.cost != null && research.cost > 0 ? ` · $${research.cost.toFixed(2)}` : ''}
-                . Content generation reuses this for the next 30 days.
+            {done && !rerunning && research && (
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5 }}>
+                {research.discovered != null && (
+                  <>{research.discovered.toLocaleString()} candidate{research.discovered === 1 ? '' : 's'} found
+                  {research.cost != null && research.cost > 0 ? ` · $${research.cost.toFixed(2)}` : ''}. </>
+                )}
+                {research.reason && research.keywords.length > 0 ? `${research.reason}. ` : ''}
+                Content generation reads this pool for the next 30 days.
               </div>
             )}
           </div>
@@ -1561,31 +1703,38 @@ function StepResearch({ research, done }: { research: ResearchData | null; done:
             Competitor Analysis
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
-            {!done ? (
+            {busy ? (
               <StatusRow label="Finding competitors…" status="loading" />
             ) : (research?.competitors ?? []).length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
                 {research?.connected
-                  ? 'DataForSEO named no competing domains for this site yet.'
+                  ? (research.reason
+                      ? 'Competitors are only listed on a fresh run — re-run research to see them.'
+                      : 'DataForSEO found no competing domains it could name for this site. Directories and marketplaces are excluded on purpose; a site with little search footprint may not have overlapping rivals in the index yet.')
                   : 'Connect DataForSEO for this client to see who they compete with.'}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {research!.competitors.map((c, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{c}</span>
-                  </div>
-                ))}
-              </div>
+              <>
+                <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                  Sites that rank for the same searches, by overlap. Their ranking keywords are part of the pool.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {research!.competitors.map((c, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                      <a href={`https://${c}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace', textDecoration: 'none' }}>{c}</a>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
       </div>
 
-      {done && (
+      {done && !rerunning && (
         <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', fontSize: '0.8125rem', color: '#166534' }}>
-          Research complete. This data will improve topic relevance when generating.
+          Research complete. Topic selection reads these candidates alongside Search Console, Ads and Ahrefs.
         </div>
       )}
     </div>

@@ -483,6 +483,12 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive }: { data: Gsc
 
   async function handleRefresh() {
     setRefreshing(true)
+    // Both lazy loaders are guarded on `!== null`, so once this tab has fetched, it never asks
+    // again on its own — and router.refresh() below does not clear component state. Research
+    // run from the setup wizard (a modal over this page) therefore stayed invisible here until a
+    // hard reload, which read as "research did nothing". Clearing them lets the effects refetch.
+    setRanks(null)
+    setSources(null)
     try {
       await fetch('/api/admin/sync', {
         method: 'POST',
@@ -610,8 +616,10 @@ function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading
   if (ranks.length === 0) {
     return (
       <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-        No keyword rankings yet. Connect <strong>DataForSEO</strong> on the Integrations page and attach this client&apos;s
-        domain to start tracking. Keywords targeted by generated posts are registered automatically.
+        No keyword rankings recorded yet. Rankings need <strong>DataForSEO</strong> connected with this client&apos;s domain,
+        and then either the site already ranking for something DataForSEO indexes (the free snapshot), or a generated post
+        being published — its target keyword is then checked live. A new site with no footprint shows nothing here until
+        its first post is out; the researched candidates below are what topic selection works from in the meantime.
       </p>
     )
   }

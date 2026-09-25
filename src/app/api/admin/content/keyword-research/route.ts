@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords } from '@/lib/content/clientResearch'
+import { discoverKeywords, resetResearchPool } from '@/lib/content/clientResearch'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
@@ -36,7 +36,7 @@ const RESEARCH_REUSE_DAYS = 30
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
-  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null }>
+  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null }>
   competitors:  string[]
   /** Present and false when DataForSEO is not connected for this client. */
   connected:    boolean
@@ -51,11 +51,14 @@ interface ResearchPayload {
 async function readStored(clientId: string): Promise<ResearchPayload['keywords']> {
   const db = createAdminClient()
   try {
-    const { data } = await db
+    const base = () => db
       .from('seo_keywords')
-      .select('keyword, search_volume, keyword_difficulty, intent')
+      .select('keyword, search_volume, keyword_difficulty, intent, source')
       .eq('client_id', clientId)
-      .limit(200)
+    // Dismissed rows are not shown. With-filter first, then without, for a database that has
+    // not run migration 223 yet.
+    let { data, error } = await base().is('dismissed_at', null).limit(200)
+    if (error && /dismissed_at/i.test(error.message)) ({ data } = await base().limit(200))
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
     return ((data ?? []) as Record<string, unknown>[]).map(r => ({
@@ -63,6 +66,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
+      source:     r.source             == null ? null : String(r.source),
     }))
       .filter(k => k.keyword)
       .sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1))
@@ -151,6 +155,14 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // A forced run is "look again with what I have told you now". Discovery only ever adds
+  // unknown keywords, so without clearing the pool first the operator would change the seeds,
+  // pay again, and see the same list. Tracked, claimed and dismissed rows survive the reset.
+  if (force) {
+    const removed = await resetResearchPool(clientId)
+    console.log(`[keyword-research] forced re-run for ${clientId}: cleared ${removed} candidate(s)`)
+  }
+
   const result = await discoverKeywords(clientId)
 
   const payload: ResearchPayload = {
@@ -166,4 +178,33 @@ export async function POST(request: NextRequest) {
     researchedAt: await researchedAt(clientId),
   }
   return NextResponse.json(payload)
+}
+
+
+/** Mark a researched keyword irrelevant (or take that back). { client_id, keyword, dismissed }. */
+export async function PATCH(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  let body: { client_id?: string; keyword?: string; dismissed?: boolean } = {}
+  try { body = await request.json() } catch { /* handled below */ }
+  const clientId = String(body.client_id ?? '').trim()
+  const keyword  = String(body.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!clientId || !keyword) return NextResponse.json({ error: 'client_id and keyword are required' }, { status: 400 })
+
+  const db = createAdminClient()
+  const { error } = await db
+    .from('seo_keywords')
+    .update({ dismissed_at: body.dismissed === false ? null : new Date().toISOString() })
+    .eq('client_id', clientId)
+    .eq('normalized_keyword', keyword)
+  if (error) {
+    const missing = /dismissed_at/i.test(error.message)
+    return NextResponse.json(
+      { error: missing ? 'Dismissing keywords needs migration 223 (seo_keywords.dismissed_at)' : error.message },
+      { status: missing ? 501 : 500 },
+    )
+  }
+  return NextResponse.json({ ok: true })
 }
