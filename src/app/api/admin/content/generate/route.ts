@@ -1110,6 +1110,10 @@ ${lengthInstruction}${writingRulesReminder}`
           tightenedFrom = wc0
           parsed.title            = reparsed.title || parsed.title
           parsed.metaDescription  = reparsed.metaDescription || parsed.metaDescription
+          // seoTitle travels with the title. Taking the rewritten headline and leaving the
+          // pre-rewrite SEO title shipped an article whose Rank Math title described the version
+          // it no longer was — and seo_title is what the push sends to the client's site.
+          parsed.seoTitle         = reparsed.seoTitle || parsed.seoTitle
           parsed.content          = cleaned
           wc0                     = newWc
           console.log(`[generate] tightened topic ${topicId}: ${tightenedFrom} → ${wc0} words (target ${wordTarget})`)

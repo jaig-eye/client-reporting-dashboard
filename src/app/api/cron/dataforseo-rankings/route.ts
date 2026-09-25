@@ -202,10 +202,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // The checkpoint. A silent failure here is the expensive one: every keyword still reads as
+  // never-checked, so tomorrow's run re-buys the same depth-100 first reads — and a throw would
+  // skip the usage ledger below, hiding the spend that already happened.
   if (checkedKeywordIds.size > 0) {
-    await db.from('seo_keywords')
-      .update({ last_checked_at: new Date().toISOString() })
-      .in('id', Array.from(checkedKeywordIds))
+    try {
+      const { error: stampErr } = await db.from('seo_keywords')
+        .update({ last_checked_at: new Date().toISOString() })
+        .in('id', Array.from(checkedKeywordIds))
+      if (stampErr) {
+        console.error(`[cron/dataforseo-rankings] could not stamp ${checkedKeywordIds.size} keyword(s) — they will be re-checked and re-billed:`, stampErr.message)
+      }
+    } catch (e) {
+      console.error('[cron/dataforseo-rankings] stamp threw — keywords will be re-checked and re-billed:', e)
+    }
   }
 
   let totalCost = 0

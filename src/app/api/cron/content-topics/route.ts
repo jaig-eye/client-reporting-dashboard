@@ -499,6 +499,11 @@ export async function GET(request: NextRequest) {
         .eq('client_id', client_id)
         .in('status', ['approved', 'generating', 'generated'])
         .not('target_publish_date', 'is', null)
+        // Scoped and bounded. Unfiltered, PostgREST's default row cap can silently truncate the
+        // count, which reads as "this slot is free" and reintroduces the double-approval this
+        // query exists to prevent. Only dates the pending set could collide with matter.
+        .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
+        .limit(1000)
       const approvedByDate = new Map<string, number>()
       for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
         const k = t.target_publish_date ?? 'none'
