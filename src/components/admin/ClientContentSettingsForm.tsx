@@ -69,9 +69,12 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 export default function ClientContentSettingsForm({
   clientId,
   sites: _sites,
+  onResearchRun,
 }: {
   clientId: string
   sites:    SiteOption[]
+  /** After a successful re-run, so whatever shows the candidate pool can refetch. */
+  onResearchRun?: () => void
 }) {
   const [form,        setForm]        = useState<BrandDnaForm>({ business_background: '', services: '', target_audience: '', geographic_focus: '', brand_voice: '', phone_number: '', cta_list: '' })
   const [eeat,        setEeat]        = useState<EeatData>(EMPTY_EEAT)
@@ -90,6 +93,15 @@ export default function ClientContentSettingsForm({
   const [siteTextInput, setSiteTextInput] = useState('')
   const [showSiteText,  setShowSiteText]  = useState(false)
 
+  // ── Keyword research seeds ─────────────────────────────────────────────────
+  // content_settings.foundational_keywords, kept as one comma-separated string while editing.
+  // They belong with the profile: research widens out from these and from Services, so the
+  // place to correct them is next to the words they are built on — not the Analytics tab.
+  const [seeds, setSeeds]               = useState('')
+  const [researchedAt, setResearchedAt] = useState<string | null>(null)
+  const [researching, setResearching]   = useState(false)
+  const [researchMsg, setResearchMsg]   = useState<string | null>(null)
+
   useEffect(() => {
     setLoading(true)
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
@@ -105,12 +117,18 @@ export default function ClientContentSettingsForm({
           cta_list:            String(d.cta_list            ?? ''),
         })
         setVertical(String(d.vertical ?? ''))
+        setSeeds(Array.isArray(d.foundational_keywords) ? d.foundational_keywords.map(String).join(', ') : '')
         if (d.eeat_data && typeof d.eeat_data === 'object') {
           setEeat({ ...EMPTY_EEAT, ...(d.eeat_data as Partial<EeatData>) })
         }
         setLoading(false)
       })
       .catch(() => setLoading(false))
+    // Read-only; never spends.
+    fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { researchedAt?: string | null } | null) => setResearchedAt(d?.researchedAt ?? null))
+      .catch(() => { /* the date is a nicety */ })
   }, [clientId])
 
   function setField<K extends keyof BrandDnaForm>(key: K, val: string) {
@@ -194,7 +212,9 @@ export default function ClientContentSettingsForm({
     setShowSiteInput(false)
   }
 
-  async function save() {
+  const seedList = () => seeds.split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25)
+
+  async function save(): Promise<boolean> {
     setSaving(true); setError(''); setSaved(false)
     const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
@@ -204,11 +224,47 @@ export default function ClientContentSettingsForm({
         ...form,
         eeat_data: eeat,
         vertical: vertical || null,
+        foundational_keywords: seedList(),
       }),
     })
     setSaving(false)
-    if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 2500) }
-    else { const d = await res.json(); setError(d.error || 'Failed to save') }
+    if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 2500); return true }
+    const d = await res.json().catch(() => ({})) as { error?: string }
+    setError(d.error || 'Failed to save')
+    return false
+  }
+
+  /**
+   * Save the profile (the seeds live in it), clear the researched candidates, look at the
+   * market again. Spends a few cents in DataForSEO calls when the client is connected.
+   */
+  async function rerunResearch() {
+    setResearching(true); setResearchMsg(null)
+    try {
+      if (!(await save())) throw new Error('Brand DNA did not save, so research was not run')
+      const res = await fetch('/api/admin/content/keyword-research', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, force: true }),
+      })
+      const d = await res.json().catch(() => ({})) as {
+        discovered?: number; cost?: number; competitors?: string[]
+        researchedAt?: string | null; connected?: boolean; error?: string
+      }
+      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
+      setResearchedAt(d.researchedAt ?? new Date().toISOString())
+      setResearchMsg(d.connected === false
+        ? 'No DataForSEO connection for this client, so only the free database sources ran.'
+        : `${(d.discovered ?? 0).toLocaleString()} candidate${d.discovered === 1 ? '' : 's'}`
+          + (d.competitors?.length ? `, ${d.competitors.length} competitor${d.competitors.length === 1 ? '' : 's'}` : '')
+          + (d.cost != null && d.cost > 0 ? ` · $${d.cost.toFixed(2)}` : '')
+          + '. The Analytics tab shows the new pool.')
+      onResearchRun?.()
+    } catch (e) {
+      setResearchMsg(`Research failed: ${e instanceof Error ? e.message : 'unknown error'}`)
+    } finally {
+      setResearching(false)
+    }
   }
 
   if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
@@ -336,6 +392,37 @@ export default function ClientContentSettingsForm({
             <Label>Brand Voice</Label>
             <input className="input" style={{ width: '100%' }} value={form.brand_voice} onChange={e => setField('brand_voice', e.target.value)} />
           </div>
+        </div>
+
+        <div>
+          <Label hint="comma-separated — what this business should be found for">Foundational Keywords</Label>
+          <textarea
+            className="input"
+            rows={2}
+            style={{ width: '100%' }}
+            value={seeds}
+            onChange={e => setSeeds(e.target.value)}
+            placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+            <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220 }}>
+              Keyword research widens out from these and from Services Offered.
+              {researchedAt ? ` Last researched ${new Date(researchedAt).toLocaleDateString()}.` : ' Not researched yet.'}
+            </p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
+              onClick={rerunResearch}
+              disabled={researching || saving || !seeds.trim()}
+              title="Saves Brand DNA, clears the researched candidates and looks at the market again. Costs a few cents."
+            >
+              {researching ? 'Researching…' : 'Re-run keyword research'}
+            </button>
+          </div>
+          {researchMsg && (
+            <p className="text-xs mt-1" style={{ color: /failed/i.test(researchMsg) ? 'var(--red)' : 'var(--text-muted)' }}>{researchMsg}</p>
+          )}
         </div>
 
         <div>
