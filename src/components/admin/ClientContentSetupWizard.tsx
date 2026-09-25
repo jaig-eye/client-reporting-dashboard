@@ -1215,14 +1215,19 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, f
   function markServicePages() {
     // Only the pages this actually changes are sent; the endpoint's bulk path takes the list.
     const isService = (url: string) => url.includes('/service')
-    const newly = pages.filter(p => isService(p.url) && !p.isPriority).map(p => p.url)
+    const serviceUrls = pages.filter(p => isService(p.url)).map(p => p.url)
+    const newlyPriority = pages.filter(p => isService(p.url) && !p.isPriority).map(p => p.url)
     setPages(pages.map(p => ({ ...p, isPriority: isService(p.url) || p.isPriority })))
-    if (newly.length) {
-      void persist({ urls: newly, is_priority: true })
-      // The button is a classification, not just a ranking. is_service_page is what the sitemap
-      // tab reads and what tells the generator these are commercial pages rather than articles;
-      // sending only is_priority recorded half of what the operator just said.
-      void persist({ urls: newly, is_service_page: true })
+    // The button is a classification as much as a ranking. is_service_page is what the sitemap
+    // tab reads and what marks these as commercial pages rather than articles, and it is written
+    // for EVERY service URL — scoping it to the ones whose priority changed meant a page already
+    // marked priority never got classified. Sequential, so the two writes cannot race on the
+    // error banner.
+    if (serviceUrls.length) {
+      void (async () => {
+        if (newlyPriority.length) await persist({ urls: newlyPriority, is_priority: true })
+        await persist({ urls: serviceUrls, is_service_page: true })
+      })()
     }
   }
 
