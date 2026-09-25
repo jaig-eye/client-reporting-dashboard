@@ -221,11 +221,21 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // Seeds from what the client actually sells, so a domain with no history still produces a
     // list shaped like the business.
     try {
-      const { data: cs, error: csErr } = await db
+      // Asked for with the optional column, then without it. PostgREST fails the whole select
+      // when foundational_keywords is missing (migration 222), which would silently drop the
+      // keyword_ideas source — the one source that works for a client with no ranking history.
+      let { data: cs, error: csErr } = await db
         .from('content_settings')
         .select('services, geographic_focus, foundational_keywords')
         .eq('client_id', clientId)
         .maybeSingle()
+      if (csErr && /foundational_keywords/i.test(csErr.message)) {
+        ;({ data: cs, error: csErr } = await db
+          .from('content_settings')
+          .select('services, geographic_focus')
+          .eq('client_id', clientId)
+          .maybeSingle())
+      }
       // No seeds means no keyword_ideas call, which is the source that works for a client with no
       // ranking history — the one this whole path exists for.
       if (csErr) console.warn('[research] cannot read services for idea seeds:', csErr.message)
@@ -440,12 +450,15 @@ export async function getResearchCandidates(clientId: string): Promise<{
 
     // This one costs money to get wrong: a failure looks like "nothing recent", so research would
     // re-run its six Labs calls on every single topic generation instead of monthly.
-    if (csErr) {
+    // A missing column (migration 222 not applied) must not mean "never research again". Fall
+    // through to the row-age question, which is exactly the case the fallback below exists for.
+    if (csErr && !/last_keyword_research_at/i.test(csErr.message)) {
       console.warn('[research] staleness check failed, reusing what is stored:', csErr.message)
       return { candidates: await read(), refreshed: false }
     }
+    if (csErr) console.warn('[research] last_keyword_research_at missing (apply migration 222) — falling back to row ages')
 
-    const lastRun = (cs as Record<string, unknown> | null)?.last_keyword_research_at
+    const lastRun = csErr ? null : (cs as Record<string, unknown> | null)?.last_keyword_research_at
     if (lastRun && String(lastRun) >= cutoff) return { candidates: await read(), refreshed: false }
 
     // No timestamp yet: either this client has never been researched, or migration 222 has not

@@ -23,11 +23,32 @@ export async function GET(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
   const db = createAdminClient()
-  const [{ data }, { data: clientRow }] = await Promise.all([
-    db.from('content_settings')
-      .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, posts_per_run, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author, vertical, exclude_product_sitemaps, foundational_keywords')
+
+  // Columns every deployment has.
+  const BASE_COLS = 'business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, posts_per_run, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author, vertical, exclude_product_sitemaps'
+  // Added by migration 222. PostgREST rejects the WHOLE select when one column is missing, so
+  // naming it unconditionally took the entire settings payload down on any deployment where 222
+  // had not run — and every settings screen then rendered its defaults: cadence back to "use
+  // global default", start date blank, automation toggles off, sitemap unconfigured. The data was
+  // never touched; the page simply could not read it. Ask for it, and ask again without it.
+  const OPTIONAL_COLS = 'foundational_keywords'
+
+  const readSettings = async () => {
+    const full = await db.from('content_settings')
+      .select(`${BASE_COLS}, ${OPTIONAL_COLS}`)
       .eq('client_id', clientId)
-      .maybeSingle(),
+      .maybeSingle()
+    if (!full.error) return full
+    if (!/foundational_keywords/i.test(full.error.message)) return full
+    console.warn('[client-settings] foundational_keywords missing (apply migration 222) — reading without it')
+    return db.from('content_settings')
+      .select(BASE_COLS)
+      .eq('client_id', clientId)
+      .maybeSingle()
+  }
+
+  const [{ data }, { data: clientRow }] = await Promise.all([
+    readSettings(),
     db.from('clients').select('phone').eq('id', clientId).maybeSingle(),
   ])
 
@@ -86,9 +107,21 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { error } = await db
+  let { error } = await db
     .from('content_settings')
     .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false })
+
+  // Same shape as the read: without migration 222 the whole upsert fails, so a wizard that sent
+  // seed keywords would have saved NOTHING — schedule, brand answers and all. Drop the field the
+  // database does not know about and save the rest.
+  if (error && /foundational_keywords/i.test(error.message)) {
+    console.warn('[client-settings] foundational_keywords missing (apply migration 222) — saving without it')
+    const { foundational_keywords: _dropped, ...rest } = row
+    void _dropped
+    ;({ error } = await db
+      .from('content_settings')
+      .upsert(rest, { onConflict: 'client_id', ignoreDuplicates: false }))
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
