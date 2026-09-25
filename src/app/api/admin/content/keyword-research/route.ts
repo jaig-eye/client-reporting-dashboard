@@ -31,6 +31,9 @@ import { discoverKeywords } from '@/lib/content/clientResearch'
 // generation buys it all again.
 export const maxDuration = 300
 
+/** Matches RESEARCH_MAX_AGE_DAYS in clientResearch.ts — the window getResearchCandidates reuses. */
+const RESEARCH_REUSE_DAYS = 30
+
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
   keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null }>
@@ -109,13 +112,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   let clientId = request.nextUrl.searchParams.get('client_id')
-  if (!clientId) {
-    try {
-      const body = await request.json() as { client_id?: string }
-      clientId = body.client_id ?? null
-    } catch { /* no body */ }
-  }
+  let force = false
+  try {
+    const body = await request.json() as { client_id?: string; force?: boolean }
+    clientId = clientId ?? body.client_id ?? null
+    force = body.force === true
+  } catch { /* no body */ }
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
+
+  /**
+   * Reuse before spending.
+   *
+   * This route calls discoverKeywords() directly, which has no freshness gate of its own — the
+   * 30-day window lives in getResearchCandidates(). Since the wizard fires this on reaching the
+   * research step rather than on a button press, every visit re-bought the full six Labs calls
+   * for a client that had been researched an hour earlier. Opening the wizard twice to check a
+   * setting cost twice.
+   *
+   * `force: true` is the deliberate re-run, for when the operator has changed the seeds and
+   * wants the market looked at again.
+   */
+  if (!force) {
+    const at = await researchedAt(clientId)
+    const cutoff = new Date(Date.now() - RESEARCH_REUSE_DAYS * 86_400_000).toISOString()
+    if (at && at >= cutoff) {
+      const keywords = await readStored(clientId)
+      return NextResponse.json({
+        keywords,
+        competitors:  [],
+        connected:    keywords.length > 0,
+        reason:       'Reusing research from the last 30 days',
+        researchedAt: at,
+      } satisfies ResearchPayload)
+    }
+  }
 
   const result = await discoverKeywords(clientId)
 
