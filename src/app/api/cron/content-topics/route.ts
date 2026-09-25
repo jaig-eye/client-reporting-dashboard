@@ -503,7 +503,11 @@ export async function GET(request: NextRequest) {
         const picked = (group as PendingTopic[])
           .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
             || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
-          .slice(0, 1)
+          // postsPerRun, not 1. Generation already produces postsPerRun topics per slot and the
+          // comment above says each group is "capped at posts_per_run" — but approval took one,
+          // so a client set to 2 got 2 topics and 1 post, with the loser stuck 'pending' forever
+          // while still occupying the slot. The setting looked applied and changed nothing.
+          .slice(0, postsPerRun)
         toApprove.push(...picked.map((t: PendingTopic) => t.id))
       }
 

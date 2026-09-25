@@ -529,6 +529,17 @@ export async function POST(
   // a date get different times and that a post's own time never moves, because re-pushing must not
   // reschedule a live URL. A UUID key gives both; updated_at would give neither, and created_at
   // does not exist on this table.
+  /**
+   * The SEO-meta read-back, deferred until AFTER the row records wp_post_id.
+   *
+   * reportMetaMisses costs up to four WordPress round trips and runs on every Rank Math push.
+   * Awaiting it between publishPost() and the content_posts update put those seconds inside the
+   * window where the post is LIVE but unrecorded — and this route runs under maxDuration = 60.
+   * A kill there loses the id, so the next approve or auto-push publishes the article a second
+   * time on the client's site. Verification is worth having; it is not worth a duplicate.
+   */
+  let verifyMeta: (() => Promise<void>) | null = null
+
   const STAGGER_MINUTES = 120
   let slotOffsetMinutes = 0
   if (p.target_publish_date) {
@@ -748,9 +759,10 @@ export async function POST(
       // Same read-back as the blog branch. Service-area pages push the same three fields and
       // had no check at all, so a page whose SEO title never landed looked identical to one
       // whose did.
-      await reportMetaMisses({
+      const pageWpId = result.id
+      verifyMeta = () => reportMetaMisses({
         postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
-        wpId: result.id, expected: pageMeta, postType: 'pages',
+        wpId: pageWpId, expected: pageMeta, postType: 'pages',
       })
     } else {
       const authorId = p.wp_author_id
@@ -857,9 +869,10 @@ export async function POST(
             meta:           wpMeta,
           })
 
-      await reportMetaMisses({
+      const postWpId = result.id
+      verifyMeta = () => reportMetaMisses({
         postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
-        wpId: result.id, expected: wpMeta, postType: 'posts',
+        wpId: postWpId, expected: wpMeta, postType: 'posts',
       })
     }
 
@@ -896,6 +909,10 @@ export async function POST(
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
     }).eq('id', id)
+
+    // Now that wp_post_id is safely recorded, verifying the SEO meta can cost whatever it costs:
+    // a kill from here on loses a diagnostic, not the link between our row and a live post.
+    if (verifyMeta) await verifyMeta().catch(() => {})
 
     // Inject nearby-city links into sibling SA pages (fire-and-forget)
     if (isServiceArea) {
