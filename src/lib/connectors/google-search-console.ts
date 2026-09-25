@@ -422,7 +422,16 @@ export const googleSearchConsoleConnector: ConnectorAdapter = {
     if (!res.ok) {
       const text = await res.text()
       console.error(`[google-search-console] sites list error ${res.status}:`, text)
-      return []
+      // Throw rather than return []. An empty array is indistinguishable from "this account
+      // verifies no sites", and the connection picker treated it as fact and fell back to its
+      // cache without saying so — hiding any site added since the last manual refresh. Callers
+      // all handle a throw: the picker shows cached results AND a warning, the discover route
+      // returns the message, the OAuth callback logs and continues.
+      throw new Error(
+        res.status === 401 || res.status === 403
+          ? `Search Console refused the site list (${res.status}). The connector may need re-authorising.`
+          : `Search Console site list failed (${res.status}).`,
+      )
     }
 
     const data = await res.json() as {

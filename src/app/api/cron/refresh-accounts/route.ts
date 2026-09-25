@@ -1,14 +1,34 @@
-// Daily cron — refreshes discovered accounts for all Google Ads connectors.
+// Daily cron — refreshes discovered accounts for every connector that can discover them.
 // Keeps the connector_accounts table fresh so the client connection dropdown
 // always shows the latest sub-accounts without requiring a manual refresh.
+//
+// This used to query google_ads only, so a GA4 property or a Search Console site added after
+// the connector was authorised never appeared on its own: the cache only moved when somebody
+// opened /api/admin/connectors/[id]/discover by hand. Google Ads looked reliable purely
+// because this cron was refreshing it nightly and the others had no equivalent.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient }         from '@/lib/supabase/server'
-import { googleAdsConnector }        from '@/lib/connectors/google-ads'
-import type { Connector }            from '@/lib/types'
+import { getConnectorAdapter }       from '@/lib/connectors/registry'
+import type { Connector, ConnectorType } from '@/lib/types'
 
 export const maxDuration = 120
+
+/**
+ * Connector types whose accounts are worth re-discovering daily.
+ *
+ * Each is an agency-level connector holding one OAuth identity that can see many client
+ * accounts, so the set genuinely changes over time. Connectors configured per client
+ * (WordPress, BigCommerce, GHL, Ahrefs, DataForSEO) have nothing to enumerate.
+ */
+const REFRESHABLE: ConnectorType[] = [
+  'google_ads',
+  'google_analytics',
+  'google_search_console',
+  'google_business_profile',
+  'meta_ads',
+]
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
@@ -21,30 +41,38 @@ export async function GET(request: NextRequest) {
   const { data: connectors } = await db
     .from('connectors')
     .select('*')
-    .eq('type', 'google_ads')
+    .in('type', REFRESHABLE)
 
   const rows = (connectors ?? []) as Connector[]
-  const results: { id: string; label: string; accounts: number; error?: string }[] = []
+  const results: { id: string; type: string; label: string; accounts: number; error?: string }[] = []
 
   for (const connector of rows) {
     const auth   = (connector.auth   ?? {}) as Record<string, unknown>
     const config = (connector.config ?? {}) as Record<string, unknown>
 
+    const adapter = getConnectorAdapter(connector.type)
+    if (!adapter) continue
+
     let currentAuth = auth
 
-    // Refresh token if needed before discovery
-    try {
-      const refreshed = await googleAdsConnector.refreshAuth!(currentAuth)
-      if (refreshed) {
-        currentAuth = refreshed as Record<string, unknown>
-        await db.from('connectors').update({ auth: currentAuth }).eq('id', connector.id)
+    // Refresh token if needed before discovery. Google access tokens last about an hour, so a
+    // daily cron is always holding an expired one — without this the request 401s and the
+    // refresh accomplishes nothing. Meta's long-lived tokens have no refreshAuth; the optional
+    // call is what lets one loop serve both.
+    if (adapter.refreshAuth) {
+      try {
+        const refreshed = await adapter.refreshAuth(currentAuth)
+        if (refreshed) {
+          currentAuth = refreshed as Record<string, unknown>
+          await db.from('connectors').update({ auth: currentAuth }).eq('id', connector.id)
+        }
+      } catch (e) {
+        console.warn(`[refresh-accounts] token refresh failed for ${connector.type} ${connector.id}:`, e)
       }
-    } catch (e) {
-      console.warn(`[refresh-accounts] token refresh failed for ${connector.id}:`, e)
     }
 
     try {
-      const accounts = await googleAdsConnector.discoverAccounts(currentAuth, config)
+      const accounts = await adapter.discoverAccounts(currentAuth, config)
 
       if (accounts.length > 0) {
         await db.from('connector_accounts').upsert(
@@ -58,11 +86,11 @@ export async function GET(request: NextRequest) {
         )
       }
 
-      results.push({ id: connector.id, label: connector.label ?? connector.id, accounts: accounts.length })
+      results.push({ id: connector.id, type: connector.type, label: connector.label ?? connector.id, accounts: accounts.length })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.error(`[refresh-accounts] failed for connector ${connector.id}:`, msg)
-      results.push({ id: connector.id, label: connector.label ?? connector.id, accounts: 0, error: msg })
+      console.error(`[refresh-accounts] failed for connector ${connector.type} ${connector.id}:`, msg)
+      results.push({ id: connector.id, type: connector.type, label: connector.label ?? connector.id, accounts: 0, error: msg })
     }
   }
 
