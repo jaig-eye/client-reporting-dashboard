@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ interface Schedule {
 interface KeywordResult {
   keyword:    string
   volume:     number | null
+  /** Google Ads volume in the research location, when the run was local. */
+  local_volume?: number | null
   difficulty: number | null
   intent:     string | null
   source?:    string | null
@@ -51,6 +54,8 @@ interface ResearchData {
   discovered?:  number
   cost?:        number
   researchedAt?: string | null
+  /** Where the pool was measured, when a research location is set. */
+  researchLocation?: string | null
 }
 
 interface Props {
@@ -139,6 +144,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * guess in this box.
    */
   const [foundationalKeywords, setFoundationalKeywords] = useState('')
+  const [researchLocation, setResearchLocation]         = useState<ResearchLocationValue | null>(null)
   /**
    * The eeat_data column exactly as loaded.
    *
@@ -232,6 +238,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             eeat_data?: Record<string, unknown> | null
             weeks_ahead?: number | null
             foundational_keywords?: string[] | null
+            research_location?: unknown
             content_image_generation?: boolean | null
             content_image_prompt?: string | null
           }
@@ -247,6 +254,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           if (Array.isArray(cs.foundational_keywords) && cs.foundational_keywords.length > 0) {
             setFoundationalKeywords(cs.foundational_keywords.join(', '))
           }
+          setResearchLocation(readLocationValue(cs.research_location))
 
           // Hydrate BRAND DNA. Without this the fields render empty on a re-run and the save at
           // the end writes those empties over a profile someone already curated. Every value is
@@ -565,6 +573,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         geographic_focus:     brand.geographic_focus,
         brand_voice:          brand.brand_voice,
         phone_number:         brand.phone_number,
+        // Where research and rank checks are measured — see migration 224.
+        research_location:    researchLocation,
         // Seeds for research, not a content plan — see migration 222.
         foundational_keywords: foundationalKeywords
           .split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25),
@@ -726,6 +736,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brandLoaded={brandLoaded}
               foundationalKeywords={foundationalKeywords}
               setFoundationalKeywords={setFoundationalKeywords}
+              researchLocation={researchLocation}
+              setResearchLocation={setResearchLocation}
               onSeedsEdited={() => { seedsPrefilled.current = true }}
             />
           )}
@@ -1096,7 +1108,7 @@ function StepWpConnect({
 
 // ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
-function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords, onSeedsEdited }: {
+function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords, researchLocation, setResearchLocation, onSeedsEdited }: {
   analyzeUrl: string
   setAnalyzeUrl: (v: string) => void
   onAnalyze: () => void
@@ -1107,6 +1119,8 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brandLoaded: boolean
   foundationalKeywords: string
   setFoundationalKeywords: (v: string) => void
+  researchLocation: ResearchLocationValue | null
+  setResearchLocation: (v: ResearchLocationValue | null) => void
   /** Marks the seeds as operator-owned so the services pre-fill never runs again. */
   onSeedsEdited: () => void
 }) {
@@ -1166,6 +1180,13 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
 
           <Field label="Geographic Focus">
             <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin, TX" />
+          </Field>
+          <Field label="Research Location">
+            <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} inputStyle={inputStyle} />
+            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              Where volumes, competitors and rankings are measured: a city, county or state. Leave empty
+              for a nationwide business.
+            </p>
           </Field>
           <Field label="Brand Voice">
             <input type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
@@ -1662,9 +1683,12 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
                         {kw.source && <span>{sourceLabel[kw.source] ?? kw.source}</span>}
                       </div>
                     </div>
-                    {kw.volume != null && (
-                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {kw.volume.toLocaleString()}/mo
+                    {(kw.local_volume != null || kw.volume != null) && (
+                      <span
+                        style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+                        title={kw.local_volume != null && kw.volume != null ? `${kw.volume.toLocaleString()}/mo nationally` : undefined}
+                      >
+                        {kw.local_volume != null ? `${kw.local_volume.toLocaleString()}/mo local` : `${(kw.volume ?? 0).toLocaleString()}/mo`}
                       </span>
                     )}
                     {kw.difficulty != null && (
@@ -1703,7 +1727,7 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
         {/* Competitors panel */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-            Competitor Analysis
+            Competitor Analysis{research?.researchLocation ? ` — ${research.researchLocation.split(',')[0]}` : ''}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
             {busy ? (
@@ -1719,7 +1743,10 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
             ) : (
               <>
                 <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
-                  Sites ranking for the seed searches in this market, strongest first. The top three&apos;s own ranking keywords join the pool.
+                  {research?.researchLocation
+                    ? `Who a searcher in ${research.researchLocation.split(',')[0]} sees for the seed services \u2014 organic results and the local pack, strongest first.`
+                    : 'Sites ranking for the seed searches in this market, strongest first.'}
+                  {' '}The top three&apos;s own ranking keywords join the pool.
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {research!.competitors.map((c, i) => (

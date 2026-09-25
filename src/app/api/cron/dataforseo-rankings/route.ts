@@ -30,7 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, readResearchLocation, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
@@ -98,6 +98,21 @@ export async function GET(req: NextRequest) {
     })
     .filter(Boolean) as Array<{ clientId: string; creds: DfsCreds; domain: string; cfg: ReturnType<typeof resolveSeoConfig> }>
 
+  // Where each client's searcher is. A research location (migration 224) makes the live check
+  // local: the position that matters for a county-wide business is the one its own market sees,
+  // not the national one Labs reports.
+  const localCode = new Map<string, number>()
+  try {
+    const { data: locs } = await db
+      .from('content_settings')
+      .select('client_id, research_location')
+      .in('client_id', usable.map(u => u.clientId))
+    for (const r of (locs ?? []) as { client_id: string; research_location: unknown }[]) {
+      const loc = readResearchLocation(r.research_location)
+      if (loc) localCode.set(r.client_id, loc.code)
+    }
+  } catch { /* column absent — country-level checks, as before */ }
+
   const keywordLists = await Promise.all(usable.map(u => getTrackedKeywords(u.clientId)))
 
   type Job = {
@@ -130,7 +145,7 @@ export async function GET(req: NextRequest) {
           clientId: u.clientId, domain: u.domain, keywordId: kw.id, keyword: kw.keyword,
           // The connection's tracking config is the client's authoritative market; the keyword's
           // stored location is only a registration default.
-          locationCode: u.cfg.location_code,
+          locationCode: localCode.get(u.clientId) ?? u.cfg.location_code,
           languageCode: u.cfg.language_code,
           device,
           depth: firstRead ? FIRST_READ_DEPTH : Math.min(ROUTINE_DEPTH, u.cfg.rank_depth),

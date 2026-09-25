@@ -24,7 +24,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords, resetResearchPool, researchScoreOf } from '@/lib/content/clientResearch'
+import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
+import { readResearchLocation } from '@/lib/connectors/dataforseo'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
@@ -36,7 +37,7 @@ const RESEARCH_REUSE_DAYS = 30
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
-  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null }>
+  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null }>
   competitors:  string[]
   /** Present and false when DataForSEO is not connected for this client. */
   connected:    boolean
@@ -45,6 +46,8 @@ interface ResearchPayload {
   discovered?:  number
   cost?:        number
   researchedAt?: string | null
+  /** Where the pool was measured, when a research location is set: "Los Angeles County,California,United States". */
+  researchLocation?: string | null
 }
 
 /** The stored pool, best first. Free — this is a database read. */
@@ -69,6 +72,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       intent:     r.intent             == null ? null : String(r.intent),
       source:     r.source             == null ? null : String(r.source),
       score:      researchScoreOf(r.metadata),
+      local_volume: localVolumeOf(r.metadata),
     }))
       .filter(k => k.keyword)
       // Research score first — the order the pool was built to prefer — volume as tie-break.
@@ -80,17 +84,19 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
   }
 }
 
-async function researchedAt(clientId: string): Promise<string | null> {
+/** When research last ran and where it is measured. Both columns optional (222, 224). */
+async function researchMeta(clientId: string): Promise<{ at: string | null; location: string | null }> {
   try {
-    const { data } = await createAdminClient()
-      .from('content_settings')
-      .select('last_keyword_research_at')
-      .eq('client_id', clientId)
-      .maybeSingle()
-    const v = (data as Record<string, unknown> | null)?.last_keyword_research_at
-    return v == null ? null : String(v)
+    const db = createAdminClient()
+    const read = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
+    let { data, error } = await read('last_keyword_research_at, research_location')
+    if (error && /research_location/i.test(error.message)) ({ data, error } = await read('last_keyword_research_at'))
+    if (error) return { at: null, location: null }
+    const row = data as Record<string, unknown> | null
+    const at  = row?.last_keyword_research_at
+    return { at: at == null ? null : String(at), location: readResearchLocation(row?.research_location)?.name ?? null }
   } catch {
-    return null
+    return { at: null, location: null }
   }
 }
 
@@ -103,7 +109,7 @@ export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('client_id')
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
-  const [keywords, at] = await Promise.all([readStored(clientId), researchedAt(clientId)])
+  const [keywords, meta] = await Promise.all([readStored(clientId), researchMeta(clientId)])
   const payload: ResearchPayload = {
     keywords,
     competitors:  [],
@@ -111,7 +117,8 @@ export async function GET(request: NextRequest) {
     // so a client with no DataForSEO connection was reported as connected here while the POST
     // path called the same client disconnected.
     connected:    keywords.length > 0,
-    researchedAt: at,
+    researchedAt: meta.at,
+    researchLocation: meta.location,
   }
   return NextResponse.json(payload)
 }
@@ -144,7 +151,7 @@ export async function POST(request: NextRequest) {
    * wants the market looked at again.
    */
   if (!force) {
-    const at = await researchedAt(clientId)
+    const { at, location } = await researchMeta(clientId)
     const cutoff = new Date(Date.now() - RESEARCH_REUSE_DAYS * 86_400_000).toISOString()
     if (at && at >= cutoff) {
       const keywords = await readStored(clientId)
@@ -154,6 +161,7 @@ export async function POST(request: NextRequest) {
         connected:    keywords.length > 0,
         reason:       'Reusing research from the last 30 days',
         researchedAt: at,
+        researchLocation: location,
       } satisfies ResearchPayload)
     }
   }
@@ -167,6 +175,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await discoverKeywords(clientId)
+  const meta   = await researchMeta(clientId)
 
   const payload: ResearchPayload = {
     keywords:     await readStored(clientId),
@@ -178,7 +187,8 @@ export async function POST(request: NextRequest) {
     reason:       result.reason,
     discovered:   result.discovered,
     cost:         result.cost,
-    researchedAt: await researchedAt(clientId),
+    researchedAt: meta.at,
+    researchLocation: result.location ?? meta.location,
   }
   return NextResponse.json(payload)
 }

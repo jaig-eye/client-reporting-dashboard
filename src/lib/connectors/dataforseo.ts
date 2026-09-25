@@ -110,6 +110,22 @@ async function dfsPost(path: string, creds: DfsCreds, task: Record<string, unkno
   }
 }
 
+/** GET, for the free list endpoints (locations, languages). Null on any failure, like dfsPost. */
+async function dfsGet(path: string, creds: DfsCreds, timeoutMs = 30_000): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method:  'GET',
+      headers: { Authorization: basicAuthHeader(creds) },
+      signal:  AbortSignal.timeout(timeoutMs),
+    })
+    if (!res.ok) { console.error(`[dataforseo] ${path} HTTP ${res.status}`); return null }
+    return await res.json() as Record<string, unknown>
+  } catch (e) {
+    console.error(`[dataforseo] ${path} failed:`, e)
+    return null
+  }
+}
+
 // Pull tasks[0].result[0].items[] (Labs/SERP shape) defensively.
 function firstResultItems(json: Record<string, unknown> | null): Record<string, unknown>[] {
   const tasks = (json?.tasks as Record<string, unknown>[] | undefined) ?? []
@@ -122,6 +138,13 @@ function firstResultArray(json: Record<string, unknown> | null): Record<string, 
   const tasks = (json?.tasks as Record<string, unknown>[] | undefined) ?? []
   const result = (tasks[0]?.result as Record<string, unknown>[] | undefined)
   return Array.isArray(result) ? result : []
+}
+// DataForSEO answers HTTP 200 with a per-task status when the task itself was refused (an
+// unknown location, a keyword it will not accept). Silent, unless someone looks.
+function firstTaskError(json: Record<string, unknown> | null): string | null {
+  const tasks = (json?.tasks as Record<string, unknown>[] | undefined) ?? []
+  const code = num(tasks[0]?.status_code)
+  return code != null && code !== 20000 ? `${code} ${String(tasks[0]?.status_message ?? '')}`.trim() : null
 }
 function num(v: unknown): number | null {
   return typeof v === 'number' && !Number.isNaN(v) ? v : null
@@ -206,7 +229,7 @@ export async function dfsKeywordOverview(
 // priority) which is ~3.3× cheaper for batch/cron use; kept live here for simplicity
 // and correctness while the integration is validated.
 
-function normalizeDomain(input: string): string {
+export function normalizeDomain(input: string): string {
   return input.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').toLowerCase()
 }
 
@@ -627,6 +650,191 @@ export async function dfsSerpIntel(
     .slice(0, opts.limit ?? 5)
 
   return { paa, related, aiOverview, featuredSnippet, organicUrls, features }
+}
+
+// ── Locality ──────────────────────────────────────────────────────────────────
+//
+// Everything in the Labs section above is COUNTRY-level by design: the Labs locations list has
+// exactly one location_type, "Country", and DataForSEO's help centre says city databases would be
+// too expensive to maintain. So a Labs volume is the national figure and a Labs competitor is
+// whoever ranks nationally — for a lighting installer in one county, that is Amazon and Govee.
+//
+// Two other APIs take a city, county or state, using the same Google geo-target codes:
+//
+//   Google Ads search volume   keywords_data/google_ads/search_volume/live   $0.09 per task, up to 1,000 keywords
+//   Live SERP                  serp/google/organic/live/advanced             $0.002 per 10 results
+//   Locations list             keywords_data/google_ads/locations            free
+//
+// The helpers below put a local layer on top of the Labs pool: what the client's own market
+// searches for, and who a searcher there actually sees.
+
+/** A Google geo target as DataForSEO lists it. The code is valid for SERP and Google Ads calls alike. */
+export interface DfsLocation {
+  code:    number
+  /** As DataForSEO prints it: "Los Angeles County,California,United States". */
+  name:    string
+  /** City, County, State, Municipality, Region. */
+  type:    string
+  parent:  number | null
+  country: string
+}
+
+/** What content_settings.research_location holds. Null = country-level, the default. */
+export interface ResearchLocation { code: number; name: string; type: string }
+
+/** The stored value, or nothing: never trust a JSON column's shape. */
+export function readResearchLocation(v: unknown): ResearchLocation | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  const code = Number(o.code)
+  const name = typeof o.name === 'string' ? o.name.trim() : ''
+  if (!Number.isFinite(code) || code <= 0 || !name) return null
+  return { code: Math.round(code), name, type: typeof o.type === 'string' ? o.type : '' }
+}
+
+/** The kinds a service area is described in. Neighbourhoods and postal codes are below what Google Ads reports volume for. */
+const PICKABLE_LOCATION_TYPES = new Set(['City', 'County', 'State', 'Municipality', 'Region', 'Province', 'Territory'])
+
+// ~100k rows for every country; fetched once per process and kept for a day.
+let locationCache: { at: number; rows: DfsLocation[] } | null = null
+const LOCATION_CACHE_MS = 24 * 3_600_000
+
+async function loadLocations(creds: DfsCreds): Promise<DfsLocation[]> {
+  if (locationCache && Date.now() - locationCache.at < LOCATION_CACHE_MS) return locationCache.rows
+  const json = await dfsGet('/v3/keywords_data/google_ads/locations', creds, 60_000)
+  const rows = firstResultArray(json)
+    .map(r => ({
+      code:    num(r.location_code) ?? 0,
+      name:    String(r.location_name ?? ''),
+      type:    String(r.location_type ?? ''),
+      parent:  num(r.location_code_parent),
+      country: String(r.country_iso_code ?? ''),
+    }))
+    .filter(l => l.code > 0 && l.name && PICKABLE_LOCATION_TYPES.has(l.type))
+  if (rows.length) locationCache = { at: Date.now(), rows }
+  return rows
+}
+
+/**
+ * Locations whose own name matches `q`: exact first, then prefix, then contains; cities before
+ * counties before states; the agency's home market (US, then CA) before the rest. Free.
+ */
+export async function dfsSearchLocations(
+  q: string,
+  creds: DfsCreds,
+  opts: { limit?: number } = {},
+): Promise<DfsLocation[]> {
+  const needle = q.trim().toLowerCase()
+  if (needle.length < 2) return []
+  const rows = await loadLocations(creds)
+  const TYPE_RANK: Record<string, number>    = { City: 0, County: 1, Municipality: 2, State: 3, Province: 3, Region: 4, Territory: 4 }
+  const COUNTRY_RANK: Record<string, number> = { US: 0, CA: 1 }
+  const hits: Array<{ l: DfsLocation; rank: number }> = []
+  for (const l of rows) {
+    const head = l.name.split(',')[0].toLowerCase()
+    const rank = head === needle ? 0 : head.startsWith(needle) ? 1 : head.includes(needle) ? 2 : -1
+    if (rank >= 0) hits.push({ l, rank })
+  }
+  hits.sort((a, b) =>
+    a.rank - b.rank
+    || (COUNTRY_RANK[a.l.country] ?? 9) - (COUNTRY_RANK[b.l.country] ?? 9)
+    || (TYPE_RANK[a.l.type] ?? 9) - (TYPE_RANK[b.l.type] ?? 9)
+    || a.l.name.length - b.l.name.length)
+  return hits.slice(0, opts.limit ?? 12).map(h => h.l)
+}
+
+export interface DfsLocalVolume { search_volume: number | null; cpc: number | null; competition_index: number | null }
+const DFS_GOOGLE_ADS_TASK_COST = 0.09
+
+/**
+ * Google Ads search volume for `keywords` in one location. One task, one flat price whatever the
+ * count (up to 1,000). Keyed by the keyword lower-cased with single spaces. A null volume means
+ * Google's bucket for that phrase in that place is too small to report — not zero demand.
+ */
+export async function dfsLocalSearchVolume(
+  keywords: string[],
+  creds: DfsCreds,
+  opts: { locationCode: number; languageCode?: string; onCost?: CostSink },
+): Promise<Map<string, DfsLocalVolume>> {
+  const out = new Map<string, DfsLocalVolume>()
+  const list = Array.from(new Set(
+    keywords.map(k => k.trim()).filter(k => k && k.length <= 80 && k.split(/\s+/).length <= 10),
+  )).slice(0, 1000)
+  if (!list.length) return out
+  const json = await dfsPost('/v3/keywords_data/google_ads/search_volume/live', creds, {
+    keywords:        list,
+    location_code:   opts.locationCode,
+    language_code:   opts.languageCode ?? 'en',
+    search_partners: false,
+  }, 60_000)
+  if (!json) return out
+  opts.onCost?.(readTopCost(json) || DFS_GOOGLE_ADS_TASK_COST)
+  const err = firstTaskError(json)
+  if (err) console.warn(`[dataforseo] google_ads search_volume refused: ${err}`)
+  for (const r of firstResultArray(json)) {
+    const kw = String(r.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+    if (!kw) continue
+    out.set(kw, { search_volume: num(r.search_volume), cpc: num(r.cpc), competition_index: num(r.competition_index) })
+  }
+  return out
+}
+
+export interface DfsLocalSerp {
+  organic:   Array<{ domain: string; url: string; title: string; rank: number }>
+  /** The map pack: where a service business's real rivals are listed. Domain is often absent. */
+  localPack: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null; rank: number }>
+  /** Element types present, so a caller can tell a local-pack SERP from a national-looking one. */
+  features:  string[]
+}
+
+/**
+ * One live SERP as a searcher in `locationCode` sees it: organic results and the local pack.
+ * depth 20 is two pages, $0.004. Null when DataForSEO did not answer.
+ */
+export async function dfsLocalSerp(
+  keyword: string,
+  creds: DfsCreds,
+  opts: { locationCode: number; languageCode?: string; depth?: number; device?: SeoDevice; onCost?: CostSink },
+): Promise<DfsLocalSerp | null> {
+  if (!keyword.trim()) return null
+  const depth = opts.depth ?? 20
+  const json = await dfsPost('/v3/serp/google/organic/live/advanced', creds, {
+    keyword:       keyword.trim(),
+    location_code: opts.locationCode,
+    language_code: opts.languageCode ?? 'en',
+    device:        opts.device ?? 'desktop',
+    depth,
+  })
+  if (!json) return null
+  opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))
+  const err = firstTaskError(json)
+  if (err) console.warn(`[dataforseo] local SERP refused for "${keyword}": ${err}`)
+  const items = firstResultItems(json)
+  const organic = items
+    .filter(i => i.type === 'organic')
+    .map(i => ({
+      domain: normalizeDomain(String(i.domain ?? '') || String(i.url ?? '')),
+      url:    String(i.url ?? ''),
+      title:  String(i.title ?? ''),
+      rank:   num(i.rank_group) ?? 999,
+    }))
+    .filter(o => o.domain)
+  const localPack = items
+    .filter(i => i.type === 'local_pack')
+    .map(i => {
+      const rating = (i.rating as Record<string, unknown> | null) ?? null
+      const dom = i.domain ? normalizeDomain(String(i.domain)) : i.url ? normalizeDomain(String(i.url)) : ''
+      return {
+        title:  String(i.title ?? ''),
+        domain: dom || null,
+        rating: num(rating?.value),
+        votes:  num(rating?.votes_count),
+        rank:   num(i.rank_group) ?? 999,
+      }
+    })
+    .filter(p => p.title)
+  const features = Array.from(new Set(items.map(i => String(i.type ?? '')).filter(t => t && t !== 'organic')))
+  return { organic, localPack, features }
 }
 
 // ── Account balance (free) — used by testConnection ───────────────────────────

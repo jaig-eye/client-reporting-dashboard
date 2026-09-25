@@ -21,7 +21,7 @@
 import type { createAdminClient } from '@/lib/supabase/server'
 import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors, type CompetitorResearch } from './competitorResearch'
 import { recordDfsUsage } from './dataforseoUsage'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, readResearchLocation, type DfsCreds, type SeoTrackingConfig } from '@/lib/connectors/dataforseo'
 
 type Db = ReturnType<typeof createAdminClient>
 
@@ -44,7 +44,15 @@ export async function getClientDfsContext(db: Db, clientId: string): Promise<Dfs
     if (!dfsRow) return null   // client not connected to DataForSEO → dormant
     const creds = resolveDfsCreds(dfsRow.connector?.auth ?? {})   // env fills the password if absent
     if (!creds) return null
-    return { creds, domain: dfsRow.external_id ?? null, config: resolveSeoConfig(dfsRow.connector?.config, dfsRow.config) }
+    const config = resolveSeoConfig(dfsRow.connector?.config, dfsRow.config)
+    // A research location (migration 224) makes the SERP intel local: People-Also-Ask and the
+    // competing pages as a searcher in the service area sees them.
+    try {
+      const { data: cs } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+      const loc = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)
+      if (loc) config.location_code = loc.code
+    } catch { /* column absent */ }
+    return { creds, domain: dfsRow.external_id ?? null, config }
   } catch {
     return null
   }

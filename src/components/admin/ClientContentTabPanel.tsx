@@ -354,7 +354,7 @@ function GscSection({
 // The other three sources topic selection reads (/api/admin/content/keyword-sources).
 interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
 interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null }
+interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null; local_volume?: number | null }
 interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[] }
 
 /** One column of a source table. `align` defaults to right, because most of these are numbers. */
@@ -464,6 +464,9 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
   // Research ran elsewhere (epoch moved): forget what was loaded so the effects below fetch
   // again. Runs once on mount as well, where clearing already-empty state changes nothing.
   useEffect(() => { setRanks(null); setSources(null) }, [epoch])
+
+  // A local run stores the market's own volume; the column only appears when there is one.
+  const hasLocalVolume = (sources?.researched ?? []).some(r => r.local_volume != null)
 
   /** "Not this one." Optimistic; a refused write puts it back by refetching. */
   async function handleDismiss(keyword: string) {
@@ -616,6 +619,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
           { label: 'Keyword',    left: true, render: r => r.keyword },
           { label: 'Volume',     render: r => r.volume     == null ? '—' : r.volume.toLocaleString() },
           { label: 'Difficulty', render: r => r.difficulty == null ? '—' : String(r.difficulty) },
+          ...(hasLocalVolume ? [{ label: 'Local vol.', render: (r: ResearchRow) => r.local_volume == null ? '\u2014' : r.local_volume.toLocaleString() }] : []),
           { label: 'Intent',     render: r => r.intent ?? '—' },
           // The number the table is ordered by, so the order is explicable rather than magic.
           { label: 'Score',      render: r => r.score == null ? '—' : String(Math.round(r.score)) },

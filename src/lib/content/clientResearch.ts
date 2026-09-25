@@ -35,13 +35,15 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import {
   resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsSerpCompetitors, dfsKeywordIdeas,
-  dfsKeywordSuggestions,
-  type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig,
+  dfsKeywordSuggestions, dfsLocalSerp, dfsLocalSearchVolume, isAggregatorDomain, normalizeDomain, readResearchLocation,
+  type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig, type ResearchLocation,
 } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from './dataforseoUsage'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
 const MAX_COMPETITORS = 3
+/** Service seeds probed with a live local SERP when a research location is set. $0.004 each. */
+const LOCAL_SERP_SEEDS = 5
 /**
  * Research older than this is redone; anything newer is reused as-is.
  *
@@ -70,12 +72,19 @@ export interface DiscoveryResult {
    * nothing and saves the setup wizard buying the same answer again to show it.
    */
   competitors: string[]
+  /** The research location's name when the run was local, for the display to say so. */
+  location?: string | null
 }
 
 /** Which system a candidate came from. Stored as seo_keywords.source, so it must be honest. */
 type KeywordOrigin = 'dataforseo' | 'ahrefs' | 'google_ads'
 
-type Candidate = DfsKeywordCandidate & { normalized: string; origin: KeywordOrigin }
+type Candidate = DfsKeywordCandidate & {
+  normalized: string
+  origin:     KeywordOrigin
+  /** Google Ads volume in the research location. Undefined = not asked; null = asked, too small to report. */
+  local_volume?: number | null
+}
 
 const normalize = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
 
@@ -96,6 +105,33 @@ const SEED_STOP = new Set(['and', 'the', 'for', 'with', 'your', 'our', 'from', '
  * word is nearly always "light". Matching is on prefixes so "lighting", "lights" and "light"
  * agree, and geography words never count as topic words on their own ("los angeles weather").
  */
+/**
+ * The phrase local seeds are built on: the research location's own name when there is one
+ * ("Los Angeles County" → "Los Angeles"), otherwise the first place the prose names, cut at the
+ * first "and", bracket or "including". "Los Angeles and Tri-County area, Southern California" used
+ * to produce seeds ending in "los angeles and tri-county area", which nobody types.
+ */
+function geoPhrase(location: ResearchLocation | null, prose: string): string {
+  const fromLocation = location ? location.name.split(',')[0].replace(/\s+county$/i, '').trim() : ''
+  if (fromLocation) return fromLocation
+  const first = prose.split(/[,\n;]+/)[0] ?? ''
+  return first.split(/\s+and\s+|\s*\(|\s+including\s+/i)[0].trim()
+}
+
+/**
+ * How much of national demand this market is, from the phrases Google answered for both. The
+ * median, over pairs big enough to be more than noise. 3% — roughly one large metro — when too
+ * few answered to say.
+ */
+function observedLocalShare(cands: Candidate[]): number {
+  const ratios = cands
+    .filter(c => c.local_volume != null && c.local_volume > 0 && (c.search_volume ?? 0) >= 100)
+    .map(c => (c.local_volume as number) / (c.search_volume as number))
+    .sort((a, b) => a - b)
+  if (ratios.length < 5) return 0.03
+  return Math.min(1, Math.max(0.002, ratios[Math.floor(ratios.length / 2)]))
+}
+
 function buildSeedMatcher(phrases: string[], geo: string) {
   const tokenize = (v: string) =>
     v.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length >= 3 && !SEED_STOP.has(t))
@@ -150,9 +186,16 @@ const PRODUCT_WORDS = /\b(buy|cheap(?:est)?|amazon|walmart|home depot|lowes|cost
  *   owned          -50     we already rank top ten for it; it needs a supporting piece at most
  *   nearMiss       +25     we sit at 11–30; one good article can move it
  */
-function score(c: Candidate, paidConversions: number, mentionsGeo: boolean): number {
+function score(c: Candidate, paidConversions: number, mentionsGeo: boolean, localShare = 0): number {
   const kw         = c.keyword.toLowerCase()
-  const volume     = Math.log10(Math.max(1, c.search_volume ?? 0) + 1) * 20
+  // With a research location, demand is measured where the client sells. Google reports nothing
+  // for a phrase whose local bucket is too small, so those fall back to the national figure scaled
+  // by the share the answered phrases showed — a long-tail local phrase keeps its place instead of
+  // dropping to zero.
+  const demand = localShare > 0
+    ? (c.local_volume ?? Math.round((c.search_volume ?? 0) * localShare))
+    : (c.search_volume ?? 0)
+  const volume     = Math.log10(Math.max(1, demand) + 1) * 20
   const difficulty = (c.keyword_difficulty ?? 50) * 0.4
   const proven     = paidConversions > 0 ? 40 + Math.min(40, paidConversions * 4) : 0
   const local      = mentionsGeo ? 20 : 0
@@ -288,27 +331,29 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // dfsSerpCompetitors) rather than from a domain overlap a new site does not have.
   let seeds: string[] = []
   let geo = ''
+  let location: ResearchLocation | null = null
+  // 0 until a local volume call has run; then the market's share of national demand.
+  let localShare = 0
   try {
     // Asked for with the optional column, then without it. PostgREST fails the whole select
     // when foundational_keywords is missing (migration 222), which would silently drop the
     // keyword_ideas source — the one source that works for a client with no ranking history.
-    let { data: cs, error: csErr } = await db
-      .from('content_settings')
-      .select('services, geographic_focus, foundational_keywords')
-      .eq('client_id', clientId)
-      .maybeSingle()
+    // Asked for with both optional columns, then progressively without: research_location is
+    // migration 224, foundational_keywords 222.
+    const readSettings = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
+    let { data: cs, error: csErr } = await readSettings('services, geographic_focus, foundational_keywords, research_location')
+    if (csErr && /research_location/i.test(csErr.message)) {
+      ;({ data: cs, error: csErr } = await readSettings('services, geographic_focus, foundational_keywords'))
+    }
     if (csErr && /foundational_keywords/i.test(csErr.message)) {
-      ;({ data: cs, error: csErr } = await db
-        .from('content_settings')
-        .select('services, geographic_focus')
-        .eq('client_id', clientId)
-        .maybeSingle())
+      ;({ data: cs, error: csErr } = await readSettings('services, geographic_focus'))
     }
     if (csErr) console.warn('[research] cannot read services for seeds:', csErr.message)
     const settings = cs as Record<string, unknown> | null
     const services = String(settings?.services ?? '')
       .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
-    geo = String(settings?.geographic_focus ?? '').split(/[,\n;]+/)[0]?.trim() ?? ''
+    location = readResearchLocation(settings?.research_location)
+    geo = geoPhrase(location, String(settings?.geographic_focus ?? ''))
     // What the operator said this business should be found for, before any data existed. Seeds
     // only: they widen what gets discovered and then take no further part — the results are
     // ranked on volume, difficulty and proven paid conversions like everything else, so a term
@@ -321,7 +366,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // are the ones down the road, and they give keyword_ideas a local angle to expand from.
     const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
     seeds = Array.from(new Set([...foundational, ...fromServices]))
-    seedMatcher = buildSeedMatcher([...foundational, ...services], geo)
+    // The location's every name part counts as geography for the matcher ("southern california"
+    // is not a topic word), but the prose does not — a business that says "in-shop service at
+    // 1820 Trade St" would have "shop" and "service" stop counting as topic words.
+    seedMatcher = buildSeedMatcher([...foundational, ...services], [geo, ...(location ? location.name.split(',') : [])].join(' '))
   } catch { /* no settings — no seeds, and the sources below that need them are skipped */ }
 
   if (creds && domain) {
@@ -336,9 +384,39 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // The seed SERPs come first because they answer the question for every client, including
     // one with no rankings yet. Domain overlap is kept as a supplement: once a site has a
     // footprint it can surface a rival the seeds did not, and it costs one call.
-    const bySerp    = seeds.length ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain }) : []
+    // ── Local competitors: who a searcher in the service area actually sees ──
+    // Labs serp_competitors answers nationally. With a research location, a few live SERPs of the
+    // service seeds — organic top 20 plus the local pack — name the businesses down the road.
+    let localRivals: string[] = []
+    if (location && seeds.length) {
+      const own   = normalizeDomain(domain)
+      const tally = new Map<string, number>()
+      const probe = seeds.filter(sd => !geo || !sd.toLowerCase().endsWith(geo.toLowerCase())).slice(0, LOCAL_SERP_SEEDS)
+      let packs = 0
+      for (const sd of probe) {
+        const serp = await dfsLocalSerp(sd, creds, { locationCode: location.code, languageCode: cfg.language_code, depth: 20, onCost })
+        if (!serp) continue
+        for (const o of serp.organic) {
+          if (o.rank > 20 || o.domain === own || o.domain.endsWith('.' + own) || isAggregatorDomain(o.domain)) continue
+          tally.set(o.domain, (tally.get(o.domain) ?? 0) + (21 - o.rank) / 20)
+        }
+        if (serp.localPack.length) packs++
+        for (const p of serp.localPack) {
+          if (!p.domain || p.domain === own || p.domain.endsWith('.' + own) || isAggregatorDomain(p.domain)) continue
+          // In the pack at all outweighs any organic position: that is the map a local searcher
+          // clicks first.
+          tally.set(p.domain, (tally.get(p.domain) ?? 0) + 1.5)
+        }
+      }
+      localRivals = Array.from(tally.entries()).sort((a, b) => b[1] - a[1]).map(([d]) => d).slice(0, 8)
+      console.log(`[research] local SERPs (${location.name}): ${probe.length} seed(s), ${packs} with a local pack, ${localRivals.length} rival(s)` +
+        (localRivals.length ? ` — top: ${localRivals.slice(0, 3).join(', ')}` : ''))
+    }
+
+    // The national list is only bought when the local one is thin.
+    const bySerp    = seeds.length && localRivals.length < 4 ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain }) : []
     const byOverlap = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
-    const ordered   = Array.from(new Set([...bySerp.map(c => c.domain), ...byOverlap]))
+    const ordered   = Array.from(new Set([...localRivals, ...bySerp.map(c => c.domain), ...byOverlap]))
     competitorDomains = ordered.slice(0, 8)
     console.log(`[research] competitors: ${bySerp.length} from seed SERPs, ${byOverlap.length} from domain overlap` +
       (bySerp.length ? ` — top: ${bySerp.slice(0, 3).map(c => `${c.domain} (${c.keywords_count ?? '?'} kw)`).join(', ')}` : ''))
@@ -368,20 +446,48 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       console.log(`[research] keyword_ideas: kept ${kept}, dropped ${dropped} off-topic`)
     }
 
-    // ── Local phrases: what people in this city actually type ────────────────
+    // ── Local phrases: what people in this market actually type ─────────────
     // keyword_ideas cannot produce these — it expands by category and the city gets lost.
-    // Phrase-match suggestions for the geo-suffixed seeds return only searches that contain
-    // the seed, city included. One Labs task per seed, so the count is capped.
-    if (geo && seeds.length && seedMatcher) {
+    // Phrase-match suggestions for the geo-suffixed seeds return only searches that contain the
+    // seed, city included; "near me" is the other way a local searcher types it, the one that never
+    // carries a city. One Labs task per seed, so the count is capped.
+    if (seeds.length && seedMatcher) {
       const matcher  = seedMatcher
-      const geoSeeds = seeds.filter(sd => sd.toLowerCase().endsWith(geo.toLowerCase())).slice(0, 5)
+      const isGeo    = (sd: string) => !!geo && sd.toLowerCase().endsWith(geo.toLowerCase())
+      const geoSeeds = seeds.filter(isGeo).slice(0, 3)
+      const nearMe   = seeds.filter(sd => !isGeo(sd)).slice(0, 2).map(sd => `${sd} near me`)
       let localKept = 0
-      for (const sd of geoSeeds) {
+      for (const sd of [...geoSeeds, ...nearMe]) {
         for (const c of await dfsKeywordSuggestions(sd, creds, { ...labsOpts, limit: 60 })) {
           if (matcher.isRelevant(c.keyword)) { add(c); localKept++ }
         }
       }
-      console.log(`[research] local suggestions: ${localKept} from ${geoSeeds.length} geo seed(s)`)
+      console.log(`[research] local suggestions: ${localKept} from ${geoSeeds.length} geo + ${nearMe.length} near-me seed(s)`)
+    }
+
+    // ── Local volume: what the service area itself searches ───────────────────
+    // Every volume above is national — Labs is country-level by design. One Google Ads call prices
+    // the pool for the research location, flat $0.09 whatever the count, so the ranking below can
+    // put the market's demand ahead of the country's.
+    if (location && candidates.size) {
+      const byKey = new Map<string, Candidate>()
+      // Up to 1,000 per task: the national order decides which make the cut when there are more.
+      const prelim = Array.from(candidates.values())
+        .sort((a, b) => score(b, paidConversions.get(b.normalized) ?? 0, seedMatcher?.mentionsGeo(b.keyword) ?? false)
+                      - score(a, paidConversions.get(a.normalized) ?? 0, seedMatcher?.mentionsGeo(a.keyword) ?? false))
+        .slice(0, 1000)
+      for (const c of prelim) byKey.set(c.keyword.toLowerCase().replace(/\s+/g, ' '), c)
+      const local = await dfsLocalSearchVolume(Array.from(byKey.keys()), creds, { locationCode: location.code, languageCode: cfg.language_code, onCost })
+      let answered = 0
+      for (const [k, v] of Array.from(local.entries())) {
+        const c = byKey.get(k)
+        if (!c) continue
+        c.local_volume = v.search_volume
+        c.cpc ??= v.cpc
+        if (v.search_volume != null) answered++
+      }
+      if (local.size) localShare = observedLocalShare(Array.from(candidates.values()))
+      console.log(`[research] local volume (${location.name}): ${answered} of ${byKey.size} answered, share ${(localShare * 100).toFixed(1)}%`)
     }
   }
 
@@ -409,7 +515,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
   const scored = Array.from(candidates.values())
-    .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false) }))
+    .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false, localShare) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, MAX_CANDIDATES)
   const ranked  = scored.map(r => r.c)
@@ -450,7 +556,12 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       is_tracked:         false,
       // The score, so reads can rank by it instead of by raw volume, and where the candidate
       // came from within the run (site / competitor / idea) for anyone reading the row later.
-      metadata:           { research_score: scoreOf.get(c.normalized) ?? null, found_via: c.source },
+      metadata:           {
+        research_score:    scoreOf.get(c.normalized) ?? null,
+        found_via:         c.source,
+        // The market's own number, and where it was measured. Absent on a country-level run.
+        ...(location ? { local_volume: c.local_volume ?? null, research_location: location.code } : {}),
+      },
     }))
 
     for (const c of ranked) bySource[c.source] = (bySource[c.source] ?? 0) + 1
@@ -476,7 +587,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   await stampResearchRun()
 
   console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
-  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains }
+  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null }
 }
 
 /**
@@ -547,13 +658,19 @@ async function recordOwnRankings(
  * candidate set stays stable enough to plan a run of posts around.
  */
 /** metadata.research_score as a number, or null for rows stored before the score was kept. */
+/** The Google Ads volume in the research location, stored by a local run. Null otherwise. */
+export function localVolumeOf(metadata: unknown): number | null {
+  const v = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).local_volume : null
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
 export function researchScoreOf(metadata: unknown): number | null {
   const v = (metadata as Record<string, unknown> | null | undefined)?.research_score
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
 export async function getResearchCandidates(clientId: string): Promise<{
-  candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null }>
+  candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null }>
   refreshed:  boolean
 }> {
   const read = async () => {
@@ -581,6 +698,7 @@ export async function getResearchCandidates(clientId: string): Promise<{
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
       intent:     r.intent             == null ? null : String(r.intent),
       score:      researchScoreOf(r.metadata),
+      local_volume: localVolumeOf(r.metadata),
     }))
       .filter(k => k.keyword)
       // By the research score, which is what the pool was built to prefer; volume breaks ties

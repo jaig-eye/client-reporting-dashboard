@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
 import type { EeatData }       from '@/lib/content/types'
 
 interface SiteOption {
@@ -101,6 +102,7 @@ export default function ClientContentSettingsForm({
   const [researchedAt, setResearchedAt] = useState<string | null>(null)
   const [researching, setResearching]   = useState(false)
   const [researchMsg, setResearchMsg]   = useState<string | null>(null)
+  const [researchLocation, setResearchLocation] = useState<ResearchLocationValue | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -118,6 +120,7 @@ export default function ClientContentSettingsForm({
         })
         setVertical(String(d.vertical ?? ''))
         setSeeds(Array.isArray(d.foundational_keywords) ? d.foundational_keywords.map(String).join(', ') : '')
+        setResearchLocation(readLocationValue(d.research_location))
         if (d.eeat_data && typeof d.eeat_data === 'object') {
           setEeat({ ...EMPTY_EEAT, ...(d.eeat_data as Partial<EeatData>) })
         }
@@ -225,6 +228,7 @@ export default function ClientContentSettingsForm({
         eeat_data: eeat,
         vertical: vertical || null,
         foundational_keywords: seedList(),
+        research_location: researchLocation,
       }),
     })
     setSaving(false)
@@ -392,6 +396,14 @@ export default function ClientContentSettingsForm({
             <Label>Brand Voice</Label>
             <input className="input" style={{ width: '100%' }} value={form.brand_voice} onChange={e => setField('brand_voice', e.target.value)} />
           </div>
+        </div>
+
+        <div>
+          <Label hint="where volumes, competitors and rankings are measured">Research Location</Label>
+          <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
+          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+            A city, county or state. Leave empty for a nationwide business &mdash; research then uses country-wide numbers.
+          </p>
         </div>
 
         <div>

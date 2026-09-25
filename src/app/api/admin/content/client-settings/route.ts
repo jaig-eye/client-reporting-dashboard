@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                   from '@/lib/activity'
 import { parseBody }                     from '@/lib/apiError'
@@ -31,20 +32,22 @@ export async function GET(request: NextRequest) {
   // had not run — and every settings screen then rendered its defaults: cadence back to "use
   // global default", start date blank, automation toggles off, sitemap unconfigured. The data was
   // never touched; the page simply could not read it. Ask for it, and ask again without it.
-  const OPTIONAL_COLS = 'foundational_keywords'
+  // research_location is migration 224 — same treatment.
+  const OPTIONAL_COLS = ['foundational_keywords', 'research_location']
 
   const readSettings = async () => {
-    const full = await db.from('content_settings')
-      .select(`${BASE_COLS}, ${OPTIONAL_COLS}`)
-      .eq('client_id', clientId)
-      .maybeSingle()
-    if (!full.error) return full
-    if (!/foundational_keywords/i.test(full.error.message)) return full
-    console.warn('[client-settings] foundational_keywords missing (apply migration 222) — reading without it')
-    return db.from('content_settings')
-      .select(BASE_COLS)
-      .eq('client_id', clientId)
-      .maybeSingle()
+    const optional = [...OPTIONAL_COLS]
+    for (;;) {
+      const res = await db.from('content_settings')
+        .select([BASE_COLS, ...optional].join(', '))
+        .eq('client_id', clientId)
+        .maybeSingle()
+      if (!res.error) return res
+      const missing = optional.find(col => new RegExp(col, 'i').test(res.error.message))
+      if (!missing) return res
+      console.warn(`[client-settings] ${missing} missing (apply migration ${missing === 'research_location' ? 224 : 222}) — reading without it`)
+      optional.splice(optional.indexOf(missing), 1)
+    }
   }
 
   const [{ data }, { data: clientRow }] = await Promise.all([
@@ -52,7 +55,8 @@ export async function GET(request: NextRequest) {
     db.from('clients').select('phone').eq('id', clientId).maybeSingle(),
   ])
 
-  const result: Record<string, unknown> = { ...(data ?? {}) }
+  // The select string is built at runtime now, so supabase-js cannot type the row.
+  const result: Record<string, unknown> = { ...((data ?? {}) as Record<string, unknown>) }
   if ((result.phone_number == null || result.phone_number === '') && clientRow?.phone) {
     result.phone_number = clientRow.phone
   }
@@ -78,6 +82,7 @@ const CONTENT_FIELDS = [
   'vertical',
   'exclude_product_sitemaps',
   'foundational_keywords',
+  'research_location',
 ] as const
 
 export async function PUT(request: NextRequest) {
@@ -100,6 +105,9 @@ export async function PUT(request: NextRequest) {
       // Array fields must remain arrays; everything else coerces null
       if (f === 'sitemap_urls' || f === 'manual_link_urls' || f === 'foundational_keywords') {
         row[f] = Array.isArray(body[f]) ? body[f] : []
+      } else if (f === 'research_location') {
+        // A geo target or nothing — never an arbitrary object.
+        row[f] = readResearchLocation(body[f])
       } else {
         row[f] = body[f] ?? null
       }
@@ -114,13 +122,14 @@ export async function PUT(request: NextRequest) {
   // Same shape as the read: without migration 222 the whole upsert fails, so a wizard that sent
   // seed keywords would have saved NOTHING — schedule, brand answers and all. Drop the field the
   // database does not know about and save the rest.
-  if (error && /foundational_keywords/i.test(error.message)) {
-    console.warn('[client-settings] foundational_keywords missing (apply migration 222) — saving without it')
-    const { foundational_keywords: _dropped, ...rest } = row
-    void _dropped
-    ;({ error } = await db
-      .from('content_settings')
-      .upsert(rest, { onConflict: 'client_id', ignoreDuplicates: false }))
+  for (const col of ['research_location', 'foundational_keywords'] as const) {
+    if (error && col in row && new RegExp(col, 'i').test(error.message)) {
+      console.warn(`[client-settings] ${col} missing (apply migration ${col === 'research_location' ? 224 : 222}) — saving without it`)
+      delete row[col]
+      ;({ error } = await db
+        .from('content_settings')
+        .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false }))
+    }
   }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -1,9 +1,9 @@
 # Pending production migrations
 
 Migrations that exist in `supabase/migrations/` and have **not** been applied to production.
-Apply them in numeric order, oldest first: 189, 190, 191, 222, 223.
+Apply them in numeric order, oldest first: 189, 190, 191, 222, 223, 224.
 
-All five are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
+All six are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
 live dashboard reads either until the tables exist, so applying them changes nothing on its own.
 
 | File | What it adds | What stays broken without it |
@@ -13,6 +13,7 @@ live dashboard reads either until the tables exist, so applying them changes not
 | `191_dataforseo_usage.sql` | `dataforseo_usage`, the spend ledger | Every DataForSEO cost is silently unrecorded: the agency usage panel stays empty and the `$` figures the wizard shows are never kept. Nothing else breaks — the ledger soft-fails by design — which is how this one went unlisted |
 | `222_foundational_keywords.sql` | `content_settings.foundational_keywords` + `last_keyword_research_at`; widens `seo_keywords.source` to allow `google_ads` | Seed keywords from the wizard are dropped on save; the 30-day research reuse gate falls back to row ages; database-only research rows fail the `source` check. The code tolerates all three being absent, but each logs a warning naming this file |
 | `223_seo_keyword_dismissal.sql` | `seo_keywords.dismissed_at` | The × on a researched keyword in the wizard answers 501, so dismissed keywords cannot be kept out of the pool. Every read tolerates the column being absent |
+| `224_research_location.sql` | `content_settings.research_location` | The Research Location picked in Brand DNA or the wizard is dropped on save, so research and rank checks stay country-wide: national volumes, national competitors. Every read tolerates the column being absent |
 
 `190` builds on `seo_keywords`, so `189` has to land first, and `222` after `190` — its `seo_keywords` change is guarded so it cannot fail if run early, but the guard means that part silently does nothing until the table exists. Applying out of order fails loudly
 rather than silently, but there is no reason to find that out.

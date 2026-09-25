@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { researchScoreOf } from '@/lib/content/clientResearch'
+import { researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +28,7 @@ const PAID_WINDOW_DAYS = 90
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null }
+export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null }
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
@@ -131,6 +131,7 @@ export async function GET(req: NextRequest) {
         difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
         intent:     r.intent             == null ? null : String(r.intent),
         score:      researchScoreOf(r.metadata),
+        local_volume: localVolumeOf(r.metadata),
       }))
         .filter(k => k.keyword)
         .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
