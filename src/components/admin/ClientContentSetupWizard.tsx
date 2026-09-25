@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -138,6 +138,15 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * guess in this box.
    */
   const [foundationalKeywords, setFoundationalKeywords] = useState('')
+  /**
+   * The eeat_data column exactly as loaded.
+   *
+   * The wizard edits 8 of its 16 keys, but the save writes the whole JSONB column. Without the
+   * original underneath, re-running the wizard deleted insurance, awards, team_experience,
+   * brands_used, financing_options, warranties, case_studies, before_after_proof and
+   * common_objections — all of which the settings tab maintains and the writer prompt reads.
+   */
+  const [loadedEeat, setLoadedEeat] = useState<Record<string, unknown>>({})
   const [researchDone,   setResearchDone]   = useState(false)
 
   // Saving state
@@ -207,9 +216,16 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             eeat_data?: Record<string, unknown> | null
             weeks_ahead?: number | null
             foundational_keywords?: string[] | null
+            content_image_generation?: boolean | null
+            content_image_prompt?: string | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
+          // Read back, because the save below always writes them. Unhydrated, reaching the
+          // research step silently switched AI featured images off and blanked the prompt for
+          // any client who had set them on the settings tab.
+          if (typeof cs.content_image_generation === 'boolean') setImageGen(cs.content_image_generation)
+          if (cs.content_image_prompt) setImagePrompt(cs.content_image_prompt)
           // Re-runs must show what was entered before, or the save at the end writes an empty
           // array over seeds someone chose.
           if (Array.isArray(cs.foundational_keywords) && cs.foundational_keywords.length > 0) {
@@ -221,6 +237,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           // kept only when the saved one is non-empty, so a half-filled record can still be
           // completed by the AI analysis rather than being blocked by it.
           const eeat = (cs.eeat_data ?? {}) as Record<string, unknown>
+          // Held so the save can merge onto it instead of replacing the column.
+          setLoadedEeat(eeat)
           const str  = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
           const savedBrand = {
             business_background: str(cs.business_background),
@@ -409,28 +427,40 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * geography and the seed terms from content_settings, so an unsaved wizard would research the
    * wrong business.
    */
-  const loadResearch = useCallback(async () => {
-    if (researchDone) return
-    setResearchDone(true)
-    try {
-      await saveSettings(false)
-      const res  = await fetch('/api/admin/content/keyword-research', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ client_id: clientId }),
-      })
-      const data = await res.json() as ResearchData
-      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
-    } catch {
-      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
-    }
-    // saveSettings is a hoisted declaration and never changes identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, researchDone])
+  // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
+  // step reads to stop showing a spinner, and using one value for both made the spinner
+  // unreachable — it was set before the awaits, so the panel rendered its empty state while the
+  // request was still in flight.
+  const researchStarted = useRef(false)
 
   useEffect(() => {
-    if (step === 7) loadResearch()
-  }, [step, loadResearch])
+    if (step !== 7 || researchStarted.current) return
+    researchStarted.current = true
+    void (async () => {
+      try {
+        // Read at call time from the render that reached this step, so it saves what the
+        // operator actually entered. An earlier version wrapped this in useCallback keyed on
+        // [clientId, researchDone], which froze the first render's saveSettings and wrote the
+        // wizard's INITIAL state over the loaded profile — blanking brand answers, resetting the
+        // schedule and moving schedule_start_date to today — and then researched the settings it
+        // had just erased.
+        await saveSettings(false)
+        const res  = await fetch('/api/admin/content/keyword-research', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ client_id: clientId }),
+        })
+        const data = await res.json() as ResearchData
+        setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+      } catch {
+        setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed' })
+      } finally {
+        setResearchDone(true)
+      }
+    })()
+    // saveSettings and clientId are read inside the async body from this render's closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step])
 
   async function saveSettings(wizardCompleted: boolean) {
     const eeatData = {
@@ -470,7 +500,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         service_page_topic_guidelines:  spGuidelinesWiz || null,
         generate_regular_pages:         enableRegularPages,
         regular_page_topic_guidelines:  rpGuidelinesWiz || null,
-        eeat_data:                      eeatData,
+        // Merged, not replaced: the wizard owns 8 keys of a 16-key column and must not delete
+        // the 9 the settings tab maintains — several of which the writer prompt reads.
+        eeat_data:                      { ...loadedEeat, ...eeatData },
         wizard_completed:               wizardCompleted,
         connection_id:                  detectedConnectionId ?? undefined,
         content_image_generation:       imageGen,
