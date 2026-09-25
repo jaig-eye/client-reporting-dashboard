@@ -258,7 +258,7 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     if (postIds.length > 0) {
       const { data: posts, error: postsErr } = await db
         .from('content_posts')
-        .select('id, published_at, last_pushed_at')
+        .select('id, published_at, last_pushed_at, wp_status')
         .in('id', postIds)
       // Ages drive the whole cadence. A failure leaves every age null, which reads as "money
       // keyword" and puts the entire universe on the fastest check interval — the expensive
@@ -268,8 +268,12 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
       // out through Approve & Push — which is everything, in practice — stamps last_pushed_at
       // instead, so reading published_at alone left every real post looking unpublished:
       // awaiting_publish stayed true and the rankings cron skipped the entire universe.
-      for (const p of (posts ?? []) as { id: string; published_at: string | null; last_pushed_at: string | null }[]) {
-        const anchor = p.published_at ?? p.last_pushed_at
+      for (const p of (posts ?? []) as { id: string; published_at: string | null; last_pushed_at: string | null; wp_status: string | null }[]) {
+        // last_pushed_at only counts when the post is actually LIVE. Approve stamps it the moment
+        // it pushes, including for a post scheduled weeks ahead as 'future' — so using it
+        // unconditionally told the cron those were published and had it buy depth-100 live checks
+        // for articles nobody could rank yet, defeating the awaiting_publish guard.
+        const anchor = p.published_at ?? (p.wp_status === 'publish' ? p.last_pushed_at : null)
         if (anchor) publishedAt.set(p.id, anchor)
       }
     }

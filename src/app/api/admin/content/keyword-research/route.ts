@@ -93,7 +93,10 @@ export async function GET(request: NextRequest) {
   const payload: ResearchPayload = {
     keywords,
     competitors:  [],
-    connected:    at != null || keywords.length > 0,
+    // Keywords present, not "research ran": stampResearchRun fires for database-only runs too,
+    // so a client with no DataForSEO connection was reported as connected here while the POST
+    // path called the same client disconnected.
+    connected:    keywords.length > 0,
     researchedAt: at,
   }
   return NextResponse.json(payload)

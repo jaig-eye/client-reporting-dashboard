@@ -491,7 +491,21 @@ export async function GET(request: NextRequest) {
         .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
-      // Group by date, pick best 1 per group (one topic → one post per slot)
+      // What already holds each slot. Without this the cap counts only pending topics, so a date
+      // that already has an approved topic gets postsPerRun MORE approved on top of it.
+      const { data: alreadyApproved } = await db
+        .from('content_topics')
+        .select('target_publish_date')
+        .eq('client_id', client_id)
+        .in('status', ['approved', 'generating', 'generated'])
+        .not('target_publish_date', 'is', null)
+      const approvedByDate = new Map<string, number>()
+      for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
+        const k = t.target_publish_date ?? 'none'
+        approvedByDate.set(k, (approvedByDate.get(k) ?? 0) + 1)
+      }
+
+      // Group by date, pick up to postsPerRun per group, minus whatever already holds the slot
       type PendingTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
       const grouped = new Map<string, PendingTopic[]>()
       for (const t of (pendingTopics ?? []) as PendingTopic[]) {
@@ -499,7 +513,7 @@ export async function GET(request: NextRequest) {
         grouped.set(key, [...(grouped.get(key) ?? []), t])
       }
       const toApprove: string[] = []
-      for (const [, group] of Array.from(grouped)) {
+      for (const [key, group] of Array.from(grouped)) {
         const picked = (group as PendingTopic[])
           .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
             || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
@@ -507,7 +521,9 @@ export async function GET(request: NextRequest) {
           // comment above says each group is "capped at posts_per_run" — but approval took one,
           // so a client set to 2 got 2 topics and 1 post, with the loser stuck 'pending' forever
           // while still occupying the slot. The setting looked applied and changed nothing.
-          .slice(0, postsPerRun)
+          // Minus what already holds this slot. The group only contains 'pending' topics, so
+          // taking postsPerRun of them on a date that already has approved ones over-fills it.
+          .slice(0, Math.max(0, postsPerRun - (approvedByDate.get(key) ?? 0)))
         toApprove.push(...picked.map((t: PendingTopic) => t.id))
       }
 

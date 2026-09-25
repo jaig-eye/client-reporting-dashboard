@@ -447,7 +447,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     if (fromServices.length === 0) return
     seedsPrefilled.current = true
     setFoundationalKeywords(fromServices.join(', '))
-  }, [brand.services, foundationalKeywords])
+  }, [brand.services])
 
   // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
   // step reads to stop showing a spinner, and using one value for both made the spinner
@@ -668,6 +668,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brandLoaded={brandLoaded}
               foundationalKeywords={foundationalKeywords}
               setFoundationalKeywords={setFoundationalKeywords}
+              onSeedsEdited={() => { seedsPrefilled.current = true }}
             />
           )}
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
@@ -1027,7 +1028,7 @@ function StepWpConnect({
 
 // ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
-function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords }: {
+function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords, onSeedsEdited }: {
   analyzeUrl: string
   setAnalyzeUrl: (v: string) => void
   onAnalyze: () => void
@@ -1038,6 +1039,8 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brandLoaded: boolean
   foundationalKeywords: string
   setFoundationalKeywords: (v: string) => void
+  /** Marks the seeds as operator-owned so the services pre-fill never runs again. */
+  onSeedsEdited: () => void
 }) {
   return (
     <div>
@@ -1083,7 +1086,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
             <input
               type="text"
               value={foundationalKeywords}
-              onChange={e => setFoundationalKeywords(e.target.value)}
+              onChange={e => { onSeedsEdited(); setFoundationalKeywords(e.target.value) }}
               style={inputStyle}
               placeholder="mobile detailing, ceramic coating, paint correction"
             />
