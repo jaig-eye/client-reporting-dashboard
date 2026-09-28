@@ -45,6 +45,9 @@ const MAX_PER_SELECTION = 30
 /** Calls in flight. Enough to keep 30 within a few seconds, low enough not to trip rate limits. */
 const CONCURRENCY = 5
 
+/** Keywords per `in` filter. They travel in the URL, so the list has to stay short enough to send. */
+export const IN_CHUNK = 100
+
 export interface SnapshotResult {
   /** Snapshots captured and stored. */
   captured: number
@@ -99,20 +102,28 @@ export async function snapshotChosenKeywords(
 
     // Only the rows that were actually chosen, and only the ones with nothing stored. The read
     // carries metadata so "already has one" is decided here rather than by a second query.
-    const { data, error } = await db
-      .from('seo_keywords')
-      .select('id, keyword, metadata')
-      .eq('client_id', clientId)
-      .in('normalized_keyword', normalized)
-    if (error) {
-      // PostgREST reports failure in the payload rather than by throwing, so an unchecked read
-      // here would look like "no keywords needed a snapshot" and quietly do nothing forever.
-      console.warn('[snapshot] cannot read chosen keywords:', error.message)
-      return { ...none, reason: 'could not read the chosen keywords' }
+    //
+    // Chunked because an `in` filter travels in the URL: the selection endpoint accepts 500
+    // keywords, and 500 phrases is on the order of twelve kilobytes of query string — past what
+    // proxies in front of PostgREST will accept, which would fail the whole read rather than
+    // truncate it.
+    const rows: Array<{ id: string; keyword: string; metadata: unknown }> = []
+    for (let i = 0; i < normalized.length; i += IN_CHUNK) {
+      const { data, error } = await db
+        .from('seo_keywords')
+        .select('id, keyword, metadata')
+        .eq('client_id', clientId)
+        .in('normalized_keyword', normalized.slice(i, i + IN_CHUNK))
+      if (error) {
+        // PostgREST reports failure in the payload rather than by throwing, so an unchecked read
+        // here would look like "no keywords needed a snapshot" and quietly do nothing forever.
+        console.warn('[snapshot] cannot read chosen keywords:', error.message)
+        return { ...none, reason: 'could not read the chosen keywords' }
+      }
+      for (const r of (data ?? []) as Array<{ id: string; keyword: string; metadata: unknown }>) {
+        if (r.id && String(r.keyword ?? '').trim()) rows.push(r)
+      }
     }
-
-    const rows = ((data ?? []) as Array<{ id: string; keyword: string; metadata: unknown }>)
-      .filter(r => r.id && String(r.keyword ?? '').trim())
     const needed = rows.filter(r => readSerpInsight(r.metadata) == null)
     const skipped = rows.length - needed.length
     if (needed.length === 0) return { ...none, skipped }
@@ -123,11 +134,18 @@ export async function snapshotChosenKeywords(
     // service areas, exactly as research does — so a snapshot taken here and one taken by
     // research describe the same market rather than two different ones.
     let location: ResearchLocation | null = null
-    const { data: cs } = await db
+    const { data: cs, error: csErr } = await db
       .from('content_settings')
       .select('research_location, geographic_focus')
       .eq('client_id', clientId)
       .maybeSingle()
+    // Unchecked, a failed read here is indistinguishable from "no location set" and the snapshot
+    // is quietly taken nationwide — wrong data rather than missing data, filed against a local
+    // client and impossible to spot afterwards. Better to buy nothing than to buy the wrong market.
+    if (csErr) {
+      console.warn('[snapshot] cannot read the research location:', csErr.message)
+      return { ...none, skipped, reason: 'could not read where to measure' }
+    }
     const settings = cs as Record<string, unknown> | null
     location = readResearchLocation(settings?.research_location)
     if (!location) {

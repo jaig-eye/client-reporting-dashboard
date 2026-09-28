@@ -213,6 +213,21 @@ function Row({ k, checked, onToggle, indented }: {
       {/* Full text, wrapping — a truncated keyword cannot be judged. */}
       <span style={{ flex: 1, fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.35 }}>
         {k.keyword}
+        {/* A hand-typed keyword has no volume until Google has an opinion on it, so it shows a
+            bare dash next to rows full of numbers. Say where it came from, or the blank reads as
+            something failing rather than as a term nobody has searched enough to measure. */}
+        {k.source === 'manual' && (
+          <span
+            title="You added this one. Search volume appears if Google reports any."
+            style={{
+              marginLeft: 6, fontSize: '0.65rem', color: 'var(--text-faint)',
+              border: '1px solid var(--border)', borderRadius: 999, padding: '0 6px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            yours
+          </span>
+        )}
       </span>
       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
         {vol == null ? '—' : `${vol.toLocaleString()}/mo`}

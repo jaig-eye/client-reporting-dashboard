@@ -31,8 +31,12 @@ import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 type Db = ReturnType<typeof createAdminClient>
 
-/** One entry a time; a paste of a hundred is a research run, not a manual addition. */
-const MAX_PER_CALL = 25
+/**
+ * Per call. Matches the snapshot cap and the input box, so nothing is accepted on screen and
+ * then silently dropped on the way in. A paste of a hundred is a research run, not a manual
+ * addition.
+ */
+const MAX_PER_CALL = 30
 
 /** Same normalisation the pool and the selection endpoint use. */
 function normalize(kw: string): string {
@@ -90,11 +94,18 @@ export async function addManualKeywords(
     cfg   = resolveSeoConfig(conn.config, row.config)
     break
   }
-  const { data: cs } = await db
+  const { data: cs, error: csErr } = await db
     .from('content_settings')
     .select('research_location')
     .eq('client_id', clientId)
     .maybeSingle()
+  // A failed read looks exactly like "no location set", which would file the row against the
+  // national default while every other row for this client sits in its own market — the same
+  // keyword, split across two location codes, counted as two.
+  if (csErr) {
+    console.warn('[manual-keywords] cannot read the research location:', csErr.message)
+    return { ...none, error: 'Could not read where this client is measured' }
+  }
   const location     = readResearchLocation((cs as Record<string, unknown> | null)?.research_location)
   const locationCode = location?.code ?? cfg.location_code
 

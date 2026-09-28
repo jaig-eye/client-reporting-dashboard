@@ -26,7 +26,7 @@ import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
-import { snapshotChosenKeywords } from '@/lib/content/snapshotChosen'
+import { snapshotChosenKeywords, IN_CHUNK } from '@/lib/content/snapshotChosen'
 import { addManualKeywords } from '@/lib/content/addManualKeywords'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
@@ -250,17 +250,23 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'client_id and a non-empty keywords array are required' }, { status: 400 })
     }
     const db = createAdminClient()
-    const { error } = await db
-      .from('seo_keywords')
-      .update({ chosen_at: body.chosen === false ? null : new Date().toISOString() })
-      .eq('client_id', clientId)
-      .in('normalized_keyword', list)
-    if (error) {
-      const missing = /chosen_at/i.test(error.message)
-      return NextResponse.json(
-        { error: missing ? 'Choosing keywords needs migration 225 (seo_keywords.chosen_at)' : error.message },
-        { status: missing ? 501 : 500 },
-      )
+    // Chunked: an `in` filter rides in the URL, and 500 phrases is roughly twelve kilobytes of
+    // query string — past what proxies in front of PostgREST accept, which fails the whole
+    // update rather than part of it.
+    const chosenAt = body.chosen === false ? null : new Date().toISOString()
+    for (let i = 0; i < list.length; i += IN_CHUNK) {
+      const { error } = await db
+        .from('seo_keywords')
+        .update({ chosen_at: chosenAt })
+        .eq('client_id', clientId)
+        .in('normalized_keyword', list.slice(i, i + IN_CHUNK))
+      if (error) {
+        const missing = /chosen_at/i.test(error.message)
+        return NextResponse.json(
+          { error: missing ? 'Choosing keywords needs migration 225 (seo_keywords.chosen_at)' : error.message },
+          { status: missing ? 501 : 500 },
+        )
+      }
     }
     // Picking a keyword is the moment its talking points are worth reading — before a post is
     // committed to it, not after one exists. One SERP call per keyword, once: anything that

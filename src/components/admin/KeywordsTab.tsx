@@ -121,31 +121,20 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
         </p>
       )}
 
-      <div className="card p-5">
-        {data === null ? (
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-faint)' }}>Loading…</p>
-        ) : (
-          <KeywordResearchPanel
-            clientId={clientId}
-            keywords={data.researched}
-            geoWords={place ? [place] : []}
-            place={place}
-          />
-        )}
-      </div>
-
       {/* ── Adding to the list ──────────────────────────────────────────────
           Two ways in, side by side, because they answer different questions: "I already know the
           term" and "show me what else is out there". Both land in the same pool. */}
-      <div className="card p-5" style={{ marginTop: 16 }}>
+      <div className="card p-5" style={{ marginBottom: 16 }}>
         <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
           Add your own
           <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — selected as soon as you add them</span>
         </label>
+        {/* max matches the server's own ceiling, so the box cannot accept more than it will add. */}
         <KeywordChipInput
           value={draft}
           onChange={setDraft}
           disabled={adding}
+          max={30}
           placeholder="permanent Christmas lights, landscape lighting near me…"
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
@@ -194,6 +183,20 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
           <p className="text-xs" style={{ margin: '10px 0 0', color: /could not|error|http/i.test(notice) ? 'var(--red)' : 'var(--text-muted)' }}>
             {notice}
           </p>
+        )}
+      </div>
+
+      <div className="card p-5">
+        {data === null ? (
+          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-faint)' }}>Loading…</p>
+        ) : (
+          <KeywordResearchPanel
+            clientId={clientId}
+            keywords={data.researched}
+            geoWords={place ? [place] : []}
+            place={place}
+            onChanged={() => setReload(v => v + 1)}
+          />
         )}
       </div>
 
