@@ -21,6 +21,15 @@ export const maxDuration = 120
 const TOKEN_WARN_DAYS = 10
 
 /**
+ * Connector types whose auth failures are not worth waking anyone for.
+ *
+ * A cancelled client leaves their GHL connection behind — still 'active' on our side, gone on
+ * theirs — so it fails authentication every morning forever and nobody is going to reconnect it.
+ * The failures are still recorded in sync_jobs and still visible on the connections page.
+ */
+const ALERT_EXEMPT_TYPES = new Set(['ghl'])
+
+/**
  * Connector types whose accounts are worth re-discovering daily.
  *
  * Each is an agency-level connector holding one OAuth identity that can see many client
@@ -127,11 +136,23 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
   const problems: string[] = []
 
   // ── Expiring soon ─────────────────────────────────────────────────────────
+  //
+  // Only for credentials that cannot renew themselves. A Google access token expires roughly
+  // hourly and is refreshed on every sync, so its token_expires_at is always inside any horizon
+  // worth warning about — which is why this reported "expires in 0 day(s)" for all four Google
+  // connectors every morning while their syncs ran perfectly.
+  //
+  // A revoked refresh token is not missed by going quiet here: it fails with invalid_grant and
+  // the auth-failure scan below reports it the day it happens.
   try {
-    const { data: conns } = await db.from('connectors').select('type, auth')
+    const { data: conns, error } = await db.from('connectors').select('type, auth')
+    if (error) console.warn('[refresh-accounts] connector read failed:', error.message)
     const horizon = new Date(Date.now() + TOKEN_WARN_DAYS * 86_400_000).toISOString()
     const now     = new Date().toISOString()
     for (const c of (conns ?? []) as { type: string; auth: Record<string, unknown> | null }[]) {
+      // Self-renewing. Its access-token expiry says nothing about whether the credential works.
+      const refresh = c.auth?.refresh_token
+      if (typeof refresh === 'string' && refresh) continue
       const exp = c.auth?.token_expires_at
       if (typeof exp !== 'string' || !exp) continue
       if (exp > horizon) continue
@@ -149,12 +170,13 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
   // failure row for every client using it, and seventeen identical lines is a worse alert than one.
   try {
     const since = new Date(Date.now() - 86_400_000).toISOString()
-    const { data: failures } = await db
+    const { data: failures, error: failErr } = await db
       .from('sync_jobs')
       .select('error_message, connection_id, client_connections(connectors(type))')
       .eq('status', 'error')
       .gte('started_at', since)
       .limit(500)
+    if (failErr) console.warn('[refresh-accounts] sync failure read failed:', failErr.message)
 
     const authFailures = new Map<string, number>()
     for (const row of (failures ?? []) as { error_message: string | null; client_connections: unknown }[]) {
@@ -164,6 +186,7 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
       const cc   = row.client_connections as { connectors?: { type?: string } | { type?: string }[] } | null
       const conn = Array.isArray(cc?.connectors) ? cc?.connectors[0] : cc?.connectors
       const type = conn?.type ?? 'unknown'
+      if (ALERT_EXEMPT_TYPES.has(type)) continue
       authFailures.set(type, (authFailures.get(type) ?? 0) + 1)
     }
     for (const [type, count] of Array.from(authFailures)) {
