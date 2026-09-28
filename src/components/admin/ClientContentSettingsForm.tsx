@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
 import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP } from '@/lib/content/researchCopy'
+import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import type { EeatData }       from '@/lib/content/types'
 
 interface SiteOption {
@@ -393,8 +394,8 @@ export default function ClientContentSettingsForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <Label hint="comma-separated">Services Offered</Label>
-            <textarea className="input" rows={2} style={{ width: '100%' }} value={form.services} onChange={e => setField('services', e.target.value)} />
+            <Label>Services Offered</Label>
+            <KeywordChipInput value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical" />
           </div>
           <div>
             <Label>Target Audience</Label>
@@ -417,14 +418,11 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label hint="comma-separated">Starting keywords</Label>
-          <textarea
-            className="input"
-            rows={2}
-            style={{ width: '100%' }}
+          <Label>Search keyword research from</Label>
+          <KeywordChipInput
             value={seeds}
-            onChange={e => setSeeds(e.target.value)}
-            placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
+            onChange={setSeeds}
+            placeholder="permanent outdoor lighting, landscape lighting installation…"
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
             {STARTING_KEYWORDS_HELP}
@@ -432,7 +430,7 @@ export default function ClientContentSettingsForm({
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
             <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220 }}>
-              Looking again replaces this client&apos;s keyword ideas and uses your DataForSEO balance &mdash; usually well under a dollar.
+              Looking again replaces this client&apos;s keyword ideas. Anything already chosen stays chosen.
             </p>
             {confirmRerun ? (
               <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.8125rem', color: 'var(--text-primary)' }}>

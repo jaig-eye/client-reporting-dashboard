@@ -70,10 +70,13 @@ export default function KeywordResearchPanel({
     return q ? keywords.filter(k => k.keyword.toLowerCase().includes(q)) : keywords
   }, [keywords, filter])
 
-  const groups = useMemo(
-    () => groupKeywords(visible, k => k.keyword, strengthOf, geoWords),
-    [visible, geoWords],
-  )
+  const groups = useMemo(() => {
+    const all = groupKeywords(visible, k => k.keyword, strengthOf, geoWords)
+    // Chosen themes first, each still ordered by strength within its half. Keyed off the saved
+    // `chosen` flag rather than live state so a row does not jump away as you tick it.
+    const isChosen = (g: typeof all[number]) => g.members.some(m => m.chosen)
+    return [...all.filter(isChosen), ...all.filter(g => !isChosen(g))]
+  }, [visible, geoWords])
 
   const toggle = useCallback((keyword: string) => {
     setChosen(prev => {
