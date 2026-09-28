@@ -232,7 +232,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('analytics') && (
           <div style={{ display: activeTab === 'analytics' ? 'block' : 'none' }} className={animatingTab === 'analytics' ? 'cc-tab-content' : ''}>
-            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} isActive={activeTab === 'analytics'} epoch={researchEpoch} />
+            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} sites={sites} isActive={activeTab === 'analytics'} epoch={researchEpoch} />
           </div>
         )}
       </div>
@@ -476,7 +476,7 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number }) {
+function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch }: { data: GscData; isEcom: boolean; clientId: string; sites: SiteOption[]; isActive: boolean; epoch: number }) {
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -700,7 +700,12 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
         </div>
       )}
 
-      <SerpInsightsSection rows={insights} loading={insights === null} search={search} />
+      {/* The client's own sites, so the result list can mark which line is theirs rather than
+          leaving the operator to recognise their own domain among ten competitors. */}
+      <SerpInsightsSection
+        rows={insights} loading={insights === null} search={search}
+        ownDomains={sites.map(s => s.siteUrl)}
+      />
 
       {/* ── Search Console insights ────────────────────────────────────────── */}
       {isEmpty ? (

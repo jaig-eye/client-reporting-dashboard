@@ -444,6 +444,16 @@ export default function ClientContentSettingsForm({
         <div>
           <Label hint="primary market" help={RESEARCH_LOCATION_HELP}>Research Location</Label>
           <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
+          {!researchLocation && (() => {
+            const first = form.geographic_focus.split(/[,;\n]+/).map(v => v.trim()).filter(Boolean)[0]
+            return (
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+                {first
+                  ? <>Measuring in <strong style={{ color: 'var(--text-muted)' }}>{first}</strong>, from your first service area. Set one here to override.</>
+                  : 'No service areas set, so demand is measured nationwide.'}
+              </p>
+            )
+          })()}
 
         </div>
 

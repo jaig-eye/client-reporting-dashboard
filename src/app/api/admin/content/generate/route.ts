@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { styleTables } from '@/lib/content/contentHtml'
+import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -689,7 +690,7 @@ async function runTopicGeneration({
       if (clientSettings.business_background) contextLines.push(`Business background: ${clientSettings.business_background}`)
       if (clientSettings.services)            contextLines.push(`Services offered: ${clientSettings.services}`)
       if (clientSettings.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-      if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+      const areaLine = serviceAreaLine(clientSettings.geographic_focus); if (areaLine) contextLines.push(areaLine)
       if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
       if (clientSettings.phone_number) {
         const ph     = String(clientSettings.phone_number)
@@ -1505,7 +1506,7 @@ export async function POST(request: NextRequest) {
     if (clientSettings.business_background) contextLines.push(`Business background: ${clientSettings.business_background}`)
     if (clientSettings.services)            contextLines.push(`Services offered: ${clientSettings.services}`)
     if (clientSettings.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-    if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+    const areaLine = serviceAreaLine(clientSettings.geographic_focus); if (areaLine) contextLines.push(areaLine)
     if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
     if (clientSettings.phone_number) {
       const ph     = String(clientSettings.phone_number)

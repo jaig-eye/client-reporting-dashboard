@@ -23,6 +23,7 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { getClientDfsContext } from '@/lib/content/competitiveIntel'
 import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
+import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
 
 interface TopicIdea {
@@ -570,7 +571,7 @@ export async function generateTopicsForClient(
   if (clientSettings?.business_background) contextLines.push(`Business: ${clientSettings.business_background}`)
   if (clientSettings?.services)            contextLines.push(`Services: ${clientSettings.services}`)
   if (clientSettings?.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-  if (clientSettings?.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+  const areaLine = serviceAreaLine(clientSettings?.geographic_focus); if (areaLine) contextLines.push(areaLine)
   if (clientSettings?.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
 
   const gscTopText = topPages.length > 0
