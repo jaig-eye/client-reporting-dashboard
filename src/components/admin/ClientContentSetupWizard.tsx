@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
 import { intentLabel, intentHint } from '@/lib/content/intentLabels'
-import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP, GEOGRAPHIC_FOCUS_HELP } from '@/lib/content/researchCopy'
+import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP, GEOGRAPHIC_FOCUS_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -881,11 +881,28 @@ function StepSub({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, drivesResearch }: {
+  label: string
+  children: React.ReactNode
+  /** Marks a field the research reads, as opposed to one that only shapes the writing. */
+  drivesResearch?: boolean
+}) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
         {label}
+        {drivesResearch && (
+          <span
+            title="Read by keyword research: changing this changes what we find."
+            style={{
+              fontSize: '0.5625rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+              padding: '1px 6px', borderRadius: 999,
+              background: 'var(--accent-soft, #eef2ff)', color: 'var(--accent-strong, #4338ca)',
+            }}
+          >
+            research
+          </span>
+        )}
       </label>
       {children}
     </div>
@@ -1164,16 +1181,19 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
 
       {(brandLoaded || brand.business_background) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
+            {RESEARCH_FIELDS_NOTE}
+          </p>
           <Field label="Business Background">
             <textarea value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
           </Field>
-          <Field label="Services">
+          <Field label="Services" drivesResearch>
             <input type="text" value={brand.services} onChange={e => setBrand({ ...brand, services: e.target.value })} style={inputStyle} placeholder="Plumbing, HVAC, Electrical" />
           </Field>
           <Field label="Target Audience">
             <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
-          <Field label="Starting keywords">
+          <Field label="Starting keywords" drivesResearch>
             <input
               type="text"
               value={foundationalKeywords}
@@ -1186,13 +1206,13 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
             </p>
           </Field>
 
-          <Field label="Geographic Focus">
+          <Field label="Geographic Focus" drivesResearch>
             <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin and the surrounding Hill Country" />
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
               {GEOGRAPHIC_FOCUS_HELP}
             </p>
           </Field>
-          <Field label="Research Location">
+          <Field label="Research Location" drivesResearch>
             <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} inputStyle={inputStyle} />
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
               {RESEARCH_LOCATION_HELP}

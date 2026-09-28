@@ -40,9 +40,17 @@ import {
 } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
 import { recordDfsUsage } from './dataforseoUsage'
+import { deriveResearchLocation } from './deriveLocation'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
 const MAX_COMPETITORS = 3
+/**
+ * Ranked keywords a site needs before domain overlap says anything useful.
+ *
+ * competitors_domain answers "who else ranks for what you rank for". Below roughly this many the
+ * question has no content and the answer is just the vertical's biggest domains.
+ */
+const MIN_FOOTPRINT_FOR_OVERLAP = 25
 /** Service seeds probed with a live local SERP when a research location is set. $0.004 each. */
 const LOCAL_SERP_SEEDS = 5
 /**
@@ -371,7 +379,27 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     const services = String(settings?.services ?? '')
       .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
     location = readResearchLocation(settings?.research_location)
-    geo = geoPhrase(location, String(settings?.geographic_focus ?? ''))
+    const geographicFocus = String(settings?.geographic_focus ?? '')
+
+    // Nobody picked a research location, so read one out of the geography they already typed.
+    //
+    // This is the difference between finding the businesses down the road and listing the biggest
+    // sites in the country: without a location the local SERP path below never runs at all. In
+    // production none of the nineteen content clients has picked one and thirteen have written
+    // their market in prose, so this is the normal case, not the exception.
+    //
+    // Derived, never stored: a guess and a decision must not share a field. The picker offers this
+    // as a suggestion, and a human choice wins permanently once made.
+    if (!location && creds && geographicFocus) {
+      const derived = await deriveResearchLocation(geographicFocus, creds)
+      if (derived) {
+        location = derived.location
+        console.log(`[research] research location derived from geographic_focus: "${derived.from}" → ${derived.location.name}`)
+      } else {
+        console.log(`[research] no local market read from geographic_focus ("${geographicFocus.slice(0, 60)}") — staying country-wide`)
+      }
+    }
+    geo = geoPhrase(location, geographicFocus)
     // What the operator said this business should be found for, before any data existed. Seeds
     // only: they widen what gets discovered and then take no further part — the results are
     // ranked on volume, difficulty and proven paid conversions like everything else, so a term
@@ -440,9 +468,26 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
         (localRivals.length ? ` — top: ${localRivals.slice(0, 3).join(', ')}` : ''))
     }
 
-    // The national list is only bought when the local one is thin.
-    const bySerp    = seeds.length && localRivals.length < 4 ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain }) : []
-    const byOverlap = await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
+    // The national lists are only bought when the local one has not answered.
+    //
+    // bySerp was already conditional; byOverlap was not, so a client with good local rivals still
+    // had national brands appended to the set that gets displayed and mined.
+    const localAnswered = localRivals.length >= 4
+    const bySerp = seeds.length && !localAnswered
+      ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain })
+      : []
+
+    // Domain overlap compares what two sites both rank for, so it needs the client to rank for
+    // something. A new site does not, and what comes back is then simply the biggest domains in
+    // the vertical — the global brands that do not compete on this client's level. ownRanked is
+    // the site's own ranked_keywords from earlier in this run, so the footprint is already known.
+    const hasFootprint = ownRanked.length >= MIN_FOOTPRINT_FOR_OVERLAP
+    const byOverlap = !localAnswered && hasFootprint
+      ? await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
+      : []
+    if (!hasFootprint && !localAnswered) {
+      console.log(`[research] domain overlap skipped: only ${ownRanked.length} ranked keyword(s) — too new for overlap to mean anything`)
+    }
     const ordered   = Array.from(new Set([...localRivals, ...bySerp.map(c => c.domain), ...byOverlap]))
     competitorDomains = ordered.slice(0, 8)
     console.log(`[research] competitors: ${bySerp.length} from seed SERPs, ${byOverlap.length} from domain overlap` +
