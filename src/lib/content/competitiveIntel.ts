@@ -57,7 +57,9 @@ export async function getClientDfsContext(db: Db, clientId: string): Promise<Dfs
     // SERP intel below is what a searcher in the service area sees.
     let location: ResearchLocation | null = null
     try {
-      const { data: cs } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+      const { data: cs, error: locErr } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+      // Migration 224 has landed, so a failure here is a real one, not the column being absent.
+      if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
       location = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)
     } catch { /* column absent */ }
     return { creds, domain: dfsRow.external_id ?? null, config, location }

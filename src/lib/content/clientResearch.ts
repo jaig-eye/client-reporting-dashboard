@@ -848,13 +848,16 @@ export async function getResearchCandidates(clientId: string): Promise<{
     // call after deploying — it is the weaker signal, but it only has to hold until the first run
     // writes a timestamp.
     if (lastRun == null) {
-      const { data: fresh } = await db
+      const { data: fresh, error: freshErr } = await db
         .from('seo_keywords')
         .select('id')
         .eq('client_id', clientId)
         .eq('source', 'dataforseo')
         .gte('created_at', cutoff)
         .limit(1)
+      // A failed read reads as "nothing recent", which re-runs the whole research pass — about
+      // twenty cents — on every topic generation instead of monthly.
+      if (freshErr) console.warn('[research] staleness fallback failed, may re-research:', freshErr.message)
       if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
     }
   } catch {

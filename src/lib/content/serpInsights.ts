@@ -117,13 +117,14 @@ export async function patchKeywordMetadata(db: Db, clientId: string, keyword: st
   const normalized = keyword.trim().toLowerCase().replace(/\s+/g, ' ')
   if (!clientId || !normalized) return false
   try {
-    const { data } = await db
+    const { data, error: lookupErr } = await db
       .from('seo_keywords')
       .select('id, metadata')
       .eq('client_id', clientId)
       .eq('normalized_keyword', normalized)
       .limit(1)
       .maybeSingle()
+    if (lookupErr) console.warn('[serp-insights] keyword lookup failed:', lookupErr.message)
     const row = data as { id?: string; metadata?: Record<string, unknown> | null } | null
     if (!row?.id) return false
     const { error } = await db.from('seo_keywords')
@@ -146,7 +147,10 @@ export function saveSerpInsight(db: Db, clientId: string, keyword: string, insig
 export async function saveSerpInsightById(db: Db, keywordId: string, insight: SerpInsight): Promise<boolean> {
   if (!keywordId) return false
   try {
-    const { data } = await db.from('seo_keywords').select('metadata').eq('id', keywordId).maybeSingle()
+    const { data, error: readErr } = await db.from('seo_keywords').select('metadata').eq('id', keywordId).maybeSingle()
+    // Not merely a missing snapshot: the update below spreads this object, so treating a failed
+    // read as "no metadata" would write { serp } over whatever else the row was carrying.
+    if (readErr) { console.warn('[serp-insights] metadata read failed, not overwriting:', readErr.message); return false }
     const metadata = ((data as { metadata?: Record<string, unknown> | null } | null)?.metadata) ?? {}
     const { error } = await db.from('seo_keywords')
       .update({ metadata: { ...metadata, serp: insight }, updated_at: new Date().toISOString() })

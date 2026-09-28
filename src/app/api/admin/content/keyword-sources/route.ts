@@ -144,7 +144,9 @@ export async function GET(req: NextRequest) {
   // Where the researched numbers were measured (migration 224), so the tab can say so.
   let researchLocation: string | null = null
   try {
-    const { data: cs } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+    const { data: cs, error: locErr } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+    // Migration 224 has landed, so a failure here is a real one, not the column being absent.
+    if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
     researchLocation = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)?.name ?? null
   } catch { /* column absent */ }
 

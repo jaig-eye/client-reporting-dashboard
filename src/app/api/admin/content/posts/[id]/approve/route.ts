@@ -543,7 +543,7 @@ export async function POST(
   const STAGGER_MINUTES = 120
   let slotOffsetMinutes = 0
   if (p.target_publish_date) {
-    const { data: sameDay } = await db
+    const { data: sameDay, error: sameDayErr } = await db
       .from('content_posts')
       .select('id')
       .eq('client_id', String(p.client_id ?? ''))
@@ -554,6 +554,9 @@ export async function POST(
       // date, applied to a date with nothing on it.
       .in('status', ['approved', 'for_review', 'draft_saved', 'generated', 'scheduled', 'published'])
       .order('id', { ascending: true })
+    // An unreadable sibling list reads as "no siblings", so the post takes the unstaggered time.
+    // Worth a line: two posts landing on the same minute is the thing the stagger exists to stop.
+    if (sameDayErr) console.warn('[approve] stagger siblings unreadable, publishing unstaggered:', sameDayErr.message)
     const siblings = (sameDay ?? []) as { id: string }[]
     const position = siblings.findIndex(s => s.id === id)
     if (position > 0) slotOffsetMinutes = position * STAGGER_MINUTES

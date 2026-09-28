@@ -493,7 +493,7 @@ export async function GET(request: NextRequest) {
 
       // What already holds each slot. Without this the cap counts only pending topics, so a date
       // that already has an approved topic gets postsPerRun MORE approved on top of it.
-      const { data: alreadyApproved } = await db
+      const { data: alreadyApproved, error: approvedErr } = await db
         .from('content_topics')
         .select('target_publish_date')
         .eq('client_id', client_id)
@@ -508,6 +508,13 @@ export async function GET(request: NextRequest) {
         // query exists to prevent. Only dates the pending set could collide with matter.
         .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
         .limit(1000)
+      // A failed read here reads as "every slot is empty", which approves a full quota on top of
+      // whatever already holds the date — duplicate posts on a client's site, unattended. Skipping
+      // this client's approval round costs at most a day's delay, which is the cheaper mistake.
+      if (approvedErr) {
+        console.error(`[cron/content-topics] slot occupancy unreadable for ${client_id}, skipping approval:`, approvedErr.message)
+        continue
+      }
       const approvedByDate = new Map<string, number>()
       for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
         const k = t.target_publish_date ?? 'none'

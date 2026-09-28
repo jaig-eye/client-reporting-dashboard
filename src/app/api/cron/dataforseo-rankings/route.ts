@@ -103,10 +103,13 @@ export async function GET(req: NextRequest) {
   // not the national one Labs reports.
   const localCode = new Map<string, { code: number; name: string }>()
   try {
-    const { data: locs } = await db
+    const { data: locs, error: locsErr } = await db
       .from('content_settings')
       .select('client_id, research_location')
       .in('client_id', usable.map(u => u.clientId))
+    // Migration 224 has landed, so this failing means something other than the column missing —
+    // and every rank check silently reverts to the national SERP.
+    if (locsErr) console.warn('[cron/dataforseo-rankings] research locations unreadable, checking nationally:', locsErr.message)
     for (const r of (locs ?? []) as { client_id: string; research_location: unknown }[]) {
       const loc = readResearchLocation(r.research_location)
       if (loc) localCode.set(r.client_id, { code: loc.code, name: loc.name })
