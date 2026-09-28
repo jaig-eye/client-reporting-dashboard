@@ -42,11 +42,35 @@ const EMPTY_EEAT: EeatData = {
   common_objections:      '',
 }
 
-function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+function Label({ children, hint, help }: {
+  children: React.ReactNode
+  /** A few words, shown inline. */
+  hint?: string
+  /**
+   * The longer explanation, on hover rather than on screen.
+   *
+   * These forms were mostly prose about the form. Guidance someone needs once, while deciding what
+   * to type, does not have to occupy the page for everyone who already knows.
+   */
+  help?: string
+}) {
   return (
     <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
       {children}
       {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
+      {help && (
+        <span
+          title={help}
+          aria-label={help}
+          tabIndex={0}
+          style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 13, height: 13, marginLeft: 5, borderRadius: '50%', cursor: 'help',
+            border: '1px solid var(--border)', color: 'var(--text-faint)',
+            fontSize: '0.5625rem', fontWeight: 700, lineHeight: 1, verticalAlign: 'middle',
+          }}
+        >?</span>
+      )}
     </label>
   )
 }
@@ -90,7 +114,9 @@ export default function ClientContentSettingsForm({
   const [aiSuggested, setAiSuggested] = useState(false)
   const [aiBlocked,     setAiBlocked]     = useState(false)
   const [vertical,      setVertical]      = useState('')
-  const [eeatOpen,      setEeatOpen]      = useState(false)  // auto-opens when AI fills EEAT fields
+  // Open by default. It feeds every AI prompt and is the difference between expert copy and
+  // filler; collapsed, it read as "advanced, skip this" — and left the page half empty.
+  const [eeatOpen,      setEeatOpen]      = useState(true)
   const [siteUrlInput,  setSiteUrlInput]  = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
   const [siteTextInput, setSiteTextInput] = useState('')
@@ -412,21 +438,20 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label hint="the one place we measure search demand and rankings in">Research Location</Label>
+          <Label hint="primary market" help={RESEARCH_LOCATION_HELP}>Research Location</Label>
           <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{RESEARCH_LOCATION_HELP}</p>
+
         </div>
 
         <div>
-          <Label>Search keyword research from</Label>
+          <Label help={STARTING_KEYWORDS_HELP}>Search keyword research from</Label>
           <KeywordChipInput
             value={seeds}
             onChange={setSeeds}
             placeholder="permanent outdoor lighting, landscape lighting installation…"
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            {STARTING_KEYWORDS_HELP}
-            {researchedAt ? ` Last researched ${new Date(researchedAt).toLocaleDateString()}.` : ' Not researched yet.'}
+            {researchedAt ? `Last researched ${new Date(researchedAt).toLocaleDateString()}.` : 'Not researched yet.'}
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
             <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220 }}>
@@ -480,15 +505,11 @@ export default function ClientContentSettingsForm({
       {/* ── Trust & Credibility (E-E-A-T) ────────────────────────────────── */}
       <details className="card" style={{ overflow: 'hidden' }} open={eeatOpen} onToggle={e => setEeatOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary className="p-6 cursor-pointer font-semibold text-sm flex items-center justify-between" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
-          <span>Trust &amp; Credibility <span className="text-xs font-normal ml-1" style={{ color: 'var(--text-muted)' }}>(E-E-A-T signals — used in every AI prompt)</span></span>
+          <span>Trust &amp; Credibility <span className="text-xs font-normal ml-1" style={{ color: 'var(--text-muted)' }}>what makes this business worth believing — a few fields here change the writing noticeably</span></span>
           <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{eeatOpen ? '▾' : '▸'}</span>
         </summary>
 
         <div className="p-6 pt-0 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
-          <p className="section-desc">
-            These signals let the AI write as a genuine expert — not generic AI filler. Even a few filled fields make a noticeable difference in content quality.
-          </p>
-
           {/* Regulated vertical — a compliance switch, not a style preference.
               Turning this on bans invented rates/requirements/outcomes in the
               writer prompt AND enables figure detection in the quality gate. */}

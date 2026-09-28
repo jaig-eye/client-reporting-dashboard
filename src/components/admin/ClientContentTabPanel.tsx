@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect }                        from 'react'
-import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
+import KeywordsTab from '@/components/admin/KeywordsTab'
 import { useRouter, usePathname }                      from 'next/navigation'
-import { SlidersHorizontal, TreeStructure, ChartLineUp, CalendarBlank } from '@phosphor-icons/react'
+import { SlidersHorizontal, TreeStructure, ChartLineUp, CalendarBlank, MagnifyingGlass } from '@phosphor-icons/react'
 import ClientContentSettings                          from './ClientContentSettings'
 import ClientPipeline                                 from './ClientPipeline'
 import ClientSitemapTab                               from './ClientSitemapTab'
@@ -58,7 +58,7 @@ interface Props {
   initialSubTab?: string
 }
 
-type SubTab = 'pipeline' | 'analytics' | 'sitemap' | 'settings'
+type SubTab = 'pipeline' | 'keywords' | 'analytics' | 'sitemap' | 'settings'
 
 interface TabDef { id: SubTab; label: string; icon: React.ReactNode; badge?: number }
 
@@ -70,7 +70,7 @@ export default function ClientContentTabPanel({
   const router       = useRouter()
   const pathname     = usePathname()
 
-  const VALID_TABS: SubTab[] = ['pipeline', 'analytics', 'sitemap', 'settings']
+  const VALID_TABS: SubTab[] = ['pipeline', 'keywords', 'analytics', 'sitemap', 'settings']
   // Backward-compat aliases so old deep links keep working (?subtab=overview|schedule|
   // brand-dna|gsc). 'gsc' was renamed to 'analytics'.
   const validSubTab = (s: string | undefined | null): SubTab => {
@@ -114,6 +114,7 @@ export default function ClientContentTabPanel({
 
   const TABS: TabDef[] = [
     { id: 'pipeline',  label: 'Pipeline',  icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
+    { id: 'keywords',  label: 'Keywords',  icon: <MagnifyingGlass size={22} weight="duotone" /> },
     { id: 'analytics', label: 'Analytics', icon: <ChartLineUp size={22} weight="duotone" /> },
     { id: 'sitemap',   label: 'Sitemap',   icon: <TreeStructure size={22} weight="duotone" /> },
     { id: 'settings',  label: 'Settings',  icon: <SlidersHorizontal size={22} weight="duotone" /> },
@@ -222,6 +223,11 @@ export default function ClientContentTabPanel({
         {visited.has('sitemap') && (
           <div style={{ display: activeTab === 'sitemap' ? 'block' : 'none' }} className={animatingTab === 'sitemap' ? 'cc-tab-content' : ''}>
             <ClientSitemapTab clientId={clientId} />
+          </div>
+        )}
+        {visited.has('keywords') && (
+          <div style={{ display: activeTab === 'keywords' ? 'block' : 'none' }} className={animatingTab === 'keywords' ? 'cc-tab-content' : ''}>
+            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} />
           </div>
         )}
         {visited.has('analytics') && (
@@ -507,8 +513,6 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
   }, [loadTick, clientId])
 
   // A local run stores the market's own volume; the column only appears when there is one.
-  const hasLocalVolume = (sources?.researched ?? []).some(r => r.local_volume != null)
-  const place = sources?.researchLocation ? sources.researchLocation.split(',')[0] : null
 
   async function setDismissed(keyword: string, dismissed: boolean): Promise<boolean> {
     try {
@@ -675,39 +679,8 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
         ]}
       />
 
-      {/* Choosing, not just listing: this is where keyword curation happens between setup runs. */}
-      <div className="card p-5" style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 10 }}>
-          <span style={{
-            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-            background: '#f1f5f9', color: '#334155',
-          }}>
-            Keyword Research
-          </span>
-        </div>
-        <p style={{ margin: '0 0 12px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          {hasLocalVolume
-            ? `Search terms found for this client's services, measured in ${place ?? 'their market'}.`
-            : `Search terms found for this client's services, measured nationwide${place ? '' : ' — set a research location under Settings → Brand DNA for local numbers'}.`}
-          {' '}Pick the ones worth pursuing; only those are shown to the writer.
-        </p>
-        <KeywordResearchPanel
-          clientId={clientId}
-          keywords={(sources?.researched ?? []).map(r => ({
-            keyword:      r.keyword,
-            volume:       r.volume ?? null,
-            difficulty:   r.difficulty ?? null,
-            intent:       r.intent ?? null,
-            source:       null,
-            score:        null,
-            local_volume: r.local_volume ?? null,
-            chosen:       r.chosen ?? false,
-          }))}
-          geoWords={place ? [place] : []}
-          place={place}
-        />
-      </div>
+      {/* Keyword choosing lives in its own tab now — see KeywordsTab. Analytics keeps the
+          read-only sources and the SERP snapshots, which are reporting rather than decisions. */}
       {(removed.length > 0 || researchMsg) && (
         <div style={{ margin: '-8px 0 16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           {researchMsg && <p style={{ margin: '0 0 6px', color: 'var(--red)' }}>{researchMsg}</p>}
