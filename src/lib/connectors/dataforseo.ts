@@ -858,7 +858,10 @@ export async function dfsLocalSerp(
 // ── Account balance (free) — used by testConnection ───────────────────────────
 
 export async function dfsAccountBalance(creds: DfsCreds): Promise<number | null> {
-  const json = await dfsPost('/v3/appendix/user_data', creds, {}, 8_000)
+  // GET, not POST. This endpoint takes no task body, and dfsPost would send it `[{}]` — which it
+  // rejects, so the balance always read as null and the caller reported broken credentials on a
+  // connection that works.
+  const json = await dfsGet('/v3/appendix/user_data', creds, 8_000)
   const arr = firstResultArray(json)
   const money = (arr[0]?.money as Record<string, unknown>) ?? {}
   return num(money.balance)

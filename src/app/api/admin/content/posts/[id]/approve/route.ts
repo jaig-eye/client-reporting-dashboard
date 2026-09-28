@@ -9,6 +9,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta } from '@/lib/connectors/wordpress'
 import { xmlrpcSetPostMeta } from '@/lib/connectors/wordpressXmlrpc'
+import { rankMathUpdateMeta } from '@/lib/connectors/rankMathApi'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
@@ -71,15 +72,23 @@ async function reportMetaMisses(
     // successful-looking response proved nothing.
     const repair: Record<string, string> = {}
     for (const m of missed) repair[m.key] = m.sent
-    const wrote = await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair)
 
-    const stillMissing = wrote
+    // Rank Math's own endpoint first. It is capability-checked rather than nonce-checked, so an
+    // application password satisfies it, and it exists wherever Rank Math does — which is a far
+    // larger set of sites than those with xmlrpc.php still switched on.
+    let via: 'rankmath' | 'xmlrpc' | null = null
+    if (await rankMathUpdateMeta(args.siteUrl, args.auth, args.wpId, repair)) via = 'rankmath'
+    else if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair)) via = 'xmlrpc'
+
+    // Ask WordPress again rather than trusting either answer — a successful-looking response is
+    // precisely what proved nothing the first time round.
+    const stillMissing = via
       ? await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType)
       : missed
 
     if (stillMissing.length === 0) {
       console.log(
-        `[approve] repaired ${missed.length} SEO field(s) over XML-RPC for ${args.postType} ${args.wpId} on ${args.siteUrl}`,
+        `[approve] repaired ${missed.length} SEO field(s) via ${via} for ${args.postType} ${args.wpId} on ${args.siteUrl}`,
       )
       return
     }
@@ -89,8 +98,8 @@ async function reportMetaMisses(
       .join('; ')
     console.warn(
       `[approve] ${stillMissing.length} SEO field(s) could not be stored for ${args.postType} ${args.wpId} ` +
-      `on ${args.siteUrl}: ${summary}. REST drops them (Rank Math does not register its keys) and ` +
-      `XML-RPC ${wrote ? 'accepted the write without it taking effect' : 'is unavailable'}.`,
+      `on ${args.siteUrl}: ${summary}. REST drops them (Rank Math does not register its keys with ` +
+      `show_in_rest), and ${via ? `${via} accepted the write without it taking effect` : "neither Rank Math's updateMeta nor XML-RPC was available"}.`,
     )
     logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
       resourceId: args.postRowId,
@@ -103,7 +112,9 @@ async function reportMetaMisses(
         detail:   summary,
         // What was tried, so nobody re-investigates from scratch.
         rest:     'rejected — Rank Math does not register its meta keys with show_in_rest',
-        xmlrpc:   wrote ? 'accepted the write but the value did not stick' : 'unavailable (xmlrpc.php disabled or blocked)',
+        repaired_via: via ?? 'nothing available',
+        rankmath: via === 'rankmath' ? 'accepted the write but the value did not stick' : 'unavailable (no updateMeta route, or refused)',
+        xmlrpc:   via === 'xmlrpc'   ? 'accepted the write but the value did not stick' : 'unavailable (xmlrpc.php disabled or blocked)',
       },
     })
   } catch (e) {
