@@ -12,17 +12,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
+import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from '@/components/admin/ResearchLocationPicker'
+import ResearchSeedPreview from '@/components/admin/ResearchSeedPreview'
+import { locationCandidates } from '@/lib/content/researchSeeds'
+import { RESEARCH_LOCATION_HELP, RESEARCH_SEEDS_HELP } from '@/lib/content/researchCopy'
 
 interface Payload {
   researched:       ResearchKeyword[]
   researchLocation?: string | null
 }
 
-export default function KeywordsTab({ clientId, isActive, epoch }: {
+/** The bits of the client profile this tab needs to say what it will search for, and where. */
+interface Profile {
+  services:         string
+  geographic_focus: string
+  /** Older clients only; still unioned into the seeds, no longer editable. */
+  foundational:     string
+}
+
+export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }: {
   clientId: string
   isActive: boolean
   /** Bumped when research reruns elsewhere, so this refetches rather than showing a stale list. */
   epoch:    number
+  /** After research runs here, so the Analytics tab drops its cached copy too. */
+  onResearchRun?: () => void
 }) {
   const [data, setData]   = useState<Payload | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -36,6 +50,13 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
   const [notice,    setNotice]    = useState<string | null>(null)
   const [confirmRerun, setConfirmRerun] = useState(false)
 
+  // Where and what we search. These moved here from Brand DNA with the rest of the research
+  // controls: they describe measurement, not the business.
+  const [profile,  setProfile]  = useState<Profile | null>(null)
+  const [location, setLocation] = useState<ResearchLocationValue | null>(null)
+  const [savingLocation, setSavingLocation] = useState(false)
+  const [researchedAt, setResearchedAt] = useState<string | null>(null)
+
   useEffect(() => {
     if (!isActive) return
     let cancelled = false
@@ -46,6 +67,53 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
       .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [] }) } })
     return () => { cancelled = true }
   }, [clientId, isActive, epoch, reload])
+
+  // The profile and the last-run date. Both free reads.
+  useEffect(() => {
+    if (!isActive) return
+    let cancelled = false
+    fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: Record<string, unknown> | null) => {
+        if (cancelled || !d) return
+        setProfile({
+          services:         String(d.services         ?? ''),
+          geographic_focus: String(d.geographic_focus ?? ''),
+          foundational:     Array.isArray(d.foundational_keywords) ? d.foundational_keywords.map(String).join(', ') : '',
+        })
+        setLocation(readLocationValue(d.research_location))
+      })
+      .catch(() => { /* the preview is context, not the point of the screen */ })
+    fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { researchedAt?: string | null } | null) => { if (!cancelled) setResearchedAt(d?.researchedAt ?? null) })
+      .catch(() => { /* the date is a nicety */ })
+    return () => { cancelled = true }
+  }, [clientId, isActive, epoch, reload])
+
+  /**
+   * Save the research location on its own.
+   *
+   * Only this field is sent. The settings PUT writes just the fields present in the body, so a
+   * save here cannot disturb anything someone is editing on the Brand DNA screen.
+   */
+  const saveLocation = useCallback(async (next: ResearchLocationValue | null) => {
+    setLocation(next)
+    setSavingLocation(true); setNotice(null)
+    try {
+      const res = await fetch('/api/admin/content/client-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, research_location: next }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setNotice(next ? `Now measuring in ${next.name}.` : 'Measuring from your first service area again.')
+    } catch (e) {
+      setNotice(e instanceof Error ? `Could not save the location (${e.message})` : 'Could not save the location')
+    } finally {
+      setSavingLocation(false)
+    }
+  }, [clientId])
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
@@ -93,12 +161,14 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
           : body.reason ?? 'Nothing new came back.',
       )
       setReload(n => n + 1)
+      // Analytics shows the same pool; let it drop its cached copy too.
+      onResearchRun?.()
     } catch (e) {
       setNotice(e instanceof Error ? e.message : 'Could not run the research')
     } finally {
       setBusy(false)
     }
-  }, [clientId])
+  }, [clientId, onResearchRun])
 
   const place = data?.researchLocation ? data.researchLocation.split(',')[0] : null
 
@@ -155,8 +225,66 @@ export default function KeywordsTab({ clientId, isActive, epoch }: {
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '14px 0' }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {/* Where we measure, and what we search for. Both used to sit in Brand DNA, which is about
+            the business — these are about research, and research happens here. */}
+        <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+              Measured in
+              <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — primary market</span>
+              <span
+                title={RESEARCH_LOCATION_HELP}
+                aria-label={RESEARCH_LOCATION_HELP}
+                tabIndex={0}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 13, height: 13, marginLeft: 5, borderRadius: '50%', cursor: 'help',
+                  border: '1px solid var(--border)', color: 'var(--text-faint)',
+                  fontSize: '0.5625rem', fontWeight: 700, lineHeight: 1, verticalAlign: 'middle',
+                }}
+              >?</span>
+            </label>
+            <ResearchLocationPicker value={location} onChange={v => void saveLocation(v)} />
+            {!location && (
+              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                {(() => {
+                  const first = locationCandidates(profile?.geographic_focus ?? '')[0]
+                  return first
+                    ? <>Measuring in <strong style={{ color: 'var(--text-muted)' }}>{first}</strong>, read from the first service area. Set one here to override.</>
+                    : 'No local market in the service areas, so demand is measured nationwide.'
+                })()}
+              </p>
+            )}
+            {savingLocation && <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Saving…</p>}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+              What we search for
+              <span
+                title={RESEARCH_SEEDS_HELP}
+                aria-label={RESEARCH_SEEDS_HELP}
+                tabIndex={0}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 13, height: 13, marginLeft: 5, borderRadius: '50%', cursor: 'help',
+                  border: '1px solid var(--border)', color: 'var(--text-faint)',
+                  fontSize: '0.5625rem', fontWeight: 700, lineHeight: 1, verticalAlign: 'middle',
+                }}
+              >?</span>
+            </label>
+            <ResearchSeedPreview
+              services={profile?.services ?? ''}
+              location={location}
+              geographicFocus={profile?.geographic_focus ?? ''}
+              extra={profile?.foundational ?? ''}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
           <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220, lineHeight: 1.5 }}>
+            {researchedAt ? `Last looked ${new Date(researchedAt).toLocaleDateString()}. ` : ''}
             Looking again searches the market from this client&apos;s services and replaces the
             unselected ideas. Anything selected stays selected.
           </p>

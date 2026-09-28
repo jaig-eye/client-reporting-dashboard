@@ -18,7 +18,6 @@ interface WpCategory { id: number; name: string }
 
 interface Props {
   /** Called after keyword research is re-run from Brand DNA, so the Analytics tab refetches. */
-  onResearchRun?: () => void
   clientId:     string
   clientName:   string
   sites:        SiteOption[]
@@ -76,7 +75,7 @@ function SaveRow({ onSave, saving, saved, error }: { onSave: () => void; saving:
 type SaveState = { saving: boolean; saved: boolean; error: string }
 const IDLE: SaveState = { saving: false, saved: false, error: '' }
 
-export default function ClientContentSettings({ clientId, clientName, sites, onResearchRun }: Props) {
+export default function ClientContentSettings({ clientId, clientName, sites }: Props) {
   const clientSites = sites.filter(s => s.clientId === clientId)
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -278,7 +277,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, onR
           (not conditionally rendered) so unsaved edits survive a sub-nav switch —
           it holds its own internal form state, unlike the parent-owned sections below. */}
       <div style={{ display: activeSection === 'brand' ? 'block' : 'none' }}>
-        <ClientContentSettingsForm clientId={clientId} sites={sites} onResearchRun={onResearchRun} />
+        <ClientContentSettingsForm clientId={clientId} sites={sites} />
       </div>
 
       {/* ── Publishing ─────────────────────────────────────────────────────── */}

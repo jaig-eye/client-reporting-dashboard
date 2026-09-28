@@ -217,7 +217,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('settings') && (
           <div style={{ display: activeTab === 'settings' ? 'block' : 'none' }} className={animatingTab === 'settings' ? 'cc-tab-content' : ''}>
-            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} aiConfigured={aiConfigured} onResearchRun={() => setResearchEpoch(e => e + 1)} />
+            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} aiConfigured={aiConfigured} />
           </div>
         )}
         {visited.has('sitemap') && (
@@ -227,7 +227,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('keywords') && (
           <div style={{ display: activeTab === 'keywords' ? 'block' : 'none' }} className={animatingTab === 'keywords' ? 'cc-tab-content' : ''}>
-            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} />
+            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} onResearchRun={() => setResearchEpoch(e => e + 1)} />
           </div>
         )}
         {visited.has('analytics') && (

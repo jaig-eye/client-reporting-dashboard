@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { SERVICES_HELP, SERVICE_AREAS_HELP, RESEARCH_LOCATION_HELP, RESEARCH_SEEDS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
-import { parseServices, geoPhrase, buildResearchSeeds, locationCandidates } from '@/lib/content/researchSeeds'
+import { SERVICES_HELP, SERVICE_AREAS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import type { EeatData }       from '@/lib/content/types'
 
@@ -97,12 +95,9 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 export default function ClientContentSettingsForm({
   clientId,
   sites: _sites,
-  onResearchRun,
 }: {
   clientId: string
   sites:    SiteOption[]
-  /** After a successful re-run, so whatever shows the candidate pool can refetch. */
-  onResearchRun?: () => void
 }) {
   const [form,        setForm]        = useState<BrandDnaForm>({ business_background: '', services: '', target_audience: '', geographic_focus: '', brand_voice: '', phone_number: '', cta_list: '' })
   const [eeat,        setEeat]        = useState<EeatData>(EMPTY_EEAT)
@@ -123,16 +118,6 @@ export default function ClientContentSettingsForm({
   const [siteTextInput, setSiteTextInput] = useState('')
   const [showSiteText,  setShowSiteText]  = useState(false)
 
-  // ── Keyword research seeds ─────────────────────────────────────────────────
-  // content_settings.foundational_keywords, kept as one comma-separated string while editing.
-  // They belong with the profile: research widens out from these and from Services, so the
-  // place to correct them is next to the words they are built on — not the Analytics tab.
-  const [seeds, setSeeds]               = useState('')
-  const [researchedAt, setResearchedAt] = useState<string | null>(null)
-  const [researching, setResearching]   = useState(false)
-  const [researchMsg, setResearchMsg]   = useState<string | null>(null)
-  const [researchLocation, setResearchLocation] = useState<ResearchLocationValue | null>(null)
-  const [confirmRerun, setConfirmRerun] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -149,19 +134,12 @@ export default function ClientContentSettingsForm({
           cta_list:            String(d.cta_list            ?? ''),
         })
         setVertical(String(d.vertical ?? ''))
-        setSeeds(Array.isArray(d.foundational_keywords) ? d.foundational_keywords.map(String).join(', ') : '')
-        setResearchLocation(readLocationValue(d.research_location))
         if (d.eeat_data && typeof d.eeat_data === 'object') {
           setEeat({ ...EMPTY_EEAT, ...(d.eeat_data as Partial<EeatData>) })
         }
         setLoading(false)
       })
       .catch(() => setLoading(false))
-    // Read-only; never spends.
-    fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then((d: { researchedAt?: string | null } | null) => setResearchedAt(d?.researchedAt ?? null))
-      .catch(() => { /* the date is a nicety */ })
   }, [clientId])
 
   function setField<K extends keyof BrandDnaForm>(key: K, val: string) {
@@ -245,9 +223,10 @@ export default function ClientContentSettingsForm({
     setShowSiteInput(false)
   }
 
-  // foundational_keywords is no longer editable here, so it is no longer sent. The PUT handler
-  // only writes fields present in the body, which leaves whatever an older client had stored
-  // intact — research still unions it into the seeds. Removing the field must not wipe the data.
+  // foundational_keywords and research_location are not editable here any more, so neither is
+  // sent. The PUT handler only writes fields present in the body, so leaving them out preserves
+  // them — and stops a Brand DNA save from writing a stale location back over one just changed in
+  // the Keywords tab.
 
   async function save(): Promise<boolean> {
     setSaving(true); setError(''); setSaved(false)
@@ -259,7 +238,6 @@ export default function ClientContentSettingsForm({
         ...form,
         eeat_data: eeat,
         vertical: vertical || null,
-        research_location: researchLocation,
       }),
     })
     setSaving(false)
@@ -269,48 +247,6 @@ export default function ClientContentSettingsForm({
     return false
   }
 
-  /**
-   * Save the profile (the seeds live in it), clear the researched candidates, look at the
-   * market again. Spends a few cents in DataForSEO calls when the client is connected.
-   */
-  async function rerunResearch() {
-    setResearching(true); setResearchMsg(null)
-    try {
-      if (!(await save())) throw new Error('unsaved')
-      const res = await fetch('/api/admin/content/keyword-research', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ client_id: clientId, force: true }),
-      })
-      const d = await res.json().catch(() => ({})) as {
-        discovered?: number; cost?: number; competitors?: string[]
-        researchedAt?: string | null; connected?: boolean; error?: string; reason?: string
-      }
-      if (!res.ok) throw new Error('failed')
-      if (d.reason === 'storage failed') throw new Error('unstored')
-      setResearchedAt(d.researchedAt ?? new Date().toISOString())
-      const ideas = d.discovered ?? 0
-      const sites = d.competitors?.length ?? 0
-      setResearchMsg(d.connected === false
-        ? 'DataForSEO isn’t connected for this client, so this used Google Ads and Ahrefs data only. Connect it on the client’s Integrations tab for search volumes and competing sites.'
-        : `Found ${ideas.toLocaleString()} keyword idea${ideas === 1 ? '' : 's'}`
-          + (sites ? ` and ${sites} competing site${sites === 1 ? '' : 's'}` : '')
-          + (d.cost != null && d.cost > 0 ? ` for $${d.cost.toFixed(2)}` : '')
-          + '. They’re on the Analytics tab now.')
-      onResearchRun?.()
-    } catch (e) {
-      // The real reason goes to the console; the operator gets a sentence they can act on.
-      console.warn('[brand-dna] research failed:', e)
-      const why = e instanceof Error ? e.message : ''
-      setResearchMsg(why === 'unsaved'
-        ? 'Brand DNA did not save, so nothing was researched. Fix the error above and try again.'
-        : why === 'unstored'
-        ? 'Research ran but the results couldn’t be saved. Nothing to fix on your side — tell your admin the keyword tables aren’t ready yet.'
-        : 'Research didn’t finish. Try again in a minute — if it keeps happening, check the DataForSEO connection on the Integrations page.')
-    } finally {
-      setResearching(false)
-    }
-  }
 
   if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
 
@@ -443,66 +379,9 @@ export default function ClientContentSettingsForm({
           </div>
         </div>
 
-        <div>
-          <Label hint="primary market" help={RESEARCH_LOCATION_HELP}>Research Location</Label>
-          <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
-          {!researchLocation && (() => {
-            // The place name research will look up, not the raw first service area. "Los Angeles
-            // and Tri-County area" is one entry meaning one city, and showing it verbatim implied
-            // we would search for a phrase that resolves to nothing.
-            const first = locationCandidates(form.geographic_focus)[0]
-            return (
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                {first
-                  ? <>Measuring in <strong style={{ color: 'var(--text-muted)' }}>{first}</strong>, read from your first service area. Set one here to override.</>
-                  : 'No local market in your service areas, so demand is measured nationwide.'}
-              </p>
-            )
-          })()}
-
-        </div>
-
-        <div>
-          <Label help={RESEARCH_SEEDS_HELP}>What we search for</Label>
-          {/* Shown, not asked for. This was a second chip input the operator filled in by hand,
-              and every client had it as a verbatim copy of Services Offered — because that is
-              what it is. The phrases come from buildResearchSeeds, the same function research
-              itself calls, so the preview cannot drift from what actually gets bought. */}
-          <SeedPreview
-            services={form.services}
-            location={researchLocation}
-            geographicFocus={form.geographic_focus}
-            extra={seeds}
-          />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            {researchedAt ? `Last researched ${new Date(researchedAt).toLocaleDateString()}.` : 'Not researched yet.'}
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-            <p className="text-xs" style={{ color: 'var(--text-faint)', margin: 0, flex: 1, minWidth: 220 }}>
-              Looking again replaces this client&apos;s keyword ideas. Anything already chosen stays chosen.
-            </p>
-            {confirmRerun ? (
-              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-                Replace the current keyword ideas?
-                <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }} onClick={() => setConfirmRerun(false)}>Cancel</button>
-                <button type="button" className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }} onClick={() => { setConfirmRerun(false); void rerunResearch() }}>Yes, look again</button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
-                onClick={() => { if (researchedAt) setConfirmRerun(true); else void rerunResearch() }}
-                disabled={researching || saving || !form.services.trim()}
-              >
-                {researching ? 'Looking…' : 'Look again'}
-              </button>
-            )}
-          </div>
-          {researchMsg && (
-            <p className="text-xs mt-1" style={{ color: /didn|did not|couldn/i.test(researchMsg) ? 'var(--red)' : 'var(--text-muted)' }}>{researchMsg}</p>
-          )}
-        </div>
+        {/* Research Location, the seed preview and "Look again" used to sit here. They are all
+            about where and what we search, which happens in the Keywords tab — so they live there
+            now, and this screen is only about who the business is. */}
 
         <div>
           <Label hint="used when referencing phone in content" help={PHONE_HELP}>Phone Number</Label>
@@ -628,64 +507,6 @@ export default function ClientContentSettingsForm({
         {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
         {error && <span className="text-xs" style={{ color: 'var(--red)' }}>{error}</span>}
       </div>
-    </div>
-  )
-}
-
-/**
- * What research will search for, derived rather than typed.
- *
- * Built by buildResearchSeeds — the function research itself calls — so what is on screen is what
- * gets bought. The geo variants are shown muted: they are the same service with the market pinned
- * on, and letting them read as separate entries made five services look like ten decisions.
- */
-function SeedPreview({ services, location, geographicFocus, extra }: {
-  services:        string
-  location:        ResearchLocationValue | null
-  geographicFocus: string
-  /** content_settings.foundational_keywords, from older clients. Read-only now. */
-  extra:           string
-}) {
-  const list  = parseServices(services)
-  const geo   = geoPhrase(location ? { name: location.name } : null, geographicFocus)
-  const older = String(extra ?? '').split(/[,;\n]+/).map(v => v.trim()).filter(Boolean)
-  // Anything stored that is not simply one of the services — the rest would read as a duplicate.
-  const kept  = older.filter(v => !list.some(s => s.toLowerCase() === v.toLowerCase()))
-  const seeds = buildResearchSeeds(list, geo, kept)
-
-  if (seeds.length === 0) {
-    return (
-      <p className="text-xs" style={{ margin: 0, color: 'var(--text-faint)' }}>
-        Add a service above and the searches appear here.
-      </p>
-    )
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {seeds.map(s => {
-          const isGeo = !!geo && s.toLowerCase().endsWith(` ${geo.toLowerCase()}`)
-          return (
-            <span
-              key={s}
-              style={{
-                display: 'inline-flex', alignItems: 'center',
-                background: isGeo ? 'transparent' : 'var(--bg-subtle)',
-                border: '1px solid var(--border)',
-                borderRadius: 999, padding: '2px 9px', fontSize: '0.78rem',
-                color: isGeo ? 'var(--text-faint)' : 'var(--text-primary)',
-              }}
-            >
-              {s}
-            </span>
-          )
-        })}
-      </div>
-      <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-        {seeds.length} search{seeds.length === 1 ? '' : 'es'}
-        {geo ? <> — the faded ones are the same service measured in <strong style={{ color: 'var(--text-muted)' }}>{geo}</strong>.</> : '.'}
-      </p>
     </div>
   )
 }
