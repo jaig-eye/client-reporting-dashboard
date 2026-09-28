@@ -37,6 +37,15 @@ interface TopicIdea {
   why_now:             string
   competition_level:   string
   cluster_group?:      string
+  /**
+   * The client's own URL this article must link to, set by the cannibalization guard when it
+   * demotes a topic to a supporting article.
+   *
+   * Not something the model returns. The guard's directive goes in ranking_strategy, which the
+   * article prompt does not read — page_to_support is the field it does read, and it is what
+   * turns "this should support the ranking page" into an internal link in the finished post.
+   */
+  page_to_support?:    string | null
 }
 
 /**
@@ -995,7 +1004,12 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
           `${info.url ? ` at ${info.url}` : ''}. This must not compete with that page: cover a` +
           ` genuinely narrower question and link to it${info.url ? ` (${info.url})` : ''} as the primary internal link.`
         t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
-        demoted.push(`"${t.target_keyword}" → supports "${prot}"`)
+        // The directive above is for the operator reading the pipeline card. This is the half the
+        // writer acts on: page_to_support is the only field the article prompt reads for "link to
+        // this page", so without it a demoted topic was written exactly like an undemoted one and
+        // competed with the page it was supposed to support.
+        if (info.url) t.page_to_support = info.url
+        demoted.push(`"${t.target_keyword}" → supports "${prot}"${info.url ? '' : ' (no URL known — directive only)'}`)
       }
       return true
     })
@@ -1026,6 +1040,9 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     rationale:            [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level].filter(Boolean).join(' | '),
     keyword_opportunity:  t.keyword_opportunity ?? null,
     ranking_strategy:     t.ranking_strategy    ?? null,
+    // Set only by the cannibalization guard. The article prompt renders it as "Core page to
+    // support (must appear as an internal link)".
+    page_to_support:      t.page_to_support     ?? null,
     audience_intent:      t.audience_intent     ?? null,
     why_now:              t.why_now             ?? null,
     competition_level:    t.competition_level   ?? null,
