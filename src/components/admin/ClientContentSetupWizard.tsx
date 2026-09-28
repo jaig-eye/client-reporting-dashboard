@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { intentLabel, intentHint } from '@/lib/content/intentLabels'
 import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP, GEOGRAPHIC_FOCUS_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
+import KeywordChipInput from '@/components/admin/KeywordChipInput'
+import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,10 @@ interface KeywordResult {
   difficulty: number | null
   intent:     string | null
   source?:    string | null
+  /** How research ranked it, when the run recorded a score. */
+  score?:     number | null
+  /** Whether a person has picked this one for the writer. Absent on an unmigrated database. */
+  chosen?:    boolean
 }
 
 interface ResearchData {
@@ -469,18 +474,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * invisibly. Runs only while the box is untouched and empty, so a saved value and anything
    * typed by hand both survive; clearing the box deliberately leaves it cleared.
    */
+  // Deliberately not pre-filled from Services any more. Both steps now offer "use the services"
+  // as a button, so the default is one click away and the two fields stop looking like one field
+  // shown twice. seedsPrefilled survives as the guard that a saved value is never overwritten.
   const seedsPrefilled = useRef(false)
-  useEffect(() => {
-    if (seedsPrefilled.current || foundationalKeywords.trim()) return
-    const fromServices = brand.services
-      .split(/[,;\n]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
-    if (fromServices.length === 0) return
-    seedsPrefilled.current = true
-    setFoundationalKeywords(fromServices.join(', '))
-    // foundationalKeywords is read as a guard, not a trigger: the pre-fill must run when the
-    // SERVICES change, never because the operator typed in the box it fills.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand.services])
 
   // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
   // step reads to stop showing a spinner, and using one value for both made the spinner
@@ -548,17 +545,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   }
 
   /** "Not this one." Gone from the list now, and from every read of the pool once the server agrees. */
-  async function dismissKeyword(keyword: string) {
-    setResearch(prev => prev ? { ...prev, keywords: prev.keywords.filter(k => k.keyword !== keyword) } : prev)
-    try {
-      await fetch('/api/admin/content/keyword-research', {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ client_id: clientId, keyword, dismissed: true }),
-      })
-    } catch { /* optimistic; it will still be in the pool next time, and can be dismissed again */ }
-  }
-
   async function saveSettings(wizardCompleted: boolean) {
     const eeatData = {
       founded_year:           brand.founded_year,
@@ -789,11 +775,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             <StepResearch
               research={research}
               done={researchDone}
+              clientId={clientId}
+              servicesText={brand.services}
               seeds={foundationalKeywords}
               setSeeds={v => { seedsPrefilled.current = true; setFoundationalKeywords(v) }}
               onRerun={rerunResearch}
               rerunning={rerunning}
-              onDismiss={dismissKeyword}
             />
           )}
           {step === 9 && (
@@ -1188,19 +1175,31 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
             <textarea value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
           </Field>
           <Field label="Services" drivesResearch>
-            <input type="text" value={brand.services} onChange={e => setBrand({ ...brand, services: e.target.value })} style={inputStyle} placeholder="Plumbing, HVAC, Electrical" />
+            <KeywordChipInput
+              value={brand.services}
+              onChange={v => setBrand({ ...brand, services: v })}
+              placeholder="Plumbing, HVAC, Electrical"
+            />
           </Field>
           <Field label="Target Audience">
             <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
-          <Field label="Starting keywords" drivesResearch>
-            <input
-              type="text"
+          <Field label="Search keyword research from" drivesResearch>
+            <KeywordChipInput
               value={foundationalKeywords}
-              onChange={e => { onSeedsEdited(); setFoundationalKeywords(e.target.value) }}
-              style={inputStyle}
+              onChange={v => { onSeedsEdited(); setFoundationalKeywords(v) }}
               placeholder="mobile detailing, ceramic coating, paint correction"
             />
+            {brand.services.trim() && !foundationalKeywords.trim() && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '0.72rem', marginTop: 6 }}
+                onClick={() => { onSeedsEdited(); setFoundationalKeywords(brand.services) }}
+              >
+                Use the services above
+              </button>
+            )}
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
               {STARTING_KEYWORDS_HELP}
             </p>
@@ -1628,14 +1627,16 @@ function StepContentTypes({
 
 // --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onDismiss }: {
+function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning }: {
   research:  ResearchData | null
   done:      boolean
+  clientId:  string
+  /** Step 3's Services, offered as a starting point rather than copied in silently. */
+  servicesText: string
   seeds:     string
   setSeeds:  (v: string) => void
   onRerun:   () => void
   rerunning: boolean
-  onDismiss: (keyword: string) => void
 }) {
   const busy = !done || rerunning
   const [confirming, setConfirming] = useState(false)
@@ -1645,42 +1646,49 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
   const localPack    = research?.localPack ?? []
   const reused       = !!research?.reason && /reusing/i.test(research.reason)
   const failed       = !!research?.failed
-  // Discovered but not kept: the database behind the pool is not ready. Not a seeds problem.
-  const notStored    = research?.reason === 'storage failed'
   const found        = research?.discovered ?? keywords.length
   const researchedOn = research?.researchedAt ? new Date(research.researchedAt).toLocaleDateString() : null
   const place        = research?.researchLocation ? research.researchLocation.split(',')[0] : null
-  // DataForSEO is the default source and goes unsaid; the others are worth knowing.
-  const provenance: Record<string, string> = { ahrefs: 'from Ahrefs', google_ads: 'from Google Ads' }
-  const difficultyTone = (d: number) => (d <= 30 ? 'green' : d <= 60 ? 'amber' : 'red')
 
   return (
     <div>
-      <StepTitle>Your keyword shortlist</StepTitle>
+      <StepTitle>Choose what to write around</StepTitle>
       <StepSub>
-        Keyword ideas and competing sites for this client. Remove anything that isn&apos;t this business,
-        or change the starting keywords and look again.
+        Search terms this business could realistically win, and the sites already winning them.
+        Pick the ones worth pursuing — only those are shown to the writer. You can come back and
+        pick more at any time from the client&apos;s Analytics tab.
       </StepSub>
 
       {/* Starting keywords + look again: the two things an operator can do about a bad list */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: 12, background: 'var(--bg-subtle)' }}>
         <label htmlFor="wizard-starting-keywords" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-          Starting keywords
+          Search from
         </label>
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 6px', lineHeight: 1.5 }}>
-          {STARTING_KEYWORDS_HELP} Same field as step 3 &mdash; edit here to look again.
+          {STARTING_KEYWORDS_HELP}
+          {servicesText.trim() && !seeds.trim() ? ' Start from the services you entered, or type your own.' : ''}
         </p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <textarea
-            id="wizard-starting-keywords"
-            className="input"
-            rows={2}
-            value={seeds}
-            onChange={e => setSeeds(e.target.value)}
-            placeholder="permanent outdoor lighting, landscape lighting installation, christmas light installers"
-            style={{ flex: 1, resize: 'vertical', fontSize: '0.8125rem' }}
+        {servicesText.trim() && !seeds.trim() && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', marginBottom: 8 }}
+            onClick={() => setSeeds(servicesText)}
             disabled={busy}
-          />
+          >
+            Use the services from step 3
+          </button>
+        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <KeywordChipInput
+              id="wizard-starting-keywords"
+              value={seeds}
+              onChange={setSeeds}
+              disabled={busy}
+              placeholder="permanent outdoor lighting, landscape lighting installation…"
+            />
+          </div>
           {confirming ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200 }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
@@ -1704,110 +1712,39 @@ function StepResearch({ research, done, seeds, setSeeds, onRerun, rerunning, onD
           )}
         </div>
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
-          Looking again clears the list below and searches from these keywords. Uses your DataForSEO
-          balance &mdash; usually well under a dollar.
+          Looking again replaces the ideas below with a fresh search from these terms. Anything you
+          have already chosen stays chosen.
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        {/* Keyword ideas */}
-        <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-          <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>Keyword ideas{place ? ` in ${place}` : ''}</span>
-            {done && !rerunning && keywords.length > 0 && (
-              <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>
-                {shown.length < keywords.length ? `${shown.length} of ${keywords.length}` : keywords.length}
-              </span>
-            )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 16 }}>
+        {/* Keyword ideas — choosing is the work, so it leads and gets the full width */}
+        <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.85rem 1rem' }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 8 }}>
+            Search terms worth pursuing
           </div>
-          <div style={{ padding: '0.875rem 1rem' }}>
-            {busy ? (
-              <StatusRow
-                label={rerunning
-                  ? 'Looking again from the new keywords — usually 20–40 seconds…'
-                  : 'Looking at this market — usually 20–40 seconds. This uses your DataForSEO balance.'}
-                status="loading"
-              />
-            ) : failed ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--red)', lineHeight: 1.5 }}>
-                Research didn&apos;t finish. Look again to retry.
-              </div>
-            ) : notStored ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--red)', lineHeight: 1.5 }}>
-                Research ran but the results couldn&apos;t be saved. Nothing to fix on your side &mdash; tell your admin
-                the keyword tables aren&apos;t ready yet.
-              </div>
-            ) : !research?.connected && keywords.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
-                DataForSEO isn&apos;t connected for this client, so there is nothing to search with yet.
-                Connect it on the client&apos;s Integrations tab for keyword ideas, search volumes and competing sites.
-              </div>
-            ) : keywords.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                No usable keywords came back. Try broader starting keywords and look again.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 300, overflowY: 'auto' }}>
-                {shown.map(kw => (
-                  <div key={kw.keyword} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kw.keyword}>
-                        {kw.keyword}
-                      </div>
-                      <div style={{ fontSize: '0.625rem', color: 'var(--text-faint)', display: 'flex', gap: 6 }}>
-                        {intentLabel(kw.intent) && <span title={intentHint(kw.intent)}>{intentLabel(kw.intent)}</span>}
-                        {kw.source && provenance[kw.source] && <span>{provenance[kw.source]}</span>}
-                      </div>
-                    </div>
-                    {kw.local_volume != null ? (
-                      <span
-                        style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-                        title={kw.volume != null ? `${kw.volume.toLocaleString()} searches a month nationally` : 'Searches a month in the research location'}
-                      >
-                        {kw.local_volume.toLocaleString()}/mo
-                      </span>
-                    ) : kw.volume != null ? (
-                      <span
-                        style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-                        title={place ? 'Searches a month nationally — too few locally for Google to report' : 'Searches a month'}
-                      >
-                        {kw.volume.toLocaleString()}/mo{place ? ' (national)' : ''}
-                      </span>
-                    ) : null}
-                    {kw.difficulty != null && (
-                      <span className={`badge badge-${difficultyTone(kw.difficulty)}`} style={{ whiteSpace: 'nowrap' }} title="How hard it is to rank, 0–100. Under 30 is winnable quickly.">
-                        Difficulty {Math.round(kw.difficulty)}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onDismiss(kw.keyword)}
-                      title="Remove — this keyword won't be suggested again"
-                      aria-label={`Remove ${kw.keyword}`}
-                      style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.875rem', lineHeight: 1, padding: '0 2px' }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {done && !rerunning && shown.length < keywords.length && (
-              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
-                Showing the top 60. All {keywords.length} are saved and used when choosing topics.
-              </p>
-            )}
-            {done && !rerunning && research && keywords.length > 0 && (
-              <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
-                {reused && researchedOn
-                  ? `Using the research from ${researchedOn}. `
-                  : research.discovered != null
-                    ? `${research.discovered.toLocaleString()} keyword idea${research.discovered === 1 ? '' : 's'} found${research.cost != null && research.cost > 0 ? ` · this run cost $${research.cost.toFixed(2)}` : ''}. `
-                    : ''}
-                These are what topics are chosen from for the next 30 days.
-              </p>
-            )}
-          </div>
+          {!done || rerunning ? (
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: 0 }}>
+              Looking at this market — usually 20–40 seconds.
+            </p>
+          ) : (
+            <KeywordResearchPanel
+              clientId={clientId}
+              keywords={keywords.map(k => ({
+                keyword:      k.keyword,
+                volume:       k.volume ?? null,
+                difficulty:   k.difficulty ?? null,
+                intent:       k.intent ?? null,
+                source:       k.source ?? null,
+                score:        k.score ?? null,
+                local_volume: k.local_volume ?? null,
+                chosen:       k.chosen ?? false,
+              }))}
+              geoWords={place ? [place] : []}
+              place={place}
+              busy={busy}
+            />
+          )}
         </div>
 
         {/* Competing sites */}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect }                        from 'react'
+import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
 import { useRouter, usePathname }                      from 'next/navigation'
 import { SlidersHorizontal, TreeStructure, ChartLineUp, CalendarBlank } from '@phosphor-icons/react'
 import ClientContentSettings                          from './ClientContentSettings'
@@ -8,7 +9,6 @@ import ClientPipeline                                 from './ClientPipeline'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientContentSetupWizard                       from './ClientContentSetupWizard'
 import SerpInsightsSection                            from './SerpInsightsSection'
-import { intentLabel, intentHint }                    from '@/lib/content/intentLabels'
 import type { SerpInsightRow }                        from '@/lib/content/serpInsights'
 import type { SiteOption }                            from '@/lib/content/types'
 
@@ -357,7 +357,7 @@ function GscSection({
 // The other three sources topic selection reads (/api/admin/content/keyword-sources).
 interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
 interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null; local_volume?: number | null }
+interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null; local_volume?: number | null; chosen?: boolean }
 interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[]; researchLocation?: string | null }
 
 /** One column of a source table. `align` defaults to right, because most of these are numbers. */
@@ -530,17 +530,6 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
   }
 
   /** "Not this one." The row moves to a Removed line with Restore; put back if the write fails. */
-  async function handleDismiss(row: ResearchRow) {
-    setResearchMsg(null)
-    setSources(prev => prev ? { ...prev, researched: prev.researched.filter(r => r.keyword !== row.keyword) } : prev)
-    setRemoved(prev => [row, ...prev.filter(r => r.keyword !== row.keyword)])
-    if (!(await setDismissed(row.keyword, true))) {
-      setRemoved(prev => prev.filter(r => r.keyword !== row.keyword))
-      setSources(prev => prev ? { ...prev, researched: [row, ...prev.researched] } : prev)
-      setResearchMsg('Couldn’t remove that keyword. It’s still in the list — try again, or tell your admin if it keeps happening.')
-    }
-  }
-
   async function handleRestore(row: ResearchRow) {
     setResearchMsg(null)
     setRemoved(prev => prev.filter(r => r.keyword !== row.keyword))
@@ -686,58 +675,39 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { da
         ]}
       />
 
-      <SourceSection<ResearchRow>
-        badge="Keyword Research" badgeColor="#334155" badgeBg="#f1f5f9" provider="DataForSEO"
-        note={hasLocalVolume
-          ? `What research found for this client’s services — searches measured in ${place ?? 'the research location'}. Nothing has been written for these yet; best first. Starting keywords are edited under Settings → Brand DNA.`
-          : `What research found for this client’s services — searches measured nationwide${place
-              ? ` (Look again under Settings → Brand DNA to get numbers for ${place})`
-              : ' (set a research location under Settings → Brand DNA to see local numbers)'}. Nothing has been written for these yet; best first. Starting keywords are edited under Settings → Brand DNA.`}
-        emptyText="No keyword research yet for this client. Run it from Settings → Brand DNA → Look again."
-        rows={sources?.researched ?? []} search={search} loading={sources === null}
-        searchOn={r => r.keyword}
-        columns={[
-          { label: 'Keyword', left: true, render: r => r.keyword },
-          {
-            label:  hasLocalVolume ? 'Searches/mo (national)' : 'Searches/mo',
-            title:  hasLocalVolume ? 'Average searches a month, country-wide' : 'Average searches a month',
-            render: r => r.volume == null ? '—' : r.volume.toLocaleString(),
-          },
-          ...(hasLocalVolume ? [{
-            label:  `Searches/mo (${place ?? 'local'})`,
-            title:  'Average searches a month in the research location. — means too few for Google to report.',
-            render: (r: ResearchRow) => r.local_volume == null ? '—' : r.local_volume.toLocaleString(),
-          }] : []),
-          {
-            label:  'Difficulty',
-            title:  'How hard it is to rank, 0–100. Under 30 is winnable quickly.',
-            render: r => r.difficulty == null ? '—' : (
-              <span className={`badge badge-${r.difficulty <= 30 ? 'green' : r.difficulty <= 60 ? 'amber' : 'red'}`}>{Math.round(r.difficulty)}</span>
-            ),
-          },
-          {
-            label:  'What they want',
-            title:  'What the searcher is trying to do',
-            render: r => { const l = intentLabel(r.intent); return l ? <span title={intentHint(r.intent)}>{l}</span> : '—' },
-          },
-          {
-            label:  'Priority',
-            title:  'How strongly we recommend writing this — combines monthly searches, how hard it is to rank, whether it already converts in Google Ads, and how close it is to this client’s services.',
-            render: r => r.score == null ? '—' : String(Math.round(r.score)),
-          },
-          { label: '', render: r => (
-            <button
-              type="button"
-              onClick={() => handleDismiss(r)}
-              title="Remove — this keyword won’t be suggested again"
-              aria-label={`Remove ${r.keyword}`}
-              style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px' }}
-            >
-              ×
-            </button>
-          ) },
-        ]}
-      />
+      {/* Choosing, not just listing: this is where keyword curation happens between setup runs. */}
+      <div className="card p-5" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            background: '#f1f5f9', color: '#334155',
+          }}>
+            Keyword Research
+          </span>
+        </div>
+        <p style={{ margin: '0 0 12px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          {hasLocalVolume
+            ? `Search terms found for this client's services, measured in ${place ?? 'their market'}.`
+            : `Search terms found for this client's services, measured nationwide${place ? '' : ' — set a research location under Settings → Brand DNA for local numbers'}.`}
+          {' '}Pick the ones worth pursuing; only those are shown to the writer.
+        </p>
+        <KeywordResearchPanel
+          clientId={clientId}
+          keywords={(sources?.researched ?? []).map(r => ({
+            keyword:      r.keyword,
+            volume:       r.volume ?? null,
+            difficulty:   r.difficulty ?? null,
+            intent:       r.intent ?? null,
+            source:       null,
+            score:        null,
+            local_volume: r.local_volume ?? null,
+            chosen:       r.chosen ?? false,
+          }))}
+          geoWords={place ? [place] : []}
+          place={place}
+        />
+      </div>
       {(removed.length > 0 || researchMsg) && (
         <div style={{ margin: '-8px 0 16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           {researchMsg && <p style={{ margin: '0 0 6px', color: 'var(--red)' }}>{researchMsg}</p>}

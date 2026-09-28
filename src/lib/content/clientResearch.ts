@@ -779,6 +779,11 @@ export async function getResearchCandidates(clientId: string): Promise<{
   candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null }>
   refreshed:  boolean
 }> {
+  // Only chosen keywords reach the writer. A research run stores a few hundred candidates; they
+  // stay browsable in the keywords panel, but nothing is written from one until a person picks it.
+  //
+  // Without migration 225 the filter is dropped and every candidate counts, which is the behaviour
+  // this replaces — so an unmigrated database keeps working exactly as before.
   const read = async () => {
     const db = createAdminClient()
     const base = () => db
@@ -790,7 +795,13 @@ export async function getResearchCandidates(clientId: string): Promise<{
     // Dismissed candidates stay out of the prompt. Asked with the filter, then without it, so a
     // database that has not run migration 223 still reads (and still shows dismissed rows —
     // there is nothing else it could do).
-    let { data, error } = await base().is('dismissed_at', null).limit(200)
+    // Chosen only, dismissed excluded. Each filter is dropped in turn if its column is absent,
+    // so a database missing migration 225 (or 223) still reads and behaves as it did before that
+    // migration — unfiltered, which is the old meaning of "the pool".
+    let { data, error } = await base().not('chosen_at', 'is', null).is('dismissed_at', null).limit(200)
+    if (error && /chosen_at/i.test(error.message)) {
+      ({ data, error } = await base().is('dismissed_at', null).limit(200))
+    }
     if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(200))
     if (error) console.warn('[research] candidate read failed:', error.message)
     // Sorted here, not in the query. keyword-sources/route.ts observed that a server-side

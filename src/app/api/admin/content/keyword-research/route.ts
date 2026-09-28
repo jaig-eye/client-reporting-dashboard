@@ -37,7 +37,7 @@ const RESEARCH_REUSE_DAYS = 30
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
-  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null }>
+  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null; chosen: boolean }>
   competitors:  string[]
   /** Best-rated businesses in the local pack for the seed services; only on a fresh local run. */
   localPack?:   Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
@@ -58,13 +58,17 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
   try {
     const base = () => db
       .from('seo_keywords')
-      .select('keyword, search_volume, keyword_difficulty, intent, source, metadata')
+      .select('keyword, search_volume, keyword_difficulty, intent, source, metadata, chosen_at')
       .eq('client_id', clientId)
       .or('intent.is.null,intent.neq.navigational')
     // Dismissed rows are not shown. With-filter first, then without, for a database that has
     // not run migration 223 yet.
     let { data, error } = await base().is('dismissed_at', null).limit(200)
     if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(200))
+    // chosen_at is migration 225. Without it every keyword reads as chosen, which is exactly the
+    // pre-225 behaviour and keeps a database that has not been migrated working unchanged.
+    const hasChosen = !(error && /chosen_at/i.test(error.message))
+    if (!hasChosen) ({ data, error } = await base().limit(200))
     if (error) console.warn('[keyword-research] stored read failed:', error.message)
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
@@ -76,6 +80,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       source:     r.source             == null ? null : String(r.source),
       score:      researchScoreOf(r.metadata),
       local_volume: localVolumeOf(r.metadata),
+      chosen:     hasChosen ? r.chosen_at != null : true,
     }))
       .filter(k => k.keyword)
       // Research score first — the order the pool was built to prefer — volume as tie-break.
@@ -200,16 +205,49 @@ export async function POST(request: NextRequest) {
 }
 
 
-/** Mark a researched keyword irrelevant (or take that back). { client_id, keyword, dismissed }. */
+/**
+ * Change what we do with researched keywords.
+ *
+ *   { client_id, keyword, dismissed }        — mark one irrelevant, or take that back
+ *   { client_id, keywords: [...], chosen }   — choose or unchoose several at once
+ *
+ * Bulk matters for choosing: a run returns a few hundred candidates and ticking twenty of them
+ * should be one request, not twenty.
+ */
 export async function PATCH(request: NextRequest) {
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { client_id?: string; keyword?: string; dismissed?: boolean } = {}
+  let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean } = {}
   try { body = await request.json() } catch { /* handled below */ }
   const clientId = String(body.client_id ?? '').trim()
-  const keyword  = String(body.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+  // ── Bulk selection ────────────────────────────────────────────────────────
+  if (Array.isArray(body.keywords)) {
+    const list = Array.from(new Set(
+      (body.keywords as unknown[]).map(k => String(k ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean),
+    )).slice(0, 500)
+    if (!clientId || list.length === 0) {
+      return NextResponse.json({ error: 'client_id and a non-empty keywords array are required' }, { status: 400 })
+    }
+    const db = createAdminClient()
+    const { error } = await db
+      .from('seo_keywords')
+      .update({ chosen_at: body.chosen === false ? null : new Date().toISOString() })
+      .eq('client_id', clientId)
+      .in('normalized_keyword', list)
+    if (error) {
+      const missing = /chosen_at/i.test(error.message)
+      return NextResponse.json(
+        { error: missing ? 'Choosing keywords needs migration 225 (seo_keywords.chosen_at)' : error.message },
+        { status: missing ? 501 : 500 },
+      )
+    }
+    return NextResponse.json({ ok: true, updated: list.length })
+  }
+
+  const keyword = String(body.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
   if (!clientId || !keyword) return NextResponse.json({ error: 'client_id and keyword are required' }, { status: 400 })
 
   const db = createAdminClient()
