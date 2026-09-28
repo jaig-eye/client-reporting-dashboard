@@ -146,7 +146,7 @@ export default function ClientContentTabPanel({
       )}
 
       {/* Card nav */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: '1.5rem' }}>
+      <div className="cc-nav" style={{ '--cc-nav-count': TABS.length } as React.CSSProperties}>
         {TABS.map(tab => {
           const active = activeTab === tab.id
           return (
@@ -157,7 +157,7 @@ export default function ClientContentTabPanel({
               style={{
                 position: 'relative',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 8, padding: '16px 8px',
+                gap: 8, padding: '14px 6px', whiteSpace: 'nowrap',
                 borderRadius: 12,
                 border: active ? 'none' : '1px solid var(--border)',
                 background: active ? 'var(--accent, #2563eb)' : 'var(--bg-surface)',

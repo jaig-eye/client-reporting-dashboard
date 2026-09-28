@@ -12,7 +12,7 @@
 // The value is exchanged as the same comma-joined string the callers already store, so nothing
 // downstream has to change.
 
-import { useState, type KeyboardEvent, type ClipboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react'
 
 export function splitPhrases(text: string): string[] {
   return Array.from(new Set(
@@ -33,6 +33,17 @@ export default function KeywordChipInput({
 }) {
   const [draft, setDraft] = useState('')
   const phrases = splitPhrases(value)
+
+  // Clicking the box focuses its own input.
+  //
+  // This used to be document.getElementById(id ?? 'chip-input'), and no caller passed an id — so
+  // every chip input on the page shared the literal 'chip-input' and getElementById handed back
+  // whichever came first in the DOM. Clicking Service Areas, or Search keyword research from, put
+  // the caret in Services Offered. A ref can only ever mean this instance.
+  const inputRef = useRef<HTMLInputElement>(null)
+  // A real unique id so a caller's <label htmlFor> still lands on the right field.
+  const autoId   = useId()
+  const inputId  = id ?? `chips-${autoId}`
 
   const commit = (text: string) => {
     const added = splitPhrases(text)
@@ -65,7 +76,7 @@ export default function KeywordChipInput({
         minHeight: 38, height: 'auto', padding: '6px 8px',
         cursor: disabled ? 'not-allowed' : 'text', opacity: disabled ? 0.6 : 1,
       }}
-      onClick={() => { if (!disabled) document.getElementById(id ?? 'chip-input')?.focus() }}
+      onClick={() => { if (!disabled) inputRef.current?.focus() }}
     >
       {phrases.map((p, i) => (
         <span
@@ -92,7 +103,8 @@ export default function KeywordChipInput({
         </span>
       ))}
       <input
-        id={id ?? 'chip-input'}
+        id={inputId}
+        ref={inputRef}
         type="text"
         value={draft}
         disabled={disabled}

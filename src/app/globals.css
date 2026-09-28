@@ -386,6 +386,30 @@
   .badge-blue   { background: var(--blue-subtle);   color: var(--blue);   }
   .badge-gray   { background: var(--bg-subtle); color: var(--text-muted); border: 1px solid var(--border); }
 
+  /* ── Content tab nav ───────────────────────────────────────────────────── */
+  /* One row, however many tabs there are. The column count was hard-coded at 4, so adding
+     Keywords wrapped a fifth card onto its own line. It comes from --cc-nav-count now, which the
+     panel sets from the tab list, and narrow screens fall back to a grid that still fits. */
+  .cc-nav {
+    display: grid;
+    grid-template-columns: repeat(var(--cc-nav-count, 4), minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 760px) { .cc-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 460px) { .cc-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /* ── Trust & Credibility grid ──────────────────────────────────────────── */
+  /* Two columns of mixed controls: single-line inputs paired with two-row textareas. The grid
+     row stretched to the taller cell but the control inside kept its own height, so the short
+     side sat against the top of a tall row and the pair never lined up. Each cell is a column
+     now and its control fills it — which also gives the prose fields the room they were
+     overflowing out of. */
+  .eeat-grid > div { display: flex; flex-direction: column; }
+  .eeat-grid > div > textarea,
+  .eeat-grid > div > input { flex: 1 1 auto; }
+  .eeat-grid > div > textarea { min-height: 3.5rem; resize: vertical; }
+
   /* ── Tables ────────────────────────────────────────────────────────────── */
   .data-table {
     width: 100%;

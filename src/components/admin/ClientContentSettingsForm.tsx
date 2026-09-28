@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { SERVICES_HELP, SERVICE_AREAS_HELP, RESEARCH_LOCATION_HELP } from '@/lib/content/researchCopy'
+import { SERVICES_HELP, SERVICE_AREAS_HELP, RESEARCH_LOCATION_HELP, RESEARCH_SEEDS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
+import { parseServices, geoPhrase, buildResearchSeeds, locationCandidates } from '@/lib/content/researchSeeds'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import type { EeatData }       from '@/lib/content/types'
 
@@ -244,7 +245,9 @@ export default function ClientContentSettingsForm({
     setShowSiteInput(false)
   }
 
-  const seedList = () => seeds.split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25)
+  // foundational_keywords is no longer editable here, so it is no longer sent. The PUT handler
+  // only writes fields present in the body, which leaves whatever an older client had stored
+  // intact — research still unions it into the seeds. Removing the field must not wipe the data.
 
   async function save(): Promise<boolean> {
     setSaving(true); setError(''); setSaved(false)
@@ -256,7 +259,6 @@ export default function ClientContentSettingsForm({
         ...form,
         eeat_data: eeat,
         vertical: vertical || null,
-        foundational_keywords: seedList(),
         research_location: researchLocation,
       }),
     })
@@ -445,12 +447,15 @@ export default function ClientContentSettingsForm({
           <Label hint="primary market" help={RESEARCH_LOCATION_HELP}>Research Location</Label>
           <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} />
           {!researchLocation && (() => {
-            const first = form.geographic_focus.split(/[,;\n]+/).map(v => v.trim()).filter(Boolean)[0]
+            // The place name research will look up, not the raw first service area. "Los Angeles
+            // and Tri-County area" is one entry meaning one city, and showing it verbatim implied
+            // we would search for a phrase that resolves to nothing.
+            const first = locationCandidates(form.geographic_focus)[0]
             return (
               <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
                 {first
-                  ? <>Measuring in <strong style={{ color: 'var(--text-muted)' }}>{first}</strong>, from your first service area. Set one here to override.</>
-                  : 'No service areas set, so demand is measured nationwide.'}
+                  ? <>Measuring in <strong style={{ color: 'var(--text-muted)' }}>{first}</strong>, read from your first service area. Set one here to override.</>
+                  : 'No local market in your service areas, so demand is measured nationwide.'}
               </p>
             )
           })()}
@@ -458,11 +463,16 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label help={SERVICES_HELP}>Search keyword research from</Label>
-          <KeywordChipInput
-            value={seeds}
-            onChange={setSeeds}
-            placeholder="permanent outdoor lighting, landscape lighting installation…"
+          <Label help={RESEARCH_SEEDS_HELP}>What we search for</Label>
+          {/* Shown, not asked for. This was a second chip input the operator filled in by hand,
+              and every client had it as a verbatim copy of Services Offered — because that is
+              what it is. The phrases come from buildResearchSeeds, the same function research
+              itself calls, so the preview cannot drift from what actually gets bought. */}
+          <SeedPreview
+            services={form.services}
+            location={researchLocation}
+            geographicFocus={form.geographic_focus}
+            extra={seeds}
           />
           <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
             {researchedAt ? `Last researched ${new Date(researchedAt).toLocaleDateString()}.` : 'Not researched yet.'}
@@ -483,7 +493,7 @@ export default function ClientContentSettingsForm({
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap' }}
                 onClick={() => { if (researchedAt) setConfirmRerun(true); else void rerunResearch() }}
-                disabled={researching || saving || !seeds.trim()}
+                disabled={researching || saving || !form.services.trim()}
               >
                 {researching ? 'Looking…' : 'Look again'}
               </button>
@@ -495,13 +505,12 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label hint="used when referencing phone in content">Phone Number</Label>
+          <Label hint="used when referencing phone in content" help={PHONE_HELP}>Phone Number</Label>
           <input className="input" type="tel" style={{ width: '50%' }} value={form.phone_number} onChange={e => setField('phone_number', e.target.value)} placeholder="(321) 555-5555" />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Saving also updates the business phone number in Business Info.</p>
         </div>
 
         <div>
-          <Label hint="one per line — AI picks the most relevant for each post">Call-to-Action Options</Label>
+          <Label hint="one per line" help={CTA_HELP}>Call-to-Action Options</Label>
           <textarea
             className="input"
             rows={3}
@@ -510,9 +519,6 @@ export default function ClientContentSettingsForm({
             onChange={e => setField('cta_list', e.target.value)}
             placeholder={`e.g.\nCall us at (321) 555-5555 for a free quote.\nBook online at https://example.com/book`}
           />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-            The AI maps each CTA to the post&rsquo;s funnel stage and intent automatically.
-          </p>
         </div>
       </div>
 
@@ -548,13 +554,10 @@ export default function ClientContentSettingsForm({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 eeat-grid">
             <div>
-              <Label>Year Founded</Label>
+              <Label help={FOUNDED_YEAR_HELP}>Year Founded</Label>
               <input className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
-              <p style={{ fontSize: '0.68rem', color: 'var(--text-faint)', marginTop: 3 }}>
-                Tenure is calculated from this, so it stays correct as years pass.
-              </p>
             </div>
             <div>
               <Label>Reviews (count &amp; rating)</Label>
@@ -625,6 +628,64 @@ export default function ClientContentSettingsForm({
         {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
         {error && <span className="text-xs" style={{ color: 'var(--red)' }}>{error}</span>}
       </div>
+    </div>
+  )
+}
+
+/**
+ * What research will search for, derived rather than typed.
+ *
+ * Built by buildResearchSeeds — the function research itself calls — so what is on screen is what
+ * gets bought. The geo variants are shown muted: they are the same service with the market pinned
+ * on, and letting them read as separate entries made five services look like ten decisions.
+ */
+function SeedPreview({ services, location, geographicFocus, extra }: {
+  services:        string
+  location:        ResearchLocationValue | null
+  geographicFocus: string
+  /** content_settings.foundational_keywords, from older clients. Read-only now. */
+  extra:           string
+}) {
+  const list  = parseServices(services)
+  const geo   = geoPhrase(location ? { name: location.name } : null, geographicFocus)
+  const older = String(extra ?? '').split(/[,;\n]+/).map(v => v.trim()).filter(Boolean)
+  // Anything stored that is not simply one of the services — the rest would read as a duplicate.
+  const kept  = older.filter(v => !list.some(s => s.toLowerCase() === v.toLowerCase()))
+  const seeds = buildResearchSeeds(list, geo, kept)
+
+  if (seeds.length === 0) {
+    return (
+      <p className="text-xs" style={{ margin: 0, color: 'var(--text-faint)' }}>
+        Add a service above and the searches appear here.
+      </p>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {seeds.map(s => {
+          const isGeo = !!geo && s.toLowerCase().endsWith(` ${geo.toLowerCase()}`)
+          return (
+            <span
+              key={s}
+              style={{
+                display: 'inline-flex', alignItems: 'center',
+                background: isGeo ? 'transparent' : 'var(--bg-subtle)',
+                border: '1px solid var(--border)',
+                borderRadius: 999, padding: '2px 9px', fontSize: '0.78rem',
+                color: isGeo ? 'var(--text-faint)' : 'var(--text-primary)',
+              }}
+            >
+              {s}
+            </span>
+          )
+        })}
+      </div>
+      <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+        {seeds.length} search{seeds.length === 1 ? '' : 'es'}
+        {geo ? <> — the faded ones are the same service measured in <strong style={{ color: 'var(--text-muted)' }}>{geo}</strong>.</> : '.'}
+      </p>
     </div>
   )
 }

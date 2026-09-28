@@ -39,6 +39,7 @@ import {
   type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig, type ResearchLocation, type DfsSerpSnapshot,
 } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
+import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
 import { recordDfsUsage } from './dataforseoUsage'
 import { deriveResearchLocation } from './deriveLocation'
 
@@ -122,13 +123,6 @@ const SEED_STOP = new Set(['and', 'the', 'for', 'with', 'your', 'our', 'from', '
  * first "and", bracket or "including". "Los Angeles and Tri-County area, Southern California" used
  * to produce seeds ending in "los angeles and tri-county area", which nobody types.
  */
-function geoPhrase(location: ResearchLocation | null, prose: string): string {
-  const fromLocation = location ? location.name.split(',')[0].replace(/\s+county$/i, '').trim() : ''
-  if (fromLocation) return fromLocation
-  const first = prose.split(/[,\n;]+/)[0] ?? ''
-  return first.split(/\s+and\s+|\s*\(|\s+including\s+/i)[0].trim()
-}
-
 /**
  * How much of national demand this market is, from the phrases Google answered for both. The
  * median, over pairs big enough to be more than noise. 3% — roughly one large metro — when too
@@ -376,8 +370,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     }
     if (csErr) console.warn('[research] cannot read services for seeds:', csErr.message)
     const settings = cs as Record<string, unknown> | null
-    const services = String(settings?.services ?? '')
-      .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
+    const services = parseServices(settings?.services)
     location = readResearchLocation(settings?.research_location)
     const geographicFocus = String(settings?.geographic_focus ?? '')
 
@@ -410,8 +403,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     ).map(v => String(v).trim()).filter(v => v.length > 2).slice(0, 25)
     // The geo variants matter twice over: they make the SERPs local, so the competitors found
     // are the ones down the road, and they give keyword_ideas a local angle to expand from.
-    const fromServices = geo ? services.flatMap(s => [s, `${s} ${geo}`]) : services
-    seeds = Array.from(new Set([...foundational, ...fromServices]))
+    seeds = buildResearchSeeds(services, geo, foundational)
     // The location's every name part counts as geography for the matcher ("southern california"
     // is not a topic word), but the prose does not — a business that says "in-shop service at
     // 1820 Trade St" would have "shop" and "service" stop counting as topic words.
@@ -903,7 +895,11 @@ export async function resetResearchPool(clientId: string): Promise<number> {
       .eq('client_id', clientId)
       .eq('is_tracked', false)
       .is('content_post_id', null)
-    let { data, error } = await base().is('dismissed_at', null)
+    // Chosen keywords survive a re-run. Choosing sets chosen_at and nothing else — not
+    // is_tracked, not content_post_id — so without this clause every keyword the operator had
+    // picked was deleted by the next "Look again", while the UI promised the opposite.
+    let { data, error } = await base().is('dismissed_at', null).is('chosen_at', null)
+    if (error && /chosen_at/i.test(error.message)) ({ data, error } = await base().is('dismissed_at', null))
     if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base())
     if (error) { console.warn('[research] reset: cannot list candidates:', error.message); return 0 }
     const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
