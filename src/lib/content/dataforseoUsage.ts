@@ -9,6 +9,10 @@
 import { createAdminClient } from '@/lib/supabase/server'
 
 export type DfsOperation = 'rank_check' | 'keyword_discovery' | 'serp_research' | 'serp_intel' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
+  // One live SERP bought when an operator picks a keyword, so the talking points exist before a
+  // post is committed to it. Its own operation because it is the one line of spend a person
+  // triggers by clicking, and it should be readable apart from the scheduled research.
+  | 'serp_snapshot_on_select'
 
 export async function recordDfsUsage(params: {
   operation: DfsOperation

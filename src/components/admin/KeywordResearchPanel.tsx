@@ -100,6 +100,10 @@ export default function KeywordResearchPanel({
       const was  = new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase()))
       const add  = Array.from(chosen).filter(k => !was.has(k))
       const drop = Array.from(was).filter(k => !chosen.has(k))
+      // Newly picked keywords have their SERP looked up as part of the save, so this request can
+      // take a few seconds per keyword. Say so rather than leaving a button spinning.
+      if (add.length) setMsg(`Saving, and looking up what Google shows for ${add.length} new keyword${add.length === 1 ? '' : 's'}…`)
+      let captured = 0
       for (const [list, isChosen] of [[add, true], [drop, false]] as const) {
         if (!list.length) continue
         const res = await fetch('/api/admin/content/keyword-research', {
@@ -111,8 +115,13 @@ export default function KeywordResearchPanel({
           const body = await res.json().catch(() => ({}))
           throw new Error(body.error ?? `HTTP ${res.status}`)
         }
+        const body = await res.json().catch(() => ({})) as { snapshot?: { captured?: number } }
+        captured += body.snapshot?.captured ?? 0
       }
-      setMsg(`Saved — ${chosen.size} keyword${chosen.size === 1 ? '' : 's'} in use.`)
+      setMsg(
+        `Saved — ${chosen.size} keyword${chosen.size === 1 ? '' : 's'} in use.` +
+        (captured ? ` Captured what Google shows for ${captured} of them; see the Analytics tab.` : ''),
+      )
       onChanged?.()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not save')

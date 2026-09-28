@@ -26,6 +26,7 @@ import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
+import { snapshotChosenKeywords } from '@/lib/content/snapshotChosen'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
@@ -244,7 +245,15 @@ export async function PATCH(request: NextRequest) {
         { status: missing ? 501 : 500 },
       )
     }
-    return NextResponse.json({ ok: true, updated: list.length })
+    // Picking a keyword is the moment its talking points are worth reading — before a post is
+    // committed to it, not after one exists. One SERP call per keyword, once: anything that
+    // already carries a snapshot is skipped, and unchoosing buys nothing. This never fails the
+    // selection, which is already written above.
+    const snapshot = body.chosen === false
+      ? { captured: 0, skipped: 0, cost: 0 }
+      : await snapshotChosenKeywords(db, clientId, list)
+
+    return NextResponse.json({ ok: true, updated: list.length, snapshot })
   }
 
   const keyword = String(body.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
