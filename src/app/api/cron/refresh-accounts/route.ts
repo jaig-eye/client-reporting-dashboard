@@ -9,7 +9,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { createAdminClient }         from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
+import { isDeadCredentialError } from '@/lib/connectors/authFailure'
 import { getConnectorAdapter }       from '@/lib/connectors/registry'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -180,9 +181,8 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
 
     const authFailures = new Map<string, number>()
     for (const row of (failures ?? []) as { error_message: string | null; client_connections: unknown }[]) {
-      const msg = row.error_message ?? ''
-      // The signatures that mean "our credential is dead", not "this one request went wrong".
-      if (!/OAuthException|code\D*190|access token|token has expired|invalid_grant|401|invalid_client/i.test(msg)) continue
+      // Dead credential, and not merely a bad five minutes wearing the same words.
+      if (!isDeadCredentialError(row.error_message)) continue
       const cc   = row.client_connections as { connectors?: { type?: string } | { type?: string }[] } | null
       const conn = Array.isArray(cc?.connectors) ? cc?.connectors[0] : cc?.connectors
       const type = conn?.type ?? 'unknown'
