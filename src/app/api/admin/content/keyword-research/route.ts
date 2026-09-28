@@ -27,6 +27,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { snapshotChosenKeywords } from '@/lib/content/snapshotChosen'
+import { addManualKeywords } from '@/lib/content/addManualKeywords'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
@@ -220,9 +221,25 @@ export async function PATCH(request: NextRequest) {
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean } = {}
+  let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean; add?: unknown } = {}
   try { body = await request.json() } catch { /* handled below */ }
   const clientId = String(body.client_id ?? '').trim()
+
+  // ── Keywords typed in by hand ─────────────────────────────────────────────
+  // Added to the same pool the research writes, chosen on arrival, and given a SERP snapshot the
+  // same way any other pick is — so a typed keyword is judged and written from exactly like a
+  // discovered one.
+  if (Array.isArray(body.add)) {
+    if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
+    const db = createAdminClient()
+    const result = await addManualKeywords(db, clientId, (body.add as unknown[]).map(k => String(k ?? '')))
+    if (result.error) return NextResponse.json({ error: result.error }, { status: 500 })
+    const snapshot = await snapshotChosenKeywords(
+      db, clientId,
+      (body.add as unknown[]).map(k => String(k ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean),
+    )
+    return NextResponse.json({ ok: true, ...result, snapshot })
+  }
 
   // ── Bulk selection ────────────────────────────────────────────────────────
   if (Array.isArray(body.keywords)) {

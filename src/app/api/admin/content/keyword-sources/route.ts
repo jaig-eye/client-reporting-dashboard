@@ -26,10 +26,14 @@ export const dynamic = 'force-dynamic'
  * numbers will not agree and the comment used to claim they did.
  */
 const PAID_WINDOW_DAYS = 90
+/** Rows read from the pool before ranking. Wider than we show, so the sort decides what survives. */
+const POOL_READ = 200
+/** Rows shown, on top of everything already chosen. */
+const POOL_SHOW = 60
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null }
+export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null; source: string | null; chosen: boolean }
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
@@ -108,18 +112,28 @@ export async function GET(req: NextRequest) {
   // ── DataForSEO research: candidates nothing has been written for yet ──────
   const researched: ResearchRow[] = await (async () => {
     try {
-      const base = () => db
+      const base = (cols: string) => db
         .from('seo_keywords')
-        .select('keyword, search_volume, keyword_difficulty, intent, metadata')
+        .select(cols)
         .eq('client_id', clientId)
         .eq('is_tracked', false)
         .is('content_post_id', null)
         // A brand search is never a content target; rows from before the pool excluded them.
         .or('intent.is.null,intent.neq.navigational')
-      // Dismissed candidates are not "researched opportunities" any more. Filter first, then
-      // without, for a database that has not run migration 223.
-      let { data, error } = await base().is('dismissed_at', null).limit(60)
-      if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(60))
+      // chosen_at is migration 225. Without it nothing here can say what was picked — which is
+      // what happened before: this select never asked for the column, so every row came back
+      // unchosen and the tab showed a saved selection as empty every time it was reopened.
+      const WITH    = 'keyword, search_volume, keyword_difficulty, intent, metadata, chosen_at, source'
+      const WITHOUT = 'keyword, search_volume, keyword_difficulty, intent, metadata, source'
+      // Read wider than we show. The cap used to be applied by the database, before the sort
+      // below ran, so which sixty rows survived was whatever order Postgres happened to return.
+      let { data, error } = await base(WITH).is('dismissed_at', null).limit(POOL_READ)
+      let hasChosen = true
+      if (error && /chosen_at/i.test(error.message)) {
+        hasChosen = false
+        ;({ data, error } = await base(WITHOUT).is('dismissed_at', null).limit(POOL_READ))
+      }
+      if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? WITH : WITHOUT).limit(POOL_READ))
       // PostgREST reports a bad query by RETURNING an error, not by throwing, so a bare catch
       // sees nothing and the panel silently renders empty. Say so instead.
       if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return [] }
@@ -128,16 +142,30 @@ export async function GET(req: NextRequest) {
       // array against local PostgREST — no error, just nothing — while the identical query
       // without it returned every row. Sixty rows sort for nothing, so this sidesteps the
       // question rather than depending on an answer I could not pin down.
-      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+      // Through unknown: the column list is chosen at runtime, so PostgREST's generic cannot
+      // narrow it and infers the error shape instead.
+      const all = ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
         keyword:    String(r.keyword ?? '').trim(),
         volume:     r.search_volume      == null ? null : Number(r.search_volume),
         difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
         intent:     r.intent             == null ? null : String(r.intent),
         score:      researchScoreOf(r.metadata),
         local_volume: localVolumeOf(r.metadata),
+        source:     r.source == null ? null : String(r.source),
+        chosen:     hasChosen ? r.chosen_at != null : false,
       }))
         .filter(k => k.keyword)
         .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
+
+      // Everything chosen, then the best of the rest up to the display cap.
+      //
+      // Two reasons the cap cannot simply take the top sixty by score. A chosen keyword is a
+      // decision and must never fall off the list that shows decisions. And a hand-typed keyword
+      // has no research score at all, so it sorts below every discovered row — it would be added,
+      // chosen, and then invisible.
+      const chosen   = all.filter(k => k.chosen)
+      const unchosen = all.filter(k => !k.chosen)
+      return [...chosen, ...unchosen.slice(0, Math.max(0, POOL_SHOW - chosen.length))]
     } catch { return [] }   // seo_keywords only exists from migration 189
   })()
 
