@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP } from '@/lib/content/researchCopy'
+import { SERVICES_HELP, SERVICE_AREAS_HELP, RESEARCH_LOCATION_HELP } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import type { EeatData }       from '@/lib/content/types'
 
@@ -420,7 +420,7 @@ export default function ClientContentSettingsForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <Label>Services Offered</Label>
+            <Label help={SERVICES_HELP}>Services Offered</Label>
             <KeywordChipInput value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical" />
           </div>
           <div>
@@ -428,8 +428,12 @@ export default function ClientContentSettingsForm({
             <input className="input" style={{ width: '100%' }} value={form.target_audience} onChange={e => setField('target_audience', e.target.value)} />
           </div>
           <div>
-            <Label>Geographic Focus</Label>
-            <input className="input" style={{ width: '100%' }} value={form.geographic_focus} onChange={e => setField('geographic_focus', e.target.value)} />
+            <Label hint="strongest first" help={SERVICE_AREAS_HELP}>Service Areas</Label>
+            <KeywordChipInput
+              value={form.geographic_focus}
+              onChange={v => setField('geographic_focus', v)}
+              placeholder="Los Angeles, Orange County…"
+            />
           </div>
           <div>
             <Label>Brand Voice</Label>
@@ -444,7 +448,7 @@ export default function ClientContentSettingsForm({
         </div>
 
         <div>
-          <Label help={STARTING_KEYWORDS_HELP}>Search keyword research from</Label>
+          <Label help={SERVICES_HELP}>Search keyword research from</Label>
           <KeywordChipInput
             value={seeds}
             onChange={setSeeds}

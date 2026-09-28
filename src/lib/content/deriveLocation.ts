@@ -53,6 +53,14 @@ export function locationCandidates(geographicFocus: string): string[] {
   const raw = (geographicFocus ?? '').trim()
   if (!raw || NON_LOCAL.test(raw)) return []
 
+  // Service Areas is a list now, strongest first, so the first entry is the primary market and
+  // needs no guessing. The prose parsing below stays for clients written as a sentence — which is
+  // every client until they are next edited.
+  const asList = raw.split(',').map(v => v.trim()).filter(Boolean)
+  if (asList.length > 1 && asList.every(v => v.split(/\s+/).length <= 4)) {
+    return asList.filter(v => !NON_LOCAL.test(v)).slice(0, 4)
+  }
+
   const out: string[] = []
   // Parentheticals go first, before the split: "(Rockledge and Melbourne)" contains a joiner, so
   // splitting first would tear the bracket in half and leave an orphan "(" in the candidate.

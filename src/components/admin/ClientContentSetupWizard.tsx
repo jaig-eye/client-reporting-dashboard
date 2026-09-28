@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { STARTING_KEYWORDS_HELP, RESEARCH_LOCATION_HELP, GEOGRAPHIC_FOCUS_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
+import { SERVICES_HELP, RESEARCH_LOCATION_HELP, SERVICE_AREAS_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
 
@@ -729,11 +729,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brand={brand}
               setBrand={setBrand}
               brandLoaded={brandLoaded}
-              foundationalKeywords={foundationalKeywords}
-              setFoundationalKeywords={setFoundationalKeywords}
               researchLocation={researchLocation}
               setResearchLocation={setResearchLocation}
-              onSeedsEdited={() => { seedsPrefilled.current = true }}
             />
           )}
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
@@ -1121,7 +1118,7 @@ function StepWpConnect({
 
 // ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
-function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, foundationalKeywords, setFoundationalKeywords, researchLocation, setResearchLocation, onSeedsEdited }: {
+function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, researchLocation, setResearchLocation }: {
   analyzeUrl: string
   setAnalyzeUrl: (v: string) => void
   onAnalyze: () => void
@@ -1130,12 +1127,9 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brand: BrandDna
   setBrand: (b: BrandDna) => void
   brandLoaded: boolean
-  foundationalKeywords: string
-  setFoundationalKeywords: (v: string) => void
   researchLocation: ResearchLocationValue | null
   setResearchLocation: (v: ResearchLocationValue | null) => void
   /** Marks the seeds as operator-owned so the services pre-fill never runs again. */
-  onSeedsEdited: () => void
 }) {
   return (
     <div>
@@ -1180,35 +1174,22 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               onChange={v => setBrand({ ...brand, services: v })}
               placeholder="Plumbing, HVAC, Electrical"
             />
+            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              {SERVICES_HELP}
+            </p>
           </Field>
           <Field label="Target Audience">
             <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
-          <Field label="Search keyword research from" drivesResearch>
-            <KeywordChipInput
-              value={foundationalKeywords}
-              onChange={v => { onSeedsEdited(); setFoundationalKeywords(v) }}
-              placeholder="mobile detailing, ceramic coating, paint correction"
-            />
-            {brand.services.trim() && !foundationalKeywords.trim() && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ fontSize: '0.72rem', marginTop: 6 }}
-                onClick={() => { onSeedsEdited(); setFoundationalKeywords(brand.services) }}
-              >
-                Use the services above
-              </button>
-            )}
-            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              {STARTING_KEYWORDS_HELP}
-            </p>
-          </Field>
 
-          <Field label="Geographic Focus" drivesResearch>
-            <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin and the surrounding Hill Country" />
+          <Field label="Service Areas" drivesResearch>
+            <KeywordChipInput
+              value={brand.geographic_focus}
+              onChange={v => setBrand({ ...brand, geographic_focus: v })}
+              placeholder="Austin, Round Rock, Hill Country…"
+            />
             <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              {GEOGRAPHIC_FOCUS_HELP}
+              {SERVICE_AREAS_HELP}
             </p>
           </Field>
           <Field label="Research Location" drivesResearch>
@@ -1665,7 +1646,7 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
           Search from
         </label>
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 6px', lineHeight: 1.5 }}>
-          {STARTING_KEYWORDS_HELP}
+          {SERVICES_HELP}
           {servicesText.trim() && !seeds.trim() ? ' Start from the services you entered, or type your own.' : ''}
         </p>
         {servicesText.trim() && !seeds.trim() && (
