@@ -159,7 +159,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ── DataForSEO research: candidates nothing has been written for yet ──────
-  const readResearched = async (): Promise<ResearchRow[]> => {
+  // Returns the pool and its true size together. The size used to be its own `count: 'exact'`
+  // query, which came back 0 for the same reason the limited read came back empty — and a second
+  // round trip to count rows this one already has in hand was never worth making anyway.
+  const readResearched = async (): Promise<{ rows: ResearchRow[]; total: number | null }> => {
     try {
       const base = (cols: string) => db
         .from('seo_keywords')
@@ -174,17 +177,26 @@ export async function GET(req: NextRequest) {
       // unchosen and the tab showed a saved selection as empty every time it was reopened.
       const WITH    = 'keyword, search_volume, keyword_difficulty, intent, metadata, chosen_at, source'
       const WITHOUT = 'keyword, search_volume, keyword_difficulty, intent, metadata, source'
-      // A ceiling on the payload, not a shortlist — everything under it is shown.
-      let { data, error } = await base(WITH).is('dismissed_at', null).limit(POOL_READ)
+      // Capped in JS, not by the query.
+      //
+      // `.limit()` on this particular select returns an empty array — no error, no rows — through
+      // the Supabase client, while the identical request made by hand over HTTP returns the rows.
+      // Isolated by elimination: the same filters with `select=keyword` and a limit are fine, and
+      // the full column list with no limit is fine; only the two together fail. That is the same
+      // shape as the `.order()` pathology documented below, and the same answer applies — do it
+      // here, where it is a slice of an array we already sort in memory, instead of depending on
+      // a modifier this stack gets wrong. The read stays bounded; the bound is just enforced
+      // somewhere that works.
+      let { data, error } = await base(WITH).is('dismissed_at', null)
       let hasChosen = true
       if (error && /chosen_at/i.test(error.message)) {
         hasChosen = false
-        ;({ data, error } = await base(WITHOUT).is('dismissed_at', null).limit(POOL_READ))
+        ;({ data, error } = await base(WITHOUT).is('dismissed_at', null))
       }
-      if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? WITH : WITHOUT).limit(POOL_READ))
+      if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? WITH : WITHOUT))
       // PostgREST reports a bad query by RETURNING an error, not by throwing, so a bare catch
       // sees nothing and the panel silently renders empty. Say so instead.
-      if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return [] }
+      if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return { rows: [], total: null } }
 
       // Chosen rows, read separately and uncapped.
       //
@@ -196,7 +208,7 @@ export async function GET(req: NextRequest) {
       // so they are fetched on their own and merged in.
       let picked: Record<string, unknown>[] = []
       if (hasChosen) {
-        const { data: ch, error: chErr } = await base(WITH).is('dismissed_at', null).not('chosen_at', 'is', null).limit(POOL_READ)
+        const { data: ch, error: chErr } = await base(WITH).is('dismissed_at', null).not('chosen_at', 'is', null)
         if (chErr) console.warn('[keyword-sources] chosen query failed:', chErr.message)
         else picked = (ch ?? []) as unknown as Record<string, unknown>[]
       }
@@ -245,26 +257,13 @@ export async function GET(req: NextRequest) {
 
       // Chosen first, then everything else by score. A chosen keyword is a decision and belongs
       // at the top of the list that shows decisions; a hand-typed one has no research score at
-      // all, so without this it would sort below every discovered row.
-      return [...all.filter(k => k.chosen), ...all.filter(k => !k.chosen)]
-    } catch { return [] }   // seo_keywords only exists from migration 189
-  }
-
-  // The size of the pool, so the strip can say whether the list is all of it. Only differs from
-  // the list length when a client has more candidates than POOL_READ.
-  const readPoolTotal = async (): Promise<number | null> => {
-    try {
-      const { count, error } = await db
-        .from('seo_keywords')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', clientId)
-        .eq('is_tracked', false)
-        .is('content_post_id', null)
-        .is('dismissed_at', null)
-        .or('intent.is.null,intent.neq.navigational')
-      if (error) { console.warn('[keyword-sources] pool count failed:', error.message); return null }
-      return count ?? null
-    } catch { return null }
+      // all, so without this it would sort below every discovered row. POOL_READ caps the payload
+      // here rather than in the query — see the note above.
+      return {
+        rows:  [...all.filter(k => k.chosen), ...all.filter(k => !k.chosen)].slice(0, POOL_READ),
+        total: all.length,
+      }
+    } catch { return { rows: [], total: null } }   // seo_keywords only exists from migration 189
   }
 
   // Whether this client can be researched at all.
@@ -308,10 +307,10 @@ export async function GET(req: NextRequest) {
 
   // Everything that does not depend on anything else, at once. `researched` is the exception: it
   // joins against the leads map that readPaidTerms fills, so it waits for that one alone.
-  const [paidTerms, ahrefs, poolTotal, hasDataForSeo, settings] = await Promise.all([
-    readPaidTerms(), readAhrefs(), readPoolTotal(), readHasDataForSeo(), readSettings(),
+  const [paidTerms, ahrefs, hasDataForSeo, settings] = await Promise.all([
+    readPaidTerms(), readAhrefs(), readHasDataForSeo(), readSettings(),
   ])
-  const researched = await readResearched()
+  const { rows: researched, total: poolTotal } = await readResearched()
 
   return NextResponse.json({
     paidTerms, ahrefs, researched,
