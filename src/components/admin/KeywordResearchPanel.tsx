@@ -67,11 +67,11 @@ const difficultyTone = (d: number | null) =>
  * it, and the tooltip says how.
  */
 const ORIGINS = [
-  { key: 'manual',     label: 'You added these',             hint: 'Typed in by hand. In use from the moment they were added.' },
-  { key: 'idea',       label: 'Suggested for what you sell',  hint: 'Found by research — what people search around this client’s services, plus paid terms that actually converted.' },
-  { key: 'site',       label: 'You already rank for these',   hint: 'Found by research — keywords this client’s own site is already showing up under.' },
-  { key: 'competitor', label: 'Competitors rank for these',   hint: 'Found by research — keywords rival sites are showing up under in this market.' },
-  { key: 'other',      label: 'Other',                        hint: 'From an earlier run, before origins were recorded.' },
+  { key: 'manual',     chip: 'Yours',       label: 'You added these',             hint: 'Typed in by hand. In use from the moment they were added.' },
+  { key: 'idea',       chip: 'Services',    label: 'Suggested for what you sell',  hint: 'Found by research — what people search around this client’s services, plus paid terms that actually converted.' },
+  { key: 'site',       chip: 'Your site',   label: 'You already rank for these',   hint: 'Found by research — keywords this client’s own site is already showing up under.' },
+  { key: 'competitor', chip: 'Competitors', label: 'Competitors rank for these',   hint: 'Found by research — keywords rival sites are showing up under in this market.' },
+  { key: 'other',      chip: 'Other',       label: 'Other',                        hint: 'From an earlier run, before origins were recorded.' },
 ] as const
 
 const originOf = (k: ResearchKeyword): string => {
@@ -114,6 +114,8 @@ export default function KeywordResearchPanel({
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState<string | null>(null)
   const [filter, setFilter]   = useState('')
+  /** Which origin the list is narrowed to, or 'all'. */
+  const [origin, setOrigin]   = useState<string>('all')
   const [confirmRefresh, setConfirmRefresh] = useState(false)
 
   // Server state is the starting point; a save reconciles back to it.
@@ -121,10 +123,26 @@ export default function KeywordResearchPanel({
     setChosen(new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase())))
   }, [keywords])
 
+  // Text filter first; the origin chips are counted against that result, so the numbers on the
+  // chips always describe what clicking one would actually show.
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase()
     return q ? keywords.filter(k => k.keyword.toLowerCase().includes(q)) : keywords
   }, [keywords, filter])
+
+  const originCounts = useMemo(() => ORIGINS
+    .map(o => ({ key: o.key as string, label: o.chip, n: visible.filter(k => originOf(k) === o.key).length }))
+    .filter(o => o.n > 0), [visible])
+
+  // A chip for an origin that has just been filtered away would otherwise stay selected and show
+  // an empty list with no way back except clearing the text filter.
+  useEffect(() => {
+    if (origin !== 'all' && !originCounts.some(o => o.key === origin)) setOrigin('all')
+  }, [originCounts, origin])
+
+  const shown = useMemo(
+    () => origin === 'all' ? visible : visible.filter(k => originOf(k) === origin),
+    [visible, origin])
 
   // Which columns have anything in them. A client without DataForSEO has no volume and no
   // difficulty at all, and two columns of "—" across the whole table say less than no columns do.
@@ -134,7 +152,7 @@ export default function KeywordResearchPanel({
   /** Origin sections, each with its themes inside. Empty sections are not rendered. */
   const sections = useMemo(() => {
     return ORIGINS.map(origin => {
-      const mine = visible.filter(k => originOf(k) === origin.key)
+      const mine = shown.filter(k => originOf(k) === origin.key)
       if (!mine.length) return null
       const all = groupKeywords(mine, k => k.keyword, strengthOf, geoWords)
       // Chosen themes first within the section, keyed off the saved flag so a row does not jump
@@ -142,7 +160,7 @@ export default function KeywordResearchPanel({
       const isChosen = (g: typeof all[number]) => g.members.some(m => m.chosen)
       return { ...origin, groups: [...all.filter(isChosen), ...all.filter(g => !isChosen(g))], count: mine.length }
     }).filter((s): s is NonNullable<typeof s> => s !== null)
-  }, [visible, geoWords])
+  }, [shown, geoWords])
 
   const toggle = useCallback((keyword: string) => {
     setChosen(prev => {
@@ -276,30 +294,59 @@ export default function KeywordResearchPanel({
             placeholder="Filter…"
             style={{ maxWidth: 170, fontSize: '0.8125rem', padding: '0.3rem 0.55rem' }}
           />
+          {/* Named for what it does, not for the arrow it used to wear. This is the one control on
+              the page that goes out to DataForSEO and spends, so it says so before it runs rather
+              than hiding behind a circular arrow that looked like the reload button above it. */}
           {onRefresh && (confirmRefresh ? (
-            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.8125rem' }}>
-              <button type="button" className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem' }} onClick={() => setConfirmRefresh(false)}>Cancel</button>
-              <button type="button" className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem' }} onClick={() => { setConfirmRefresh(false); onRefresh() }}>Refresh</button>
+            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <button type="button" className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => setConfirmRefresh(false)}>Cancel</button>
+              <button type="button" className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => { setConfirmRefresh(false); onRefresh() }}>Look now</button>
             </span>
           ) : (
             <button
               type="button"
+              className="btn btn-secondary"
               onClick={() => setConfirmRefresh(true)}
               disabled={refreshing || busy}
-              title="Refresh keywords — looks for new ideas. Anything in use stays."
-              aria-label="Refresh keywords"
-              style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 30, height: 30, borderRadius: 8, cursor: refreshing ? 'default' : 'pointer',
-                border: '1px solid var(--border)', background: 'var(--bg-surface)',
-                color: 'var(--text-muted)',
-              }}
+              title="Asks DataForSEO for new keyword ideas. Costs money, and anything already in use stays."
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', fontSize: '0.8125rem', padding: '0.3rem 0.65rem' }}
             >
               <RefreshIcon spinning={!!refreshing} />
+              {refreshing ? 'Looking…' : 'Find new'}
             </button>
           ))}
         </span>
       </div>
+
+      {/* Where each keyword came from, as a filter rather than only as a section heading. With a
+          few hundred rows the headings scroll out of sight, and "show me only what competitors
+          rank for" was a question the list could not answer. Only origins actually present are
+          offered, so this is never a row of dead buttons. */}
+      {originCounts.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {[{ key: 'all', label: 'All', n: visible.length }, ...originCounts].map(o => {
+            const on = origin === o.key
+            return (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => setOrigin(o.key)}
+                aria-pressed={on}
+                style={{
+                  cursor: 'pointer', borderRadius: 7, padding: '3px 9px',
+                  fontSize: '0.75rem', fontWeight: on ? 600 : 500,
+                  border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
+                  background: on ? 'var(--blue-subtle, rgba(37,99,235,0.12))' : 'var(--bg-surface)',
+                  color: on ? 'var(--blue)' : 'var(--text-muted)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {o.label} <span style={{ opacity: 0.7 }}>{o.n}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 480, overflowY: 'auto' }}>
         {/* Column headers, once. */}

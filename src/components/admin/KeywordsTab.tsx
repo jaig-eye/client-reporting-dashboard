@@ -162,18 +162,21 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         isActive={isActive} epoch={epoch}
         view="all"
         hasDataForSeo={data?.hasDataForSeo !== false}
+        onRefreshed={() => setReload(v => v + 1)}
       />
 
       {/* What Google returns for the keywords in use — the talking points the writer gets. It
           describes the picks, so it leads into the picking list rather than sitting among the
           Search Console tables. */}
-      <SerpInsightsSection
-        rows={insights} loading={insights === null} search=""
-        ownDomains={sites.map(s => s.siteUrl)}
-      />
+      <div style={{ marginTop: 16 }}>
+        <SerpInsightsSection
+          rows={insights} loading={insights === null} search=""
+          ownDomains={sites.map(s => s.siteUrl)}
+        />
+      </div>
 
       {/* ── Pick: the decision the rest of the page exists to inform ──────── */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', margin: '24px 0 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', margin: '28px 0 10px' }}>
         <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
           Pick what to write about
         </h4>
@@ -214,16 +217,26 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           own section above and are bought when a keyword is picked. */}
       {data && data.hasDataForSeo === false && (
         <div
-          className="card"
-          style={{ marginBottom: 12, padding: '10px 14px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', borderLeft: '3px solid var(--amber, #a3541a)' }}
+          role="note"
+          style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 8,
+            display: 'flex', alignItems: 'flex-start', gap: 9,
+            background: 'var(--amber-subtle, #fffbeb)',
+            border: '1px solid var(--amber, #d97706)',
+          }}
         >
-          <strong style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-            No DataForSEO here
-          </strong>
-          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            This list is built from the client&apos;s own converting ad terms, which is why it has leads
-            but no search volume. Connect DataForSEO for volume, difficulty and what competitors rank for.
-          </span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber, #d97706)" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ flexShrink: 0, marginTop: 1 }}>
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <p style={{ margin: 0, fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
+            <strong style={{ fontWeight: 600 }}>Google Ads data only.</strong>{' '}
+            <span style={{ color: 'var(--text-muted)' }}>
+              DataForSEO is not connected for this client, so these came from converting ad terms —
+              which is why they have leads but no search volume or difficulty.
+            </span>
+          </p>
         </div>
       )}
 

@@ -49,9 +49,9 @@ function truncatePage(url: string, max = 44): string {
 }
 
 function GscSection({
-  badge, badgeColor, badgeBg, rows, search,
+  badge, rows, search,
 }: {
-  badge: string; badgeColor: string; badgeBg: string
+  badge: string
   rows:  GscRow[]; search: string
 }) {
   const filtered = rows.filter(r => {
@@ -62,37 +62,29 @@ function GscSection({
   if (filtered.length === 0) return null
 
   return (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <div style={{ marginBottom: 8 }}>
-        <span style={{
-          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-          background: badgeBg, color: badgeColor, marginBottom: 4,
-        }}>
-          {badge}
-        </span>
-        <span style={{ marginLeft: 8, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+    <div style={{ marginBottom: '1.25rem' }}>
+      {/* A sub-heading inside the Search Console card, in the product's own small-label style
+          rather than a coloured pill of its own. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+        <span className="section-label">{badge}</span>
+        <span className="section-desc" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {filtered.length} keyword{filtered.length !== 1 ? 's' : ''}
         </span>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+        <table className="data-table data-table--compact">
           <thead>
-            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <tr>
               {(['Query','Page','Impr','Clicks','CTR','Position'] as const).map(h => (
-                <th key={h} style={{
-                  padding: '5px 8px', textAlign: h === 'Query' || h === 'Page' ? 'left' : 'right',
-                  fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
-                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-                }}>{h}</th>
+                <th key={h} style={{ textAlign: h === 'Query' || h === 'Page' ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.map((r, i) => (
-              <tr key={i} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500, maxWidth: 200 }}>
+              <tr key={i}>
+                <td style={{ color: 'var(--text-primary)', fontWeight: 500, maxWidth: 200 }}>
                   <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.query ?? ''}>
                     {r.query || '—'}
                   </span>
@@ -100,7 +92,7 @@ function GscSection({
                     <span style={{ fontSize: '0.6rem', color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '1px 4px', borderRadius: 3 }}>↩ used</span>
                   )}
                 </td>
-                <td style={{ padding: '6px 8px', color: 'var(--blue)', maxWidth: 180 }}>
+                <td style={{ color: 'var(--blue)', maxWidth: 180 }}>
                   {r.page ? (
                     <a href={r.page} target="_blank" rel="noopener noreferrer"
                       title={r.page}
@@ -109,10 +101,10 @@ function GscSection({
                     </a>
                   ) : '—'}
                 </td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.impressions)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{r.clicks ?? '—'}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(r.ctr)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                <td style={{ textAlign: 'right' }}>{fmtImpr(r.impressions)}</td>
+                <td style={{ textAlign: 'right' }}>{r.clicks ?? '—'}</td>
+                <td style={{ textAlign: 'right' }}>{fmtPct(r.ctr)}</td>
+                <td style={{ textAlign: 'right' }}>
                   <span style={{
                     display: 'inline-block', padding: '1px 6px', borderRadius: 4,
                     fontWeight: 600, fontSize: '0.75rem',
@@ -153,57 +145,51 @@ interface SourceColumn<T> {
  * filter that matches nothing says so instead of making the card vanish.
  */
 function SourceSection<T>({
-  badge, badgeColor, badgeBg, provider, note, emptyText, loading = false, columns, rows, search, searchOn, unit = 'keyword',
+  title, provider, note, emptyText, loading = false, columns, rows, search, searchOn,
 }: {
-  badge: string; badgeColor: string; badgeBg: string; provider: string; note?: string; emptyText?: string; loading?: boolean
+  title: string; provider: string; note?: string; emptyText?: string; loading?: boolean
   columns: SourceColumn<T>[]; rows: T[]; search: string
   searchOn: (row: T) => string
-  unit?: string
 }) {
   const filtered = rows.filter(r => !search || searchOn(r).toLowerCase().includes(search.toLowerCase()))
   if ((loading || rows.length === 0) && !emptyText) return null
 
   return (
-    <div className="card p-5" style={{ marginBottom: 16 }}>
-      <div style={{ marginBottom: 10 }}>
-        <SectionLabel
-          badge={badge} color={badgeColor} bg={badgeBg} provider={provider}
-          count={rows.length > 0 ? filtered.length : undefined}
-        />
-      </div>
-      {note && rows.length > 0 && (
-        <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{note}</p>
-      )}
+    <div className="card p-5">
+      <SectionHead
+        title={title} provider={provider}
+        count={rows.length > 0 ? filtered.length : undefined}
+        desc={rows.length > 0 ? note : undefined}
+      />
       {loading ? (
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading…</p>
+        <p className="section-desc" style={{ margin: 0 }}>Loading…</p>
       ) : rows.length === 0 ? (
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{emptyText}</p>
+        <p className="section-desc" style={{ margin: 0 }}>{emptyText}</p>
       ) : filtered.length === 0 ? (
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>No {unit}s match &ldquo;{search}&rdquo;.</p>
+        <p className="section-desc" style={{ margin: 0 }}>Nothing matches &ldquo;{search}&rdquo;.</p>
       ) : (
         <>
+          {/* The product's own table styling, rather than a private copy of it — these tables used
+              hand-rolled padding and borders a shade off every other table in the admin. */}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <table className="data-table data-table--compact">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <tr>
                   {columns.map(c => (
-                    <th key={c.label} title={c.title} style={{
-                      padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
-                      fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
-                      textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-                      cursor: c.title ? 'help' : undefined,
-                    }}>{c.label}</th>
+                    <th key={c.label} title={c.title}
+                      style={{ textAlign: c.left ? 'left' : 'right', whiteSpace: 'nowrap', cursor: c.title ? 'help' : undefined }}>
+                      {c.label}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.slice(0, 25).map((row, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                  <tr key={i}>
                     {columns.map(c => (
                       <td key={c.label} style={{
-                        padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
-                        color: c.left ? 'var(--text-primary)' : 'var(--text-muted)',
-                        fontVariantNumeric: c.left ? undefined : 'tabular-nums',
+                        textAlign: c.left ? 'left' : 'right',
+                        color: c.left ? 'var(--text-primary)' : undefined,
                       }}>{c.render(row)}</td>
                     ))}
                   </tr>
@@ -212,7 +198,7 @@ function SourceSection<T>({
             </table>
           </div>
           {filtered.length > 25 && (
-            <p style={{ margin: '8px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+            <p className="section-desc" style={{ margin: '8px 0 0' }}>
               Showing the top 25 of {filtered.length}.
             </p>
           )}
@@ -237,12 +223,14 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all', hasDataForSeo = true }: {
+export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all', hasDataForSeo = true, onRefreshed }: {
   data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number
   /** 'evidence' = what to write about next. 'rankings' = whether it is working. */
   view?: 'all' | 'evidence' | 'rankings'
   /** Rankings is the one section that is purely DataForSEO, so it says so when there is none. */
   hasDataForSeo?: boolean
+  /** Refresh re-reads the whole page, including the parts this component does not own. */
+  onRefreshed?: () => void
 }) {
   const showEvidence = view === 'all' || view === 'evidence'
   const showRankings = view === 'all' || view === 'rankings'
@@ -324,6 +312,14 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
     return () => { cancelled = true }
   }, [loadTick, clientId])
 
+  /**
+   * Re-read everything on the page from our own database. Nothing external, nothing billable.
+   *
+   * This used to POST /api/admin/sync, pulling Search Console live and waiting on Google before
+   * it would show you anything — a heavy, slow, surprising thing to sit behind a button labelled
+   * "Refresh" next to a filter box. Syncing is a scheduled job; this is the button that shows you
+   * what the last sync brought in.
+   */
   async function handleRefresh() {
     setRefreshing(true)
     setRefreshNote(null)
@@ -335,13 +331,12 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
     setSources(null)
     setLoadTick(t => t + 1)
     try {
-      const res = await fetch('/api/admin/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, days: 3 }),
-      })
-      setRefreshNote(res.ok ? 'Updated just now' : 'Couldn’t refresh — try again in a minute')
-      if (res.ok) router.refresh()
+      // Search Console rows are rendered from the server component, so the page itself has to be
+      // re-rendered for them to change; the two client-side tables refetch from the state cleared
+      // above. onRefreshed lets the Keywords page reload the pool in the same click.
+      onRefreshed?.()
+      router.refresh()
+      setRefreshNote('Updated just now')
     } catch {
       setRefreshNote('Couldn’t refresh — try again in a minute')
     } finally {
@@ -357,12 +352,15 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
     !search || r.keyword.toLowerCase().includes(search.toLowerCase()))
 
   return (
-    <div>
+    // One gap between every card on the page, set here rather than as a marginBottom on each one.
+    // Per-card margins are what made the spacing collapse between Search Console and Rankings:
+    // the card before them had its own margin, those two did not.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* The title lives on the Keywords tab; this row is only the two controls. The refresh
           button carried its icon as a "↻" inside the label, which wrapped onto its own line the
           moment the row got tight — an icon stacked above its own word. It is an inline SVG with
           a nowrap label now, so the button is one line at any width. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         {refreshNote && (
           <span role="status" style={{ marginRight: 'auto', fontSize: '0.75rem', color: /couldn/i.test(refreshNote) ? 'var(--red)' : 'var(--text-faint)' }}>
             {refreshNote}
@@ -399,8 +397,8 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
       {showEvidence && (
       <>
       <SourceSection<PaidTermRow>
-        badge="Converted in Paid" badgeColor="#9f1239" badgeBg="#ffe4e6" provider="Google Ads"
-        note="Paid terms that produced leads in the last 90 days."
+        title="Converted in paid" provider="Google Ads"
+        note="Terms that produced leads in the last 90 days. These are buying searches — the service page should own them, so write the question a buyer asks on the way there."
         rows={sources?.paidTerms ?? []} search={search}
         searchOn={r => r.term}
         columns={[
@@ -412,7 +410,7 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
       />
 
       <SourceSection<AhrefsRow>
-        badge="Organic Positions" badgeColor="#115e59" badgeBg="#ccfbf1" provider="Ahrefs"
+        title="Organic positions" provider="Ahrefs"
         note="Positions Search Console under-reports. 11–30 are the near-misses."
         rows={sources?.ahrefs ?? []} search={search}
         searchOn={r => r.keyword}
@@ -448,30 +446,26 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
       {/* The client's own sites, so the result list can mark which line is theirs rather than
           leaving the operator to recognise their own domain among ten competitors. */}
       {/* ── Search Console insights ────────────────────────────────────────── */}
-      {isEmpty ? (
-        <div className="card p-5" style={{ marginBottom: 16 }}>
-          {/* Labelled like every other section even when empty — an unlabelled card of grey text
-              in the middle of a labelled page reads as something having gone wrong. */}
-          <div style={{ marginBottom: 10 }}>
-            <SectionLabel badge="Search Console" color="#3730a3" bg="#e0e7ff" provider="Google" />
-          </div>
-          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+      {/* Labelled the same way whether or not it has anything in it — an unlabelled card of grey
+          text in the middle of a labelled page reads as something having gone wrong. */}
+      <div className="card p-5">
+        <SectionHead
+          title="Search Console" provider="Google"
+          desc={isEmpty ? undefined : 'What this site already shows up for, and where it nearly does.'}
+        />
+        {isEmpty ? (
+          <p className="section-desc" style={{ margin: 0 }}>
             Nothing here yet. Connect Google Search Console and run a sync.
           </p>
-        </div>
-      ) : (
-        <div className="card p-5">
-          {/* Provider is "Google", not "Google Search Console": the badge already says Search
-              Console, and the pair read as a stutter. */}
-          <div style={{ marginBottom: 12 }}>
-            <SectionLabel badge="Search Console" color="#3730a3" bg="#e0e7ff" provider="Google" />
-          </div>
-          <GscSection badge="Growth Opportunities" badgeColor="#92400e" badgeBg="#fef3c7" rows={data.growth}     search={search} />
-          <GscSection badge="Quick Wins"           badgeColor="#166534" badgeBg="#dcfce7" rows={data.quickWins}  search={search} />
-          <GscSection badge="Low CTR"              badgeColor="#1e3a8a" badgeBg="#dbeafe" rows={data.lowCtr}     search={search} />
-          <GscSection badge="High Volume Low Rank" badgeColor="#6b21a8" badgeBg="#f3e8ff" rows={data.highVolume} search={search} />
-        </div>
-      )}
+        ) : (
+          <>
+            <GscSection badge="Growth opportunities" rows={data.growth}     search={search} />
+            <GscSection badge="Quick wins"           rows={data.quickWins}  search={search} />
+            <GscSection badge="Low CTR"              rows={data.lowCtr}     search={search} />
+            <GscSection badge="High volume, low rank" rows={data.highVolume} search={search} />
+          </>
+        )}
+      </div>
       </>
       )}
 
@@ -480,13 +474,12 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
           next, and because it is the one section that is purely DataForSEO — a client without a
           connection has nothing here and should be told why rather than shown an empty table. */}
       {showRankings && (
-      <div className="card p-5" style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 10 }}>
-          <SectionLabel
-            badge="Rankings" color="#4338ca" bg="#eef2ff" provider="DataForSEO"
-            count={ranks === null ? undefined : filteredRanks.length}
-          />
-        </div>
+      <div className="card p-5">
+        <SectionHead
+          title="Rankings" provider="DataForSEO"
+          count={ranks === null ? undefined : filteredRanks.length}
+          desc={ranks && ranks.length > 0 ? 'Where the published posts sit in Google, checked on a schedule.' : undefined}
+        />
         <KeywordRankTable ranks={filteredRanks} loading={ranks === null} hasDataForSeo={hasDataForSeo} />
       </div>
       )}
@@ -495,32 +488,32 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
 }
 
 /**
- * The one header every section on this page wears: what it is, who it came from, how many rows.
+ * The header every section on this page wears.
  *
- * They had drifted apart — the paid table counted "6 terms", Search Console counted nothing and
- * wore a plain bold line instead of a badge, and Rankings named its provider but never its size.
- * Reading down the page you could not tell whether a section was small or simply labelled
- * differently. One component, one shape, and "keywords" throughout: they are all keywords here,
- * whichever system reported them.
+ * It used to be a coloured pill in a colour unique to each section, which nothing else in this
+ * product does — the rest of the admin uses `.section-title` with a `.section-desc` under it, and
+ * six pills in six colours read as decoration competing with the sentence beside them. This is
+ * that same pattern: the name on the left, where it came from and how many rows on the right,
+ * quiet.
+ *
+ * Counts are in "keywords" throughout. They are all keywords here, whichever system reported
+ * them, and the page previously alternated between "terms" and "keywords" for the same idea.
  */
-function SectionLabel({ badge, color, bg, provider, count }: {
-  badge: string; color: string; bg: string; provider: string; count?: number
+export function SectionHead({ title, provider, count, desc }: {
+  title: string; provider?: string; count?: number; desc?: string
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={{
-        display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-        fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-        background: bg, color,
-      }}>
-        {badge}
-      </span>
-      <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{provider}</span>
-      {count != null && (
-        <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
-          {count} keyword{count === 1 ? '' : 's'}
-        </span>
-      )}
+    <div style={{ marginBottom: desc ? 10 : 12 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <h3 className="section-title" style={{ margin: 0 }}>{title}</h3>
+        {(provider || count != null) && (
+          <span className="section-desc" style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+            {[provider, count == null ? null : `${count} keyword${count === 1 ? '' : 's'}`]
+              .filter(Boolean).join(' · ')}
+          </span>
+        )}
+      </div>
+      {desc && <p className="section-desc" style={{ margin: '2px 0 0' }}>{desc}</p>}
     </div>
   )
 }
@@ -544,27 +537,23 @@ function KeywordRankTable({ ranks, loading, hasDataForSeo = true }: {
   }
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+      <table className="data-table data-table--compact">
         <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+          <tr>
             {(['Keyword','Position','Change','Volume','Difficulty'] as const).map(h => (
-              <th key={h} style={{
-                padding: '5px 8px', textAlign: h === 'Keyword' ? 'left' : 'right',
-                fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
-                textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-              }}>{h}</th>
+              <th key={h} style={{ textAlign: h === 'Keyword' ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {ranks.map((r, i) => (
-            <tr key={r.keyword_id} style={{ borderBottom: i < ranks.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500, maxWidth: 260 }}>
+          {ranks.map(r => (
+            <tr key={r.keyword_id}>
+              <td style={{ color: 'var(--text-primary)', fontWeight: 500, maxWidth: 260 }}>
                 <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.keyword}>
                   {r.keyword}
                 </span>
               </td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+              <td style={{ textAlign: 'right' }}>
                 <span style={{
                   display: 'inline-block', padding: '1px 6px', borderRadius: 4,
                   fontWeight: 600, fontSize: '0.75rem',
@@ -573,15 +562,15 @@ function KeywordRankTable({ ranks, loading, hasDataForSeo = true }: {
                   {r.current_position ?? '—'}
                 </span>
               </td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+              <td style={{ textAlign: 'right' }}>
                 {r.movement === 'dropped'
                   ? <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }} title={r.previous_position != null ? `was #${r.previous_position}` : undefined}>dropped</span>
                   : r.movement === 'entered'
                   ? <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
                   : <RankDelta delta={r.position_delta} />}
               </td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.search_volume)}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>
+              <td style={{ textAlign: 'right' }}>{fmtImpr(r.search_volume)}</td>
+              <td style={{ textAlign: 'right' }}>
                 {r.keyword_difficulty == null ? '—' : Math.round(r.keyword_difficulty)}
               </td>
             </tr>

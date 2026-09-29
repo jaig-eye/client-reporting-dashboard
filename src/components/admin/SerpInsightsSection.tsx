@@ -1,9 +1,10 @@
 'use client'
 
 import type { SerpInsightRow, SerpInsight, SerpSource } from '@/lib/content/serpInsights'
+import { SectionHead } from '@/components/admin/KeywordEvidence'
 
 /**
- * "What Google shows" — the talking points the writer is handed, made visible.
+ * SERP snapshots — the talking points the writer is handed, made visible.
  *
  * One row per keyword that has a stored SERP snapshot: a post's target keyword (captured when
  * the post was written) or a starting keyword (captured when research ran).
@@ -33,36 +34,24 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
   const own = new Set((ownDomains ?? []).map(bareHost).filter(Boolean))
 
   return (
-    <div className="card p-5" style={{ marginBottom: 16 }}>
-      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-          background: '#fef3c7', color: '#92400e',
-        }}>
-          What Google shows
-        </span>
-        {all.length > 0 && (
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-            {filtered.length} search{filtered.length === 1 ? '' : 'es'}
-          </span>
-        )}
-      </div>
-      {/* The explanation only earns its line when there is something to explain. Empty, the
-          section was two stacked greyed sentences saying nearly the same thing. */}
-      {!loading && filtered.length > 0 && (
-        <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          Talking points the writer is handed. One snapshot per keyword, replaced when it is taken again.
-        </p>
-      )}
-
+    <div className="card p-5">
+      {/* Named for what it holds — a stored search-results page per keyword — rather than the
+          question it answers. "What Google shows" sat among six sections all of which show
+          something Google knows, and told you nothing about which one this was. */}
+      <SectionHead
+        title="SERP snapshots" provider="DataForSEO"
+        count={all.length > 0 ? filtered.length : undefined}
+        desc={!loading && filtered.length > 0
+          ? 'The talking points the writer is handed: one search-results page per keyword, taken when the keyword is picked and replaced the next time it is taken.'
+          : undefined}
+      />
       {loading ? (
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading…</p>
+        <p className="section-desc" style={{ margin: 0 }}>Loading…</p>
       ) : filtered.length === 0 ? (
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <p className="section-desc" style={{ margin: 0 }}>
           {search
-            ? `No searches match "${search}".`
-            : 'Nothing captured yet. Fills in as keywords are picked and posts are written.'}
+            ? `Nothing matches "${search}".`
+            : 'Nothing captured yet. One is taken for each keyword as you pick it.'}
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
