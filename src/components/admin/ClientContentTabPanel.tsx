@@ -8,8 +8,6 @@ import ClientContentSettings                          from './ClientContentSetti
 import ClientPipeline                                 from './ClientPipeline'
 import ClientSitemapTab                               from './ClientSitemapTab'
 import ClientContentSetupWizard                       from './ClientContentSetupWizard'
-import SerpInsightsSection                            from './SerpInsightsSection'
-import type { SerpInsightRow }                        from '@/lib/content/serpInsights'
 import type { SiteOption }                            from '@/lib/content/types'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
@@ -227,12 +225,12 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('keywords') && (
           <div style={{ display: activeTab === 'keywords' ? 'block' : 'none' }} className={animatingTab === 'keywords' ? 'cc-tab-content' : ''}>
-            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} onResearchRun={() => setResearchEpoch(e => e + 1)} />
+            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} sites={sites} onResearchRun={() => setResearchEpoch(e => e + 1)} />
           </div>
         )}
         {visited.has('analytics') && (
           <div style={{ display: activeTab === 'analytics' ? 'block' : 'none' }} className={animatingTab === 'analytics' ? 'cc-tab-content' : ''}>
-            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} sites={sites} isActive={activeTab === 'analytics'} epoch={researchEpoch} />
+            <AnalyticsTab data={gscData} isEcom={isEcom} clientId={clientId} isActive={activeTab === 'analytics'} epoch={researchEpoch} />
           </div>
         )}
       </div>
@@ -476,14 +474,13 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch }: { data: GscData; isEcom: boolean; clientId: string; sites: SiteOption[]; isActive: boolean; epoch: number }) {
+function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch }: { data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number }) {
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
   const [sources, setSources]       = useState<SourcesPayload | null>(null)
 
-  const [insights, setInsights]     = useState<SerpInsightRow[] | null>(null)
   // A plain sentence when a remove or restore could not be done. Never the server's words.
   const [researchMsg, setResearchMsg] = useState<string | null>(null)
   // Keywords removed this session, so a misclick can be undone with Restore.
@@ -493,26 +490,13 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
   // Research ran elsewhere (epoch moved): forget what was loaded so the loading state shows
   // while the effects below fetch again. Runs once on mount as well, where clearing
   // already-empty state changes nothing.
-  useEffect(() => { setRanks(null); setSources(null); setInsights(null); setRemoved([]) }, [epoch])
+  useEffect(() => { setRanks(null); setSources(null); setRemoved([]) }, [epoch])
 
   // Every table is fetched each time this tab is shown, and again on epoch or Refresh. A tab
   // that fetched once and then trusted itself showed a list from before a "Look again" run
   // until the page was reloaded — the old rows stayed on screen while a fetch is in flight.
   const [loadTick, setLoadTick] = useState(0)
   useEffect(() => { if (isActive) setLoadTick(t => t + 1) }, [isActive, epoch])
-
-  // What Google showed for keywords this client has written for or researched.
-  useEffect(() => {
-    if (!loadTick) return
-    let cancelled = false
-    fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
-      .then(r => r.ok ? r.json() : { insights: [] })
-      .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
-      .catch(() => { if (!cancelled) setInsights([]) })
-    return () => { cancelled = true }
-  }, [loadTick, clientId])
-
-  // A local run stores the market's own volume; the column only appears when there is one.
 
   async function setDismissed(keyword: string, dismissed: boolean): Promise<boolean> {
     try {
@@ -578,7 +562,6 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
     // hard reload, which read as "research did nothing". Clearing them lets the effects refetch.
     setRanks(null)
     setSources(null)
-    setInsights(null)
     setLoadTick(t => t + 1)
     try {
       const res = await fetch('/api/admin/sync', {
@@ -702,11 +685,6 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
 
       {/* The client's own sites, so the result list can mark which line is theirs rather than
           leaving the operator to recognise their own domain among ten competitors. */}
-      <SerpInsightsSection
-        rows={insights} loading={insights === null} search={search}
-        ownDomains={sites.map(s => s.siteUrl)}
-      />
-
       {/* ── Search Console insights ────────────────────────────────────────── */}
       {isEmpty ? (
         <div className="card p-6" style={{ textAlign: 'center' }}>

@@ -111,9 +111,6 @@ export default function ClientContentSettingsForm({
   const [aiSuggested, setAiSuggested] = useState(false)
   const [aiBlocked,     setAiBlocked]     = useState(false)
   const [vertical,      setVertical]      = useState('')
-  // Open by default. It feeds every AI prompt and is the difference between expert copy and
-  // filler; collapsed, it read as "advanced, skip this" — and left the page half empty.
-  const [eeatOpen,      setEeatOpen]      = useState(true)
   const [siteUrlInput,  setSiteUrlInput]  = useState('')
   const [showSiteInput, setShowSiteInput] = useState(false)
   const [siteTextInput, setSiteTextInput] = useState('')
@@ -218,7 +215,7 @@ export default function ClientContentSettingsForm({
     }
     if (Object.keys(eeatUpdate).length > 0) {
       setEeat(prev => ({ ...prev, ...eeatUpdate }))
-      setEeatOpen(true) // auto-expand so users can see the populated fields
+      // No expanding to do — the section is always open now.
     }
     setAiSuggested(true)
     setShowSiteInput(false)
@@ -404,13 +401,13 @@ export default function ClientContentSettingsForm({
       </div>
 
       {/* ── Trust & Credibility (E-E-A-T) ────────────────────────────────── */}
-      <details className="card" style={{ overflow: 'hidden' }} open={eeatOpen} onToggle={e => setEeatOpen((e.currentTarget as HTMLDetailsElement).open)}>
-        <summary className="p-6 cursor-pointer font-semibold text-sm flex items-center justify-between" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>
-          <span>Trust &amp; Credibility <span className="text-xs font-normal ml-1" style={{ color: 'var(--text-muted)' }}>what makes this business worth believing — a few fields here change the writing noticeably</span></span>
-          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{eeatOpen ? '▾' : '▸'}</span>
-        </summary>
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="p-6 pb-4">
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Trust &amp; Credibility</h2>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>What makes this business worth believing.</p>
+        </div>
 
-        <div className="p-6 pt-0 space-y-4" style={{ borderTop: '1px solid var(--border)' }}>
+        <div className="p-6 pt-0 space-y-4">
           {/* Regulated vertical — a compliance switch, not a style preference.
               Turning this on bans invented rates/requirements/outcomes in the
               writer prompt AND enables figure detection in the quality gate. */}
@@ -499,7 +496,7 @@ export default function ClientContentSettingsForm({
             <textarea className="input" rows={3} style={{ width: '100%' }} value={eeat.common_objections} onChange={e => setEeatField('common_objections', e.target.value)} placeholder="e.g. Price concerns, timing uncertainty, DIY temptation..." />
           </div>
         </div>
-      </details>
+      </div>
 
       {/* ── Save ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3">

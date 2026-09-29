@@ -15,15 +15,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
+import SerpInsightsSection from '@/components/admin/SerpInsightsSection'
+import type { SerpInsightRow } from '@/lib/content/serpInsights'
+import type { SiteOption } from '@/lib/content/types'
 
 interface Payload {
   researched:        ResearchKeyword[]
   researchLocation?: string | null
 }
 
-export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }: {
+export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onResearchRun }: {
   clientId: string
   isActive: boolean
+  /** The client's own sites, so their own line is marked in a list of competitors. */
+  sites?:   SiteOption[]
   /** Bumped when research reruns elsewhere, so this refetches rather than showing a stale list. */
   epoch:    number
   /** After research runs here, so the Analytics tab drops its cached copy too. */
@@ -41,6 +46,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
   const [adding,  setAdding]  = useState(false)
   const [busy,    setBusy]    = useState(false)
   const [notice,  setNotice]  = useState<string | null>(null)
+  // What Google returns for these keywords. It lived under the Analytics tables, which is where
+  // you go to see how things are doing — this is about the keywords themselves.
+  const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
 
   useEffect(() => {
     if (!isActive) return
@@ -50,6 +58,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => { if (!cancelled) setData({ researched: d.researched ?? [], researchLocation: d.researchLocation ?? null }) })
       .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [] }) } })
+    fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { insights: [] })
+      .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
+      .catch(() => { if (!cancelled) setInsights([]) })
     return () => { cancelled = true }
   }, [clientId, isActive, epoch, reload])
 
@@ -170,6 +182,13 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
             refreshing={busy}
           />
         )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <SerpInsightsSection
+          rows={insights} loading={insights === null} search=""
+          ownDomains={sites.map(s => s.siteUrl)}
+        />
       </div>
 
       {notice && (

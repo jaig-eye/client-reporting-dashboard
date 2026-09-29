@@ -7,7 +7,7 @@
 // (only the keys a card sends are written), so sections never clobber each other.
 
 import { useState, useEffect, useCallback } from 'react'
-import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine } from '@phosphor-icons/react'
+import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine, Sparkle } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
 import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
 
@@ -85,6 +85,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   const [bcAuthor, setBcAuthor] = useState('')
   const [blogUrlPrefix, setBlogUrlPrefix] = useState('')
   const [categoryIds, setCategoryIds] = useState<number[]>([])
+  const [newCategory,      setNewCategory]      = useState('')
+  const [creatingCategory, setCreatingCategory] = useState(false)
+  const [categoryMsg,      setCategoryMsg]      = useState('')
   const [authors,    setAuthors]    = useState<Author[]>([])
   const [categories, setCategories] = useState<WpCategory[]>([])
   const [loading,    setLoading]    = useState(true)
@@ -216,6 +219,37 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     topic_guidelines: form.topic_guidelines ?? null,
   }, setWriteSave)
 
+  /**
+   * Make a category on the client's site and select it.
+   *
+   * The same endpoint the post editor uses, including its treatment of duplicates: WordPress
+   * rejects a name it already has, and the API resolves that to the existing term instead of
+   * erroring — otherwise retyping a name you already made pushes you to invent a near-duplicate.
+   */
+  async function createCategory() {
+    const name = newCategory.trim()
+    if (!effectiveConn || name.length < 2) return
+    setCreatingCategory(true); setCategoryMsg('')
+    try {
+      const res = await fetch('/api/admin/wordpress/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: effectiveConn, name }),
+      })
+      const d = await res.json().catch(() => ({})) as { category?: WpCategory & { existed?: boolean }; error?: string }
+      if (!res.ok || d.error || !d.category) throw new Error(d.error ?? 'Could not create it')
+      const made = d.category
+      setCategories(prev => prev.some(c => c.id === made.id) ? prev : [...prev, made])
+      setCategoryIds(prev => prev.includes(made.id) ? prev : [...prev, made.id])
+      setNewCategory('')
+      setCategoryMsg(made.existed ? 'Already existed — selected' : 'Created and selected. Save to apply.')
+    } catch (e) {
+      setCategoryMsg(e instanceof Error ? e.message : 'Could not create it')
+    } finally {
+      setCreatingCategory(false)
+    }
+  }
+
   function toggleCategory(id: number) {
     setCategoryIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
@@ -277,6 +311,24 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
             </button>
           )
         })}
+
+        {/* The writing prompt every client inherits lives at agency level. Anyone tuning a client's
+            writing rules is one question away from wanting it, and there was no path from here. */}
+        <a
+          href="/admin/content/settings"
+          className="cc-set-navitem"
+          style={{ textDecoration: 'none', marginTop: 4, borderTop: '1px solid var(--border)', borderRadius: 0, paddingTop: 12 }}
+        >
+          <Sparkle size={18} weight="duotone" style={{ color: 'var(--text-faint)' }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+              Global prompts ↗
+            </span>
+            <span className="cc-set-desc" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
+              Applies to every client
+            </span>
+          </span>
+        </a>
       </nav>
 
       {/* Right panel — active section */}
@@ -366,6 +418,35 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
                       </button>
                     )
                   })}
+                </div>
+              )}
+              {/* Same as the post editor: a category you need does not exist until someone makes
+                  it, and sending people to wp-admin to do that is how defaults stay unset. A name
+                  WordPress already has resolves to the existing term rather than erroring. */}
+              {effectiveConn && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                  <input
+                    className="input"
+                    value={newCategory}
+                    onChange={e => setNewCategory(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void createCategory() } }}
+                    placeholder="New category…"
+                    style={{ maxWidth: 200, fontSize: '0.8125rem', padding: '0.3rem 0.55rem' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem', padding: '0.3rem 0.7rem' }}
+                    onClick={() => void createCategory()}
+                    disabled={creatingCategory || newCategory.trim().length < 2}
+                  >
+                    {creatingCategory ? 'Creating…' : 'Create'}
+                  </button>
+                  {categoryMsg && (
+                    <span className="text-xs" style={{ color: /could|error/i.test(categoryMsg) ? 'var(--red)' : 'var(--text-faint)' }}>
+                      {categoryMsg}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -473,14 +554,13 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <div style={{ maxWidth: 200 }}>
           <Label>Target word count</Label>
-          <input className="input" type="number" min={300} max={5000} step={100} value={form.target_length ?? 1500} onChange={e => set('target_length', Number(e.target.value))} />
-          {/* The generator holds posts to this range and revises anything longer, so the number
-              needs to read as a budget rather than a suggestion. Posts averaged 135% of target
-              while this said nothing. */}
-          <p className="section-desc" style={{ marginTop: '0.25rem' }}>
-            Posts are written to {Math.round((form.target_length ?? 1500) * 0.9).toLocaleString()}–{Math.round((form.target_length ?? 1500) * 1.15).toLocaleString()} words.
-            Anything longer is shortened before it reaches you.
-          </p>
+          {/* The generator holds posts to this band and revises anything past the ceiling, so the
+              number is a budget, not a suggestion — posts averaged 135% of target while this was
+              a sentence nobody read. Drawn to scale so the band is a shape rather than arithmetic. */}
+          <LengthBudget
+            value={form.target_length ?? 1500}
+            onChange={v => set('target_length', v)}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -505,5 +585,66 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       </div>
     </div>
     </>
+  )
+}
+
+/**
+ * The word-count budget, drawn.
+ *
+ * This was a number input and a sentence doing arithmetic out loud — "posts are written to
+ * 1,350–1,725 words" — which is the kind of line that stops being read. The band is the point: the
+ * generator writes to it and shortens anything past the ceiling, so seeing where the target sits
+ * inside it says more than the sentence did.
+ */
+function LengthBudget({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const MIN = 300, MAX = 5000
+  const floor   = Math.round(value * 0.9)
+  const ceiling = Math.round(value * 1.15)
+  const pct = (n: number) => ((n - MIN) / (MAX - MIN)) * 100
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          type="number" min={MIN} max={MAX} step={100}
+          value={value}
+          onChange={e => onChange(Number(e.target.value))}
+          style={{ width: 120, fontVariantNumeric: 'tabular-nums' }}
+        />
+        <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+          words — accepted between{' '}
+          <strong style={{ color: 'var(--text-primary)' }}>{floor.toLocaleString()}</strong> and{' '}
+          <strong style={{ color: 'var(--text-primary)' }}>{ceiling.toLocaleString()}</strong>
+        </span>
+      </div>
+
+      {/* The band, to scale across the whole allowed range. */}
+      <div style={{ marginTop: 10, maxWidth: 420 }}>
+        <div style={{ position: 'relative', height: 8, borderRadius: 999, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+          <div
+            style={{
+              position: 'absolute', top: -1, bottom: -1,
+              left: `${pct(floor)}%`, width: `${pct(ceiling) - pct(floor)}%`,
+              minWidth: 6, borderRadius: 999,
+              background: 'var(--blue-subtle, rgba(37,99,235,0.18))',
+              border: '1px solid var(--blue)',
+            }}
+          />
+          <div
+            title={`Target ${value.toLocaleString()} words`}
+            style={{
+              position: 'absolute', top: -3, width: 2, height: 14,
+              left: `${pct(value)}%`, background: 'var(--blue)', borderRadius: 2,
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+          <span>{MIN.toLocaleString()}</span>
+          <span>Anything longer is shortened before it reaches you.</span>
+          <span>{MAX.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
   )
 }
