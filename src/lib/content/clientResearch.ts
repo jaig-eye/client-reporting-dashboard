@@ -40,6 +40,7 @@ import {
 } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
 import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
+import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
 import { deriveResearchLocation } from './deriveLocation'
 
@@ -410,7 +411,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     seedMatcher = buildSeedMatcher([...foundational, ...services], [geo, ...(location ? location.name.split(',') : [])].join(' '))
   } catch { /* no settings — no seeds, and the sources below that need them are skipped */ }
 
-  if (creds && domain) {
+  // Over the ceiling, discovery is skipped and the pool keeps whatever it already had — the same
+  // degradation as having no connection, which everything downstream already handles.
+  const withinBudget = await canSpendOnDfs('keyword discovery')
+  if (creds && domain && withinBudget) {
     const labsOpts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
 
     for (const c of await dfsKeywordsForSite(domain, creds, { ...labsOpts, source: 'site', limit: 300 })) {

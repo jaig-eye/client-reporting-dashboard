@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, readResearchLocation, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
+import { canSpendOnDfs, getDfsBudget } from '@/lib/content/dfsBudget'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
@@ -152,6 +153,19 @@ export async function GET(req: NextRequest) {
       if (loc) localCode.set(r.client_id, { code: loc.code, name: loc.name })
     }
   } catch { /* column absent — country-level checks, as before */ }
+
+  // The largest paid path there is: every tracked keyword, every day it is due. If the month's
+  // ceiling is reached the run stops here — the last reading stands, and the cadence resumes when
+  // the month turns over. A skipped day is a gap in a history; an unbounded bill is not recoverable.
+  if (!(await canSpendOnDfs('rank checks'))) {
+    const state = await getDfsBudget()
+    return NextResponse.json({
+      ok: true, skipped: 'budget',
+      reason: state.reason ?? 'monthly budget reached',
+      spent: Number.isFinite(state.spent) ? Number(state.spent.toFixed(2)) : null,
+      limit: state.limit,
+    })
+  }
 
   const keywordLists = await Promise.all(usable.map(u => getTrackedKeywords(u.clientId)))
 

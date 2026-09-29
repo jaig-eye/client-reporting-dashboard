@@ -14,6 +14,7 @@ interface UsageSummary {
 interface UsageResponse {
   configured: boolean
   balance: number | null
+  budget?: { limit: number | null; spent: number; allowed: boolean; reason?: string }
   currency: string
   summary: UsageSummary
 }
@@ -41,12 +42,15 @@ function fmtDay(d: string): string {
 export default function DataForSeoUsagePanel() {
   const [data, setData] = useState<UsageResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [budgetDraft,  setBudgetDraft]  = useState('')
+  const [savingBudget, setSavingBudget] = useState(false)
+  const [budgetMsg,    setBudgetMsg]    = useState('')
 
   useEffect(() => {
     let cancelled = false
     fetch('/api/admin/dataforseo-usage')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
+      .then(d => { if (!cancelled) { setData(d); setBudgetDraft(d?.budget?.limit == null ? '' : String(d.budget.limit)); setLoading(false) } })
       .catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
@@ -57,6 +61,24 @@ export default function DataForSeoUsagePanel() {
     )
   }
   if (!data) return null
+
+  async function saveBudget() {
+    setSavingBudget(true); setBudgetMsg('')
+    try {
+      const res = await fetch('/api/admin/dataforseo-usage', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthly_budget: budgetDraft.trim() === '' ? null : budgetDraft.trim() }),
+      })
+      const d = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
+      setBudgetMsg(budgetDraft.trim() === '' ? 'No limit' : 'Saved')
+    } catch (e) {
+      setBudgetMsg(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setSavingBudget(false)
+    }
+  }
 
   const s = data.summary
   const maxDay = Math.max(...s.daily.map(d => d.cost), 0.0001)
@@ -73,6 +95,47 @@ export default function DataForSeoUsagePanel() {
         </div>
         {!data.configured && (
           <span className="badge badge-gray">Not connected</span>
+        )}
+      </div>
+
+      {/* ── The ceiling ──────────────────────────────────────────────────────
+          On the same card as the spend, because a limit shown anywhere else is a number nobody
+          relates to the bill it governs. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '10px 12px', marginBottom: 14, borderRadius: 10,
+        background: 'var(--bg-subtle)', border: '1px solid var(--border)',
+      }}>
+        <label className="text-xs" style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Monthly limit</label>
+        <span style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>$</span>
+        <input
+          className="input"
+          value={budgetDraft}
+          onChange={e => setBudgetDraft(e.target.value)}
+          placeholder="no limit"
+          inputMode="decimal"
+          style={{ width: 96, fontSize: '0.8125rem', padding: '0.3rem 0.5rem', fontVariantNumeric: 'tabular-nums' }}
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ fontSize: '0.8125rem', padding: '0.3rem 0.7rem' }}
+          disabled={savingBudget}
+          onClick={() => void saveBudget()}
+        >
+          {savingBudget ? 'Saving…' : 'Save'}
+        </button>
+        <span className="text-xs" style={{ color: 'var(--text-faint)', flex: 1, minWidth: 220 }}>
+          {data.budget?.limit == null
+            ? 'No ceiling — paid research runs until you set one.'
+            : data.budget.allowed
+              ? `${s.total.toFixed(2)} of ${data.budget.limit.toFixed(2)} used this month.`
+              : 'Reached — paid research is paused until next month.'}
+        </span>
+        {budgetMsg && (
+          <span className="text-xs" style={{ color: /could|need|http/i.test(budgetMsg) ? 'var(--red)' : 'var(--green)' }}>
+            {budgetMsg}
+          </span>
         )}
       </div>
 

@@ -30,6 +30,7 @@ import {
 import { deriveResearchLocation } from '@/lib/content/deriveLocation'
 import { toSerpInsight, readSerpInsight, saveSerpInsightById } from '@/lib/content/serpInsights'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
+import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 
 type Db = ReturnType<typeof createAdminClient>
 
@@ -99,6 +100,12 @@ export async function snapshotChosenKeywords(
     }
     // Not connected is not a failure. Everything else on this page works without it.
     if (!creds) return { ...none, reason: 'keyword research not connected' }
+
+    // Over the monthly ceiling the keyword is still chosen; it just does not get a snapshot until
+    // the month turns over, the same as picking one with no connection.
+    if (!(await canSpendOnDfs('keyword snapshot'))) {
+      return { ...none, reason: 'monthly research budget reached' }
+    }
 
     // Only the rows that were actually chosen, and only the ones with nothing stored. The read
     // carries metadata so "already has one" is decided here rather than by a second query.
