@@ -21,7 +21,7 @@ export function splitPhrases(text: string): string[] {
 }
 
 export default function KeywordChipInput({
-  value, onChange, placeholder, id, disabled, max = 40,
+  value, onChange, placeholder, id, disabled, max = 40, onPending,
 }: {
   /** Comma-joined, as stored. */
   value:        string
@@ -30,6 +30,15 @@ export default function KeywordChipInput({
   id?:          string
   disabled?:    boolean
   max?:         number
+  /**
+   * Text typed but not yet committed to a chip.
+   *
+   * A caller with its own submit button needs this. Typing a phrase and pressing that button
+   * used to do nothing: the text lived here until Enter, comma or blur turned it into a chip, so
+   * the parent still saw an empty value and kept the button disabled. The button cannot enable
+   * itself on a blur that only happens because you clicked it.
+   */
+  onPending?:   (text: string) => void
 }) {
   const [draft, setDraft] = useState('')
   const phrases = splitPhrases(value)
@@ -51,6 +60,7 @@ export default function KeywordChipInput({
     const next = Array.from(new Set([...phrases, ...added])).slice(0, max)
     onChange(next.join(', '))
     setDraft('')
+    onPending?.('')
   }
 
   const removeAt = (i: number) => onChange(phrases.filter((_, n) => n !== i).join(', '))
@@ -108,7 +118,7 @@ export default function KeywordChipInput({
         type="text"
         value={draft}
         disabled={disabled}
-        onChange={e => setDraft(e.target.value)}
+        onChange={e => { setDraft(e.target.value); onPending?.(e.target.value) }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onBlur={() => commit(draft)}

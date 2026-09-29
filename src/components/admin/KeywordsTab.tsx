@@ -35,6 +35,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
+  // Text typed into the chip box but not yet turned into a chip. Without it the Add button stays
+  // disabled until you press Enter, so typing a phrase and clicking Add does nothing.
+  const [pending, setPending] = useState('')
   const [adding,  setAdding]  = useState(false)
   const [busy,    setBusy]    = useState(false)
   const [notice,  setNotice]  = useState<string | null>(null)
@@ -52,7 +55,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
-    const list = splitPhrases(draft)
+    const list = splitPhrases([draft, pending].filter(Boolean).join(', '))
     if (!list.length) return
     setAdding(true); setNotice(null)
     try {
@@ -65,7 +68,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
       const n = (body.added ?? 0) + (body.rechosen ?? 0)
       setNotice(n ? `Added ${n}` : 'Nothing new to add')
-      setDraft('')
+      setDraft(''); setPending('')
       setShowAdd(false)
       setReload(v => v + 1)
     } catch (e) {
@@ -73,7 +76,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
     } finally {
       setAdding(false)
     }
-  }, [clientId, draft])
+  }, [clientId, draft, pending])
 
   /** Look for new ideas. Replaces the unchosen; anything in use survives. */
   const refresh = useCallback(async () => {
@@ -131,6 +134,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
           <KeywordChipInput
             value={draft}
             onChange={setDraft}
+            onPending={setPending}
             disabled={adding}
             max={30}
             placeholder="permanent Christmas lights, soffit lighting installers…"
@@ -141,7 +145,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, onResearchRun }
               className="btn btn-primary"
               style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }}
               onClick={() => void addTyped()}
-              disabled={adding || !splitPhrases(draft).length}
+              disabled={adding || !splitPhrases([draft, pending].filter(Boolean).join(', ')).length}
             >
               {adding ? 'Adding…' : 'Add'}
             </button>
