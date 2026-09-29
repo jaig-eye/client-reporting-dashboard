@@ -413,7 +413,12 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // Over the ceiling, discovery is skipped and the pool keeps whatever it already had — the same
   // degradation as having no connection, which everything downstream already handles.
-  const withinBudget = await canSpendOnDfs('keyword discovery')
+  const withinBudget = creds && domain ? await canSpendOnDfs('keyword discovery') : true
+  // Whether this run actually bought anything. The freshness stamp keys off it: a run stopped by
+  // the budget never asked DataForSEO, so stamping it would say the market had been looked at and
+  // hold the next real run behind the 30-day reuse window — long after the month rolled over and
+  // the budget freed up.
+  const spentOnDfs = !!creds && !!domain && withinBudget
   if (creds && domain && withinBudget) {
     const labsOpts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
 
@@ -582,7 +587,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // A run that asked DataForSEO and got nothing back still answered the question, so it counts
     // against the 30-day window. A client with no connection has not been researched at all, so
     // it does not — otherwise connecting DataForSEO later would wait a month to take effect.
-    if (creds) await stampResearchRun()
+    if (spentOnDfs) await stampResearchRun()
     return { ...empty, ok: true, competitors: competitorDomains, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources' }
   }
 
@@ -686,7 +691,12 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   // Stamped even when `stored` is 0. A well-covered client discovers nothing new for months, and
   // inferring freshness from row ages made that look like "never researched".
-  await stampResearchRun()
+  //
+  // Not stamped when the budget stopped the DataForSEO half, though: the database sources can
+  // still produce candidates, and stamping on the strength of those would claim the market was
+  // looked at when it was not — holding the next real run for thirty days after the month rolled
+  // over and the money came back.
+  if (spentOnDfs) await stampResearchRun()
 
   console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
   return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }

@@ -26,6 +26,8 @@ const OP_LABELS: Record<string, string> = {
   keyword_overview: 'Keyword data',
   keyword_ideas:    'Keyword ideas',
   search_volume:    'Search volume',
+  keyword_discovery:       'Keyword discovery',
+  serp_snapshot_on_select: 'Snapshots on picking',
 }
 
 function fmtMoney(n: number | null | undefined): string {
@@ -129,7 +131,7 @@ export default function DataForSeoUsagePanel() {
           {data.budget?.limit == null
             ? 'No ceiling — paid research runs until you set one.'
             : data.budget.allowed
-              ? `${s.total.toFixed(2)} of ${data.budget.limit.toFixed(2)} used this month.`
+              ? `$${s.total.toFixed(2)} of $${data.budget.limit.toFixed(2)} used this month.`
               : 'Reached — paid research is paused until next month.'}
         </span>
         {budgetMsg && (
