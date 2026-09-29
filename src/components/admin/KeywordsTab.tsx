@@ -18,15 +18,35 @@ import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipIn
 import SerpInsightsSection from '@/components/admin/SerpInsightsSection'
 import type { SerpInsightRow } from '@/lib/content/serpInsights'
 import type { SiteOption } from '@/lib/content/types'
+import { AnalyticsTab } from '@/components/admin/KeywordEvidence'
+import type { GscData } from '@/components/admin/ClientContentTabPanel'
+
+/**
+ * The three questions this tab answers, in the order you ask them.
+ *
+ * Pick and Evidence used to be separate tabs, which split one decision across two screens: the
+ * pool was here and everything that should inform choosing from it — converting paid terms, the
+ * near-miss positions, the Search Console opportunities — was over there. Rankings is the one part
+ * that really was a report, so it keeps its own view rather than padding the other two.
+ */
+const VIEWS = [
+  { key: 'pick',     label: 'Pick',     hint: 'Choose what to write about' },
+  { key: 'evidence', label: 'Evidence', hint: 'What the data suggests' },
+  { key: 'rankings', label: 'Rankings', hint: 'How the published posts are doing' },
+] as const
+type View = typeof VIEWS[number]['key']
 
 interface Payload {
   researched:        ResearchKeyword[]
   researchLocation?: string | null
 }
 
-export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onResearchRun }: {
+export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gscData, isEcom = false, onResearchRun }: {
   clientId: string
   isActive: boolean
+  /** Search Console rows, for the Evidence view. */
+  gscData:  GscData
+  isEcom?:  boolean
   /** The client's own sites, so their own line is marked in a list of competitors. */
   sites?:   SiteOption[]
   /** Bumped when research reruns elsewhere, so this refetches rather than showing a stale list. */
@@ -37,6 +57,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onR
   const [data,   setData]   = useState<Payload | null>(null)
   const [error,  setError]  = useState<string | null>(null)
   const [reload, setReload] = useState(0)
+  const [view,   setView]   = useState<View>('pick')
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
@@ -51,7 +72,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onR
   const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
 
   useEffect(() => {
-    if (!isActive) return
+    if (!isActive || view !== 'pick') return
     let cancelled = false
     setError(null)
     fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
@@ -63,7 +84,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onR
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
       .catch(() => { if (!cancelled) setInsights([]) })
     return () => { cancelled = true }
-  }, [clientId, isActive, epoch, reload])
+  }, [clientId, isActive, epoch, reload, view])
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
@@ -124,16 +145,54 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onR
         <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
           What this client should be found for. Only the ones you pick reach the writer.
         </p>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          style={{ marginLeft: 'auto', fontSize: '0.8125rem', padding: '0.3rem 0.7rem', whiteSpace: 'nowrap' }}
-          onClick={() => setShowAdd(v => !v)}
-          disabled={adding || busy}
-        >
-          {showAdd ? 'Cancel' : 'Add your own'}
-        </button>
+        {view === 'pick' && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ marginLeft: 'auto', fontSize: '0.8125rem', padding: '0.3rem 0.7rem', whiteSpace: 'nowrap' }}
+            onClick={() => setShowAdd(v => !v)}
+            disabled={adding || busy}
+          >
+            {showAdd ? 'Cancel' : 'Add your own'}
+          </button>
+        )}
       </div>
+
+      <div role="tablist" aria-label="Keyword views" style={{ display: 'inline-flex', gap: 2, padding: 2, marginBottom: 14, borderRadius: 10, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+        {VIEWS.map(v => {
+          const on = view === v.key
+          return (
+            <button
+              key={v.key}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              title={v.hint}
+              onClick={() => setView(v.key)}
+              style={{
+                border: 'none', cursor: 'pointer', borderRadius: 8,
+                padding: '5px 12px', fontSize: '0.8125rem',
+                fontWeight: on ? 600 : 500,
+                background: on ? 'var(--bg-surface)' : 'transparent',
+                color: on ? 'var(--text-primary)' : 'var(--text-muted)',
+                boxShadow: on ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              }}
+            >
+              {v.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {view !== 'pick' && (
+        <AnalyticsTab
+          data={gscData} isEcom={isEcom} clientId={clientId}
+          isActive={isActive} epoch={epoch}
+          view={view === 'evidence' ? 'evidence' : 'rankings'}
+        />
+      )}
+
+      {view === 'pick' && (<>
 
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red, #b91c1c)', marginBottom: 12 }}>
@@ -196,6 +255,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], onR
           {notice}
         </p>
       )}
+
+      </>)}
     </div>
   )
 }

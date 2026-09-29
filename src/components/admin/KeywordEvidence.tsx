@@ -1,0 +1,560 @@
+'use client'
+
+// What the data says to write about, and how the published posts are doing.
+//
+// Split out of ClientContentTabPanel when Analytics folded into Keywords: the Keywords tab renders
+// these, and importing them from the panel meant a child importing its own parent. Everything here
+// was already one unit — the evidence tables, the Search Console blocks and the rankings table
+// share one fetch and one search box.
+
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import type { GscData, GscRow } from '@/components/admin/ClientContentTabPanel'
+
+// ─── Formatting ──────────────────────────────────────────────────────────────
+function fmtImpr(n: number | null | undefined): string {
+  if (!n) return '—'
+  if (n >= 10000) return `${Math.round(n / 1000)}k`
+  if (n >= 1000)  return `${(n / 1000).toFixed(1)}k`
+  return n.toLocaleString()
+}
+function fmtPct(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return `${(n * 100).toFixed(1)}%`
+}
+function fmtPos(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return n.toFixed(1)
+}
+function posColor(pos: number | null): string {
+  if (!pos) return 'var(--text-muted)'
+  if (pos <= 3)  return '#16a34a'
+  if (pos <= 10) return '#d97706'
+  return '#9ca3af'
+}
+function posBg(pos: number | null): string {
+  if (!pos) return 'var(--bg-muted)'
+  if (pos <= 3)  return '#dcfce7'
+  if (pos <= 10) return '#fef3c7'
+  return 'var(--bg-muted)'
+}
+function truncatePage(url: string, max = 44): string {
+  try {
+    const u    = new URL(url)
+    const path = u.pathname
+    return path.length > max ? '…' + path.slice(-(max - 1)) : path
+  } catch {
+    return url.length > max ? url.slice(0, max) + '…' : url
+  }
+}
+
+function GscSection({
+  badge, badgeColor, badgeBg, rows, search,
+}: {
+  badge: string; badgeColor: string; badgeBg: string
+  rows:  GscRow[]; search: string
+}) {
+  const filtered = rows.filter(r => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (r.query ?? '').toLowerCase().includes(q) || (r.page ?? '').toLowerCase().includes(q)
+  })
+  if (filtered.length === 0) return null
+
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ marginBottom: 8 }}>
+        <span style={{
+          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          background: badgeBg, color: badgeColor, marginBottom: 4,
+        }}>
+          {badge}
+        </span>
+        <span style={{ marginLeft: 8, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+          {filtered.length} keyword{filtered.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              {(['Query','Page','Impr','Clicks','CTR','Position'] as const).map(h => (
+                <th key={h} style={{
+                  padding: '5px 8px', textAlign: h === 'Query' || h === 'Page' ? 'left' : 'right',
+                  fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
+                  textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r, i) => (
+              <tr key={i} style={{ borderBottom: i < filtered.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500, maxWidth: 200 }}>
+                  <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.query ?? ''}>
+                    {r.query || '—'}
+                  </span>
+                  {r.recentlyTargeted && (
+                    <span style={{ fontSize: '0.6rem', color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '1px 4px', borderRadius: 3 }}>↩ used</span>
+                  )}
+                </td>
+                <td style={{ padding: '6px 8px', color: 'var(--blue)', maxWidth: 180 }}>
+                  {r.page ? (
+                    <a href={r.page} target="_blank" rel="noopener noreferrer"
+                      title={r.page}
+                      style={{ color: 'var(--blue)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {truncatePage(r.page)}
+                    </a>
+                  ) : '—'}
+                </td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.impressions)}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{r.clicks ?? '—'}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtPct(r.ctr)}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                  <span style={{
+                    display: 'inline-block', padding: '1px 6px', borderRadius: 4,
+                    fontWeight: 600, fontSize: '0.75rem',
+                    background: posBg(r.position), color: posColor(r.position),
+                  }}>
+                    {fmtPos(r.position)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// The other three sources topic selection reads (/api/admin/content/keyword-sources).
+interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
+interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null; local_volume?: number | null; chosen?: boolean }
+interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[]; researchLocation?: string | null }
+
+/** One column of a source table. `align` defaults to right, because most of these are numbers. */
+interface SourceColumn<T> {
+  label:  string
+  render: (row: T) => React.ReactNode
+  left?:  boolean
+  /** Hover explanation on the column header, for a figure that needs one. */
+  title?: string
+}
+
+/**
+ * A titled, badged table for one keyword source.
+ *
+ * Without `emptyText`, renders nothing when the source has no rows — a client without Ahrefs sees
+ * no Ahrefs card rather than an empty one. With it, the card stays and says why it is empty. A
+ * filter that matches nothing says so instead of making the card vanish.
+ */
+function SourceSection<T>({
+  badge, badgeColor, badgeBg, provider, note, emptyText, loading = false, columns, rows, search, searchOn, unit = 'keyword',
+}: {
+  badge: string; badgeColor: string; badgeBg: string; provider: string; note?: string; emptyText?: string; loading?: boolean
+  columns: SourceColumn<T>[]; rows: T[]; search: string
+  searchOn: (row: T) => string
+  unit?: string
+}) {
+  const filtered = rows.filter(r => !search || searchOn(r).toLowerCase().includes(search.toLowerCase()))
+  if ((loading || rows.length === 0) && !emptyText) return null
+
+  return (
+    <div className="card p-5" style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 10 }}>
+        <span style={{
+          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          background: badgeBg, color: badgeColor,
+        }}>
+          {badge}
+        </span>
+        <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>{provider}</span>
+        {rows.length > 0 && (
+          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+            {filtered.length} {unit}{filtered.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      {note && rows.length > 0 && (
+        <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{note}</p>
+      )}
+      {loading ? (
+        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading…</p>
+      ) : rows.length === 0 ? (
+        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{emptyText}</p>
+      ) : filtered.length === 0 ? (
+        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>No {unit}s match &ldquo;{search}&rdquo;.</p>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {columns.map(c => (
+                    <th key={c.label} title={c.title} style={{
+                      padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
+                      fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
+                      textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+                      cursor: c.title ? 'help' : undefined,
+                    }}>{c.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.slice(0, 25).map((row, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                    {columns.map(c => (
+                      <td key={c.label} style={{
+                        padding: '5px 8px', textAlign: c.left ? 'left' : 'right',
+                        color: c.left ? 'var(--text-primary)' : 'var(--text-muted)',
+                        fontVariantNumeric: c.left ? undefined : 'tabular-nums',
+                      }}>{c.render(row)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length > 25 && (
+            <p style={{ margin: '8px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
+              Showing the top 25 of {filtered.length}.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// Keyword rank row from the DataForSEO datastream (/api/admin/content/keyword-rankings).
+interface KeywordRankRow {
+  keyword_id:         string
+  keyword:            string
+  current_position:   number | null
+  previous_position:  number | null
+  position_delta:     number | null
+  current_url:        string | null
+  search_volume:      number | null
+  keyword_difficulty: number | null
+  intent:             string | null
+  content_post_id:    string | null
+  movement?:          string
+}
+
+export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all' }: {
+  data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number
+  /** 'evidence' = what to write about next. 'rankings' = whether it is working. */
+  view?: 'all' | 'evidence' | 'rankings'
+}) {
+  const showEvidence = view === 'all' || view === 'evidence'
+  const showRankings = view === 'all' || view === 'rankings'
+  const router           = useRouter()
+  const [search, setSearch]       = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
+  const [sources, setSources]       = useState<SourcesPayload | null>(null)
+
+  // A plain sentence when a remove or restore could not be done. Never the server's words.
+  const [researchMsg, setResearchMsg] = useState<string | null>(null)
+  // Keywords removed this session, so a misclick can be undone with Restore.
+  const [removed, setRemoved]         = useState<ResearchRow[]>([])
+  const [refreshNote, setRefreshNote] = useState<string | null>(null)
+
+  // Research ran elsewhere (epoch moved): forget what was loaded so the loading state shows
+  // while the effects below fetch again. Runs once on mount as well, where clearing
+  // already-empty state changes nothing.
+  useEffect(() => { setRanks(null); setSources(null); setRemoved([]) }, [epoch])
+
+  // Every table is fetched each time this tab is shown, and again on epoch or Refresh. A tab
+  // that fetched once and then trusted itself showed a list from before a "Look again" run
+  // until the page was reloaded — the old rows stayed on screen while a fetch is in flight.
+  const [loadTick, setLoadTick] = useState(0)
+  useEffect(() => { if (isActive) setLoadTick(t => t + 1) }, [isActive, epoch])
+
+  async function setDismissed(keyword: string, dismissed: boolean): Promise<boolean> {
+    try {
+      const res = await fetch('/api/admin/content/keyword-research', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, keyword, dismissed }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string }
+        console.warn('[analytics] keyword dismiss failed:', res.status, d.error)
+        return false
+      }
+      return true
+    } catch (e) {
+      console.warn('[analytics] keyword dismiss failed:', e)
+      return false
+    }
+  }
+
+  /** "Not this one." The row moves to a Removed line with Restore; put back if the write fails. */
+  async function handleRestore(row: ResearchRow) {
+    setResearchMsg(null)
+    setRemoved(prev => prev.filter(r => r.keyword !== row.keyword))
+    setSources(prev => prev ? { ...prev, researched: [row, ...prev.researched] } : prev)
+    if (!(await setDismissed(row.keyword, false))) {
+      // Put it back where the server still has it, so Restore stays on offer.
+      setSources(prev => prev ? { ...prev, researched: prev.researched.filter(r => r.keyword !== row.keyword) } : prev)
+      setRemoved(prev => [row, ...prev.filter(r => r.keyword !== row.keyword)])
+      setResearchMsg('Couldn’t restore that keyword. Try again in a moment.')
+    }
+  }
+
+  useEffect(() => {
+    if (!loadTick) return
+    let cancelled = false
+    fetch(`/api/admin/content/keyword-rankings?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { rankings: [] })
+      .then(d => { if (!cancelled) setRanks((d.rankings ?? []) as KeywordRankRow[]) })
+      .catch(() => { if (!cancelled) setRanks([]) })
+    return () => { cancelled = true }
+  }, [loadTick, clientId])
+
+  // The other three sources, loaded the same way. Separate from the ranks call so a slow or
+  // missing one never blocks the other.
+  useEffect(() => {
+    if (!loadTick) return
+    let cancelled = false
+    const empty: SourcesPayload = { paidTerms: [], ahrefs: [], researched: [] }
+    fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : empty)
+      .then(d => { if (!cancelled) setSources({ ...empty, ...(d as Partial<SourcesPayload>) }) })
+      .catch(() => { if (!cancelled) setSources(empty) })
+    return () => { cancelled = true }
+  }, [loadTick, clientId])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    setRefreshNote(null)
+    // Both lazy loaders are guarded on `!== null`, so once this tab has fetched, it never asks
+    // again on its own — and router.refresh() below does not clear component state. Research
+    // run from the setup wizard (a modal over this page) therefore stayed invisible here until a
+    // hard reload, which read as "research did nothing". Clearing them lets the effects refetch.
+    setRanks(null)
+    setSources(null)
+    setLoadTick(t => t + 1)
+    try {
+      const res = await fetch('/api/admin/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, days: 3 }),
+      })
+      setRefreshNote(res.ok ? 'Updated just now' : 'Couldn’t refresh — try again in a minute')
+      if (res.ok) router.refresh()
+    } catch {
+      setRefreshNote('Couldn’t refresh — try again in a minute')
+    } finally {
+      setRefreshing(false)
+      setTimeout(() => setRefreshNote(null), 8000)
+    }
+  }
+
+  const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
+    && data.lowCtr.length === 0 && data.highVolume.length === 0
+
+  const filteredRanks = (ranks ?? []).filter(r =>
+    !search || r.keyword.toLowerCase().includes(search.toLowerCase()))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div>
+          {/* The title lives on the Keywords tab now; this keeps only its refresh control. */}
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Pull the latest Search Console data and reload every table on this tab"
+          >
+            {refreshing ? 'Syncing…' : '↻ Refresh'}
+          </button>
+          {refreshNote && (
+            <span role="status" style={{ fontSize: '0.75rem', color: /couldn/i.test(refreshNote) ? 'var(--red)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+              {refreshNote}
+            </span>
+          )}
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter keywords or pages…"
+            className="input"
+            style={{ maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+          />
+        </div>
+      </div>
+
+      {/* ── Keyword Rankings ───────────────────────────────────────────────── */}
+      {showRankings && (
+      <div className="card p-5" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+            background: '#eef2ff', color: '#4338ca',
+          }}>
+            Keyword Rankings
+          </span>
+          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>DataForSEO</span>
+        </div>
+        <KeywordRankTable ranks={filteredRanks} loading={ranks === null} />
+      </div>
+      )}
+
+      {/* ── The sources that feed topic selection ──────────────────────────── */}
+      {showEvidence && (
+      <>
+      <SourceSection<PaidTermRow>
+        badge="Converted in Paid" badgeColor="#9f1239" badgeBg="#ffe4e6" provider="Google Ads"
+        note="Paid terms that produced leads in the last 90 days."
+        rows={sources?.paidTerms ?? []} search={search} unit="term"
+        searchOn={r => r.term}
+        columns={[
+          { label: 'Search term', left: true, render: r => r.term },
+          { label: 'Leads',       render: r => r.conversions.toFixed(1) },
+          { label: 'Spend',       render: r => `$${r.spend.toFixed(2)}` },
+          { label: 'Cost / lead', render: r => r.costPerLead == null ? '—' : `$${r.costPerLead.toFixed(2)}` },
+        ]}
+      />
+
+      <SourceSection<AhrefsRow>
+        badge="Organic Positions" badgeColor="#115e59" badgeBg="#ccfbf1" provider="Ahrefs"
+        note="Positions Search Console under-reports. 11–30 are the near-misses."
+        rows={sources?.ahrefs ?? []} search={search}
+        searchOn={r => r.keyword}
+        columns={[
+          { label: 'Keyword',    left: true, render: r => r.keyword },
+          { label: 'Google position', title: 'Where the site currently ranks', render: r => r.position   == null ? '—' : `#${r.position}` },
+          { label: 'Searches/mo', title: 'Average searches a month', render: r => r.volume     == null ? '—' : r.volume.toLocaleString() },
+          { label: 'Difficulty', title: 'How hard it is to rank, 0–100. Under 30 is winnable quickly.', render: r => r.difficulty == null ? '—' : String(r.difficulty) },
+        ]}
+      />
+
+      {/* Keyword choosing lives in its own tab now — see KeywordsTab. Analytics keeps the
+          read-only sources and the SERP snapshots, which are reporting rather than decisions. */}
+      {(removed.length > 0 || researchMsg) && (
+        <div style={{ margin: '-8px 0 16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          {researchMsg && <p style={{ margin: '0 0 6px', color: 'var(--red)' }}>{researchMsg}</p>}
+          {removed.length > 0 && (
+            <p style={{ margin: 0 }}>
+              Removed:{' '}
+              {removed.map(r => (
+                <span key={r.keyword} style={{ marginRight: 10, whiteSpace: 'nowrap' }}>
+                  {r.keyword}{' '}
+                  <button type="button" onClick={() => handleRestore(r)} style={{ border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>
+                    Restore
+                  </button>
+                </span>
+              ))}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* The client's own sites, so the result list can mark which line is theirs rather than
+          leaving the operator to recognise their own domain among ten competitors. */}
+      {/* ── Search Console insights ────────────────────────────────────────── */}
+      {isEmpty ? (
+        <div className="card p-6" style={{ textAlign: 'center' }}>
+          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+            No Search Console data yet. Connect Google Search Console and run a sync.
+          </p>
+        </div>
+      ) : (
+        <div className="card p-5">
+          <div style={{ marginBottom: 12, fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Search Console Insights</div>
+          <GscSection badge="Growth Opportunities" badgeColor="#92400e" badgeBg="#fef3c7" rows={data.growth}     search={search} />
+          <GscSection badge="Quick Wins"           badgeColor="#166534" badgeBg="#dcfce7" rows={data.quickWins}  search={search} />
+          <GscSection badge="Low CTR"              badgeColor="#1e3a8a" badgeBg="#dbeafe" rows={data.lowCtr}     search={search} />
+          <GscSection badge="High Volume Low Rank" badgeColor="#6b21a8" badgeBg="#f3e8ff" rows={data.highVolume} search={search} />
+        </div>
+      )}
+      </>
+      )}
+    </div>
+  )
+}
+
+function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading: boolean }) {
+  if (loading) {
+    return <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading rankings…</p>
+  }
+  if (ranks.length === 0) {
+    return (
+      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        No rankings yet. We start tracking a keyword once this client&apos;s first post goes live, or sooner if
+        the site already ranks for something. Tracking needs DataForSEO connected for this client.
+      </p>
+    )
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            {(['Keyword','Position','Change','Volume','Difficulty'] as const).map(h => (
+              <th key={h} style={{
+                padding: '5px 8px', textAlign: h === 'Keyword' ? 'left' : 'right',
+                fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)',
+                textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ranks.map((r, i) => (
+            <tr key={r.keyword_id} style={{ borderBottom: i < ranks.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500, maxWidth: 260 }}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.keyword}>
+                  {r.keyword}
+                </span>
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                <span style={{
+                  display: 'inline-block', padding: '1px 6px', borderRadius: 4,
+                  fontWeight: 600, fontSize: '0.75rem',
+                  background: posBg(r.current_position), color: posColor(r.current_position),
+                }}>
+                  {r.current_position ?? '—'}
+                </span>
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                {r.movement === 'dropped'
+                  ? <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }} title={r.previous_position != null ? `was #${r.previous_position}` : undefined}>dropped</span>
+                  : r.movement === 'entered'
+                  ? <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
+                  : <RankDelta delta={r.position_delta} />}
+              </td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtImpr(r.search_volume)}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>
+                {r.keyword_difficulty == null ? '—' : Math.round(r.keyword_difficulty)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Rank movement pill. Positive delta = improved (moved toward #1) → green ▲.
+function RankDelta({ delta }: { delta: number | null }) {
+  if (delta == null || delta === 0) return <span style={{ color: 'var(--text-faint)' }}>—</span>
+  const improved = delta > 0
+  return (
+    <span style={{ color: improved ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: '0.75rem' }}>
+      {improved ? '▲' : '▼'} {Math.abs(delta)}
+    </span>
+  )
+}
