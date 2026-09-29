@@ -49,9 +49,7 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
         )}
       </div>
       <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        What Google actually shows for these searches — the questions people also ask, who its AI answer
-        quotes, and who is in the map pack. The writer is handed this as talking points; it does not
-        change how a post is written. Captured when a post is written and when research runs.
+        Talking points the writer is handed. One snapshot per keyword, replaced when it is taken again.
       </p>
 
       {loading ? (
@@ -60,7 +58,7 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
         <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
           {search
             ? `No searches match "${search}".`
-            : 'Nothing captured yet. This fills in as posts are written and research runs with keyword research connected for this client.'}
+            : 'Nothing captured yet. Fills in as keywords are picked and posts are written.'}
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

@@ -247,6 +247,15 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         .cc-set-navitem .cc-set-desc { display: none; }
       }
     `}</style>
+    {/* Every sub-tab names itself in the same shape: title, then one line. */}
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+      <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+        Settings
+      </h3>
+      <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+        Who this client is, where posts go, and how often.
+      </p>
+    </div>
     <div className="cc-set-grid">
       {/* Left sub-nav (progressive disclosure — one section at a time) */}
       <nav className="cc-set-rail" aria-label="Content settings sections">

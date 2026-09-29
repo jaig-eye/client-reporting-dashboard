@@ -26,6 +26,20 @@ export const dynamic = 'force-dynamic'
  * numbers will not agree and the comment used to claim they did.
  */
 const PAID_WINDOW_DAYS = 90
+/**
+ * Where a keyword came from, in one word the list can group on.
+ *
+ * research stores this as metadata.found_via — 'site' for the client's own footprint,
+ * 'competitor' for a rival's, 'idea' for an expansion of the services. Hand-typed rows carry
+ * source 'manual'. Grouping the list on this is what tells the operator what they are looking at,
+ * which a paragraph above the table never managed to.
+ */
+function foundViaOf(metadata: unknown, source: unknown): string | null {
+  if (String(source ?? '') === 'manual') return 'manual'
+  const v = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).found_via : null
+  return typeof v === 'string' && v ? v : null
+}
+
 /** Rows read from the pool before ranking. Wider than we show, so the sort decides what survives. */
 const POOL_READ = 200
 /** Rows shown, on top of everything already chosen. */
@@ -33,7 +47,7 @@ const POOL_SHOW = 60
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null; source: string | null; chosen: boolean }
+export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null; source: string | null; foundVia: string | null; chosen: boolean }
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
@@ -152,6 +166,9 @@ export async function GET(req: NextRequest) {
         score:      researchScoreOf(r.metadata),
         local_volume: localVolumeOf(r.metadata),
         source:     r.source == null ? null : String(r.source),
+        // How it was found — site footprint, a competitor, an expansion of the services, or typed
+        // in. The list groups on this, which is what tells the operator what they are looking at.
+        foundVia:   foundViaOf(r.metadata, r.source),
         chosen:     hasChosen ? r.chosen_at != null : false,
       }))
         .filter(k => k.keyword)

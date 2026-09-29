@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import ResearchLocationPicker, { readLocationValue, type ResearchLocationValue } from './ResearchLocationPicker'
-import { SERVICES_HELP, RESEARCH_LOCATION_HELP, SERVICE_AREAS_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
+import MarketLine from './MarketLine'
+import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
 
@@ -155,7 +155,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * guess in this box.
    */
   const [foundationalKeywords, setFoundationalKeywords] = useState('')
-  const [researchLocation, setResearchLocation]         = useState<ResearchLocationValue | null>(null)
   /**
    * The eeat_data column exactly as loaded.
    *
@@ -265,7 +264,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           if (Array.isArray(cs.foundational_keywords) && cs.foundational_keywords.length > 0) {
             setFoundationalKeywords(cs.foundational_keywords.join(', '))
           }
-          setResearchLocation(readLocationValue(cs.research_location))
 
           // Hydrate BRAND DNA. Without this the fields render empty on a re-run and the save at
           // the end writes those empties over a profile someone already curated. Every value is
@@ -569,7 +567,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         brand_voice:          brand.brand_voice,
         phone_number:         brand.phone_number,
         // Where research and rank checks are measured — see migration 224.
-        research_location:    researchLocation,
         // Seeds for research, not a content plan — see migration 222.
         foundational_keywords: foundationalKeywords
           .split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25),
@@ -729,8 +726,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               brand={brand}
               setBrand={setBrand}
               brandLoaded={brandLoaded}
-              researchLocation={researchLocation}
-              setResearchLocation={setResearchLocation}
             />
           )}
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
@@ -1118,7 +1113,7 @@ function StepWpConnect({
 
 // ─── Step 3: Brand Analysis (was Step 2) ─────────────────────────────────────
 
-function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded, researchLocation, setResearchLocation }: {
+function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, analyzeMsg, brand, setBrand, brandLoaded }: {
   analyzeUrl: string
   setAnalyzeUrl: (v: string) => void
   onAnalyze: () => void
@@ -1127,8 +1122,6 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brand: BrandDna
   setBrand: (b: BrandDna) => void
   brandLoaded: boolean
-  researchLocation: ResearchLocationValue | null
-  setResearchLocation: (v: ResearchLocationValue | null) => void
   /** Marks the seeds as operator-owned so the services pre-fill never runs again. */
 }) {
   return (
@@ -1168,7 +1161,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           <Field label="Business Background">
             <textarea value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
           </Field>
-          <Field label="Services" drivesResearch>
+          <Field label="What they sell" drivesResearch>
             <KeywordChipInput
               value={brand.services}
               onChange={v => setBrand({ ...brand, services: v })}
@@ -1188,16 +1181,11 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               onChange={v => setBrand({ ...brand, geographic_focus: v })}
               placeholder="Austin, Round Rock, Hill Country…"
             />
-            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              {SERVICE_AREAS_HELP}
-            </p>
+            <MarketLine geographicFocus={brand.geographic_focus} />
           </Field>
-          <Field label="Research Location" drivesResearch>
-            <ResearchLocationPicker value={researchLocation} onChange={setResearchLocation} inputStyle={inputStyle} />
-            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
-              {RESEARCH_LOCATION_HELP}
-            </p>
-          </Field>
+          {/* Research Location used to sit here. It was a second place to name the market the
+              first service area already names, and in production not one client had ever set it.
+              The market is derived from the first service area and shown under it. */}
           <Field label="Brand Voice">
             <input type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
           </Field>

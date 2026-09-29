@@ -364,6 +364,16 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+      {/* Every sub-tab names itself in the same shape: title, then one line. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Pipeline
+        </h3>
+        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          Topics on their way to being written, and posts waiting on you.
+        </p>
+      </div>
+
       {/* ── AI Content Plan + New Post controls ────────────────────────────── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {aiConfigured ? (

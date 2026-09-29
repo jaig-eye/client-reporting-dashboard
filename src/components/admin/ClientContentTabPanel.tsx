@@ -608,7 +608,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Analytics</h3>
           <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Everything we look at when deciding what to write for this client. Search Console leads; the other sources widen the shortlist. Keywords sitting past position 20 are usually the best next articles &mdash; close enough to matter, far enough to win.
+            What we look at when deciding what to write next.
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -655,7 +655,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
       {/* ── The sources that feed topic selection ──────────────────────────── */}
       <SourceSection<PaidTermRow>
         badge="Converted in Paid" badgeColor="#9f1239" badgeBg="#ffe4e6" provider="Google Ads"
-        note="Search terms that produced real leads in the last 90 days. Ranking for these organically has a known value — cost per lead is what we currently pay for the same visit."
+        note="Paid terms that produced leads in the last 90 days."
         rows={sources?.paidTerms ?? []} search={search} unit="term"
         searchOn={r => r.term}
         columns={[
@@ -668,7 +668,7 @@ function AnalyticsTab({ data, isEcom: _isEcom, clientId, sites, isActive, epoch 
 
       <SourceSection<AhrefsRow>
         badge="Organic Positions" badgeColor="#115e59" badgeBg="#ccfbf1" provider="Ahrefs"
-        note="Where the site sits on terms Search Console under-reports. Positions 11–30 are the near-misses worth an article."
+        note="Positions Search Console under-reports. 11–30 are the near-misses."
         rows={sources?.ahrefs ?? []} search={search}
         searchOn={r => r.keyword}
         columns={[

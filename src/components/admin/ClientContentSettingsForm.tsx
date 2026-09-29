@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { SERVICES_HELP, SERVICE_AREAS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
+import MarketLine from '@/components/admin/MarketLine'
 import type { EeatData }       from '@/lib/content/types'
 
 interface SiteOption {
@@ -358,8 +359,8 @@ export default function ClientContentSettingsForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <Label help={SERVICES_HELP}>Services Offered</Label>
-            <KeywordChipInput value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical" />
+            <Label help={SERVICES_HELP}>What they sell</Label>
+            <KeywordChipInput value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical…" />
           </div>
           <div>
             <Label>Target Audience</Label>
@@ -372,6 +373,7 @@ export default function ClientContentSettingsForm({
               onChange={v => setField('geographic_focus', v)}
               placeholder="Los Angeles, Orange County…"
             />
+            <MarketLine geographicFocus={form.geographic_focus} />
           </div>
           <div>
             <Label>Brand Voice</Label>
