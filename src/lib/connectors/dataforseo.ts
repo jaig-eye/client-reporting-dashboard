@@ -37,7 +37,10 @@ export interface SeoTrackingConfig {
 
 const DEFAULT_SEO_CONFIG: SeoTrackingConfig = {
   rank_depth:    100,
-  devices:       ['desktop', 'mobile'],
+  // Mobile only. Rank tracking is an internal nice-to-have, not a client deliverable, and local
+  // search is overwhelmingly mobile — a desktop reading doubled the bill to confirm what the
+  // mobile one said. A client that genuinely needs desktop can still ask for it in its config.
+  devices:       ['mobile'],
   location_code: 2840,
   language_code: 'en',
 }

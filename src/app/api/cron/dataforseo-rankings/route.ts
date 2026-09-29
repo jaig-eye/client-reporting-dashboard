@@ -48,8 +48,14 @@ const FRESH_WINDOW_DAYS = 60
 /** How long to leave a new post alone. Below this Google is still indexing it and there is nothing to read. */
 const INDEXING_DAYS = 14
 
-/** Cadence per device inside that window. Mobile carries most traffic, so it is watched closer. */
-const INTERVAL_DAYS: Record<SeoDevice, number> = { mobile: 7, desktop: 30 }
+/**
+ * Cadence per device inside that window.
+ *
+ * Fortnightly, not weekly. This is an internal view of whether a post is moving, not a number
+ * anybody reports on — and a position that moved between Tuesday and Tuesday is still moving a
+ * fortnight later. Halving the reads in the window halves the largest line of the bill.
+ */
+const INTERVAL_DAYS: Record<SeoDevice, number> = { mobile: 14, desktop: 30 }
 
 /**
  * How often a keyword is re-checked once the close window closes.
