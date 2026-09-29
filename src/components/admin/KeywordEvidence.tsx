@@ -365,34 +365,41 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div>
-          {/* The title lives on the Keywords tab now; this keeps only its refresh control. */}
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button
-            className="btn btn-secondary"
-            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }}
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Pull the latest Search Console data and reload every table on this tab"
-          >
-            {refreshing ? 'Syncing…' : '↻ Refresh'}
-          </button>
-          {refreshNote && (
-            <span role="status" style={{ fontSize: '0.75rem', color: /couldn/i.test(refreshNote) ? 'var(--red)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>
-              {refreshNote}
-            </span>
-          )}
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Filter keywords or pages…"
-            className="input"
-            style={{ maxWidth: 260, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
-          />
-        </div>
+      {/* The title lives on the Keywords tab; this row is only the two controls. The refresh
+          button carried its icon as a "↻" inside the label, which wrapped onto its own line the
+          moment the row got tight — an icon stacked above its own word. It is an inline SVG with
+          a nowrap label now, so the button is one line at any width. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {refreshNote && (
+          <span role="status" style={{ marginRight: 'auto', fontSize: '0.75rem', color: /couldn/i.test(refreshNote) ? 'var(--red)' : 'var(--text-faint)' }}>
+            {refreshNote}
+          </span>
+        )}
+        <button
+          className="btn btn-secondary"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+            fontSize: '0.8125rem', padding: '0.375rem 0.75rem', flexShrink: 0,
+          }}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Pull the latest Search Console data and reload every table on this tab"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+            style={refreshing ? { animation: 'ccSpin 0.9s linear infinite' } : undefined}>
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
+          {refreshing ? 'Syncing…' : 'Refresh'}
+        </button>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Filter keywords or pages…"
+          className="input"
+          style={{ width: 240, maxWidth: '100%', fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+        />
       </div>
 
       {/* ── Keyword Rankings ───────────────────────────────────────────────── */}

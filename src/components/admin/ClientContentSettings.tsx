@@ -591,37 +591,40 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 /**
  * The word-count budget, drawn.
  *
- * This was a number input and a sentence doing arithmetic out loud — "posts are written to
- * 1,350–1,725 words" — which is the kind of line that stops being read. The band is the point: the
- * generator writes to it and shortens anything past the ceiling, so seeing where the target sits
- * inside it says more than the sentence did.
+ * The field and the band sit side by side: you set a number on the left and see the band it buys
+ * on the right, rather than reading a sentence that does the arithmetic out loud. The three
+ * labels under the band used to share one row with a sentence between them, which collided at
+ * this width — the sentence is a tooltip now and only the scale's ends are drawn.
  */
 function LengthBudget({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const MIN = 300, MAX = 5000
   const floor   = Math.round(value * 0.9)
   const ceiling = Math.round(value * 1.15)
-  const pct = (n: number) => ((n - MIN) / (MAX - MIN)) * 100
+  const pct = (n: number) => Math.max(0, Math.min(100, ((n - MIN) / (MAX - MIN)) * 100))
 
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <input
-          className="input"
-          type="number" min={MIN} max={MAX} step={100}
-          value={value}
-          onChange={e => onChange(Number(e.target.value))}
-          style={{ width: 120, fontVariantNumeric: 'tabular-nums' }}
-        />
-        <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-          words — accepted between{' '}
-          <strong style={{ color: 'var(--text-primary)' }}>{floor.toLocaleString()}</strong> and{' '}
-          <strong style={{ color: 'var(--text-primary)' }}>{ceiling.toLocaleString()}</strong>
-        </span>
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+      <input
+        className="input"
+        type="number" min={MIN} max={MAX} step={100}
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        aria-describedby="length-band"
+        style={{ width: 106, fontSize: '1rem', fontWeight: 600, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+      />
 
-      {/* The band, to scale across the whole allowed range. */}
-      <div style={{ marginTop: 10, maxWidth: 420 }}>
-        <div style={{ position: 'relative', height: 8, borderRadius: 999, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+      {/* The band this target buys, to scale across the whole allowed range. */}
+      <div id="length-band" style={{ flex: 1, minWidth: 220, maxWidth: 360 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+          <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+            {floor.toLocaleString()}–{ceiling.toLocaleString()}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>words accepted</span>
+        </div>
+        <div
+          title="Drafts under the floor are rewritten longer; anything past the ceiling is shortened before it reaches you."
+          style={{ position: 'relative', height: 8, borderRadius: 999, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
+        >
           <div
             style={{
               position: 'absolute', top: -1, bottom: -1,
@@ -632,16 +635,14 @@ function LengthBudget({ value, onChange }: { value: number; onChange: (v: number
             }}
           />
           <div
-            title={`Target ${value.toLocaleString()} words`}
             style={{
               position: 'absolute', top: -3, width: 2, height: 14,
               left: `${pct(value)}%`, background: 'var(--blue)', borderRadius: 2,
             }}
           />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
           <span>{MIN.toLocaleString()}</span>
-          <span>Anything longer is shortened before it reaches you.</span>
           <span>{MAX.toLocaleString()}</span>
         </div>
       </div>

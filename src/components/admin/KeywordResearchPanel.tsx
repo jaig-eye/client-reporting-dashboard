@@ -49,13 +49,18 @@ const difficultyTone = (d: number | null) =>
  *
  * Yours first because you put them there. Then the ones built out of what this business sells,
  * then its own footprint, then its rivals' — nearest to the business outwards.
+ *
+ * The labels answer "where did these come from" outright, because the shorter ones did not. "Yours"
+ * beside "From what you sell" read as two flavours of the same thing, and the list as a whole gave
+ * no sign that anything had been researched rather than invented. Each header now says who found
+ * it, and the tooltip says how.
  */
 const ORIGINS = [
-  { key: 'manual',     label: 'Yours' },
-  { key: 'idea',       label: 'From what you sell' },
-  { key: 'site',       label: 'You already rank for' },
-  { key: 'competitor', label: 'Competitors rank for' },
-  { key: 'other',      label: 'Other' },
+  { key: 'manual',     label: 'You added these',             hint: 'Typed in by hand. In use from the moment they were added.' },
+  { key: 'idea',       label: 'Suggested for what you sell',  hint: 'Found by research — what people search around this client’s services, plus paid terms that actually converted.' },
+  { key: 'site',       label: 'You already rank for these',   hint: 'Found by research — keywords this client’s own site is already showing up under.' },
+  { key: 'competitor', label: 'Competitors rank for these',   hint: 'Found by research — keywords rival sites are showing up under in this market.' },
+  { key: 'other',      label: 'Other',                        hint: 'From an earlier run, before origins were recorded.' },
 ] as const
 
 const originOf = (k: ResearchKeyword): string => {
@@ -63,8 +68,18 @@ const originOf = (k: ResearchKeyword): string => {
   return ORIGINS.some(o => o.key === v) ? (v as string) : 'other'
 }
 
+/** "Sep 26" for this year, "Sep 26, 2025" for an older run. Empty when we have no timestamp. */
+function runLabel(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const sameYear = d.getFullYear() === new Date().getFullYear()
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
+}
+
 export default function KeywordResearchPanel({
   clientId, keywords, geoWords = [], onChanged, place, busy, onRefresh, refreshing,
+  total, lastResearchAt,
 }: {
   clientId:   string
   keywords:   ResearchKeyword[]
@@ -78,6 +93,10 @@ export default function KeywordResearchPanel({
   /** When given, a refresh control appears in the strip. */
   onRefresh?: () => void
   refreshing?: boolean
+  /** Candidates in the pool behind the ones shown, so "60 found" is not read as the whole pool. */
+  total?:     number | null
+  /** When research last ran, so the list can say how old it is. */
+  lastResearchAt?: string | null
 }) {
   const [chosen, setChosen]   = useState<Set<string>>(new Set())
   const [expanded, setExpand] = useState<Set<string>>(new Set())
@@ -162,7 +181,7 @@ export default function KeywordResearchPanel({
     return (
       <div style={{ padding: '28px 8px', textAlign: 'center' }}>
         <p style={{ margin: '0 0 10px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          No keywords yet.
+          {onRefresh ? 'No keywords yet.' : 'No keywords yet — add your own to get started.'}
         </p>
         {onRefresh && (
           <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={onRefresh} disabled={refreshing}>
@@ -181,14 +200,29 @@ export default function KeywordResearchPanel({
           {chosen.size} in use
         </strong>
         <Dot />
-        <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-          {keywords.length} found
+        <span
+          style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}
+          title={total && total > keywords.length
+            ? `Research found ${total.toLocaleString()} candidates. The strongest ${keywords.length}, plus everything in use, are shown.`
+            : 'Found by research — see the section headers for where each one came from.'}
+        >
+          {total && total > keywords.length
+            ? `showing ${keywords.length} of ${total.toLocaleString()} researched`
+            : `${keywords.length} researched`}
         </span>
         {place && (
           <>
             <Dot />
             <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }} title="Search volumes are measured in this market, taken from the first service area">
               measured in {place}
+            </span>
+          </>
+        )}
+        {runLabel(lastResearchAt) && (
+          <>
+            <Dot />
+            <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }} title="When research last looked for new keywords. Refresh looks again.">
+              last run {runLabel(lastResearchAt)}
             </span>
           </>
         )}
@@ -254,7 +288,10 @@ export default function KeywordResearchPanel({
               padding: '8px 10px 4px', background: 'var(--bg-subtle)',
               borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)',
             }}>
-              <span style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+              <span
+                title={section.hint}
+                style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-muted)', cursor: 'help' }}
+              >
                 {section.label}
               </span>
               <span style={{ fontSize: '0.68rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>

@@ -151,6 +151,30 @@ export async function GET(req: NextRequest) {
       // PostgREST reports a bad query by RETURNING an error, not by throwing, so a bare catch
       // sees nothing and the panel silently renders empty. Say so instead.
       if (error) { console.warn('[keyword-sources] researched query failed:', error.message); return [] }
+
+      // Chosen rows, read separately and uncapped.
+      //
+      // The read above has no ORDER BY — deliberately, see the note below — so its 200-row limit
+      // takes whatever 200 rows Postgres hands back first, which is roughly insertion order. A
+      // pool larger than that therefore drops its newest rows, and the newest row is exactly what
+      // a hand-typed keyword is: it was added, chosen, saved correctly, and then never appeared,
+      // because it sat at position 241 of 241. Choices are few and must never fall off the list
+      // that shows choices, so they are fetched on their own and merged in.
+      let picked: Record<string, unknown>[] = []
+      if (hasChosen) {
+        const { data: ch, error: chErr } = await base(WITH).is('dismissed_at', null).not('chosen_at', 'is', null)
+        if (chErr) console.warn('[keyword-sources] chosen query failed:', chErr.message)
+        else picked = (ch ?? []) as unknown as Record<string, unknown>[]
+      }
+      const seen = new Set<string>()
+      const merged: Record<string, unknown>[] = []
+      for (const r of [...picked, ...((data ?? []) as unknown as Record<string, unknown>[])]) {
+        const key = String(r.keyword ?? '').trim().toLowerCase()
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        merged.push(r)
+      }
+      data = merged as never
       // Sorted here, not in the query. A server-side
       // `.order('search_volume', { nullsFirst: false })` on this exact select returned an empty
       // array against local PostgREST — no error, just nothing — while the identical query
@@ -186,14 +210,59 @@ export async function GET(req: NextRequest) {
     } catch { return [] }   // seo_keywords only exists from migration 189
   })()
 
-  // Where the researched numbers were measured (migration 224), so the tab can say so.
+  // How many candidates exist behind the sixty shown. Without it "60 found" reads as "research
+  // turned up sixty", when it turned up a few hundred and this is the strongest sixty.
+  const poolTotal: number | null = await (async () => {
+    try {
+      const { count, error } = await db
+        .from('seo_keywords')
+        .select('id', { count: 'exact', head: true })
+        .eq('client_id', clientId)
+        .eq('is_tracked', false)
+        .is('content_post_id', null)
+        .is('dismissed_at', null)
+        .or('intent.is.null,intent.neq.navigational')
+      if (error) { console.warn('[keyword-sources] pool count failed:', error.message); return null }
+      return count ?? null
+    } catch { return null }
+  })()
+
+  // Whether this client can be researched at all.
+  //
+  // Discovery, search volumes and difficulty all come from DataForSEO, and every paid path is
+  // gated on the client having its own connection row — so without one, "Find keywords" is a
+  // button that can only ever report finding nothing. Better to say why up front. Adding
+  // keywords by hand still works; they simply arrive without volume or difficulty.
+  const hasDataForSeo: boolean = await (async () => {
+    try {
+      const { data, error } = await db
+        .from('client_connections')
+        .select('connector:connectors(type)')
+        .eq('client_id', clientId)
+      if (error) { console.warn('[keyword-sources] connection check failed:', error.message); return true }
+      type Row = { connector: { type?: string } | { type?: string }[] | null }
+      return ((data ?? []) as Row[]).some(r => {
+        const c = Array.isArray(r.connector) ? r.connector[0] : r.connector
+        return c?.type === 'dataforseo'
+      })
+    } catch { return true }   // unreadable: say nothing rather than claim it is missing
+  })()
+
+  // Where the researched numbers were measured (migration 224) and when research last ran
+  // (migration 222), so the list can say what it is and how old it is instead of leaving the
+  // operator to guess whether these were found, invented, or typed in.
   let researchLocation: string | null = null
+  let lastResearchAt:   string | null = null
   try {
-    const { data: cs, error: locErr } = await db.from('content_settings').select('research_location').eq('client_id', clientId).maybeSingle()
+    const read = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
+    let { data: cs, error: locErr } = await read('research_location, last_keyword_research_at')
+    if (locErr && /last_keyword_research_at/i.test(locErr.message)) ({ data: cs, error: locErr } = await read('research_location'))
     // Migration 224 has landed, so a failure here is a real one, not the column being absent.
     if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
-    researchLocation = readResearchLocation((cs as { research_location?: unknown } | null)?.research_location)?.name ?? null
+    const row = cs as { research_location?: unknown; last_keyword_research_at?: unknown } | null
+    researchLocation = readResearchLocation(row?.research_location)?.name ?? null
+    lastResearchAt   = row?.last_keyword_research_at ? String(row.last_keyword_research_at) : null
   } catch { /* column absent */ }
 
-  return NextResponse.json({ paidTerms, ahrefs, researched, researchLocation })
+  return NextResponse.json({ paidTerms, ahrefs, researched, researchLocation, poolTotal, lastResearchAt, hasDataForSeo })
 }

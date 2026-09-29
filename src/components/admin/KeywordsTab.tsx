@@ -28,17 +28,28 @@ import type { GscData } from '@/components/admin/ClientContentTabPanel'
  * pool was here and everything that should inform choosing from it — converting paid terms, the
  * near-miss positions, the Search Console opportunities — was over there. Rankings is the one part
  * that really was a report, so it keeps its own view rather than padding the other two.
+ *
+ * Picking comes last because it is the only one that depends on something being connected, and
+ * because it is the conclusion: you look at what Search Console reports, then at how the posts
+ * that are live are doing, and only then decide what to write next. Landing on it first meant a
+ * client without DataForSEO opened this tab on an empty box.
  */
 const VIEWS = [
-  { key: 'pick',     label: 'Pick',     hint: 'Choose what to write about' },
   { key: 'evidence', label: 'Evidence', hint: 'What the data suggests' },
   { key: 'rankings', label: 'Rankings', hint: 'How the published posts are doing' },
+  { key: 'pick',     label: 'Pick',     hint: 'Choose what to write about' },
 ] as const
 type View = typeof VIEWS[number]['key']
 
 interface Payload {
   researched:        ResearchKeyword[]
   researchLocation?: string | null
+  /** Candidates in the pool behind the ones shown. */
+  poolTotal?:        number | null
+  /** When research last ran. */
+  lastResearchAt?:   string | null
+  /** Whether this client has a DataForSEO connection — without one nothing can be researched. */
+  hasDataForSeo?:    boolean
 }
 
 export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gscData, isEcom = false, onResearchRun }: {
@@ -57,7 +68,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   const [data,   setData]   = useState<Payload | null>(null)
   const [error,  setError]  = useState<string | null>(null)
   const [reload, setReload] = useState(0)
-  const [view,   setView]   = useState<View>('pick')
+  const [view,   setView]   = useState<View>('evidence')
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
@@ -67,8 +78,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   const [adding,  setAdding]  = useState(false)
   const [busy,    setBusy]    = useState(false)
   const [notice,  setNotice]  = useState<string | null>(null)
-  // What Google returns for these keywords. It lived under the Analytics tables, which is where
-  // you go to see how things are doing — this is about the keywords themselves.
+  // What Google actually returns for the chosen keywords. This is evidence about the keywords —
+  // the same kind of thing as the Search Console tables — so it sits under Evidence rather than
+  // between the picking list and the Save button, where it pushed the decision off the screen.
   const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
 
   useEffect(() => {
@@ -77,8 +89,20 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
     setError(null)
     fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(d => { if (!cancelled) setData({ researched: d.researched ?? [], researchLocation: d.researchLocation ?? null }) })
-      .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [] }) } })
+      .then(d => { if (!cancelled) setData({
+        researched:       d.researched ?? [],
+        researchLocation: d.researchLocation ?? null,
+        poolTotal:        d.poolTotal ?? null,
+        lastResearchAt:   d.lastResearchAt ?? null,
+        hasDataForSeo:    d.hasDataForSeo !== false,
+      }) })
+      .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [], hasDataForSeo: true }) } })
+    return () => { cancelled = true }
+  }, [clientId, isActive, epoch, reload, view])
+
+  useEffect(() => {
+    if (!isActive || view !== 'evidence') return
+    let cancelled = false
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { insights: [] })
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
@@ -192,12 +216,52 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         />
       )}
 
+      {/* What Google actually returns for the chosen keywords — evidence about the keywords, so
+          it sits with the rest of the evidence rather than under the picking list. */}
+      {view === 'evidence' && (
+        <div style={{ marginTop: 16 }}>
+          <SerpInsightsSection
+            rows={insights} loading={insights === null} search=""
+            ownDomains={sites.map(s => s.siteUrl)}
+          />
+        </div>
+      )}
+
       {view === 'pick' && (<>
 
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red, #b91c1c)', marginBottom: 12 }}>
           Couldn&apos;t load the keywords ({error}).
         </p>
+      )}
+
+      {/* The result of the last add or refresh, where the button that caused it is — not at the
+          bottom of a scrolled page, which is where it used to appear and why adding a keyword
+          looked like it had done nothing. */}
+      {notice && (
+        <p role="status" className="text-xs" style={{ margin: '0 0 12px', color: /could not|error|http|nothing/i.test(notice) ? 'var(--red)' : 'var(--green, #16794a)' }}>
+          {notice}
+        </p>
+      )}
+
+      {/* Research still runs without DataForSEO — it reads the client's own converting Google Ads
+          search terms and any Ahrefs rows, both free and already in the database. What it cannot
+          do is put a number on any of it, or look outside the client's own footprint. Saying
+          "research needs DataForSEO" would be wrong; saying nothing leaves a list of keywords with
+          every number blank and no explanation. */}
+      {data && data.hasDataForSeo === false && (
+        <div
+          className="card"
+          style={{ marginBottom: 12, padding: '10px 14px', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', borderLeft: '3px solid var(--amber, #a3541a)' }}
+        >
+          <strong style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+            No DataForSEO here
+          </strong>
+          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+            These come from this client&apos;s own converting ad terms. Connect DataForSEO on the
+            Connections tab for search volume, difficulty, what competitors rank for, and what Google shows.
+          </span>
+        </div>
       )}
 
       {showAdd && (
@@ -221,7 +285,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
               {adding ? 'Adding…' : 'Add'}
             </button>
             <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-              Added in use, with search volume where Google reports it.
+              {data?.hasDataForSeo === false
+                ? 'Added in use, straight into the list below.'
+                : 'Added in use, with search volume where Google reports it.'}
             </span>
           </div>
         </div>
@@ -236,25 +302,16 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
             keywords={data.researched}
             geoWords={place ? [place] : []}
             place={place}
+            total={data.poolTotal}
+            lastResearchAt={data.lastResearchAt}
             onChanged={() => setReload(v => v + 1)}
+            /* Offered with or without DataForSEO: a run against the free database sources alone
+               is what a client like 5 Star Tuning gets, and it finds real keywords. */
             onRefresh={() => void refresh()}
             refreshing={busy}
           />
         )}
       </div>
-
-      <div style={{ marginTop: 16 }}>
-        <SerpInsightsSection
-          rows={insights} loading={insights === null} search=""
-          ownDomains={sites.map(s => s.siteUrl)}
-        />
-      </div>
-
-      {notice && (
-        <p className="text-xs" style={{ margin: '10px 0 0', color: /could not|error|http/i.test(notice) ? 'var(--red)' : 'var(--text-muted)' }}>
-          {notice}
-        </p>
-      )}
 
       </>)}
     </div>
