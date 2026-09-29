@@ -10,14 +10,23 @@
 // Three questions were being answered by a paragraph above the table: what are these, where did
 // they come from, and which ones count. They are answered by the table itself now.
 //
-//   Grouped by origin    — "Yours", "From what you sell", "You already rank for", "Competitors
-//                          rank for". Four words each, and the question stops being asked.
+//   Grouped by origin    — "You added these", "Suggested for what you sell", "You already rank
+//                          for these", "Competitors rank for these". Each header says who found
+//                          the keyword, so the question stops being asked.
 //   Grouped by theme     — a real run for a Los Angeles lighting installer returned eight
 //                          variations of "christmas lights" at the top by volume, burying
 //                          landscape lighting and security lighting. The strongest of each theme
 //                          leads, variants one click away. Nothing is discarded.
-//   Counted in the strip — "12 in use · 60 found · Los Angeles" instead of two sentences saying
-//                          the same thing.
+//   Counted in the strip — "12 in use · 241 researched · Los Angeles · last run Sep 29" instead
+//                          of two sentences saying the same thing.
+//
+// COLUMNS ARE NOT FIXED
+//
+// A client without DataForSEO has no search volume and no difficulty for any row, and two columns
+// of "—" all the way down say less than no columns at all. Each numeric column appears only when
+// something in the list fills it. Leads is the column that carries those clients: their keywords
+// came from converting ad terms, and how many leads a term produced is a better reason to write
+// about it than search volume ever was.
 //
 // Nothing is used until it is chosen. No provider names, no costs: which vendor answered and what
 // it cost are our concerns, not the operator's.
@@ -36,6 +45,8 @@ export interface ResearchKeyword {
   score:         number | null
   local_volume:  number | null
   chosen:        boolean
+  /** Leads this term produced in paid search. The only number a client without DataForSEO has. */
+  leads?:        number
 }
 
 /** Local volume when the market is known, national otherwise. The number the ranking is by. */
@@ -114,6 +125,11 @@ export default function KeywordResearchPanel({
     const q = filter.trim().toLowerCase()
     return q ? keywords.filter(k => k.keyword.toLowerCase().includes(q)) : keywords
   }, [keywords, filter])
+
+  // Which columns have anything in them. A client without DataForSEO has no volume and no
+  // difficulty at all, and two columns of "—" across the whole table say less than no columns do.
+  const anyVolume = useMemo(() => keywords.some(k => (k.local_volume ?? k.volume) != null), [keywords])
+  const anyLeads  = useMemo(() => keywords.some(k => k.leads != null), [keywords])
 
   /** Origin sections, each with its themes inside. Empty sections are not rendered. */
   const sections = useMemo(() => {
@@ -271,8 +287,9 @@ export default function KeywordResearchPanel({
         }}>
           <span style={{ width: 13, flexShrink: 0 }} />
           <span style={{ flex: 1 }}>Keyword</span>
-          <span style={{ whiteSpace: 'nowrap' }}>Searches</span>
-          <span style={{ minWidth: 58, textAlign: 'right' }}>Difficulty</span>
+          {anyLeads && <span style={{ minWidth: 46, textAlign: 'right' }} title="Leads this term produced in paid search over the last 90 days">Leads</span>}
+          {anyVolume && <span style={{ whiteSpace: 'nowrap' }}>Searches</span>}
+          {anyVolume && <span style={{ minWidth: 58, textAlign: 'right' }}>Difficulty</span>}
         </div>
 
         {sections.length === 0 && (
@@ -303,7 +320,7 @@ export default function KeywordResearchPanel({
               const open = expanded.has(group.label)
               return (
                 <div key={group.label} style={{ borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
-                  <Row k={lead} checked={chosen.has(lead.keyword.toLowerCase())} onToggle={toggle} />
+                  <Row k={lead} checked={chosen.has(lead.keyword.toLowerCase())} onToggle={toggle} showVolume={anyVolume} showLeads={anyLeads} />
                   {rest.length > 0 && (
                     <>
                       <button
@@ -319,7 +336,7 @@ export default function KeywordResearchPanel({
                         {open ? '▾ hide' : `▸ ${rest.length} similar`}
                       </button>
                       {open && rest.map(k => (
-                        <Row key={k.keyword} k={k} checked={chosen.has(k.keyword.toLowerCase())} onToggle={toggle} indented />
+                        <Row key={k.keyword} k={k} checked={chosen.has(k.keyword.toLowerCase())} onToggle={toggle} indented showVolume={anyVolume} showLeads={anyLeads} />
                       ))}
                     </>
                   )}
@@ -354,8 +371,9 @@ function RefreshIcon({ spinning }: { spinning: boolean }) {
   )
 }
 
-function Row({ k, checked, onToggle, indented }: {
+function Row({ k, checked, onToggle, indented, showVolume, showLeads }: {
   k: ResearchKeyword; checked: boolean; onToggle: (kw: string) => void; indented?: boolean
+  showVolume: boolean; showLeads: boolean
 }) {
   const vol = k.local_volume ?? k.volume
   return (
@@ -370,12 +388,24 @@ function Row({ k, checked, onToggle, indented }: {
       <span style={{ flex: 1, fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.35 }}>
         {k.keyword}
       </span>
-      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-        {vol == null ? '—' : `${vol.toLocaleString()}/mo`}
-      </span>
-      <span style={{ fontSize: '0.75rem', color: difficultyTone(k.difficulty), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 58, textAlign: 'right' }}>
-        {k.difficulty == null ? '—' : k.difficulty}
-      </span>
+      {showLeads && (
+        <span
+          title={k.leads != null ? `${k.leads} lead${k.leads === 1 ? '' : 's'} from paid search in the last 90 days` : undefined}
+          style={{ fontSize: '0.75rem', fontWeight: k.leads != null ? 600 : 400, color: k.leads != null ? 'var(--green, #16794a)' : 'var(--text-faint)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 46, textAlign: 'right' }}
+        >
+          {k.leads == null ? '—' : k.leads}
+        </span>
+      )}
+      {showVolume && (
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+          {vol == null ? '—' : `${vol.toLocaleString()}/mo`}
+        </span>
+      )}
+      {showVolume && (
+        <span style={{ fontSize: '0.75rem', color: difficultyTone(k.difficulty), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 58, textAlign: 'right' }}>
+          {k.difficulty == null ? '—' : k.difficulty}
+        </span>
+      )}
     </label>
   )
 }

@@ -40,14 +40,32 @@ function foundViaOf(metadata: unknown, source: unknown): string | null {
   return typeof v === 'string' && v ? v : null
 }
 
-/** Rows read from the pool before ranking. Wider than we show, so the sort decides what survives. */
-const POOL_READ = 200
-/** Rows shown, on top of everything already chosen. */
-const POOL_SHOW = 60
+/**
+ * Rows read from the pool.
+ *
+ * There used to be a second, tighter cap that showed sixty of these and dropped the rest. It was
+ * never a judgement about fitness — the pool is already filtered to content-worthy rows, the list
+ * groups variants under one line and has a filter box — so all it did was hide two thirds of what
+ * research was paid for behind a number nobody could see past. The read cap stays as a ceiling on
+ * the payload; nothing below it is thrown away.
+ */
+const POOL_READ = 400
 
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-export interface ResearchRow  { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null; source: string | null; foundVia: string | null; chosen: boolean }
+export interface ResearchRow  {
+  keyword:      string
+  volume:       number | null
+  difficulty:   number | null
+  intent:       string | null
+  score:        number | null
+  local_volume: number | null
+  source:       string | null
+  foundVia:     string | null
+  chosen:       boolean
+  /** Leads this term produced in paid search, when it is one we bought clicks on. */
+  leads?:       number
+}
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
@@ -182,7 +200,7 @@ export async function GET(req: NextRequest) {
       // question rather than depending on an answer I could not pin down.
       // Through unknown: the column list is chosen at runtime, so PostgREST's generic cannot
       // narrow it and infers the error shape instead.
-      const all = ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
+      const all: ResearchRow[] = ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
         keyword:    String(r.keyword ?? '').trim(),
         volume:     r.search_volume      == null ? null : Number(r.search_volume),
         difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
@@ -198,20 +216,28 @@ export async function GET(req: NextRequest) {
         .filter(k => k.keyword)
         .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
 
-      // Everything chosen, then the best of the rest up to the display cap.
+      // Leads, for the rows that came from paid search.
       //
-      // Two reasons the cap cannot simply take the top sixty by score. A chosen keyword is a
-      // decision and must never fall off the list that shows decisions. And a hand-typed keyword
-      // has no research score at all, so it sorts below every discovered row — it would be added,
-      // chosen, and then invisible.
-      const chosen   = all.filter(k => k.chosen)
-      const unchosen = all.filter(k => !k.chosen)
-      return [...chosen, ...unchosen.slice(0, Math.max(0, POOL_SHOW - chosen.length))]
+      // A client without DataForSEO has no volume and no difficulty, so every column on the right
+      // of the list reads "—" and the table says nothing at all. Those rows are converting ad
+      // terms, and the number of leads each produced is a better reason to write about it than
+      // search volume ever was — it is already computed above for the paid table, so this is a
+      // join rather than a query.
+      const leadsByTerm = new Map(paidTerms.map(p => [p.term.trim().toLowerCase(), p.conversions]))
+      for (const k of all) {
+        const n = leadsByTerm.get(k.keyword.toLowerCase())
+        if (n != null && n > 0) k.leads = Math.round(n * 10) / 10
+      }
+
+      // Chosen first, then everything else by score. A chosen keyword is a decision and belongs
+      // at the top of the list that shows decisions; a hand-typed one has no research score at
+      // all, so without this it would sort below every discovered row.
+      return [...all.filter(k => k.chosen), ...all.filter(k => !k.chosen)]
     } catch { return [] }   // seo_keywords only exists from migration 189
   })()
 
-  // How many candidates exist behind the sixty shown. Without it "60 found" reads as "research
-  // turned up sixty", when it turned up a few hundred and this is the strongest sixty.
+  // The size of the pool, so the strip can say whether the list is all of it. Only differs from
+  // the list length when a client has more candidates than POOL_READ.
   const poolTotal: number | null = await (async () => {
     try {
       const { count, error } = await db

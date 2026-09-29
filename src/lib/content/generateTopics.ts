@@ -25,6 +25,7 @@ import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/datafo
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
+import { brandForms, isBrandTerm } from '@/lib/content/brandTerms'
 
 interface TopicIdea {
   topic:               string
@@ -221,7 +222,8 @@ export async function generateTopicsForClient(
     db.from('agency_settings')
       .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
       .single(),
-    db.from('clients').select('id, name').eq('id', clientId).single(),
+    // website comes along for the brand check below, which needs a second form of the name.
+    db.from('clients').select('id, name, website').eq('id', clientId).single(),
     db.from('content_settings')
       .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data, topic_guidelines')
       .eq('client_id', clientId)
@@ -294,8 +296,19 @@ export async function generateTopicsForClient(
     ex.spend       += Number(r.spend)       || 0
     paidMap.set(term, ex)
   }
+  // The client's own name is the highest-converting paid term almost everywhere, and it is the
+  // one term on this list that is worth nothing to write about: whoever searched it has already
+  // chosen the business, and the page that answers them is the home page. Handed to the model it
+  // reads as the strongest commercial signal on the page. Matched narrowly — see brandTerms.ts,
+  // where several clients are named after the service they sell.
+  const brands = brandForms(
+    (client as { name?: string | null; website?: string | null } | null)?.name,
+    (client as { website?: string | null } | null)?.website,
+    typeof clientSettings?.services === 'string' ? clientSettings.services : null,
+  )
   const paidConverters = Array.from(paidMap.values())
     .filter(t => t.conversions >= 1)
+    .filter(t => !isBrandTerm(t.term, brands))
     .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
     .slice(0, 10)
 

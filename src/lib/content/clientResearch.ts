@@ -43,6 +43,7 @@ import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
 import { deriveResearchLocation } from './deriveLocation'
+import { brandForms, isBrandTerm } from './brandTerms'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
 const MAX_COMPETITORS = 3
@@ -301,8 +302,32 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   }
 
   // ── Sources already in the database (free, and they work without DataForSEO) ──
+
+  // The client's own name, so their brand can be told apart from what they sell.
+  //
+  // Paid search converts on the brand harder than on anything else — 5 Star Tuning's converting
+  // terms were half its own name, in four spellings — and the scorer pays up to +80 for a term
+  // that converted, so the list of things to write about opened with the company's own name.
+  // Nothing is gained by an article aimed there: the searcher has already chosen the brand, and
+  // the page that answers them is the home page, which exists. See brandTerms.ts for why the
+  // match is as narrow as it is.
+  const brands: string[] = await (async () => {
+    try {
+      const [{ data: client, error: clErr }, { data: svc }] = await Promise.all([
+        db.from('clients').select('name, website').eq('id', clientId).maybeSingle(),
+        db.from('content_settings').select('services').eq('client_id', clientId).maybeSingle(),
+      ])
+      // Unreadable is not "no brand": gating on a half-read name could catch a real keyword, so
+      // an error means gate nothing at all.
+      if (clErr) { console.warn('[research] cannot read the client name:', clErr.message); return [] }
+      const c = client as { name?: string | null; website?: string | null } | null
+      return brandForms(c?.name, c?.website, (svc as { services?: string | null } | null)?.services)
+    } catch { return [] }
+  })()
+
   const windowStart = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
   const paidConversions = new Map<string, number>()
+  let brandedPaid = 0
   try {
     const { data, error } = await db
       .from('google_ads_search_terms')
@@ -313,14 +338,23 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       .limit(2000)
     if (error) console.warn('[research] paid terms unavailable:', error.message)
     for (const r of (data ?? []) as { search_term: string; conversions: number | null }[]) {
-      const k = normalize(String(r.search_term ?? ''))
+      const term = String(r.search_term ?? '')
+      const k = normalize(term)
       if (!k) continue
       paidConversions.set(k, (paidConversions.get(k) ?? 0) + (Number(r.conversions) || 0))
+      // Recorded as navigational rather than dropped. That is what a brand search is, and the
+      // pool read already excludes navigational intent while the scorer already docks it 40 — so
+      // saying what the term is keeps it out of the writer's way through machinery that exists,
+      // and leaves the row readable if we ever want it back.
+      const branded = isBrandTerm(term, brands)
+      if (branded) brandedPaid++
       add({
-        keyword: String(r.search_term), search_volume: null, keyword_difficulty: null, cpc: null,
-        competition: null, intent: 'transactional', source: 'idea', position: null, competitor_domain: null,
+        keyword: term, search_volume: null, keyword_difficulty: null, cpc: null,
+        competition: null, intent: branded ? 'navigational' : 'transactional',
+        source: 'idea', position: null, competitor_domain: null,
       }, 'google_ads')
     }
+    if (brandedPaid) console.log(`[research] client ${clientId}: ${brandedPaid} paid term(s) are the client's own brand — filed navigational`)
   } catch { /* table missing or unreadable — skip this source */ }
 
   try {
