@@ -166,6 +166,14 @@ export default function KeywordResearchPanel({
       const was  = new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase()))
       const add  = Array.from(chosen).filter(k => !was.has(k))
       const drop = Array.from(was).filter(k => !chosen.has(k))
+      // A hand-typed keyword that is un-ticked leaves the list altogether.
+      //
+      // It is only in the pool because someone typed it, so un-ticking it is the whole of the
+      // decision — there is no "keep it as a candidate" to fall back to, and leaving it sitting
+      // unchosen under "You added these" forever reads as the save having failed. Discovered
+      // candidates are different: un-ticking one means "not this time", and it stays available.
+      const manual = new Set(keywords.filter(k => originOf(k) === 'manual').map(k => k.keyword.toLowerCase()))
+      const remove = drop.filter(k => manual.has(k))
       // Newly picked keywords have their SERP looked up as part of the save, so this can take a
       // few seconds each. Say so rather than leaving a button spinning.
       if (add.length) setMsg(`Looking up what Google shows for ${add.length}…`)
@@ -184,7 +192,24 @@ export default function KeywordResearchPanel({
         const body = await res.json().catch(() => ({})) as { snapshot?: { captured?: number } }
         captured += body.snapshot?.captured ?? 0
       }
-      setMsg(`Saved${captured ? ` · ${captured} looked up` : ''}`)
+      // Runs after the un-choose above, so a failure here leaves the row unchosen rather than
+      // half-removed.
+      if (remove.length) {
+        const res = await fetch('/api/admin/content/keyword-research', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, dismiss: remove }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body.error ?? `HTTP ${res.status}`)
+        }
+      }
+      setMsg([
+        'Saved',
+        captured      ? `${captured} looked up` : '',
+        remove.length ? `${remove.length} removed` : '',
+      ].filter(Boolean).join(' · '))
       onChanged?.()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not save')

@@ -500,7 +500,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
               </select>
             </>)}
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>at</span>
-            <input className="input" type="time" style={{ width: 120 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
+            {/* 120px fits "09:00 AM" but not the clock button Chrome draws inside the field on
+                top of it, so the two overlapped. Wide enough for both, and minWidth holds it
+                there when the row is tight. */}
+            <input className="input" type="time" style={{ width: 150, minWidth: 150 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
           </div>
         </div>
 
@@ -552,7 +555,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>Length, structure, and topics to avoid.</p>
         </div>
 
-        <div style={{ maxWidth: 200 }}>
+        {/* No maxWidth: the control lays itself out across the row. Boxed to 200px it had to
+            stack, which is why the band sat under the field with the rest of the card empty. */}
+        <div>
           <Label>Target word count</Label>
           {/* The generator holds posts to this band and revises anything past the ceiling, so the
               number is a budget, not a suggestion — posts averaged 135% of target while this was
@@ -603,45 +608,48 @@ function LengthBudget({ value, onChange }: { value: number; onChange: (v: number
   const pct = (n: number) => Math.max(0, Math.min(100, ((n - MIN) / (MAX - MIN)) * 100))
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
       <input
         className="input"
         type="number" min={MIN} max={MAX} step={100}
         value={value}
         onChange={e => onChange(Number(e.target.value))}
         aria-describedby="length-band"
-        style={{ width: 106, fontSize: '1rem', fontWeight: 600, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+        style={{ width: 100, flexShrink: 0, fontSize: '1rem', fontWeight: 600, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
       />
 
       {/* The band this target buys, to scale across the whole allowed range. */}
-      <div id="length-band" style={{ flex: 1, minWidth: 220, maxWidth: 360 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 7 }}>
+      <div id="length-band" style={{ flex: '1 1 260px', minWidth: 240, maxWidth: 460 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8 }}>
           <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
             {floor.toLocaleString()}–{ceiling.toLocaleString()}
           </span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>words accepted</span>
         </div>
+        {/* The fill sits inside the track rather than outlined and overhanging it, and the handle
+            is centred on the track's midline instead of a hairline hung a pixel high. */}
         <div
           title="Drafts under the floor are rewritten longer; anything past the ceiling is shortened before it reaches you."
-          style={{ position: 'relative', height: 8, borderRadius: 999, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
+          style={{ position: 'relative', height: 6, borderRadius: 999, background: 'var(--bg-subtle)' }}
         >
           <div
             style={{
-              position: 'absolute', top: -1, bottom: -1,
+              position: 'absolute', top: 0, bottom: 0,
               left: `${pct(floor)}%`, width: `${pct(ceiling) - pct(floor)}%`,
-              minWidth: 6, borderRadius: 999,
-              background: 'var(--blue-subtle, rgba(37,99,235,0.18))',
-              border: '1px solid var(--blue)',
+              minWidth: 8, borderRadius: 999,
+              background: 'var(--blue)', opacity: 0.35,
             }}
           />
           <div
             style={{
-              position: 'absolute', top: -3, width: 2, height: 14,
-              left: `${pct(value)}%`, background: 'var(--blue)', borderRadius: 2,
+              position: 'absolute', top: '50%', left: `${pct(value)}%`,
+              width: 12, height: 12, transform: 'translate(-50%, -50%)',
+              borderRadius: '50%', background: 'var(--blue)',
+              border: '2px solid var(--bg-surface)', boxSizing: 'border-box',
             }}
           />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
           <span>{MIN.toLocaleString()}</span>
           <span>{MAX.toLocaleString()}</span>
         </div>

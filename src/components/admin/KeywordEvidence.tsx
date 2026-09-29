@@ -166,19 +166,10 @@ function SourceSection<T>({
   return (
     <div className="card p-5" style={{ marginBottom: 16 }}>
       <div style={{ marginBottom: 10 }}>
-        <span style={{
-          display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-          background: badgeBg, color: badgeColor,
-        }}>
-          {badge}
-        </span>
-        <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>{provider}</span>
-        {rows.length > 0 && (
-          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-            {filtered.length} {unit}{filtered.length !== 1 ? 's' : ''}
-          </span>
-        )}
+        <SectionLabel
+          badge={badge} color={badgeColor} bg={badgeBg} provider={provider}
+          count={rows.length > 0 ? filtered.length : undefined}
+        />
       </div>
       {note && rows.length > 0 && (
         <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{note}</p>
@@ -246,10 +237,12 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all' }: {
+export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all', hasDataForSeo = true }: {
   data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number
   /** 'evidence' = what to write about next. 'rankings' = whether it is working. */
   view?: 'all' | 'evidence' | 'rankings'
+  /** Rankings is the one section that is purely DataForSEO, so it says so when there is none. */
+  hasDataForSeo?: boolean
 }) {
   const showEvidence = view === 'all' || view === 'evidence'
   const showRankings = view === 'all' || view === 'rankings'
@@ -402,30 +395,13 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
         />
       </div>
 
-      {/* ── Keyword Rankings ───────────────────────────────────────────────── */}
-      {showRankings && (
-      <div className="card p-5" style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 10 }}>
-          <span style={{
-            display: 'inline-block', padding: '2px 10px', borderRadius: 999,
-            fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-            background: '#eef2ff', color: '#4338ca',
-          }}>
-            Keyword Rankings
-          </span>
-          <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-faint)' }}>DataForSEO</span>
-        </div>
-        <KeywordRankTable ranks={filteredRanks} loading={ranks === null} />
-      </div>
-      )}
-
       {/* ── The sources that feed topic selection ──────────────────────────── */}
       {showEvidence && (
       <>
       <SourceSection<PaidTermRow>
         badge="Converted in Paid" badgeColor="#9f1239" badgeBg="#ffe4e6" provider="Google Ads"
         note="Paid terms that produced leads in the last 90 days."
-        rows={sources?.paidTerms ?? []} search={search} unit="term"
+        rows={sources?.paidTerms ?? []} search={search}
         searchOn={r => r.term}
         columns={[
           { label: 'Search term', left: true, render: r => r.term },
@@ -473,14 +449,23 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
           leaving the operator to recognise their own domain among ten competitors. */}
       {/* ── Search Console insights ────────────────────────────────────────── */}
       {isEmpty ? (
-        <div className="card p-6" style={{ textAlign: 'center' }}>
-          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            No Search Console data yet. Connect Google Search Console and run a sync.
+        <div className="card p-5" style={{ marginBottom: 16 }}>
+          {/* Labelled like every other section even when empty — an unlabelled card of grey text
+              in the middle of a labelled page reads as something having gone wrong. */}
+          <div style={{ marginBottom: 10 }}>
+            <SectionLabel badge="Search Console" color="#3730a3" bg="#e0e7ff" provider="Google" />
+          </div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            Nothing here yet. Connect Google Search Console and run a sync.
           </p>
         </div>
       ) : (
         <div className="card p-5">
-          <div style={{ marginBottom: 12, fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Search Console Insights</div>
+          {/* Provider is "Google", not "Google Search Console": the badge already says Search
+              Console, and the pair read as a stutter. */}
+          <div style={{ marginBottom: 12 }}>
+            <SectionLabel badge="Search Console" color="#3730a3" bg="#e0e7ff" provider="Google" />
+          </div>
           <GscSection badge="Growth Opportunities" badgeColor="#92400e" badgeBg="#fef3c7" rows={data.growth}     search={search} />
           <GscSection badge="Quick Wins"           badgeColor="#166534" badgeBg="#dcfce7" rows={data.quickWins}  search={search} />
           <GscSection badge="Low CTR"              badgeColor="#1e3a8a" badgeBg="#dbeafe" rows={data.lowCtr}     search={search} />
@@ -489,19 +474,71 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
       )}
       </>
       )}
+
+      {/* ── Rankings ───────────────────────────────────────────────────────── */}
+      {/* Last, because it reports on what is already published rather than informing what to write
+          next, and because it is the one section that is purely DataForSEO — a client without a
+          connection has nothing here and should be told why rather than shown an empty table. */}
+      {showRankings && (
+      <div className="card p-5" style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 10 }}>
+          <SectionLabel
+            badge="Rankings" color="#4338ca" bg="#eef2ff" provider="DataForSEO"
+            count={ranks === null ? undefined : filteredRanks.length}
+          />
+        </div>
+        <KeywordRankTable ranks={filteredRanks} loading={ranks === null} hasDataForSeo={hasDataForSeo} />
+      </div>
+      )}
     </div>
   )
 }
 
-function KeywordRankTable({ ranks, loading }: { ranks: KeywordRankRow[]; loading: boolean }) {
+/**
+ * The one header every section on this page wears: what it is, who it came from, how many rows.
+ *
+ * They had drifted apart — the paid table counted "6 terms", Search Console counted nothing and
+ * wore a plain bold line instead of a badge, and Rankings named its provider but never its size.
+ * Reading down the page you could not tell whether a section was small or simply labelled
+ * differently. One component, one shape, and "keywords" throughout: they are all keywords here,
+ * whichever system reported them.
+ */
+function SectionLabel({ badge, color, bg, provider, count }: {
+  badge: string; color: string; bg: string; provider: string; count?: number
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{
+        display: 'inline-block', padding: '2px 10px', borderRadius: 999,
+        fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+        background: bg, color,
+      }}>
+        {badge}
+      </span>
+      <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>{provider}</span>
+      {count != null && (
+        <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+          {count} keyword{count === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function KeywordRankTable({ ranks, loading, hasDataForSeo = true }: {
+  ranks: KeywordRankRow[]; loading: boolean; hasDataForSeo?: boolean
+}) {
   if (loading) {
     return <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading rankings…</p>
   }
   if (ranks.length === 0) {
+    // Two different empty states. Without a connection this section can never fill, and saying
+    // "no rankings yet" would read as "give it time" when the answer is "connect something".
     return (
       <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        No rankings yet. We start tracking a keyword once this client&apos;s first post goes live, or sooner if
-        the site already ranks for something. Tracking needs DataForSEO connected for this client.
+        {hasDataForSeo
+          ? 'No rankings yet. A keyword starts being tracked once this client’s first post goes live, or sooner if the site already ranks for something.'
+          : 'Rank tracking needs DataForSEO, which this client does not have connected. Everything else on this page works without it.'}
       </p>
     )
   }

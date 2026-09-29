@@ -99,9 +99,14 @@ export function brandForms(
 ): string[] {
   const words = String(name ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
   const core  = words.filter(w => !CORPORATE.has(w))
-  // A one-word name that is also one of their services is not a brand we can pick out.
   if (core.length === 0) return []
-  if (core.length === 1 && mentions(String(services ?? ''), core[0])) return []
+  // A name made entirely of words the client sells is not a brand we can pick out from the
+  // service. "Irrigation Inc" is the live case: "irrigation" alone covers 77% of
+  // "irrigationinc", enough for the prefix rule to call "irrigation repair" a brand search and
+  // throw away the keyword the business is built on. "Roofing Construction" would be the same
+  // trap with two words, so the test is every word, not just a lone one.
+  const svc = String(services ?? '')
+  if (svc && core.every(w => mentions(svc, w))) return []
 
   const forms = new Set<string>()
   const fromName = compactBrand(name ?? '')

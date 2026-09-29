@@ -76,10 +76,24 @@ export async function GET(req: NextRequest) {
 
   const db = createAdminClient()
 
+  /**
+   * Leads per term across the whole window, before the table's top-50 cut.
+   *
+   * The keyword list joins against this to fill its Leads column, and it has to be the full set:
+   * joining against the displayed fifty would blank the column for every keyword ranked 51st or
+   * lower by conversions, which reads as "no leads" rather than "not in the top fifty".
+   */
+  const leadsByTerm = new Map<string, number>()
+
+  // Each block below is an async thunk rather than an awaited expression, so they can be run
+  // together at the bottom instead of one after another. This route feeds the whole Keywords page
+  // now that it is one page rather than three tabs — seven round trips in series was seven times
+  // the slowest query, for queries that do not depend on each other.
+
   // ── Google Ads: terms that actually produced leads ────────────────────────
   // Aggregated here rather than in SQL because PostgREST has no GROUP BY; the row count is
   // bounded by the same limit topic selection uses.
-  const paidTerms: PaidTermRow[] = await (async () => {
+  const readPaidTerms = async (): Promise<PaidTermRow[]> => {
     try {
       const since = new Date(Date.now() - PAID_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10)
       const { data, error } = await db
@@ -99,6 +113,9 @@ export async function GET(req: NextRequest) {
         agg.spend       += Number(r.spend)       || 0
         byTerm.set(term, agg)
       }
+      for (const [term, a] of Array.from(byTerm.entries())) {
+        if (a.conversions > 0) leadsByTerm.set(term.toLowerCase(), Math.round(a.conversions * 10) / 10)
+      }
       return Array.from(byTerm.entries())
         .map(([term, a]) => ({
           term,
@@ -111,10 +128,10 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
         .slice(0, 50)
     } catch { return [] }
-  })()
+  }
 
   // ── Ahrefs: organic positions GSC under-reports ───────────────────────────
-  const ahrefs: AhrefsRow[] = await (async () => {
+  const readAhrefs = async (): Promise<AhrefsRow[]> => {
     try {
       const { data, error } = await db
         .from('ahrefs_keywords')
@@ -139,10 +156,10 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
         .slice(0, 100)
     } catch { return [] }
-  })()
+  }
 
   // ── DataForSEO research: candidates nothing has been written for yet ──────
-  const researched: ResearchRow[] = await (async () => {
+  const readResearched = async (): Promise<ResearchRow[]> => {
     try {
       const base = (cols: string) => db
         .from('seo_keywords')
@@ -157,8 +174,7 @@ export async function GET(req: NextRequest) {
       // unchosen and the tab showed a saved selection as empty every time it was reopened.
       const WITH    = 'keyword, search_volume, keyword_difficulty, intent, metadata, chosen_at, source'
       const WITHOUT = 'keyword, search_volume, keyword_difficulty, intent, metadata, source'
-      // Read wider than we show. The cap used to be applied by the database, before the sort
-      // below ran, so which sixty rows survived was whatever order Postgres happened to return.
+      // A ceiling on the payload, not a shortlist — everything under it is shown.
       let { data, error } = await base(WITH).is('dismissed_at', null).limit(POOL_READ)
       let hasChosen = true
       if (error && /chosen_at/i.test(error.message)) {
@@ -172,15 +188,15 @@ export async function GET(req: NextRequest) {
 
       // Chosen rows, read separately and uncapped.
       //
-      // The read above has no ORDER BY — deliberately, see the note below — so its 200-row limit
-      // takes whatever 200 rows Postgres hands back first, which is roughly insertion order. A
-      // pool larger than that therefore drops its newest rows, and the newest row is exactly what
-      // a hand-typed keyword is: it was added, chosen, saved correctly, and then never appeared,
-      // because it sat at position 241 of 241. Choices are few and must never fall off the list
-      // that shows choices, so they are fetched on their own and merged in.
+      // The read above has no ORDER BY — deliberately, see the note below — so its limit takes
+      // whatever rows Postgres hands back first, which is roughly insertion order. A pool larger
+      // than that drops its NEWEST rows, and the newest row is exactly what a hand-typed keyword
+      // is: it was added, chosen, saved correctly, and then never appeared, because it sat at
+      // position 241 of 241. Choices are few and must never fall off the list that shows choices,
+      // so they are fetched on their own and merged in.
       let picked: Record<string, unknown>[] = []
       if (hasChosen) {
-        const { data: ch, error: chErr } = await base(WITH).is('dismissed_at', null).not('chosen_at', 'is', null)
+        const { data: ch, error: chErr } = await base(WITH).is('dismissed_at', null).not('chosen_at', 'is', null).limit(POOL_READ)
         if (chErr) console.warn('[keyword-sources] chosen query failed:', chErr.message)
         else picked = (ch ?? []) as unknown as Record<string, unknown>[]
       }
@@ -196,7 +212,7 @@ export async function GET(req: NextRequest) {
       // Sorted here, not in the query. A server-side
       // `.order('search_volume', { nullsFirst: false })` on this exact select returned an empty
       // array against local PostgREST — no error, just nothing — while the identical query
-      // without it returned every row. Sixty rows sort for nothing, so this sidesteps the
+      // without it returned every row. A few hundred rows sort for nothing, so this sidesteps the
       // question rather than depending on an answer I could not pin down.
       // Through unknown: the column list is chosen at runtime, so PostgREST's generic cannot
       // narrow it and infers the error shape instead.
@@ -221,12 +237,10 @@ export async function GET(req: NextRequest) {
       // A client without DataForSEO has no volume and no difficulty, so every column on the right
       // of the list reads "—" and the table says nothing at all. Those rows are converting ad
       // terms, and the number of leads each produced is a better reason to write about it than
-      // search volume ever was — it is already computed above for the paid table, so this is a
-      // join rather than a query.
-      const leadsByTerm = new Map(paidTerms.map(p => [p.term.trim().toLowerCase(), p.conversions]))
+      // search volume ever was — already aggregated above, so this is a join rather than a query.
       for (const k of all) {
         const n = leadsByTerm.get(k.keyword.toLowerCase())
-        if (n != null && n > 0) k.leads = Math.round(n * 10) / 10
+        if (n != null) k.leads = n
       }
 
       // Chosen first, then everything else by score. A chosen keyword is a decision and belongs
@@ -234,11 +248,11 @@ export async function GET(req: NextRequest) {
       // all, so without this it would sort below every discovered row.
       return [...all.filter(k => k.chosen), ...all.filter(k => !k.chosen)]
     } catch { return [] }   // seo_keywords only exists from migration 189
-  })()
+  }
 
   // The size of the pool, so the strip can say whether the list is all of it. Only differs from
   // the list length when a client has more candidates than POOL_READ.
-  const poolTotal: number | null = await (async () => {
+  const readPoolTotal = async (): Promise<number | null> => {
     try {
       const { count, error } = await db
         .from('seo_keywords')
@@ -251,7 +265,7 @@ export async function GET(req: NextRequest) {
       if (error) { console.warn('[keyword-sources] pool count failed:', error.message); return null }
       return count ?? null
     } catch { return null }
-  })()
+  }
 
   // Whether this client can be researched at all.
   //
@@ -259,7 +273,7 @@ export async function GET(req: NextRequest) {
   // gated on the client having its own connection row — so without one, "Find keywords" is a
   // button that can only ever report finding nothing. Better to say why up front. Adding
   // keywords by hand still works; they simply arrive without volume or difficulty.
-  const hasDataForSeo: boolean = await (async () => {
+  const readHasDataForSeo = async (): Promise<boolean> => {
     try {
       const { data, error } = await db
         .from('client_connections')
@@ -272,23 +286,37 @@ export async function GET(req: NextRequest) {
         return c?.type === 'dataforseo'
       })
     } catch { return true }   // unreadable: say nothing rather than claim it is missing
-  })()
+  }
 
   // Where the researched numbers were measured (migration 224) and when research last ran
   // (migration 222), so the list can say what it is and how old it is instead of leaving the
   // operator to guess whether these were found, invented, or typed in.
-  let researchLocation: string | null = null
-  let lastResearchAt:   string | null = null
-  try {
-    const read = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
-    let { data: cs, error: locErr } = await read('research_location, last_keyword_research_at')
-    if (locErr && /last_keyword_research_at/i.test(locErr.message)) ({ data: cs, error: locErr } = await read('research_location'))
-    // Migration 224 has landed, so a failure here is a real one, not the column being absent.
-    if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
-    const row = cs as { research_location?: unknown; last_keyword_research_at?: unknown } | null
-    researchLocation = readResearchLocation(row?.research_location)?.name ?? null
-    lastResearchAt   = row?.last_keyword_research_at ? String(row.last_keyword_research_at) : null
-  } catch { /* column absent */ }
+  const readSettings = async (): Promise<{ location: string | null; lastRun: string | null }> => {
+    try {
+      const read = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
+      let { data: cs, error: locErr } = await read('research_location, last_keyword_research_at')
+      if (locErr && /last_keyword_research_at/i.test(locErr.message)) ({ data: cs, error: locErr } = await read('research_location'))
+      // Migration 224 has landed, so a failure here is a real one, not the column being absent.
+      if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
+      const row = cs as { research_location?: unknown; last_keyword_research_at?: unknown } | null
+      return {
+        location: readResearchLocation(row?.research_location)?.name ?? null,
+        lastRun:  row?.last_keyword_research_at ? String(row.last_keyword_research_at) : null,
+      }
+    } catch { return { location: null, lastRun: null } }   // column absent
+  }
 
-  return NextResponse.json({ paidTerms, ahrefs, researched, researchLocation, poolTotal, lastResearchAt, hasDataForSeo })
+  // Everything that does not depend on anything else, at once. `researched` is the exception: it
+  // joins against the leads map that readPaidTerms fills, so it waits for that one alone.
+  const [paidTerms, ahrefs, poolTotal, hasDataForSeo, settings] = await Promise.all([
+    readPaidTerms(), readAhrefs(), readPoolTotal(), readHasDataForSeo(), readSettings(),
+  ])
+  const researched = await readResearched()
+
+  return NextResponse.json({
+    paidTerms, ahrefs, researched,
+    researchLocation: settings.location,
+    lastResearchAt:   settings.lastRun,
+    poolTotal, hasDataForSeo,
+  })
 }

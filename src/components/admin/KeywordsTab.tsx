@@ -2,9 +2,22 @@
 
 // The Keywords tab: deciding what this client should be found for.
 //
-// The page is the list. Everything that was explaining the list — where we measure, what we search
-// for, what "look again" replaces — either moved into the list itself (origin sections, the counts
-// strip) or stopped being a decision the operator has to make.
+// ONE PAGE, NOT THREE VIEWS
+//
+// This was briefly a tablist — Evidence, Rankings, Pick. It read as three places to go and it was
+// really one subject, so the tabs cost a click to find out a view was empty and hid the rest of
+// the page while you were in any one of them. Most clients have at least one empty view: no
+// Google Ads, no Ahrefs, no DataForSEO, nothing published yet. Three tabs where two are blank is
+// worse than one page that simply does not draw the blank parts.
+//
+// Everything is stacked now, in the order you would read it:
+//
+//   Evidence   what the data already says — converting ad terms, organic positions, Search Console
+//   Rankings   how the posts that are live are actually doing
+//   Pick       what to write next, which is the decision the rest of the page exists to inform
+//
+// Sections with nothing in them render nothing at all rather than an empty card, so a client with
+// only Search Console sees a short page rather than a page of apologies.
 //
 // Research location is gone entirely. It was a second location field whose only job was to name
 // the market, which the first service area already does; nobody had ever set it. The market is
@@ -20,26 +33,6 @@ import type { SerpInsightRow } from '@/lib/content/serpInsights'
 import type { SiteOption } from '@/lib/content/types'
 import { AnalyticsTab } from '@/components/admin/KeywordEvidence'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
-
-/**
- * The three questions this tab answers, in the order you ask them.
- *
- * Pick and Evidence used to be separate tabs, which split one decision across two screens: the
- * pool was here and everything that should inform choosing from it — converting paid terms, the
- * near-miss positions, the Search Console opportunities — was over there. Rankings is the one part
- * that really was a report, so it keeps its own view rather than padding the other two.
- *
- * Picking comes last because it is the only one that depends on something being connected, and
- * because it is the conclusion: you look at what Search Console reports, then at how the posts
- * that are live are doing, and only then decide what to write next. Landing on it first meant a
- * client without DataForSEO opened this tab on an empty box.
- */
-const VIEWS = [
-  { key: 'evidence', label: 'Evidence', hint: 'What the data suggests' },
-  { key: 'rankings', label: 'Rankings', hint: 'How the published posts are doing' },
-  { key: 'pick',     label: 'Pick',     hint: 'Choose what to write about' },
-] as const
-type View = typeof VIEWS[number]['key']
 
 interface Payload {
   researched:        ResearchKeyword[]
@@ -68,7 +61,6 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   const [data,   setData]   = useState<Payload | null>(null)
   const [error,  setError]  = useState<string | null>(null)
   const [reload, setReload] = useState(0)
-  const [view,   setView]   = useState<View>('evidence')
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
@@ -78,13 +70,12 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   const [adding,  setAdding]  = useState(false)
   const [busy,    setBusy]    = useState(false)
   const [notice,  setNotice]  = useState<string | null>(null)
-  // What Google actually returns for the chosen keywords. This is evidence about the keywords —
-  // the same kind of thing as the Search Console tables — so it sits under Evidence rather than
-  // between the picking list and the Save button, where it pushed the decision off the screen.
+  // What Google actually returns for the keywords in use — the talking points the writer is
+  // handed. Sits with the picking list, since it describes the keywords that were picked.
   const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
 
   useEffect(() => {
-    if (!isActive || view !== 'pick') return
+    if (!isActive) return
     let cancelled = false
     setError(null)
     fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
@@ -97,18 +88,12 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         hasDataForSeo:    d.hasDataForSeo !== false,
       }) })
       .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [], hasDataForSeo: true }) } })
-    return () => { cancelled = true }
-  }, [clientId, isActive, epoch, reload, view])
-
-  useEffect(() => {
-    if (!isActive || view !== 'evidence') return
-    let cancelled = false
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { insights: [] })
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
       .catch(() => { if (!cancelled) setInsights([]) })
     return () => { cancelled = true }
-  }, [clientId, isActive, epoch, reload, view])
+  }, [clientId, isActive, epoch, reload])
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
@@ -167,67 +152,44 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           Keywords
         </h3>
         <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          What this client should be found for. Only the ones you pick reach the writer.
+          What this client should be found for.
         </p>
-        {view === 'pick' && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ marginLeft: 'auto', fontSize: '0.8125rem', padding: '0.3rem 0.7rem', whiteSpace: 'nowrap' }}
-            onClick={() => setShowAdd(v => !v)}
-            disabled={adding || busy}
-          >
-            {showAdd ? 'Cancel' : 'Add your own'}
-          </button>
-        )}
       </div>
 
-      <div role="tablist" aria-label="Keyword views" style={{ display: 'inline-flex', gap: 2, padding: 2, marginBottom: 14, borderRadius: 10, background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
-        {VIEWS.map(v => {
-          const on = view === v.key
-          return (
-            <button
-              key={v.key}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              title={v.hint}
-              onClick={() => setView(v.key)}
-              style={{
-                border: 'none', cursor: 'pointer', borderRadius: 8,
-                padding: '5px 12px', fontSize: '0.8125rem',
-                fontWeight: on ? 600 : 500,
-                background: on ? 'var(--bg-surface)' : 'transparent',
-                color: on ? 'var(--text-primary)' : 'var(--text-muted)',
-                boxShadow: on ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-              }}
-            >
-              {v.label}
-            </button>
-          )
-        })}
+      {/* Evidence, then Rankings. Empty sections draw nothing — see AnalyticsTab. */}
+      <AnalyticsTab
+        data={gscData} isEcom={isEcom} clientId={clientId}
+        isActive={isActive} epoch={epoch}
+        view="all"
+        hasDataForSeo={data?.hasDataForSeo !== false}
+      />
+
+      {/* What Google returns for the keywords in use — the talking points the writer gets. It
+          describes the picks, so it leads into the picking list rather than sitting among the
+          Search Console tables. */}
+      <SerpInsightsSection
+        rows={insights} loading={insights === null} search=""
+        ownDomains={sites.map(s => s.siteUrl)}
+      />
+
+      {/* ── Pick: the decision the rest of the page exists to inform ──────── */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', margin: '24px 0 10px' }}>
+        <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Pick what to write about
+        </h4>
+        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          Only the ones you tick reach the writer.
+        </p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ marginLeft: 'auto', fontSize: '0.8125rem', padding: '0.3rem 0.7rem', whiteSpace: 'nowrap' }}
+          onClick={() => setShowAdd(v => !v)}
+          disabled={adding || busy}
+        >
+          {showAdd ? 'Cancel' : 'Add your own'}
+        </button>
       </div>
-
-      {view !== 'pick' && (
-        <AnalyticsTab
-          data={gscData} isEcom={isEcom} clientId={clientId}
-          isActive={isActive} epoch={epoch}
-          view={view === 'evidence' ? 'evidence' : 'rankings'}
-        />
-      )}
-
-      {/* What Google actually returns for the chosen keywords — evidence about the keywords, so
-          it sits with the rest of the evidence rather than under the picking list. */}
-      {view === 'evidence' && (
-        <div style={{ marginTop: 16 }}>
-          <SerpInsightsSection
-            rows={insights} loading={insights === null} search=""
-            ownDomains={sites.map(s => s.siteUrl)}
-          />
-        </div>
-      )}
-
-      {view === 'pick' && (<>
 
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red, #b91c1c)', marginBottom: 12 }}>
@@ -246,9 +208,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
 
       {/* Research still runs without DataForSEO — it reads the client's own converting Google Ads
           search terms and any Ahrefs rows, both free and already in the database. What it cannot
-          do is put a number on any of it, or look outside the client's own footprint. Saying
-          "research needs DataForSEO" would be wrong; saying nothing leaves a list of keywords with
-          every number blank and no explanation. */}
+          do is put a number on any of it, or look beyond the client's own footprint. So this says
+          what is missing from THIS list and nothing else: the first version claimed "what Google
+          shows" was missing too, which was wrong twice over, because those snapshots have their
+          own section above and are bought when a keyword is picked. */}
       {data && data.hasDataForSeo === false && (
         <div
           className="card"
@@ -258,8 +221,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
             No DataForSEO here
           </strong>
           <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            These come from this client&apos;s own converting ad terms. Connect DataForSEO on the
-            Connections tab for search volume, difficulty, what competitors rank for, and what Google shows.
+            This list is built from the client&apos;s own converting ad terms, which is why it has leads
+            but no search volume. Connect DataForSEO for volume, difficulty and what competitors rank for.
           </span>
         </div>
       )}
@@ -312,8 +275,6 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           />
         )}
       </div>
-
-      </>)}
     </div>
   )
 }

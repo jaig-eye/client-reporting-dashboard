@@ -48,9 +48,13 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
           </span>
         )}
       </div>
-      <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        Talking points the writer is handed. One snapshot per keyword, replaced when it is taken again.
-      </p>
+      {/* The explanation only earns its line when there is something to explain. Empty, the
+          section was two stacked greyed sentences saying nearly the same thing. */}
+      {!loading && filtered.length > 0 && (
+        <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Talking points the writer is handed. One snapshot per keyword, replaced when it is taken again.
+        </p>
+      )}
 
       {loading ? (
         <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading…</p>

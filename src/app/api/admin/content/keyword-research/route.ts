@@ -221,7 +221,7 @@ export async function PATCH(request: NextRequest) {
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean; add?: unknown } = {}
+  let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean; add?: unknown; dismiss?: unknown } = {}
   try { body = await request.json() } catch { /* handled below */ }
   const clientId = String(body.client_id ?? '').trim()
 
@@ -239,6 +239,37 @@ export async function PATCH(request: NextRequest) {
       (body.add as unknown[]).map(k => String(k ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean),
     )
     return NextResponse.json({ ok: true, ...result, snapshot })
+  }
+
+  // ── Bulk removal ──────────────────────────────────────────────────────────
+  // What the single-keyword dismiss below does, for a list. The picking panel needs it because a
+  // hand-typed keyword that is un-ticked should leave the list rather than sit in it unchosen
+  // forever: it is only there because someone typed it, so un-ticking it is the whole of the
+  // decision. Discovered candidates keep the older behaviour — un-ticking one means "not this
+  // time", and it stays available.
+  if (Array.isArray(body.dismiss)) {
+    if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
+    const list = Array.from(new Set(
+      (body.dismiss as unknown[]).map(k => String(k ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean),
+    )).slice(0, 500)
+    if (list.length === 0) return NextResponse.json({ ok: true, dismissed: 0 })
+    const db = createAdminClient()
+    // Chunked for the same reason the selection below is: an `in` filter rides in the URL.
+    for (let i = 0; i < list.length; i += IN_CHUNK) {
+      const { error } = await db
+        .from('seo_keywords')
+        .update({ dismissed_at: new Date().toISOString(), chosen_at: null })
+        .eq('client_id', clientId)
+        .in('normalized_keyword', list.slice(i, i + IN_CHUNK))
+      if (error) {
+        const missing = /dismissed_at/i.test(error.message)
+        return NextResponse.json(
+          { error: missing ? 'Removing keywords needs migration 223 (seo_keywords.dismissed_at)' : error.message },
+          { status: missing ? 501 : 500 },
+        )
+      }
+    }
+    return NextResponse.json({ ok: true, dismissed: list.length })
   }
 
   // ── Bulk selection ────────────────────────────────────────────────────────
