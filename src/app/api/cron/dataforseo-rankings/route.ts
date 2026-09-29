@@ -45,6 +45,9 @@ export const maxDuration = 300
  */
 const FRESH_WINDOW_DAYS = 60
 
+/** How long to leave a new post alone. Below this Google is still indexing it and there is nothing to read. */
+const INDEXING_DAYS = 14
+
 /** Cadence per device inside that window. Mobile carries most traffic, so it is watched closer. */
 const INTERVAL_DAYS: Record<SeoDevice, number> = { mobile: 7, desktop: 30 }
 
@@ -80,6 +83,15 @@ const SETTLED_INTERVAL_DAYS = 182
  */
 function checkIntervalDays(ageDays: number | null, device: SeoDevice): number | null {
   if (ageDays === null)            return null
+  // Nothing to find yet. Google has not finished indexing a page this new, so a check returns
+  // "not found" — and that answer costs the same as a real one.
+  //
+  // Worse than the money: the FIRST reading is the baseline every later comparison is measured
+  // against, and it is the one that goes to depth 100. Spending triple to record "not ranking"
+  // on day one, then calling everything after it movement against that, is the expensive way to
+  // learn nothing. This was in the original curve and went missing when the flat window replaced
+  // it.
+  if (ageDays < INDEXING_DAYS)     return null
   if (ageDays < FRESH_WINDOW_DAYS) return INTERVAL_DAYS[device]
   // Past the close window one device is enough; desktop stops.
   if (device !== 'mobile')         return null
@@ -175,7 +187,7 @@ export async function GET(req: NextRequest) {
     creds: DfsCreds; lastChecked: string | null
   }
   const jobs: Job[] = []
-  let skippedOld = 0, skippedNotDue = 0, skippedUnpublished = 0
+  let skippedNotWorth = 0, skippedNotDue = 0, skippedUnpublished = 0
 
   usable.forEach((u, i) => {
     for (const kw of keywordLists[i]) {
@@ -183,13 +195,13 @@ export async function GET(req: NextRequest) {
       // weeks before that article goes out.
       if (kw.awaiting_publish) { skippedUnpublished++; continue }
       // No post behind it — a money keyword, or one added by hand. Left to the free snapshot.
-      if (kw.age_days === null) { skippedOld++; continue }
+      if (kw.age_days === null) { skippedNotWorth++; continue }
 
       for (const device of u.cfg.devices) {
         // The cadence tapers with age rather than stopping dead at the window's edge, so a post
         // keeps getting read — less often — instead of freezing on its day-59 position.
         const interval = checkIntervalDays(kw.age_days, device)
-        if (interval === null) { skippedOld++; continue }
+        if (interval === null) { skippedNotWorth++; continue }
         // A keyword never read before is read now: that first reading is the baseline every later
         // comparison is measured against, and waiting for its slot would lose the entry position.
         const firstRead = !kw.last_checked_at
@@ -219,7 +231,7 @@ export async function GET(req: NextRequest) {
 
   console.log(
     `[cron/dataforseo-rankings] ${runJobs.length} live check(s); ` +
-    `skipped ${skippedOld} outside the ${FRESH_WINDOW_DAYS}-day window, ` +
+    `skipped ${skippedNotWorth} not worth reading (no post, still indexing, or desktop past ${FRESH_WINDOW_DAYS}d), ` +
     `${skippedNotDue} not due, ${skippedUnpublished} awaiting publication`,
   )
 
@@ -313,7 +325,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, checked, written, unanswered, capped, stoppedEarly,
-    skipped: { outsideWindow: skippedOld, notDue: skippedNotDue, awaitingPublish: skippedUnpublished },
+    skipped: { notWorthReading: skippedNotWorth, notDue: skippedNotDue, awaitingPublish: skippedUnpublished },
     cost: Number(totalCost.toFixed(4)),
   })
 }
