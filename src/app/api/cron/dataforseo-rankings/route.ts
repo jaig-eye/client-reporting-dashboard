@@ -80,6 +80,30 @@ const SETTLED_AFTER_DAYS  = 365
 const SETTLED_INTERVAL_DAYS = 182
 
 /**
+ * When a keyword stops being bought altogether.
+ *
+ * Without this the bill grows every year even at a steady client count and a steady posting rate,
+ * because nothing is ever retired: year six pays to check six years of archive. A hundred clients
+ * at two posts a week goes $55 a month in year one to $119 by year six, and the daily volume
+ * passes MAX_CHECKS_PER_RUN in year four — at which point the run truncates and the cadence
+ * quietly stops being what this file says it is.
+ *
+ * With it, both flatten. The paid set becomes a rolling two years of posts rather than everything
+ * ever written, so the same input produces the same bill forever — $82 a month, 296 checks a day,
+ * whether it is year three or year thirty.
+ *
+ * What that costs in information is very little, because it is not the same as going blind.
+ * recordOwnRankings resolves positions against every one of a client's keyword rows, so a retired
+ * keyword that STILL RANKS keeps getting a free snapshot on each monthly discovery run — desktop,
+ * Labs, lagging a month or two, which is plenty for a post this old. The only thing genuinely lost
+ * is negative confirmation: "still not ranking", two years and eleven paid readings later.
+ *
+ * The keyword itself is not retired — it keeps its row, its history and its place in the Rankings
+ * view. It just stops buying new live readings.
+ */
+const RETIRE_AFTER_DAYS = 730
+
+/**
  * The gap between readings for this keyword on this device, or null when it is not worth reading.
  *
  * age_days === null means no post behind the keyword — a money keyword, or one added by hand. Those
@@ -98,6 +122,8 @@ function checkIntervalDays(ageDays: number | null, device: SeoDevice): number | 
   // learn nothing. This was in the original curve and went missing when the flat window replaced
   // it.
   if (ageDays < INDEXING_DAYS)     return null
+  // Old enough that the free snapshot can carry it — see RETIRE_AFTER_DAYS.
+  if (ageDays >= RETIRE_AFTER_DAYS) return null
   if (ageDays < FRESH_WINDOW_DAYS) return INTERVAL_DAYS[device]
   // Past the close window one device is enough; desktop stops.
   if (device !== 'mobile')         return null
