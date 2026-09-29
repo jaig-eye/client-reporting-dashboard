@@ -38,15 +38,52 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 /**
- * How long a post stays in the live-checked window.
+ * How long a post stays in the CLOSE-watched window — weekly mobile, monthly desktop.
  *
- * Past this, Labs data is as good as a live reading — both are describing a position that has
- * stopped moving — and the snapshot already covers it at no cost.
+ * Past this a position has largely stopped moving, and the free site-wide snapshot covers it.
  */
 const FRESH_WINDOW_DAYS = 60
 
-/** Cadence per device. Mobile carries most traffic, so it is watched more closely. */
+/** Cadence per device inside that window. Mobile carries most traffic, so it is watched closer. */
 const INTERVAL_DAYS: Record<SeoDevice, number> = { mobile: 7, desktop: 30 }
+
+/**
+ * How often a keyword is re-checked once the close window closes.
+ *
+ * The window used to be a cliff: at day 61 a keyword stopped being read and its row kept showing
+ * the last position it had, forever, with nothing marking it stale. A number from day 59 looked
+ * exactly like one from this morning. And the free snapshot does not fill the gap the way the
+ * comment claimed — it only contains terms the domain ALREADY ranks for, so the posts that never
+ * broke through, the ones worth knowing about, are precisely the ones it omits.
+ *
+ * So the cliff becomes a taper. Mobile only, because a second device buys a duplicate answer to a
+ * question now being asked twice a year:
+ *
+ *   60d - 1yr   every 60 days   — day 120, 180, 240, 300, 360
+ *   1yr +       every 182 days  — twice a year, enough to catch a drop
+ *
+ * At depth 30 that is $0.006 a reading: about three cents per keyword in its first year and one
+ * cent a year after, against the alternative of a number nobody can trust.
+ */
+const TAPER_INTERVAL_DAYS = 60
+const SETTLED_AFTER_DAYS  = 365
+const SETTLED_INTERVAL_DAYS = 182
+
+/**
+ * The gap between readings for this keyword on this device, or null when it is not worth reading.
+ *
+ * age_days === null means no post behind the keyword — a money keyword, or one added by hand. Those
+ * are left alone, exactly as before: there is no publication to start a clock, and research
+ * deliberately leaves them to the free snapshot rather than buying live checks for a page nobody
+ * wrote. Changing that is a cost decision, not a staleness fix, so it is not made here.
+ */
+function checkIntervalDays(ageDays: number | null, device: SeoDevice): number | null {
+  if (ageDays === null)            return null
+  if (ageDays < FRESH_WINDOW_DAYS) return INTERVAL_DAYS[device]
+  // Past the close window one device is enough; desktop stops.
+  if (device !== 'mobile')         return null
+  return ageDays < SETTLED_AFTER_DAYS ? TAPER_INTERVAL_DAYS : SETTLED_INTERVAL_DAYS
+}
 
 /** Deep enough to catch a post entering the results; only ever used for a keyword's first read. */
 const FIRST_READ_DEPTH = 100
@@ -131,12 +168,14 @@ export async function GET(req: NextRequest) {
       // Nothing to find yet — a keyword is claimed when its article is generated, which is often
       // weeks before that article goes out.
       if (kw.awaiting_publish) { skippedUnpublished++; continue }
-      // No post behind it (a money keyword, or one added by hand) or past the window: the
-      // site-wide snapshot already covers it.
-      if (kw.age_days === null || kw.age_days > FRESH_WINDOW_DAYS) { skippedOld++; continue }
+      // No post behind it — a money keyword, or one added by hand. Left to the free snapshot.
+      if (kw.age_days === null) { skippedOld++; continue }
 
       for (const device of u.cfg.devices) {
-        const interval = INTERVAL_DAYS[device]
+        // The cadence tapers with age rather than stopping dead at the window's edge, so a post
+        // keeps getting read — less often — instead of freezing on its day-59 position.
+        const interval = checkIntervalDays(kw.age_days, device)
+        if (interval === null) { skippedOld++; continue }
         // A keyword never read before is read now: that first reading is the baseline every later
         // comparison is measured against, and waiting for its slot would lose the entry position.
         const firstRead = !kw.last_checked_at
