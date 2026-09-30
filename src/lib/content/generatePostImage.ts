@@ -209,8 +209,9 @@ export async function generatePostImage(
   const postRes = await db.from('content_posts')
     .select('id, client_id, image_concept, seo_title, title, target_keyword')
     .eq('id', postId)
-    .single()
+    .maybeSingle()
 
+  // Nothing to record the failure on.
   if (postRes.error || !postRes.data)
     return { ok: false, error: 'Post not found' }
 
@@ -252,7 +253,9 @@ export async function generatePostImage(
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
   let usedProvider = ''
-  let lastError = ''
+  // One entry per provider that was tried and did not produce an image, in order. Kept rather
+  // than overwritten, so a fallback's failure cannot hide why the primary failed.
+  const failures: string[] = []
 
   // Which model. Every model on offer takes the same arguments (IMAGE_REQUEST), so this is a bare
   // swap. A stored value that is no longer offered — the retired gpt-image-1 or dall-e-3 included —
@@ -317,22 +320,22 @@ export async function generatePostImage(
             imageUrl     = publicUrl
             usedProvider = chosenModel
           } else {
-            lastError = `Storage upload failed: ${upErr.message}`
+            failures.push(`The ${chosenModel} image could not be saved: ${upErr.message}`)
           }
         } else {
-          lastError = `${chosenModel} returned no image`
+          failures.push(`OpenAI ${chosenModel} answered without an image`)
         }
       } else {
         const errData = await imageRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `${chosenModel} error (${imageRes.status}): ${errData?.error?.message ?? imageRes.statusText}`
+        failures.push(`OpenAI ${chosenModel} failed (${imageRes.status}): ${errData?.error?.message ?? imageRes.statusText}`)
       }
     } catch (e) {
-      lastError = isTimeout(e)
-        ? `${chosenModel} did not answer within ${OPENAI_TIMEOUT_MS / 1000}s`
-        : `${chosenModel} request failed: ${e instanceof Error ? e.message : String(e)}`
+      failures.push(isTimeout(e)
+        ? `OpenAI ${chosenModel} did not answer within ${OPENAI_TIMEOUT_MS / 1000}s`
+        : `OpenAI ${chosenModel} could not be reached: ${e instanceof Error ? e.message : String(e)}`)
     }
   } else {
-    lastError = 'No OpenAI API key configured — add it in Agency Settings → AI → Image Generation'
+    failures.push('No OpenAI API key — add one in Settings → AI → Image Generation')
   }
 
   // ── Gemini Imagen 3 fallback ────────────────────────────────────────────────
@@ -362,14 +365,18 @@ export async function generatePostImage(
             const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
             imageUrl = publicUrl
             usedProvider = 'gemini'
+          } else {
+            failures.push(`The Gemini fallback image could not be saved: ${upErr.message}`)
           }
+        } else {
+          failures.push('Gemini fallback answered without an image')
         }
       } else {
         const errData = await gemRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `Gemini error (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`
+        failures.push(`Gemini fallback failed (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`)
       }
     } catch (e) {
-      lastError = `Gemini request failed: ${e instanceof Error ? e.message : String(e)}`
+      failures.push(`Gemini fallback failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -380,7 +387,7 @@ export async function generatePostImage(
   await candidatesPromise
 
   if (!imageUrl)
-    return { ok: false, error: lastError || 'Image generation failed — configure an API key in Agency Settings → AI → Image Generation' }
+    return { ok: false, error: await recordImageFailure(db, postId, failures.join(' · ') || 'Image generation failed') }
 
   // gpt-image-1 responses are already uploaded to Supabase above (b64_json path).
   // If a temp URL was returned (url path), download and re-upload so it doesn't expire.
@@ -404,10 +411,12 @@ export async function generatePostImage(
     }
   }
 
-  await updatePostReleasingMediaLink(db, postId, {
+  const { error: saveErr } = await updatePostReleasingMediaLink(db, postId, {
     featured_image_url:     finalUrl,
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
+    // Cleared here, on the only path that produced an image, so a reason recorded by an earlier
+    // failed attempt does not outlive the image that replaced it.
     image_generation_error: null,
     // Written at generation because this is the only point where what the picture SHOWS is
     // known — the prompt describes it, and nobody is going to come back and describe it
@@ -416,5 +425,35 @@ export async function generatePostImage(
     image_alt_text:         buildAltText(post, post.target_keyword?.trim() || '', altDepiction),
   })
 
+  // The picture exists in storage but the post does not point at it, so as far as anyone reading
+  // the post can tell there is no image. Reporting success here would show the reviewer a URL that
+  // is gone on the next reload.
+  if (saveErr)
+    return { ok: false, error: await recordImageFailure(db, postId, `The image was generated but could not be attached to the post: ${saveErr.message}`) }
+
   return { ok: true, url: finalUrl, prompt, provider: usedProvider }
+}
+
+/** Long enough for a provider's own explanation; short enough to read at a glance. */
+const MAX_REASON_CHARS = 300
+
+/**
+ * Leave the reason on the post when no image came out of a run, and return it.
+ *
+ * Two of the three callers start this in the background and discard what it returns — a post
+ * written by the pipeline used to ship with no featured image and nothing anywhere saying why.
+ * content_posts.image_generation_error (migration 108) is where that goes. It is only a trace: the
+ * featured image already on the post, if any, is left alone, so a failed regenerate never costs a
+ * working picture.
+ */
+async function recordImageFailure(
+  db: ReturnType<typeof createAdminClient>,
+  postId: string,
+  reason: string,
+): Promise<string> {
+  const short = reason.length > MAX_REASON_CHARS ? `${reason.slice(0, MAX_REASON_CHARS - 1).trimEnd()}…` : reason
+  console.warn(`[generatePostImage] no image for post ${postId}: ${short}`)
+  const { error } = await db.from('content_posts').update({ image_generation_error: short }).eq('id', postId)
+  if (error) console.warn(`[generatePostImage] could not record the failure on post ${postId}: ${error.message}`)
+  return short
 }
