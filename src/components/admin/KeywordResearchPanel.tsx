@@ -394,7 +394,6 @@ export default function KeywordResearchPanel({
     <div className="kw-pick" data-kw-pick>
       {!hideSummary && (
         <div className="kw-pick-meta">
-          <span className="kw-pick-meta-strong">{chosen.size} in use</span>
           <span
             title={total && total > keywords.length
               ? `Research found ${total.toLocaleString()} candidates. The strongest ${keywords.length}, plus everything in use, are shown.`
