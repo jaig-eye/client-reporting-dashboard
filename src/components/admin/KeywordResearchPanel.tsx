@@ -253,7 +253,10 @@ export default function KeywordResearchPanel({
     return (
       <div style={{ padding: '28px 8px', textAlign: 'center' }}>
         <p style={{ margin: '0 0 10px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          {onRefresh ? 'No keywords yet.' : 'No keywords yet — add your own to get started.'}
+          {/* One message: the caller always passes onRefresh now, so the second branch this used
+              to have could never render. Says what to do either way — "Find new" can legitimately
+              come back with nothing for a client with no DataForSEO and no Ahrefs rows. */}
+          No keywords yet. Look for some, or add your own.
         </p>
         {onRefresh && (
           <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={onRefresh} disabled={refreshing}>

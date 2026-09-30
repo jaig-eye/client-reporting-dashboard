@@ -368,7 +368,8 @@ export default function ClientContentSettingsForm({
             <KeywordChipInput
               value={form.geographic_focus}
               onChange={v => setField('geographic_focus', v)}
-              placeholder="Los Angeles, Orange County…"
+              placeholder="Start typing a city or county…"
+              suggestPlaces
             />
             <MarketLine geographicFocus={form.geographic_focus} />
           </div>

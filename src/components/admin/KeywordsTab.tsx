@@ -238,8 +238,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           <p style={{ margin: 0, fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
             <strong style={{ fontWeight: 600 }}>DataForSEO is not connected for this client.</strong>{' '}
             <span style={{ color: 'var(--text-muted)' }}>
-              Research still runs from this client&apos;s own converting ad terms and any Ahrefs rows.
-              What it cannot add is search volume, difficulty, what competitors rank for, or rank tracking.
+              Research can only draw on Ahrefs rows already synced — no keyword discovery, search
+              volume, difficulty, competitor keywords or rank tracking. You can still add keywords
+              by hand, and topics are still generated from Search Console.
             </span>
           </p>
         </div>

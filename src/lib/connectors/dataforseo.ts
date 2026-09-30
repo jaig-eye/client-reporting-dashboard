@@ -1,4 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
+import { splitPlace } from '@/lib/content/usStates'
 // DataForSEO connector — keyword data + SERP rank tracking
 //
 // "OpenSEO" turned out to be a bring-your-own-DataForSEO-key wrapper, so we integrate
@@ -774,16 +775,31 @@ export async function dfsSearchLocations(
   creds: DfsCreds,
   opts: { limit?: number } = {},
 ): Promise<DfsLocation[]> {
-  const needle = q.trim().toLowerCase()
+  // "Melbourne, FL" is a city and a state, not a phrase. Split them before matching.
+  //
+  // This used to compare the whole typed string against the city name alone, so naming the state —
+  // the one thing that disambiguates — guaranteed no match at all. And without a state the
+  // tie-break ran country, then type, then SHORTEST NAME, which quietly resolved "Springfield" to
+  // Ohio over Illinois, Missouri and Massachusetts. A client in Springfield MA would have had
+  // every search volume measured in Ohio while the UI read "Measured in Springfield".
+  const { head: rawHead, region } = splitPlace(q)
+  const needle = rawHead.trim().toLowerCase()
   if (needle.length < 2) return []
+  const wantRegion = region?.toLowerCase() ?? null
+
   const rows = await loadLocations(creds)
   const TYPE_RANK: Record<string, number>    = { City: 0, County: 1, Municipality: 2, State: 3, Province: 3, Region: 4, Territory: 4 }
   const COUNTRY_RANK: Record<string, number> = { US: 0, CA: 1 }
   const hits: Array<{ l: DfsLocation; rank: number }> = []
   for (const l of rows) {
-    const head = l.name.split(',')[0].toLowerCase()
-    const rank = head === needle ? 0 : head.startsWith(needle) ? 1 : head.includes(needle) ? 2 : -1
-    if (rank >= 0) hits.push({ l, rank })
+    const parts = l.name.split(',')
+    const head  = parts[0].trim().toLowerCase()
+    const rank  = head === needle ? 0 : head.startsWith(needle) ? 1 : head.includes(needle) ? 2 : -1
+    if (rank < 0) continue
+    // A named region is a requirement, not a preference. Half-matching it is what produced a
+    // confident wrong answer; no answer at all is recoverable, a silently wrong market is not.
+    if (wantRegion && !parts.slice(1).some(p => p.trim().toLowerCase() === wantRegion)) continue
+    hits.push({ l, rank })
   }
   hits.sort((a, b) =>
     a.rank - b.rank
