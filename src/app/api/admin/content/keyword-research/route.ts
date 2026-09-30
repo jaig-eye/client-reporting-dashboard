@@ -258,12 +258,22 @@ export async function PATCH(request: NextRequest) {
     if (list.length === 0) return NextResponse.json({ ok: true, dismissed: 0 })
     const db = createAdminClient()
     // Chunked for the same reason the selection below is: an `in` filter rides in the URL.
+    //
+    // chosen_at is cleared alongside dismissed_at so a removed keyword is not left counting as a
+    // choice. It is migration 225 though, and dismissed_at is 223 — so a database with one and not
+    // the other has to keep working, the way every other read in this file does. Dropping
+    // chosen_at from the patch is the right fallback: on such a database nothing is chosen in the
+    // first place.
+    const now = new Date().toISOString()
     for (let i = 0; i < list.length; i += IN_CHUNK) {
-      const { error } = await db
+      const chunk = list.slice(i, i + IN_CHUNK)
+      const write = (patch: Record<string, unknown>) => db
         .from('seo_keywords')
-        .update({ dismissed_at: new Date().toISOString(), chosen_at: null })
+        .update(patch)
         .eq('client_id', clientId)
-        .in('normalized_keyword', list.slice(i, i + IN_CHUNK))
+        .in('normalized_keyword', chunk)
+      let { error } = await write({ dismissed_at: now, chosen_at: null })
+      if (error && /chosen_at/i.test(error.message)) ({ error } = await write({ dismissed_at: now }))
       if (error) {
         const missing = /dismissed_at/i.test(error.message)
         return NextResponse.json(
