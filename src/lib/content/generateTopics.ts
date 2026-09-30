@@ -25,6 +25,7 @@ import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/datafo
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
+import { resolveCannibalization, type ProtectedPage } from '@/lib/content/cannibalization'
 
 interface TopicIdea {
   topic:               string
@@ -1030,117 +1031,22 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
 
   // ── Cannibalization: catch it, then ask for a better topic ────────────────
-  //
-  // The prompt already tells the model what the client ranks for and not to compete with it. This
-  // is what happens when it does anyway — and since nothing here is reviewed until a finished POST
-  // is approved, "flag it and carry on" would mean a person's first sight of a collision is an
-  // article already written against it.
-  //
-  // So a flagged topic is rejected and regenerated: the model is asked again, told exactly which
-  // of its proposals collided and with what, and given the banned list a second time. Only
-  // topics that come back clean are kept.
-  //
-  // What it does NOT do is stop a post going out. After the retries are spent, whatever is still
-  // colliding is demoted to a supporting article — a real, non-cannibalizing brief with an
-  // internal link to the page it must not outrank — rather than dropped. Dropping was the old
-  // behaviour and it could empty the run: a client who already ranks for most of what they sell
-  // got an error and no post, from a guard meant to protect them.
-
-  /** The strongest protected phrase this keyword collides with, or null. */
-  const collisionFor = (targetKeyword: string | null | undefined) => {
-    const kw = normalizeKeyword(targetKeyword)
-    if (!kw) return null
-    // Exact collision first, then the longest protected phrase contained in this keyword —
-    // "lawn care" protected, "lawn care in winter" proposed. Whole-phrase match so "careers"
-    // never matches "care".
-    //
-    // The LONGEST match wins, not the first. Map order is insertion order — GSC, then Ahrefs,
-    // then tracked ranks — which says nothing about specificity, so first-match could tell a
-    // "lawn care in winter" article to support "care" and link to that page instead. A directive
-    // naming the wrong URL is worse than none: it points the internal link at the weaker page.
-    const direct = protectedKeywords.get(kw)
-    if (direct) return { prot: kw, info: direct, exact: true }
-    let best: { prot: string; info: { position: number; url: string | null }; exact: boolean } | null = null
-    for (const [prot, info] of Array.from(protectedKeywords.entries())) {
-      if (kw === prot) continue
-      if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
-      if (!best || prot.length > best.prot.length) best = { prot, info, exact: false }
-    }
-    return best
-  }
-
-  if (protectedKeywords.size > 0) {
-    /** Extra model round-trips when topics collide. Each one is a billed call, so: few. */
-    const MAX_REGEN_ROUNDS = 2
-    const wanted = topics.length
-    let keep    = topics.filter(t => !collisionFor(t.target_keyword))
-    let flagged = topics.filter(t =>  collisionFor(t.target_keyword))
-
-    for (let round = 1; round <= MAX_REGEN_ROUNDS && flagged.length > 0 && keep.length < wanted; round++) {
-      const rejected = flagged.map(t => {
-        const c = collisionFor(t.target_keyword)!
-        return `  - "${t.target_keyword}" collides with "${c.prot}", which this client already ranks #${c.info.position} for`
-      }).join('\n')
-      const need = Math.min(flagged.length, wanted - keep.length)
-      console.warn(`[generateTopics] cannibalization: ${flagged.length} topic(s) rejected for client ${clientId}, regenerating (round ${round}):\n${rejected}`)
-
-      const retry = await requestTopics(
-        `\nREJECTED — these proposals cannibalize pages this client already ranks for:\n${rejected}\n` +
-        `Return exactly ${need} REPLACEMENT topic(s) in the same JSON format. Each must target a` +
-        ` keyword that is NOT one of the protected phrases above and does NOT contain one as a` +
-        ` whole phrase. Do not repeat any keyword you have already proposed in this conversation.` +
-        ` Narrower, more specific questions are the way out: if the client ranks for "lawn care",` +
-        ` "how often to dethatch a fescue lawn" is acceptable and "lawn care tips" is not.`,
+  // The rule, the retry budget and the demotion all live in cannibalization.ts, which is tested
+  // against a stubbed model. This passes the real one in.
+  {
+    const res = await resolveCannibalization({
+      topics,
+      protectedKeywords,
+      requestTopics,
+      onLog: m => console.warn(`[generateTopics] client ${clientId}: ${m}`),
+    })
+    topics = res.topics
+    if (res.demoted.length > 0) {
+      console.warn(
+        `[generateTopics] cannibalization: ${res.demoted.length} topic(s) still colliding after the` +
+        ` retries for client ${clientId}, demoted to supporting: ${res.demoted.join('; ')}`,
       )
-      // A failed retry is not a failed run — keep what is already clean and fall through to the
-      // demotion below, which still produces usable briefs.
-      if (retry.error) { console.warn(`[generateTopics] regeneration round ${round} failed: ${retry.error}`); break }
-
-      const seen = new Set(keep.map(t => normalizeKeyword(t.target_keyword)))
-      const fresh = retry.topics.filter(t => {
-        const kw = normalizeKeyword(t.target_keyword)
-        if (!kw || seen.has(kw) || collisionFor(t.target_keyword)) return false
-        seen.add(kw)
-        return true
-      })
-      // Retire exactly as many flagged topics as were actually replaced. Slicing `flagged` by
-      // fresh.length instead would discard more than were replaced whenever the model returned
-      // more than asked for — losing a topic silently instead of demoting it below.
-      const replaced = Math.min(fresh.length, need)
-      keep = keep.concat(fresh.slice(0, replaced))
-      flagged = flagged.slice(replaced)
-      if (replaced > 0) console.log(`[generateTopics] cannibalization: round ${round} replaced ${replaced} topic(s) for client ${clientId}`)
     }
-
-    // Anything still colliding becomes a supporting article rather than nothing at all.
-    const demoted: string[] = []
-    for (const t of flagged) {
-      const c = collisionFor(t.target_keyword)
-      if (!c) { keep.push(t); continue }
-      const { prot, info, exact } = c
-      const at   = info.url ? ` at ${info.url}` : ''
-      const link = info.url ? ` (${info.url})` : ''
-      const directive = exact
-        ? `SUPPORTING ARTICLE — the client ALREADY RANKS #${info.position} for this exact keyword${at}.`
-          + ` Do NOT write another page targeting it. Shift to a genuinely narrower question this`
-          + ` page does not answer, and link to it${link} as the primary internal link.`
-        : `SUPPORTING ARTICLE — the client already ranks #${info.position} for "${prot}"${at}.`
-          + ` This must not compete with that page: cover a genuinely narrower question and link`
-          + ` to it${link} as the primary internal link.`
-      t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
-      // The directive above is for the operator reading the pipeline card. This is the half the
-      // writer acts on: page_to_support is the only field the article prompt reads for "link to
-      // this page", so without it a demoted topic was written exactly like an undemoted one and
-      // competed with the page it was supposed to support.
-      if (info.url) t.page_to_support = info.url
-      demoted.push(`"${t.target_keyword}" → supports "${prot}"${exact ? ' (exact)' : ''}${info.url ? '' : ' (no URL known — directive only)'}`)
-      keep.push(t)
-    }
-    if (demoted.length > 0) {
-      console.warn(`[generateTopics] cannibalization: ${demoted.length} topic(s) still colliding after ${MAX_REGEN_ROUNDS} regeneration round(s) for client ${clientId}, demoted to supporting: ${demoted.join('; ')}`)
-    }
-
-    topics = keep
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
