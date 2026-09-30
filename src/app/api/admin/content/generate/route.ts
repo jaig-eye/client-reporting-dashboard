@@ -50,6 +50,8 @@ type TopicData = {
   rationale:              string | null
   target_keyword:         string | null
   page_to_support:        string | null
+  /** The demotion directive when the cannibalization guard rewrote this topic's job. */
+  ranking_strategy:       string | null
   client_id:              string
   target_publish_date:    string | null
   search_intent:          string | null
@@ -1056,6 +1058,7 @@ Target keyword: ${topicData.target_keyword || 'derive from topic'}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${contentType === 'regular_page' && topicData.custom_focus ? `Page focus: ${topicData.custom_focus}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
+${topicData.ranking_strategy ? `Ranking strategy — follow this: ${topicData.ranking_strategy}` : ''}
 ${siloSection}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
 ${briefLines.length > 0 ? briefLines.join('\n') : ''}
@@ -1428,7 +1431,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id, custom_slug')
+      .select('id, topic, rationale, target_keyword, page_to_support, ranking_strategy, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id, custom_slug')
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
