@@ -189,10 +189,13 @@ export default function AgencySettingsPage() {
 
   const [imgModalOpen,       setImgModalOpen]       = useState(false)
   const [imgModalKey,        setImgModalKey]        = useState('')
+  const [imgModalModel,      setImgModalModel]      = useState<string>(DEFAULT_IMAGE_MODEL)
   const [imgJustSaved,       setImgJustSaved]       = useState(false)
+  // The server's note when the key saved but the model could not (migration 227 not applied).
+  const [imgWarning,         setImgWarning]         = useState('')
 
   function openAiModal()      { setAiModalProvider(form.ai_provider); setAiModalModel(form.ai_model); setAiModalKey(form.ai_api_key);    setAiModalOpen(true) }
-  function openImgModal()     { setImgModalKey(form.openai_api_key);                                                                      setImgModalOpen(true) }
+  function openImgModal()     { setImgModalKey(form.openai_api_key); setImgModalModel(resolveImageModel(form.image_model));             setImgModalOpen(true) }
 
   async function saveAiCredential() {
     const res = await fetch('/api/admin/settings', {
@@ -204,16 +207,29 @@ export default function AgencySettingsPage() {
   }
 
   async function saveImgCredential() {
-    // The key may be left blank to keep the stored one; the model is always sent, so switching
-    // model without retyping the key works.
-    const patch: Record<string, string> = { image_model: resolveImageModel(form.image_model) }
-    if (imgModalKey) patch.openai_api_key = imgModalKey
+    // The key is always sent. Untouched, it is still the mask, which the route reads as "keep the
+    // stored key"; cleared, it is '', which the route reads as "remove it" (lib/secretMask). Leaving
+    // a blank key out of the request instead made the key impossible to revoke from here.
+    //
+    // The model is sent only when it changed, so saving a key never depends on migration 227.
+    const patch: Record<string, string> = { openai_api_key: imgModalKey }
+    const modelChanged = imgModalModel !== resolveImageModel(form.image_model)
+    if (modelChanged) patch.image_model = imgModalModel
     const res = await fetch('/api/admin/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     })
-    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
-    if (imgModalKey) setForm(f => ({ ...f, openai_api_key: imgModalKey }))
+    const d = await res.json().catch(() => ({})) as { error?: string; warning?: string }
+    if (!res.ok) throw new Error(d.error || 'Save failed')
+    // Into the form only once the server has accepted it, so Cancel or a failed save leaves the
+    // saved model showing rather than one that was never stored. A warning means the model did not
+    // stick, so the form keeps the one that will actually be used.
+    setForm(f => ({
+      ...f,
+      openai_api_key: imgModalKey,
+      ...(modelChanged && !d.warning ? { image_model: imgModalModel } : {}),
+    }))
+    setImgWarning(d.warning ?? '')
   }
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -684,24 +700,27 @@ export default function AgencySettingsPage() {
           <IntegrationCard
             icon="🖼️"
             name="Image Generation"
-            description="OpenAI API key for DALL-E 3 featured image generation — separate from the content AI key above."
+            description="OpenAI key and model for featured images — separate from the content AI key above."
             isConnected={!!form.openai_api_key}
-            connectedLabel={form.openai_api_key ? 'Key configured' : undefined}
+            connectedLabel={form.openai_api_key ? `Key configured · ${resolveImageModel(form.image_model)}` : undefined}
             onConfigure={openImgModal}
             justConnected={imgJustSaved}
           />
+          {imgWarning && (
+            <p className="section-desc" role="status" style={{ margin: 0, color: 'var(--amber)' }}>{imgWarning}</p>
+          )}
           <IntegrationModal
             open={imgModalOpen}
             onClose={() => setImgModalOpen(false)}
             onSaved={() => { setImgJustSaved(true); setTimeout(() => setImgJustSaved(false), 2000) }}
-            title="Image Generation (DALL-E 3)"
+            title="Image Generation (OpenAI)"
             icon="🖼️"
             isConnected={!!form.openai_api_key}
             howTo={
               <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
                 <li>Go to <strong>platform.openai.com → API Keys</strong> and create a new secret key (<code>sk-…</code>).</li>
-                <li>Ensure the key has access to the <strong>Images</strong> model family (DALL-E 3).</li>
-                <li>This key is used exclusively for generating featured images — it&apos;s separate from your content AI key.</li>
+                <li>OpenAI may ask the organization to complete <strong>API Organization Verification</strong> before its GPT Image models can be used.</li>
+                <li>This key is used only for featured images — it&apos;s separate from your content AI key.</li>
               </ol>
             }
             onSave={saveImgCredential}
@@ -711,17 +730,22 @@ export default function AgencySettingsPage() {
                 OpenAI API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— used for featured image generation only</span>
               </label>
               <input className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
-                placeholder={form.openai_api_key ? '•••••• (leave blank to keep)' : 'sk-…'} autoComplete="off" style={{ width: '100%' }} />
+                placeholder="sk-…" autoComplete="off" style={{ width: '100%' }} />
+              {form.openai_api_key && (
+                <p className="section-desc" style={{ margin: '6px 0 0' }}>
+                  Clear the field and save to remove the key.
+                </p>
+              )}
             </div>
-            <div style={{ marginTop: 14 }}>
+            <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
                 Model <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— which one draws the featured image</span>
               </label>
               <select
                 className="input"
                 style={{ width: '100%' }}
-                value={resolveImageModel(form.image_model)}
-                onChange={e => setForm(f => ({ ...f, image_model: e.target.value }))}
+                value={imgModalModel}
+                onChange={e => setImgModalModel(e.target.value)}
               >
                 {Object.entries(IMAGE_MODELS).map(([id, m]) => (
                   <option key={id} value={id}>{m.label}{id === DEFAULT_IMAGE_MODEL ? ' (default)' : ''}</option>
