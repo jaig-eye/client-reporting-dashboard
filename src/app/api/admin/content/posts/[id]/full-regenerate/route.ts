@@ -27,8 +27,17 @@ import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
 import { styleTables }                    from '@/lib/content/contentHtml'
 import { computeInternalLinks }           from '@/lib/content/internalLinks'
+import { lengthBudget, lengthInstruction, isOverLength, tightenPrompt, judgeTightened } from '@/lib/content/lengthRules'
 
 export const maxDuration = 300
+
+/**
+ * Past this point in the request the tighten pass is skipped — the same cut-off the topic path
+ * uses. A full-article call runs 1–2 minutes; starting one after 2.5 minutes risks the 300-second
+ * kill landing mid-rewrite, which loses the draft already paid for and leaves the post
+ * 'generating' until the reaper releases it.
+ */
+const TIGHTEN_START_DEADLINE_MS = 150_000
 
 // ── Helpers (shared with /regenerate) ────────────────────────────────────────
 
@@ -93,6 +102,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // The background job below runs inside this invocation's 300 seconds, so its clock starts here,
+  // not when the job does — anything spent claiming the post or updating the live article first
+  // comes out of the same budget.
+  const startedAt = Date.now()
+
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -312,7 +326,9 @@ export async function POST(
       const apiKey       = agencyRes.data.ai_api_key as string
       const agency       = (agencyRes.data.agency_name as string | null) || 'the agency'
       const guidelines   = (settingsRes.data?.topic_guidelines as string | null) ?? ''
-      const targetLength = (settingsRes.data?.target_length as number | null) ?? 1500
+      // The same range a new article is held to (lib/content/lengthRules.ts). "Write a
+      // comprehensive N-word post" read as a floor, so a regenerate came back as long as ever.
+      const budget       = lengthBudget(settingsRes.data?.target_length as number | null)
 
       // 4. Allowed URLs for hallucination stripping
       const { data: sitemapData } = await db
@@ -336,7 +352,7 @@ export async function POST(
         ? `\n\nEditor direction:\n${edit_notes.slice(0, 2000)}`
         : ''
 
-      const userPrompt = `Write a comprehensive ${targetLength}-word blog post for ${agency}.
+      const userPrompt = `Write a blog post for ${agency}.
 
 Topic: ${newTopic.topic}
 Target keyword: ${(newTopic.target_keyword as string | null) ?? 'not specified'}
@@ -348,7 +364,9 @@ Requirements:
 - Full HTML body (h2, h3, p, ul, strong — no h1)
 - Naturally weave in the target keyword across headings and body
 - Specific, practical information a local reader would act on
-- Professional but conversational tone`
+- Professional but conversational tone
+
+${lengthInstruction(budget)}`
 
       // Rich system prompt (internal-link allow-list + external-source rule + E-E-A-T +
       // writer-quality bar + FAQ/Key-Takeaways structure) — parity with fresh generation.
@@ -380,9 +398,52 @@ Requirements:
       // 7. Parse + sanitize
       const parsed = parseResponse(rawText)
       if (!parsed.title || !parsed.slug) throw new Error('AI returned invalid content: missing title or slug')
-      parsed.content = stripHallucinatedLinks(parsed.content, allowedUrls)
-      parsed.content = stripDangerousHtml(parsed.content)
-      parsed.content = styleTables(parsed.content)
+      const sanitise = (html: string) =>
+        styleTables(stripDangerousHtml(stripHallucinatedLinks(html, allowedUrls)))
+      parsed.content = sanitise(parsed.content)
+
+      // 7b. Over length: one tighten pass, judged exactly as the topic path judges it.
+      //
+      // The prompt states a ceiling; models still clear it. One revision, and only kept when it is
+      // shorter, closer to target, and has lost no links and no more than a quarter of its
+      // headings — otherwise the draft stands. Skipped once the request has used most of its
+      // window, because a kill mid-rewrite loses the draft too.
+      const draftWords = wordCount(parsed.content)
+      if (isOverLength(budget, draftWords) && Date.now() - startedAt > TIGHTEN_START_DEADLINE_MS) {
+        console.warn(`[full-regenerate] post ${postId}: ${draftWords} words (ceiling ${budget.ceiling}) — no time left for a tighten pass`)
+      } else if (isOverLength(budget, draftWords)) {
+        try {
+          const tightened = await completeText({
+            provider: provider === 'openai' ? 'openai' : 'anthropic',
+            model, apiKey,
+            system: systemPrompt,
+            user:   tightenPrompt(budget, draftWords, rawText),
+            maxTokens: 8192,
+            operation: 'full_regenerate',
+            clientId: String(pr.client_id ?? '') || null,
+          })
+          const reparsed = parseResponse(tightened.text)
+          // Sanitised before it is measured, the same way the draft was: a raw revision would be
+          // credited with links that are about to be stripped.
+          const cleaned  = sanitise(reparsed.content)
+          const verdict  = judgeTightened(
+            budget,
+            { words: draftWords,          html: parsed.content, title: parsed.title },
+            { words: wordCount(cleaned),  html: cleaned,        title: reparsed.title },
+          )
+          if (verdict.accept) {
+            parsed.title           = reparsed.title || parsed.title
+            parsed.metaDescription = reparsed.metaDescription || parsed.metaDescription
+            parsed.content         = cleaned
+            console.log(`[full-regenerate] tightened post ${postId}: ${verdict.reason}`)
+          } else {
+            console.warn(`[full-regenerate] tighten pass rejected for post ${postId}: ${verdict.reason}`)
+          }
+        } catch (e) {
+          // The draft is still good; an over-length article beats a failed regenerate.
+          console.warn(`[full-regenerate] tighten pass failed for post ${postId}:`, e)
+        }
+      }
 
       // Re-run the quality gate: the content is entirely new, so the stored
       // report describes an article that no longer exists. Leaving it would show
