@@ -42,6 +42,12 @@ export const maxDuration = 300
 const TIGHTEN_START_DEADLINE_MS = 150_000
 
 /**
+ * Past this point the featured image is not started inside the topic's job. OpenAI documents image
+ * requests taking up to two minutes, and the upload follows.
+ */
+const IMAGE_START_DEADLINE_MS = 170_000
+
+/**
  * POST /api/admin/content/generate
  *
  * Two input paths:
@@ -1297,7 +1303,16 @@ ${lengthInstruction(budget)}${writingRulesReminder}`
     // Auto-generate featured image in background if enabled and key is configured
     const imageEnabled = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
     const imagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
-    if (imageEnabled && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
+    const imageKeyed = !!(agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)
+    if (imageEnabled && imageKeyed && Date.now() - startedAt > IMAGE_START_DEADLINE_MS) {
+      // The image runs in this same job, under the same 300-second limit. Started this late it would
+      // be cut off mid-generation with nothing recorded, so the post says why it has no image and a
+      // person can press Generate image, which runs in a job of its own.
+      await db.from('content_posts')
+        .update({ image_generation_error: 'Not generated: the article used most of the time available. Use Generate image on the post.' })
+        .eq('id', savedPost.id)
+      console.warn(`[generate] topic ${topicId}: skipped the featured image — ${Math.round((Date.now() - startedAt) / 1000)}s already used`)
+    } else if (imageEnabled && imageKeyed) {
       waitUntil(
         generatePostImage(db, savedPost.id, agencySettings.openai_api_key, imagePromptOverride).catch(() => {})
       )
