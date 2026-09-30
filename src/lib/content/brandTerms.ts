@@ -129,12 +129,44 @@ export function brandForms(
  * Matches the name as a whole: the term and the brand must share a long prefix that covers most
  * of the brand. A term that merely contains a brand word — "off road wheels" against "Off Road
  * Rim Financing" — is not branded, and that is the case this narrowness exists to protect.
+ *
+ * `distinctive`, when given, must also appear in the term: see brandMatcher.
  */
-export function isBrandTerm(term: string, forms: string[]): boolean {
+export function isBrandTerm(term: string, forms: string[], distinctive = ''): boolean {
   const t = compactBrand(term)
   if (t.length < 3) return false
+  if (distinctive && !t.includes(distinctive)) return false
   return forms.some(brand => {
     const shared = commonPrefix(t, brand)
     return shared >= MIN_PREFIX && shared >= brand.length * PREFIX_SHARE
   })
+}
+
+/**
+ * A brand test that knows which of the name's words are the brand.
+ *
+ * The prefix rule alone reads a name built from a place and a service as a brand, and then gates
+ * the market's own searches: "Dallas Roofing Pros" on dallasroofingpros.com made "dallas roofing"
+ * and "dallas roofing prices" brand searches, and "Van Nuys Awning" did the same to "van nuys
+ * awnings". Those are what the business most wants to be found for.
+ *
+ * So the words of the name that are services or places are set aside, and what is left — "pros",
+ * "5 star" — is the brand. A term is branded only when it carries that part: "dallas roofing pros
+ * reviews" is, "dallas roofing cost" is not. A name with nothing left over has no brand to pick out
+ * and gates nothing, the same answer brandForms already gave Irrigation Inc.
+ */
+export function brandMatcher(
+  name: string | null | undefined,
+  website: string | null | undefined,
+  services: string | null | undefined,
+  geography: string | null | undefined,
+): (term: string) => boolean {
+  const forms = brandForms(name, website, services)
+  if (forms.length === 0) return () => false
+  const svc = String(services ?? ''), geo = String(geography ?? '')
+  const core = String(name ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w && !CORPORATE.has(w))
+  const own  = core.filter(w => !mentions(svc, w) && !mentions(geo, w))
+  if (own.length === 0) return () => false
+  const distinctive = compactBrand(own.join(' '))
+  return (term: string) => isBrandTerm(term, forms, distinctive)
 }

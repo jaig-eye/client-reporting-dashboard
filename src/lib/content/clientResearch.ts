@@ -43,7 +43,7 @@ import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
 import { deriveResearchLocation } from './deriveLocation'
-import { brandForms, isBrandTerm } from './brandTerms'
+import { brandMatcher } from './brandTerms'
 
 /** How many competitors to mine. Each one costs a Labs task, and the fifth adds little. */
 const MAX_COMPETITORS = 3
@@ -311,18 +311,22 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // Nothing is gained by an article aimed there: the searcher has already chosen the brand, and
   // the page that answers them is the home page, which exists. See brandTerms.ts for why the
   // match is as narrow as it is.
-  const brands: string[] = await (async () => {
+  const isBrand: (term: string) => boolean = await (async () => {
+    const none = () => false
     try {
-      const [{ data: client, error: clErr }, { data: svc }] = await Promise.all([
+      const [{ data: client, error: clErr }, { data: svc, error: svcErr }] = await Promise.all([
         db.from('clients').select('name, website').eq('id', clientId).maybeSingle(),
-        db.from('content_settings').select('services').eq('client_id', clientId).maybeSingle(),
+        db.from('content_settings').select('services, geographic_focus').eq('client_id', clientId).maybeSingle(),
       ])
       // Unreadable is not "no brand": gating on a half-read name could catch a real keyword, so
-      // an error means gate nothing at all.
-      if (clErr) { console.warn('[research] cannot read the client name:', clErr.message); return [] }
+      // an error means gate nothing at all. The services read matters as much as the name — it is
+      // what keeps a name made of the service ("Irrigation Inc") from gating the service itself.
+      if (clErr)  { console.warn('[research] cannot read the client name:', clErr.message); return none }
+      if (svcErr) { console.warn('[research] cannot read services for the brand check:', svcErr.message); return none }
       const c = client as { name?: string | null; website?: string | null } | null
-      return brandForms(c?.name, c?.website, (svc as { services?: string | null } | null)?.services)
-    } catch { return [] }
+      const s = svc as { services?: string | null; geographic_focus?: string | null } | null
+      return brandMatcher(c?.name, c?.website, s?.services, s?.geographic_focus)
+    } catch { return none }
   })()
 
   const windowStart = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
@@ -385,6 +389,9 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   let seeds: string[] = []
   let geo = ''
   let location: ResearchLocation | null = null
+  // The client's service and place words, compacted and longest first — what a rival's domain
+  // label is checked against before its terms are treated as that rival's brand.
+  let genericWords: string[] = []
   // 0 until a local volume call has run; then the market's share of national demand.
   let localShare = 0
   // What Google showed for each probed seed, keyed by normalised seed; stored on the seed's row.
@@ -409,6 +416,11 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     const services = parseServices(settings?.services)
     location = readResearchLocation(settings?.research_location)
     const geographicFocus = String(settings?.geographic_focus ?? '')
+    genericWords = Array.from(new Set(
+      [...services, geographicFocus, location?.name ?? '']
+        .join(' ').toLowerCase().split(/[^a-z0-9]+/)
+        .filter(w => w.length >= 3),
+    )).sort((a, b) => b.length - a.length)
 
     // Nobody picked a research location, so read one out of the geography they already typed.
     //
@@ -538,9 +550,16 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       // brand's includes humidifiers and gaming rooms. Only what is about this business joins.
       const parts = comp.split('.')
       const label = (parts.length >= 2 ? parts[parts.length - 2] : parts[0]).toLowerCase()
+      // An exact-match domain is not a brand. austinplumbing.com's label is this client's own
+      // market and service, and filtering on it dropped "austin plumbing repair" — the rival's best
+      // terms are the client's best terms. The label is only a brand when something is left once
+      // the client's service and place words are taken out of it.
+      let rest = label
+      for (const w of genericWords) rest = rest.split(w).join('')
+      const labelIsBrand = label.length >= 4 && rest.length >= 3
       let skipped = 0, offTopic = 0
       for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) {
-        if (label.length >= 4 && c.keyword.toLowerCase().replace(/\s+/g, '').includes(label)) { skipped++; continue }
+        if (labelIsBrand && c.keyword.toLowerCase().replace(/\s+/g, '').includes(label)) { skipped++; continue }
         if (seedMatcher && !seedMatcher.isRelevant(c.keyword)) { offTopic++; continue }
         add(c)
       }
@@ -604,6 +623,11 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     }
   }
 
+  // Recorded as soon as the paid calls are done, before anything that can fail or return early.
+  // It used to be the last step, so a run whose storage failed returned without recording what it
+  // had bought — invisible to the monthly ceiling, and bought again on the next call.
+  if (cost > 0) await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost, units: candidates.size, date: new Date().toISOString().slice(0, 10) })
+
   /**
    * Record that research ran, so the reuse gate has something truthful to read.
    *
@@ -644,15 +668,19 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   let snapshotted = 0
   const bySource: Record<string, number> = {}
   try {
-    const { data: existing, error: existingErr } = await db
-      .from('seo_keywords')
-      .select('normalized_keyword')
-      .eq('client_id', clientId)
-      .in('normalized_keyword', ranked.map(c => c.normalized))
-    // An empty result here reads as "we hold none of these", so a failure would insert the whole
-    // batch again on every run.
-    if (existingErr) console.warn('[research] cannot read existing keywords:', existingErr.message)
-    const known = new Set(((existing ?? []) as { normalized_keyword: string }[]).map(r => r.normalized_keyword))
+    // Read in chunks: a single .in() of ~400 phrases is a URL long enough for the proxy to refuse,
+    // and an unreadable list here used to mean inserting the whole batch into the unique key.
+    const known = new Set<string>()
+    const norms = ranked.map(c => c.normalized)
+    for (let i = 0; i < norms.length; i += 100) {
+      const { data: existing, error: existingErr } = await db
+        .from('seo_keywords')
+        .select('normalized_keyword')
+        .eq('client_id', clientId)
+        .in('normalized_keyword', norms.slice(i, i + 100))
+      if (existingErr) console.warn('[research] cannot read existing keywords:', existingErr.message)
+      for (const r of (existing ?? []) as { normalized_keyword: string }[]) known.add(r.normalized_keyword)
+    }
 
     const rows = ranked.filter(c => !known.has(c.normalized)).map(c => ({
       client_id:          clientId,
@@ -675,7 +703,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       // client's own ranked keywords always include their name. The pool read excludes
       // navigational intent and score() docks it 40, so this keeps brand terms out of the writer's
       // way through machinery that already exists, without deleting the row.
-      intent:             isBrandTerm(c.keyword, brands) ? 'navigational' : c.intent,
+      intent:             isBrand(c.keyword) ? 'navigational' : c.intent,
       location_code:      cfg.location_code,
       language_code:      cfg.language_code,
       // The point of the pool: discovered, not yet chosen, and costing nothing to hold.
@@ -696,8 +724,13 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
     for (const c of ranked) bySource[c.source] = (bySource[c.source] ?? 0) + 1
 
+    // Insert-or-skip on the table's own unique key, so a row the read above missed is skipped
+    // rather than failing its whole chunk.
     for (let i = 0; i < rows.length; i += 200) {
-      const { error } = await db.from('seo_keywords').insert(rows.slice(i, i + 200))
+      const { error } = await db.from('seo_keywords').upsert(rows.slice(i, i + 200), {
+        onConflict: 'client_id,normalized_keyword,location_code,language_code',
+        ignoreDuplicates: true,
+      })
       if (error) { console.error('[research] insert failed:', error.message); break }
       stored += rows.slice(i, i + 200).length
     }
@@ -730,8 +763,6 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     return { ...empty, ok: false, reason: 'seo_keywords unavailable', discovered: ranked.length, cost, competitors: competitorDomains }
   }
 
-  if (cost > 0) await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost, units: ranked.length, date: new Date().toISOString().slice(0, 10) })
-
   // Stamped even when `stored` is 0. A well-covered client discovers nothing new for months, and
   // inferring freshness from row ages made that look like "never researched".
   //
@@ -763,15 +794,21 @@ async function recordOwnRankings(
   try {
     const db = createAdminClient()
     const byNormalized = new Map(ranked.map(c => [normalize(c.keyword), c]))
-    const { data, error } = await db
-      .from('seo_keywords')
-      .select('id, normalized_keyword')
-      .eq('client_id', clientId)
-      .in('normalized_keyword', Array.from(byNormalized.keys()))
-    if (error) { console.warn('[research] cannot resolve keyword ids for snapshot:', error.message); return 0 }
+    // Chunked for the same URL-length reason as the store above.
+    const keys = Array.from(byNormalized.keys())
+    const data: { id: string; normalized_keyword: string }[] = []
+    for (let i = 0; i < keys.length; i += 100) {
+      const { data: part, error } = await db
+        .from('seo_keywords')
+        .select('id, normalized_keyword')
+        .eq('client_id', clientId)
+        .in('normalized_keyword', keys.slice(i, i + 100))
+      if (error) { console.warn('[research] cannot resolve keyword ids for snapshot:', error.message); return 0 }
+      data.push(...((part ?? []) as { id: string; normalized_keyword: string }[]))
+    }
 
     const today = new Date().toISOString().slice(0, 10)
-    const rows = ((data ?? []) as { id: string; normalized_keyword: string }[])
+    const rows = data
       .map(k => {
         const c = byNormalized.get(k.normalized_keyword)
         if (!c) return null
@@ -793,7 +830,10 @@ async function recordOwnRankings(
     let written = 0
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200)
-      const { error } = await db.from('seo_rankings').upsert(chunk, { onConflict: 'keyword_id,date,device' })
+      // Insert-or-skip. The live rank check writes the same (keyword, date, device) key, and its
+      // reading is fresher than a Labs position that lags weeks — overwriting it replaced today's
+      // real position and URL with a stale one and a null URL.
+      const { error } = await db.from('seo_rankings').upsert(chunk, { onConflict: 'keyword_id,date,device', ignoreDuplicates: true })
       if (error) { console.error('[research] snapshot failed:', error.message); break }
       written += chunk.length
     }
@@ -805,25 +845,24 @@ async function recordOwnRankings(
   }
 }
 
-/**
- * Candidates for topic selection, researching first only when what we have has gone stale.
- *
- * This is the entry point topic selection calls. Reuse is the normal path: research runs at most
- * once every RESEARCH_MAX_AGE_DAYS per client, so the cost is a few cents a month and the
- * candidate set stays stable enough to plan a run of posts around.
- */
-/** metadata.research_score as a number, or null for rows stored before the score was kept. */
 /** The Google Ads volume in the research location, stored by a local run. Null otherwise. */
 export function localVolumeOf(metadata: unknown): number | null {
   const v = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).local_volume : null
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
+/** metadata.research_score as a number, or null for rows stored before the score was kept. */
 export function researchScoreOf(metadata: unknown): number | null {
   const v = (metadata as Record<string, unknown> | null | undefined)?.research_score
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
+/**
+ * The keywords topic selection may write about: the ones a person ticked in the Keywords tab.
+ *
+ * Read-only. Research is bought by the monthly job (/api/cron/keyword-research) and on an explicit
+ * button press, never from here. `refreshed` is always false and stays for callers that log it.
+ */
 export async function getResearchCandidates(clientId: string): Promise<{
   candidates: Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score: number | null; local_volume: number | null }>
   refreshed:  boolean
@@ -873,6 +912,19 @@ export async function getResearchCandidates(clientId: string): Promise<{
       .slice(0, 40)
   }
 
+  // Never buys research. It used to run discovery inline whenever what was stored had aged past the
+  // window — from topic generation, once per slot, inside the cron's five-minute budget. Research
+  // is now its own monthly job (/api/cron/keyword-research); topic selection only reads.
+  return { candidates: await read(), refreshed: false }
+}
+
+/**
+ * Whether this client's research has aged past the reuse window, or never ran.
+ *
+ * A read failure answers "not due": re-running research on a guess costs money every time the
+ * guess is wrong, while skipping it costs one day until the next cron pass asks again.
+ */
+export async function isResearchDue(clientId: string): Promise<boolean> {
   try {
     const db = createAdminClient()
     const cutoff = new Date(Date.now() - RESEARCH_MAX_AGE_DAYS * 86_400_000).toISOString()
@@ -890,43 +942,37 @@ export async function getResearchCandidates(clientId: string): Promise<{
       .eq('client_id', clientId)
       .maybeSingle()
 
-    // This one costs money to get wrong: a failure looks like "nothing recent", so research would
-    // re-run its six Labs calls on every single topic generation instead of monthly.
     // A missing column (migration 222 not applied) must not mean "never research again". Fall
     // through to the row-age question, which is exactly the case the fallback below exists for.
     if (csErr && !/last_keyword_research_at/i.test(csErr.message)) {
-      console.warn('[research] staleness check failed, reusing what is stored:', csErr.message)
-      return { candidates: await read(), refreshed: false }
+      console.warn('[research] staleness check failed, treating research as current:', csErr.message)
+      return false
     }
     if (csErr) console.warn('[research] last_keyword_research_at missing (apply migration 222) — falling back to row ages')
 
     const lastRun = csErr ? null : (cs as Record<string, unknown> | null)?.last_keyword_research_at
-    if (lastRun && String(lastRun) >= cutoff) return { candidates: await read(), refreshed: false }
+    if (lastRun) return String(lastRun) < cutoff
 
     // No timestamp yet: either this client has never been researched, or migration 222 has not
     // landed. Fall back to the row-age question so an existing pool is not re-bought on the first
-    // call after deploying — it is the weaker signal, but it only has to hold until the first run
+    // pass after deploying — it is the weaker signal, but it only has to hold until the first run
     // writes a timestamp.
-    if (lastRun == null) {
-      const { data: fresh, error: freshErr } = await db
-        .from('seo_keywords')
-        .select('id')
-        .eq('client_id', clientId)
-        .eq('source', 'dataforseo')
-        .gte('created_at', cutoff)
-        .limit(1)
-      // A failed read reads as "nothing recent", which re-runs the whole research pass — about
-      // twenty cents — on every topic generation instead of monthly.
-      if (freshErr) console.warn('[research] staleness fallback failed, may re-research:', freshErr.message)
-      if ((fresh ?? []).length > 0) return { candidates: await read(), refreshed: false }
+    const { data: fresh, error: freshErr } = await db
+      .from('seo_keywords')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('source', 'dataforseo')
+      .gte('created_at', cutoff)
+      .limit(1)
+    if (freshErr) {
+      console.warn('[research] staleness fallback failed, treating research as current:', freshErr.message)
+      return false
     }
+    return (fresh ?? []).length === 0
   } catch {
-    // Table missing (migration 189 unapplied) — research below will soft-fail the same way.
-    return { candidates: [], refreshed: false }
+    // Table missing (migration 189 unapplied): nothing to refresh into.
+    return false
   }
-
-  await discoverKeywords(clientId)
-  return { candidates: await read(), refreshed: true }
 }
 
 
@@ -939,8 +985,8 @@ export async function getResearchCandidates(clientId: string): Promise<{
  * nothing else. Tracked keywords, keywords a post has claimed, and dismissed keywords all stay
  * — the first two belong to articles, and the third is a decision the next run must not undo.
  *
- * Rankings hanging off the removed candidates go first, so this works whichever way the
- * foreign key was declared. Returns how many candidates were removed.
+ * Rankings hanging off the removed candidates go with them (ON DELETE CASCADE). Returns how many
+ * candidates were actually removed.
  */
 export async function resetResearchPool(clientId: string): Promise<number> {
   if (!clientId) return 0
@@ -956,19 +1002,30 @@ export async function resetResearchPool(clientId: string): Promise<number> {
     // is_tracked, not content_post_id — so without this clause every keyword the operator had
     // picked was deleted by the next "Look again", while the UI promised the opposite.
     let { data, error } = await base().is('dismissed_at', null).is('chosen_at', null)
-    if (error && /chosen_at/i.test(error.message)) ({ data, error } = await base().is('dismissed_at', null))
-    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base())
+    // Which filters this database can take, so the DELETE below repeats exactly the ones the list used.
+    let hasChosen = true, hasDismissed = true
+    if (error && /chosen_at/i.test(error.message)) { hasChosen = false; ({ data, error } = await base().is('dismissed_at', null)) }
+    if (error && /dismissed_at/i.test(error.message)) { hasDismissed = false; ({ data, error } = await base()) }
     if (error) { console.warn('[research] reset: cannot list candidates:', error.message); return 0 }
     const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
     if (ids.length === 0) return 0
+    let removed = 0
     for (let i = 0; i < ids.length; i += 200) {
-      const slice = ids.slice(i, i + 200)
-      await db.from('seo_rankings').delete().in('keyword_id', slice)
-      const { error: delErr } = await db.from('seo_keywords').delete().in('id', slice)
-      if (delErr) { console.error('[research] reset: delete failed:', delErr.message); return i }
+      // The filters go on the DELETE as well as the list. A keyword ticked, claimed by a post or
+      // dismissed between the two statements must survive, and only the delete can see that.
+      // Rankings go with their keyword (ON DELETE CASCADE, in the migration and in production).
+      let del = db.from('seo_keywords').delete()
+        .in('id', ids.slice(i, i + 200))
+        .eq('is_tracked', false)
+        .is('content_post_id', null)
+      if (hasChosen)    del = del.is('chosen_at', null)
+      if (hasDismissed) del = del.is('dismissed_at', null)
+      const { data: gone, error: delErr } = await del.select('id')
+      if (delErr) { console.error('[research] reset: delete failed:', delErr.message); return removed }
+      removed += (gone ?? []).length
     }
-    console.log(`[research] reset pool for ${clientId}: removed ${ids.length} candidate(s)`)
-    return ids.length
+    console.log(`[research] reset pool for ${clientId}: removed ${removed} candidate(s)`)
+    return removed
   } catch (e) {
     console.warn('[research] reset failed:', e)
     return 0

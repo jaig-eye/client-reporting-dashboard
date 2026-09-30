@@ -66,7 +66,11 @@
     },
     {
       "path": "/api/cron/wp-reconcile",
-      "schedule": "0 */6 * * *"
+      "schedule": "30 */6 * * *"
+    },
+    {
+      "path": "/api/cron/keyword-research",
+      "schedule": "30 4 * * *"
     }
   ]
 }
