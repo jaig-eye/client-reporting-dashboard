@@ -56,6 +56,15 @@ const MAX_COMPETITORS = 3
 const MIN_FOOTPRINT_FOR_OVERLAP = 25
 /** Service seeds probed with a live local SERP when a research location is set. $0.004 each. */
 const LOCAL_SERP_SEEDS = 5
+
+/**
+ * Services expanded one by one (keyword ideas and local suggestions each). A bound on cost only —
+ * every service up to it is treated the same. Two Labs tasks per service, about two cents.
+ */
+const MAX_SERVICE_EXPANSIONS = 6
+
+/** Largest share of the stored pool that may come from competitors' rankings. */
+const MAX_COMPETITOR_SHARE = 0.5
 /**
  * Research older than this is redone; anything newer is reused as-is.
  *
@@ -139,31 +148,61 @@ function observedLocalShare(cands: Candidate[]): number {
   return Math.min(1, Math.max(0.002, ratios[Math.floor(ratios.length / 2)]))
 }
 
-function buildSeedMatcher(phrases: string[], geo: string) {
+/**
+ * Which of the client's services a keyword is about, if any.
+ *
+ * Each service is matched on its own words. The words of every service used to be pooled, so a
+ * keyword passed by borrowing one word from each of two unrelated services — "outdoor" from one,
+ * "christmas" from another — and nothing recorded which service a keyword served. Now a keyword
+ * must be about ONE service (two of its words, one of its word pairs, or one of its words plus the
+ * market), and the service it matches best is returned so research can file it under that service.
+ * A single-word service needs only its one word.
+ */
+export function buildSeedMatcher(phrases: string[], geo: string) {
   const tokenize = (v: string) =>
     v.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length >= 3 && !SEED_STOP.has(t))
   const geoTokens = new Set(tokenize(geo))
-  const topic   = new Set<string>()
-  const bigrams = new Set<string>()
-  for (const p of phrases) {
-    const t = tokenize(p).filter(x => !geoTokens.has(x))
-    t.forEach(x => topic.add(x))
-    for (let i = 0; i + 1 < t.length; i++) bigrams.add(`${t[i]} ${t[i + 1]}`)
+  // Word forms count as the same word: "lights" is "lighting", "landscaping" is "landscape". Without
+  // this "landscaping lights installation near me" matched only "installation" and was thrown out.
+  const stem = (w: string) => {
+    for (const suffix of ['ings', 'ing', 'es', 's', 'ed', 'e']) {
+      if (w.endsWith(suffix) && w.length - suffix.length >= 4) return w.slice(0, -suffix.length)
+    }
+    return w
   }
   const same = (a: string, b: string) =>
-    a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)))
-  const topicWords = Array.from(topic)
-  const isTopic = (t: string) => topicWords.some(w => same(t, w))
+    a === b
+    || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)))
+    || (stem(a).length >= 4 && stem(a) === stem(b))
+  const services = phrases.map(phrase => {
+    const words = Array.from(new Set(tokenize(phrase).filter(x => !geoTokens.has(x))))
+    const bigrams = new Set<string>()
+    for (let i = 0; i + 1 < words.length; i++) bigrams.add(`${words[i]} ${words[i + 1]}`)
+    return { phrase, words, bigrams }
+  }).filter(s => s.words.length > 0)
+
+  /** How strongly a keyword is about one service: 0 when it is not. */
+  const strength = (t: string[], s: { words: string[]; bigrams: Set<string> }): number => {
+    const hits = t.filter(x => s.words.some(w => same(x, w))).length
+    let pair = false
+    for (let i = 0; i + 1 < t.length; i++) if (s.bigrams.has(`${t[i]} ${t[i + 1]}`)) pair = true
+    if (hits >= Math.min(2, s.words.length) || pair) return hits + (pair ? 1 : 0)
+    if (hits >= 1 && t.some(x => geoTokens.has(x))) return 0.5
+    return 0
+  }
+  const serviceOf = (kw: string): string | null => {
+    const t = tokenize(kw)
+    let best: string | null = null, bestScore = 0
+    for (const s of services) {
+      const score = strength(t, s)
+      if (score > bestScore) { best = s.phrase; bestScore = score }
+    }
+    return best
+  }
   return {
     mentionsGeo: (kw: string) => tokenize(kw).some(t => geoTokens.has(t)),
-    isRelevant:  (kw: string) => {
-      const t = tokenize(kw)
-      const hits = t.filter(isTopic).length
-      if (hits >= 2) return true
-      if (hits >= 1 && t.some(x => geoTokens.has(x))) return true
-      for (let i = 0; i + 1 < t.length; i++) if (bigrams.has(`${t[i]} ${t[i + 1]}`)) return true
-      return false
-    },
+    isRelevant:  (kw: string) => serviceOf(kw) !== null,
+    serviceOf,
   }
 }
 type SeedMatcher = ReturnType<typeof buildSeedMatcher>
@@ -400,6 +439,9 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // The client's service and place words, compacted and longest first — what a rival's domain
   // label is checked against before its terms are treated as that rival's brand.
   let genericWords: string[] = []
+  // What the business sells, one entry per service (plus any older seed phrases), each expanded on
+  // its own below so every service gets the same share of discovery.
+  let researchServices: string[] = []
   // 0 until a local volume call has run; then the market's share of national demand.
   let localShare = 0
   // What Google showed for each probed seed, keyed by normalised seed; stored on the seed's row.
@@ -460,6 +502,15 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // The geo variants matter twice over: they make the SERPs local, so the competitors found
     // are the ones down the road, and they give keyword_ideas a local angle to expand from.
     seeds = buildResearchSeeds(services, geo, foundational)
+    {
+      const seen = new Set<string>()
+      researchServices = [...services, ...foundational].filter(s => {
+        const k = s.toLowerCase().trim()
+        if (!k || seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+    }
     // The location's every name part counts as geography for the matcher ("southern california"
     // is not a topic word), but the prose does not — a business that says "in-shop service at
     // 1820 Trade St" would have "shop" and "service" stop counting as topic words.
@@ -579,11 +630,23 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       const matcher = seedMatcher
       // Filtered, unlike the domain and competitor sources: those are what real sites rank for,
       // this is a category guess and needs to prove it is about the business.
+      //
+      // One expansion per service, not one for all of them. A single call over every seed returned
+      // whatever category had the most search volume — for a lighting installer, Christmas lights
+      // — and the other services got the leftovers. Each service now gets its own equal share.
+      // Every service matters as much as the next, so none is favoured; the cap only bounds cost.
       let kept = 0, dropped = 0
-      for (const c of await dfsKeywordIdeas(seeds, creds, { ...labsOpts, limit: 300 })) {
-        if (matcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
+      const perService = researchServices.slice(0, MAX_SERVICE_EXPANSIONS)
+      const batches = perService.length
+        ? perService.map(s => (geo ? [s, `${s} ${geo}`] : [s]))
+        : [seeds]
+      const perBatch = Math.max(40, Math.floor(300 / batches.length))
+      for (const batch of batches) {
+        for (const c of await dfsKeywordIdeas(batch, creds, { ...labsOpts, limit: perBatch })) {
+          if (matcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
+        }
       }
-      console.log(`[research] keyword_ideas: kept ${kept}, dropped ${dropped} off-topic`)
+      console.log(`[research] keyword_ideas: ${batches.length} expansion(s), kept ${kept}, dropped ${dropped} off-topic`)
     }
 
     // ── Local phrases: what people in this market actually type ─────────────
@@ -591,18 +654,21 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // Phrase-match suggestions for the geo-suffixed seeds return only searches that contain the
     // seed, city included; "near me" is the other way a local searcher types it, the one that never
     // carries a city. One Labs task per seed, so the count is capped.
+    //
+    // One per service, in the service's own words: with the market pinned on when there is one,
+    // "near me" when there is not. This used to take the first three geo seeds and the first two
+    // near-me seeds, so the order services were typed in decided which got local phrases at all.
     if (seeds.length && seedMatcher) {
-      const matcher  = seedMatcher
-      const isGeo    = (sd: string) => !!geo && sd.toLowerCase().endsWith(geo.toLowerCase())
-      const geoSeeds = seeds.filter(isGeo).slice(0, 3)
-      const nearMe   = seeds.filter(sd => !isGeo(sd)).slice(0, 2).map(sd => `${sd} near me`)
+      const matcher = seedMatcher
+      const localSeeds = researchServices.slice(0, MAX_SERVICE_EXPANSIONS)
+        .map(s => (geo ? `${s} ${geo}` : `${s} near me`))
       let localKept = 0
-      for (const sd of [...geoSeeds, ...nearMe]) {
+      for (const sd of localSeeds) {
         for (const c of await dfsKeywordSuggestions(sd, creds, { ...labsOpts, limit: 60 })) {
           if (matcher.isRelevant(c.keyword)) { add(c); localKept++ }
         }
       }
-      console.log(`[research] local suggestions: ${localKept} from ${geoSeeds.length} geo + ${nearMe.length} near-me seed(s)`)
+      console.log(`[research] local suggestions: ${localKept} from ${localSeeds.length} service seed(s)`)
     }
 
     // ── Local volume: what the service area itself searches ───────────────────
@@ -659,11 +725,24 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   }
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
-  const scored = Array.from(candidates.values())
+  const sortedAll = Array.from(candidates.values())
     .filter(c => !isExcluded(c))
     .map(c => ({ c, s: score(c, paidConversions.get(c.normalized) ?? 0, seedMatcher?.mentionsGeo(c.keyword) ?? false, localShare) }))
     .sort((a, b) => b.s - a.s)
-    .slice(0, MAX_CANDIDATES)
+  // At most half the pool from competitors' rankings, their weakest dropped first. Rivals rank for
+  // everything in their own catalogue, so they out-number every other source; at one client 207 of
+  // 242 keywords came from a handful of holiday-light installers, and the list read as theirs.
+  const competitorCap = Math.floor(Math.min(MAX_CANDIDATES, sortedAll.length) * MAX_COMPETITOR_SHARE)
+  const scored: typeof sortedAll = []
+  let fromCompetitors = 0
+  for (const r of sortedAll) {
+    if (scored.length >= MAX_CANDIDATES) break
+    if (r.c.source === 'competitor') {
+      if (fromCompetitors >= competitorCap) continue
+      fromCompetitors++
+    }
+    scored.push(r)
+  }
   const ranked  = scored.map(r => r.c)
   const scoreOf = new Map(scored.map(r => [r.c.normalized, r.s] as const))
 
@@ -722,6 +801,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       metadata:           {
         research_score:    scoreOf.get(c.normalized) ?? null,
         found_via:         c.source,
+        // The service this keyword is about, so the list can be read service by service instead
+        // of as one pile ranked by volume. Null for a keyword that matched no single service
+        // (the client's own rankings are kept without that test).
+        service:           seedMatcher?.serviceOf(c.keyword) ?? null,
         // The market's own number, and where it was measured. Absent on a country-level run.
         ...(location ? { local_volume: c.local_volume ?? null, research_location: location.code } : {}),
         // What Google showed for a probed seed — the talking points, kept for the Analytics tab.
