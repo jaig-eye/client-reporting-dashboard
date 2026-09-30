@@ -27,7 +27,7 @@
 | `MAILGUN_SMTP_USER` | yes | SMTP username | `lib/email.ts` |
 | `MAILGUN_SMTP_PASS` | yes | SMTP password | `lib/email.ts` |
 | `MAILGUN_FROM` | no | From address; falls back to `MAILGUN_SMTP_USER` | `lib/email.ts` |
-| `GEMINI_API_KEY` | no | Gemini API key for image generation fallback | `lib/content/generatePostImage.ts` |
+| `GEMINI_API_KEY` | no | Gemini API key for the Imagen image fallback, sent as the `x-goog-api-key` header. Google has shut Imagen down, so the fallback currently always fails until it is ported to `gemini-*-image` via `:generateContent` | `lib/content/generatePostImage.ts` |
 | `OPENAI_API_KEY` | no | OpenAI API key (also stored in `agency_settings.openai_api_key`/`ai_api_key`) | Content generation, image generation |
 | `VERCEL_URL` | auto | Set by Vercel; used internally for URL construction | Next.js runtime |
 | `NODE_ENV` | auto | `production` or `development`; affects cookie security flags | `lib/auth.ts` |
@@ -49,7 +49,7 @@ Additional keys stored in the database (not env vars) and loaded at runtime:
 Key columns: `id` (UUID PK), `name`, `email` (nullable unique), `slug` (unique), `logo_url`, `dashboard_token` (UUID, unique — client portal access key), `default_conversion_value`, `ad_fuel_cut` (DECIMAL, overrides agency default), `lead_action`, `lead_action_fallback`, `purchase_action`, `purchase_action_fallback`, `benchmark_roas/ctr/cpc/conv_rate/cpm/cpl` (all nullable), `show_benchmarks`, `hidden_metrics`, `enabled_benchmarks`, `metric_layout_override` (JSONB), `layout_type`, `bill_day` (1–31), `historic_bill_day` (1–31), `monthly_budget`, `discord_channel_id`, `local_dominator_url`, `stripe_customer_id`, `ad_fuel_alert_threshold`, `last_fuel_alert_at`, `last_fuel_alert_balance`, `ad_fuel_alert_muted`, `auto_pause_ads`, `auto_resume_ads`, `campaigns_paused_at`, `bc_daily_report`, `last_runway_alert_at`, `last_runway_alert_days`, `created_at`, `updated_at`.
 
 **`agency_settings`** (single row)
-Key columns: `agency_name`, `agency_logo_url`, `favicon_url`, `crm_name`, `benchmark_*` (6 fields), `default_date_range_days`, `default_conversion_value`, `ad_fuel_cut`, `ad_fuel_cutoff_date`, `default_lead_action`, `default_lead_action_fallback`, `default_purchase_action`, `default_purchase_action_fallback`, `cron_enabled`, `app_version`, `ads_sync_frequency`, `ads_sync_hour_utc`, `sync_frequency`, `sync_hour_utc`, `sync_day_of_week`, `chart_color_spend/prior_spend/conversions/prior_conversions`, `ai_provider`, `ai_model`, `ai_api_key`, `openai_api_key`, `metric_layouts` (JSONB), `hidden_connector_types` (TEXT[]), `discord_bot_token`, `stripe_api_key`, `stripe_webhook_secret`, `serp_api_key`, `serp_api_provider`, `brand_primary`, `notify_metric_alerts`, `metric_alert_threshold`, `daily_alert_threshold`, `daily_alert_metrics` (JSONB), `weekly_alert_metrics` (JSONB), `notify_connector_errors`, `notify_topic_ready`, `notify_post_uploaded`, `master_writing_prompt`, `service_area_master_prompt`, `super_admin_otp_hash`, `super_admin_otp_expires_at`, `image_generation_enabled`.
+Key columns: `agency_name`, `agency_logo_url`, `favicon_url`, `crm_name`, `benchmark_*` (6 fields), `default_date_range_days`, `default_conversion_value`, `ad_fuel_cut`, `ad_fuel_cutoff_date`, `default_lead_action`, `default_lead_action_fallback`, `default_purchase_action`, `default_purchase_action_fallback`, `cron_enabled`, `app_version`, `ads_sync_frequency`, `ads_sync_hour_utc`, `sync_frequency`, `sync_hour_utc`, `sync_day_of_week`, `chart_color_spend/prior_spend/conversions/prior_conversions`, `ai_provider`, `ai_model`, `ai_api_key`, `openai_api_key`, `image_model` (migration 227; OpenAI image model — NULL or unknown means `DEFAULT_IMAGE_MODEL` in `lib/content/imageModels.ts`, currently `gpt-image-2.5-flare`), `metric_layouts` (JSONB), `hidden_connector_types` (TEXT[]), `discord_bot_token`, `stripe_api_key`, `stripe_webhook_secret`, `serp_api_key`, `serp_api_provider`, `brand_primary`, `notify_metric_alerts`, `metric_alert_threshold`, `daily_alert_threshold`, `daily_alert_metrics` (JSONB), `weekly_alert_metrics` (JSONB), `notify_connector_errors`, `notify_topic_ready`, `notify_post_uploaded`, `master_writing_prompt`, `service_area_master_prompt`, `super_admin_otp_hash`, `super_admin_otp_expires_at`, `image_generation_enabled`.
 
 **`users`**
 Columns: `id`, `name`, `email` (unique), `username` (unique on `LOWER(username)`), `password_hash`, `role` (admin|viewer), `is_active`, `last_login_at`, `avatar_url`, `theme` (light|dark|auto), `accent_color`, `created_at`, `updated_at`.
@@ -207,7 +207,7 @@ Key columns: `client_id`, `background`, `services`, `target_audience`, `geograph
 Key columns: `id`, `client_id` (FK), `content_type` (blog|service_area), `status` (pending|approved|rejected|generating|generated|scheduled), `topic`, `target_keyword`, `search_intent`, `secondary_keywords`, `keyword_opportunity`, `ranking_strategy`, `audience_intent`, `why_now`, `competition_level`, `cluster_group`, `seo_brief` (JSONB — 28 fields), `competitors_researched` (JSONB), `edit_notes`, `target_publish_date`, `auto_approved_at`, `generation_error`, `city`, `state_abbr`, `service_name`, `created_at`, `updated_at`.
 
 **`content_posts`**
-Key columns: `id`, `client_id` (FK), `topic_id` (FK nullable), `content_type` (blog|service_area), `status` (pending|for_review|draft_saved|published|rejected), `title`, `seo_title`, `content` (HTML), `excerpt`, `meta_description`, `slug`, `target_keyword`, `suggested_tags`, `seo_score` (JSONB — 17 fields), `featured_image_url`, `featured_image_prompt`, `featured_image_source`, `image_generation_error`, `wp_post_id`, `wp_status`, `wp_site_url`, `bc_post_id`, `bc_store_hash`, `published_url`, `target_publish_date`, `auto_pushed_at`, `auto_push_error`, `generated_by` (scheduled|manual|topic), `topic_rationale`, `city`, `state_abbr`, `service_name`, `service_page_url`, `created_at`, `updated_at`.
+Key columns: `id`, `client_id` (FK), `topic_id` (FK nullable), `content_type` (blog|service_area), `status` (pending|for_review|draft_saved|published|rejected), `title`, `seo_title`, `content` (HTML), `excerpt`, `meta_description`, `slug`, `target_keyword`, `suggested_tags`, `seo_score` (JSONB — 17 fields), `featured_image_url`, `featured_image_prompt`, `featured_image_source`, `image_generation_error` (why the last image generation produced no image; cleared when one is attached), `wp_post_id`, `wp_status`, `wp_site_url`, `bc_post_id`, `bc_store_hash`, `published_url`, `target_publish_date`, `auto_pushed_at`, `auto_push_error`, `generated_by` (scheduled|manual|topic), `topic_rationale`, `city`, `state_abbr`, `service_name`, `service_page_url`, `created_at`, `updated_at`.
 
 **`content_sitemap_pages`**
 Unique key: `(client_id, url)`.
@@ -431,14 +431,14 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 | Stripe API v2026-04-22.dahlia | Ad Fuel billing sync, ACH detection | Secret key from `agency_settings` |
 | Mailgun (SMTP) | Transactional email | SMTP credentials in env vars |
 | Discord REST API v10 | Ad Fuel balance alerts, content notifications | Bot token from `agency_settings` |
-| OpenAI API | Content generation, image generation (DALL-E / gpt-image-1) | Key from `agency_settings.ai_api_key` or `openai_api_key` |
+| OpenAI API | Content generation, image generation (`gpt-image-2.5-flare` by default; `gpt-image-2.5-sunburst` or `gpt-image-2` per `agency_settings.image_model`) | Key from `agency_settings.ai_api_key` or `openai_api_key` |
 | Anthropic API | Content generation (Claude Haiku/Sonnet) | Key from `agency_settings.ai_api_key` |
 | SerpAPI / Google Search | Competitor research for content topics | Key from `agency_settings.serp_api_key` |
 | Ahrefs API | SEO domain authority, keywords, pages | API key stored in connector auth |
 | GoHighLevel API | CRM data (contacts, calls, forms, opportunities) | API key stored in connector auth |
 | WordPress REST API (wp/v2) | Content publishing, tag management, media upload | username + app_password in connector auth |
 | BigCommerce API v2 | Order revenue (daily cron), page publishing | store_hash + access_token in connector auth |
-| Gemini API | Fallback image generation | `GEMINI_API_KEY` env var |
+| Gemini API | Fallback image generation (Imagen — shut down by Google; currently always fails) | `GEMINI_API_KEY` env var |
 
 ---
 
