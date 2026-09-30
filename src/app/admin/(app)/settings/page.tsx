@@ -728,8 +728,8 @@ export default function AgencySettingsPage() {
                 ))}
               </select>
               <p className="section-desc" style={{ margin: '6px 0 0' }}>
-                Same price per image either way. Each is asked in its own dialect — landscape and
-                quality settings differ between the two — so switching needs nothing else changed.
+                Each is asked for the same 1536×1024 PNG, so switching needs nothing else changed.
+                Cost is billed per token and recorded from what OpenAI reports, in the usage panel above.
               </p>
             </div>
           </IntegrationModal>

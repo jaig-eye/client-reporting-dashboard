@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirections'
 import { recordAiUsage } from '@/lib/ai/usage'
-import { priceImages } from '@/lib/ai/pricing'
+import { priceImages, priceImageUsage, type ImageUsage } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 
@@ -283,20 +283,28 @@ export async function generatePostImage(
         signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       })
       if (imageRes.ok) {
-        // Billed per image, not per token, so the ledger records units and prices through
-        // priceImages. Only a successful generation is charged.
+        const data = await imageRes.json().catch(() => null) as
+          { data?: { b64_json?: string }[]; usage?: ImageUsage } | null
+
+        // These models bill per token, split by modality, and the response says how many were
+        // used — so the cost comes from that, not a flat per-image figure. The flat estimate is
+        // only for a response that omits usage (the API reference marks it optional). Recorded
+        // for any 2xx: OpenAI has charged for it whether or not the image then reaches storage.
+        const usage = data?.usage
         await recordAiUsage({
-          provider: 'openai',
-          model:    chosenModel,
-          operation: 'image',
-          units:    1,
-          costUsd:  priceImages(chosenModel, 1),
-          clientId: String(post.client_id ?? '') || null,
+          provider:     'openai',
+          model:        chosenModel,
+          operation:    'image',
+          units:        1,
+          inputTokens:  usage?.input_tokens,
+          outputTokens: usage?.output_tokens,
+          costUsd:      priceImageUsage(chosenModel, usage) ?? priceImages(chosenModel, 1),
+          clientId:     String(post.client_id ?? '') || null,
           postId,
         })
-        const data = await imageRes.json() as { data?: { b64_json?: string }[] }
+
         // GPT image models only ever answer with base64; there is no URL form to fall back to.
-        const b64  = data.data?.[0]?.b64_json
+        const b64 = data?.data?.[0]?.b64_json
 
         if (b64) {
           const buffer   = Buffer.from(b64, 'base64')
