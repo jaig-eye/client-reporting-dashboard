@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta, fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
 import { xmlrpcSetPostMeta } from '@/lib/connectors/wordpressXmlrpc'
 import { rankMathUpdateMeta } from '@/lib/connectors/rankMathApi'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
@@ -749,7 +749,7 @@ export async function POST(
         for (let i = 0; i < segments.length - 1; i++) {
           try {
             const url = `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(segments[i])}&per_page=1${parentId ? `&parent=${parentId}` : ''}`
-            const res = await fetch(url, { headers: { Authorization: `Basic ${creds}` } })
+            const res = await fetchWithSiteCredentials(url, { headers: { Authorization: `Basic ${creds}` } })
             if (res.ok) {
               const pages = (await res.json()) as { id: number }[]
               parentId = pages[0]?.id
@@ -974,7 +974,7 @@ export async function POST(
           const hubSlug = silo.hub_page_url.replace(/\/$/, '').split('/').pop() ?? ''
           if (!hubSlug) return
           const creds    = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-          const pagesRes = await fetch(
+          const pagesRes = await fetchWithSiteCredentials(
             `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(hubSlug)}&per_page=1`,
             { headers: { Authorization: `Basic ${creds}` } }
           )
@@ -1004,7 +1004,7 @@ export async function POST(
           const updatedContent = current.includes('<!-- silo-cluster-links -->')
             ? current.replace(/<\/ul>\s*<!-- \/silo-cluster-links -->/, `${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`)
             : `${current}\n<!-- silo-cluster-links -->\n<h3>Related ${entity} Resources</h3>\n<ul>\n${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`
-          await fetch(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
+          await fetchWithSiteCredentials(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
             method:  'POST',
             headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
             body:    JSON.stringify({ content: updatedContent, status: hubStatus }),

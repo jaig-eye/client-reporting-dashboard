@@ -25,8 +25,14 @@
 //
 // Soft-fails throughout: a 404 (older Rank Math), a 401, or any network failure returns false and
 // the caller moves on. It never throws into a publish that already succeeded.
+//
+// The request carries the application password in its Authorization header, so it goes through
+// fetchWithSiteCredentials: one redirect within the same site at most, never to another host.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
+
+/** Bounds the whole exchange, a followed redirect included. */
 const RANKMATH_TIMEOUT_MS = 20_000
 
 function authHeader(username: string, appPassword: string): string {
@@ -50,7 +56,7 @@ export async function rankMathUpdateMeta(
 
   const url = `${siteUrl.replace(/\/+$/, '')}/wp-json/rankmath/v1/updateMeta`
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithSiteCredentials(url, {
       method:  'POST',
       headers: {
         Authorization:  authHeader(auth.username, auth.app_password),
@@ -62,7 +68,7 @@ export async function rankMathUpdateMeta(
         meta:       Object.fromEntries(entries),
       }),
       signal: AbortSignal.timeout(RANKMATH_TIMEOUT_MS),
-    })
+    }, '[rank-math]')
 
     if (res.status === 404) {
       // Rank Math not installed, or a version predating this route.

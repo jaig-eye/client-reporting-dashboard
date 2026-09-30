@@ -30,8 +30,18 @@
 //
 // Everything here soft-fails. A site with XML-RPC disabled, a parse it does not recognise, or any
 // network failure returns false; it never throws into a publish that already succeeded.
+//
+// REDIRECTS
+//
+// The application password travels in the request BODY here, not a header — so a redirect that
+// fetch follows on its own would carry it to wherever the Location points, and a 307/308 re-sends
+// the body verbatim. Requests go through fetchWithSiteCredentials, which follows one redirect only
+// within the same site and refuses anything else.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
+
+/** Bounds the whole exchange, a followed redirect included. */
 const XMLRPC_TIMEOUT_MS = 20_000
 
 /** Escape a string for XML text content. Keyword and title values are arbitrary user text. */
@@ -59,12 +69,12 @@ function xmlrpcUrl(siteUrl: string): string {
 /** POST a methodCall and return the raw XML body, or null when the endpoint is unusable. */
 async function call(siteUrl: string, xml: string): Promise<string | null> {
   try {
-    const res = await fetch(xmlrpcUrl(siteUrl), {
+    const res = await fetchWithSiteCredentials(xmlrpcUrl(siteUrl), {
       method:  'POST',
       headers: { 'Content-Type': 'text/xml; charset=utf-8' },
       body:    xml,
       signal:  AbortSignal.timeout(XMLRPC_TIMEOUT_MS),
-    })
+    }, '[wp-xmlrpc]')
     // 403/404/405 is the normal shape of "xmlrpc.php is disabled here".
     if (!res.ok) {
       console.warn(`[wp-xmlrpc] ${siteUrl} returned ${res.status} — XML-RPC is probably disabled`)
@@ -79,6 +89,7 @@ async function call(siteUrl: string, xml: string): Promise<string | null> {
     }
     return body
   } catch (e) {
+    // A refused redirect lands here too; fetchWithSiteCredentials has already logged why.
     console.warn(`[wp-xmlrpc] ${siteUrl} unreachable:`, String(e).slice(0, 160))
     return null
   }

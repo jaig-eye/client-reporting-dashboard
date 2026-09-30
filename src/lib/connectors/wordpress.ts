@@ -60,6 +60,102 @@ function wpHeaders(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Which site is this? — one comparison for every place that asks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A site's host, for deciding whether two addresses are the same site: lower-case, any port kept,
+ * scheme and a leading "www." ignored. null when there is no usable host.
+ *
+ * Some client sites are stored with http:// and serve https://, and some with and some without
+ * www., so neither difference can mean "another site".
+ */
+export function wpSiteHost(url: string | null | undefined): string | null {
+  const raw = String(url ?? '').trim()
+  if (!raw) return null
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return u.host.toLowerCase().replace(/^www\./, '') || null
+  } catch {
+    return null
+  }
+}
+
+/** True when both addresses are the same site by wpSiteHost. Never true for an unusable address. */
+export function isSameWpSite(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ha = wpSiteHost(a)
+  return !!ha && ha === wpSiteHost(b)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credentialed requests and redirects
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+/**
+ * Where a redirect may take a request that carries a site's credentials: the same site, and never
+ * from https down to http. Returns the absolute target, or null when it must not be followed.
+ */
+export function sameSiteRedirectTarget(from: string, location: string): string | null {
+  let a: URL, b: URL
+  try { a = new URL(from); b = new URL(location, from) } catch { return null }
+  if (b.protocol !== 'http:' && b.protocol !== 'https:') return null
+  // An https → http hop would put the application password on the wire in the clear.
+  if (a.protocol === 'https:' && b.protocol === 'http:') return null
+  if (!isSameWpSite(a.toString(), b.toString())) return null
+  return b.toString()
+}
+
+/** Origin only, for logs — a Location header can carry anything, userinfo included. */
+function originOf(url: string, base?: string): string {
+  try { return new URL(url, base).origin } catch { return '(unparseable URL)' }
+}
+
+/**
+ * fetch() for every request that carries a site's credentials — the Authorization header, or the
+ * XML-RPC body with the application password in it.
+ *
+ * fetch follows redirects by default, and that is wrong here twice over. It sends a 307/308's body
+ * on to wherever the Location points, which for XML-RPC is the password itself, to any host. And it
+ * turns a POST answered with 301/302 into a GET, so a publish or an update against a site that
+ * redirects comes back 200 having written nothing — a GET of the posts list reads as success.
+ *
+ * So redirects are handled here: at most one is followed, only to the same site (http → https and
+ * adding or dropping www. are the ordinary cases), re-sending the identical request. Anything else
+ * fails closed with a log line naming both origins. A redirect answer means the server did not
+ * process the request, so re-sending it cannot write twice.
+ *
+ * `init.signal` covers both hops, so a caller's timeout bounds the whole exchange.
+ */
+export async function fetchWithSiteCredentials(url: string, init: RequestInit, label = '[wordpress]'): Promise<Response> {
+  const first = await fetch(url, { ...init, redirect: 'manual' })
+  if (!REDIRECT_STATUSES.has(first.status)) return first
+
+  const location = first.headers.get('location')
+  await first.body?.cancel().catch(() => {})
+  const next = location ? sameSiteRedirectTarget(url, location) : null
+  if (!next) {
+    const msg =
+      `${label} ${originOf(url)} answered ${first.status} with a redirect to ` +
+      `${location ? originOf(location, url) : '(no Location header)'} — not followed, because this ` +
+      `request carries the site's credentials and they only go to the site they belong to`
+    console.warn(msg)
+    throw new Error(msg)
+  }
+
+  const second = await fetch(next, { ...init, redirect: 'manual' })
+  if (REDIRECT_STATUSES.has(second.status)) {
+    await second.body?.cancel().catch(() => {})
+    const msg = `${label} ${originOf(url)} redirected more than once (via ${originOf(next)}) — not followed further`
+    console.warn(msg)
+    throw new Error(msg)
+  }
+  return second
+}
+
 async function wpGet(
   siteUrl: string,
   path: string,
@@ -69,7 +165,7 @@ async function wpGet(
   const url = new URL(wpApiUrl(siteUrl, path))
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithSiteCredentials(url.toString(), {
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
@@ -89,7 +185,7 @@ async function wpPost(
   auth: { username: string; app_password: string },
   body: Record<string, unknown>
 ): Promise<unknown> {
-  const res = await fetch(wpApiUrl(siteUrl, path), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, path), {
     method: 'POST',
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
@@ -148,7 +244,7 @@ export async function verifyPostMeta(
   try {
     // The only fetch in this file that had no timeout, and it is awaited twice per push — so an
     // unresponsive client site hung the approve request AFTER the post was already live.
-    const res = await fetch(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
+    const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
       headers: wpHeaders(auth),
       signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
     })
@@ -271,7 +367,7 @@ export async function updatePage(
     meta?:    Record<string, string>
   }
 ): Promise<WpPublishedPost> {
-  const res = await fetch(wpApiUrl(siteUrl, `/pages/${pageId}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/pages/${pageId}`), {
     method: 'POST',
     headers: {
       Authorization: authHeader(auth.username, auth.app_password),
@@ -316,7 +412,7 @@ export async function updatePost(
     meta?:           Record<string, string>
   },
 ): Promise<WpPublishedPost> {
-  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/posts/${postId}`), {
     method:  'POST',
     headers: wpHeaders(auth, true),
     body:    JSON.stringify(patch),
@@ -351,7 +447,7 @@ export async function fetchPost(
   kind: 'post' | 'page' = 'post',
 ): Promise<{ id: number; link: string; status: string } | null> {
   const base = kind === 'page' ? 'pages' : 'posts'
-  const res = await fetch(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
     headers: wpHeaders(auth),
     signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
@@ -520,7 +616,7 @@ export async function uploadMediaToWordPress(
   if (meta?.altText) formData.append('alt_text', meta.altText)
   if (meta?.title)   formData.append('title', meta.title)
 
-  const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
+  const res = await fetchWithSiteCredentials(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
     method:  'POST',
     headers: { Authorization: authHeader(auth.username, auth.app_password), 'User-Agent': BROWSER_BOT_UA },
     body:    formData,
@@ -606,7 +702,7 @@ export async function deleteWpContent(
   force = false,
 ): Promise<{ deleted: boolean; alreadyGone: boolean }> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
-  const res = await fetch(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
     method:  'DELETE',
     headers: wpHeaders(auth),
     signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
@@ -641,7 +737,7 @@ export async function setWpContentStatus(
   status: 'draft' | 'publish' | 'private',
 ): Promise<void> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
-  const res = await fetch(wpApiUrl(siteUrl, path), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, path), {
     method:  'POST',
     headers: wpHeaders(auth, true),
     body:    JSON.stringify({ status }),
@@ -714,7 +810,7 @@ export async function searchMedia(
   const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
   let res: Response
   try {
-    res = await fetch(url.toString(), {
+    res = await fetchWithSiteCredentials(url.toString(), {
       headers: {
         Authorization:  authHeader(auth.username, auth.app_password),
         'Content-Type': 'application/json',
@@ -780,7 +876,7 @@ export async function getMediaItem(
   const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
   let res: Response
   try {
-    res = await fetch(
+    res = await fetchWithSiteCredentials(
       `${wpApiUrl(siteUrl, `/media/${mediaId}`)}?_fields=id,title,source_url,media_details,alt_text,mime_type,date`,
       {
         headers: {
