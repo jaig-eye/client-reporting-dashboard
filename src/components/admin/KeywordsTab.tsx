@@ -87,7 +87,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         lastResearchAt:   d.lastResearchAt ?? null,
         hasDataForSeo:    d.hasDataForSeo !== false,
       }) })
-      .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Could not load'); setData({ researched: [], hasDataForSeo: true }) } })
+      // Keep whatever was loaded before, and never stand in an empty list: an empty list shows
+      // the "Find keywords" button, which on a failed load invited a paid run that wipes the
+      // unchosen half of a pool that was there all along.
+      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load') })
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { insights: [] })
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
@@ -195,9 +198,27 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
       </div>
 
       {error && (
-        <p style={{ fontSize: '0.8125rem', color: 'var(--red, #b91c1c)', marginBottom: 12 }}>
-          Couldn&apos;t load the keywords ({error}).
-        </p>
+        <div
+          role="alert"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            marginBottom: 12, padding: '10px 12px', borderRadius: 8,
+            background: 'var(--red-subtle)', border: '1px solid var(--red)',
+          }}
+        >
+          <p style={{ margin: 0, flex: '1 1 220px', fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
+            Couldn&apos;t load the keywords ({error}).
+            {data ? ' The list below is from the last time it loaded.' : ''}
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8125rem', padding: '0.3rem 0.7rem' }}
+            onClick={() => setReload(v => v + 1)}
+          >
+            Retry
+          </button>
+        </div>
       )}
 
       {/* The result of the last add or refresh, where the button that caused it is — not at the
@@ -275,6 +296,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         </div>
       )}
 
+      {/* Nothing loaded and the load failed: the alert above says so and offers Retry. */}
+      {!(data === null && error) && (
       <div className="card p-5">
         {data === null ? (
           <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-faint)' }}>Loading…</p>
@@ -297,6 +320,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           />
         )}
       </div>
+      )}
     </div>
   )
 }

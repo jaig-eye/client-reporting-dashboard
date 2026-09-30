@@ -277,20 +277,33 @@ export default function KeywordResearchPanel({
     }
   }
 
+  // The one control here that spends, so it asks first — from the empty state as much as from the
+  // strip. The empty state's button used to fire straight away, and it is also what showed when
+  // the list merely failed to load.
+  const refreshConfirm = onRefresh && (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button type="button" className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => setConfirmRefresh(false)}>Cancel</button>
+      <button type="button" className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => { setConfirmRefresh(false); onRefresh() }}>Look now</button>
+    </span>
+  )
+
   if (!keywords.length) {
     return (
       <div style={{ padding: '28px 8px', textAlign: 'center' }}>
         <p style={{ margin: '0 0 10px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          {/* One message: the caller always passes onRefresh now, so the second branch this used
-              to have could never render. Says what to do either way — "Find new" can legitimately
-              come back with nothing for a client with no DataForSEO and no Ahrefs rows. */}
-          No keywords yet. Look for some, or add your own.
+          {confirmRefresh
+            ? 'This asks DataForSEO for keyword ideas and spends credit. Go ahead?'
+            : 'No keywords yet. Look for some, or add your own.'}
         </p>
-        {onRefresh && (
-          <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem' }} onClick={onRefresh} disabled={refreshing}>
+        {onRefresh && (confirmRefresh ? refreshConfirm : (
+          <button
+            type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}
+            onClick={() => setConfirmRefresh(true)} disabled={refreshing || busy}
+            title="Asks DataForSEO for keyword ideas. Costs money."
+          >
             {refreshing ? 'Looking…' : 'Find keywords'}
           </button>
-        )}
+        ))}
       </div>
     )
   }
@@ -341,12 +354,7 @@ export default function KeywordResearchPanel({
           {/* Named for what it does, not for the arrow it used to wear. This is the one control on
               the page that goes out to DataForSEO and spends, so it says so before it runs rather
               than hiding behind a circular arrow that looked like the reload button above it. */}
-          {onRefresh && (confirmRefresh ? (
-            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-              <button type="button" className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => setConfirmRefresh(false)}>Cancel</button>
-              <button type="button" className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', whiteSpace: 'nowrap' }} onClick={() => { setConfirmRefresh(false); onRefresh() }}>Look now</button>
-            </span>
-          ) : (
+          {onRefresh && (confirmRefresh ? refreshConfirm : (
             <button
               type="button"
               className="btn btn-secondary"
