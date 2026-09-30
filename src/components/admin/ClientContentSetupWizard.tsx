@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import MarketLine from './MarketLine'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
-import KeywordChipInput from '@/components/admin/KeywordChipInput'
+import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -82,6 +82,9 @@ interface Props {
 }
 
 const TOTAL_STEPS = 9
+
+/** Most starting keywords research is given. The chip input stops at the same number. */
+const SEED_MAX = 25
 
 const FREQ_OPTIONS = [
   { id: 'daily',    label: 'Daily',       sub: '1 post/day' },
@@ -621,10 +624,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         geographic_focus:     brand.geographic_focus,
         brand_voice:          brand.brand_voice,
         phone_number:         brand.phone_number,
-        // Where research and rank checks are measured — see migration 224.
-        // Seeds for research, not a content plan — see migration 222.
-        foundational_keywords: foundationalKeywords
-          .split(/[,;\n]+/).map(v => v.trim()).filter(Boolean).slice(0, 25),
+        // Seeds for research, not a content plan — see migration 222. Split the way the chip
+        // input wrote them: a plain comma split turned "gutter guards (mesh, micro-mesh)" into
+        // two broken seeds. Capped at what the chip input accepts, so nothing shown is dropped.
+        foundational_keywords: splitPhrases(foundationalKeywords).slice(0, SEED_MAX),
         sitemap_url:          sitemapUrl || undefined,
         schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
@@ -953,7 +956,7 @@ function Field({ label, children, drivesResearch }: {
             style={{
               fontSize: '0.5625rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
               padding: '1px 6px', borderRadius: 999,
-              background: 'var(--accent-soft, #eef2ff)', color: 'var(--accent-strong, #4338ca)',
+              background: 'var(--blue-subtle)', color: 'var(--blue)',
             }}
           >
             research
@@ -999,18 +1002,18 @@ function StepWelcome({ clientName, hasGsc, wpUrl }: { clientName: string; hasGsc
       </div>
 
       {hasGsc === false && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#fef3c7', border: '1px solid #fde68a', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#92400e', marginBottom: 3 }}>Google Search Console not connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#92400e', lineHeight: 1.5 }}>
-            Topic suggestions will be less precise without real keyword data. Connect GSC in Data Connections for best results.
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--amber-subtle)', border: '1px solid var(--amber)', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 3 }}>Google Search Console not connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Topic suggestions will be less precise without real keyword data. Connect Search Console on the client&apos;s Integrations tab for best results.
           </div>
         </div>
       )}
 
       {wpUrl && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#166534', marginBottom: 2 }}>WordPress connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#166534' }}>{wpUrl}</div>
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--green-subtle)', border: '1px solid var(--green)', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 2 }}>WordPress connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{wpUrl}</div>
         </div>
       )}
     </div>
@@ -1051,13 +1054,13 @@ function StepWpConnect({
         <div style={{
           padding: '1.25rem 1.5rem',
           borderRadius: 12,
-          border: '2px solid #86efac',
-          background: '#f0fdf4',
+          border: '2px solid var(--green)',
+          background: 'var(--green-subtle)',
           display: 'flex', alignItems: 'center', gap: 16,
           animation: 'wp-slide-in 0.35s ease',
         }}>
           <div style={{
-            width: 44, height: 44, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+            width: 44, height: 44, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -1065,8 +1068,8 @@ function StepWpConnect({
             </svg>
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>Connected</div>
-            <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{wpUrl}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>Connected</div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>{wpUrl}</div>
           </div>
         </div>
         <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -1093,13 +1096,13 @@ function StepWpConnect({
           <div style={{
             padding: '1.5rem',
             borderRadius: 12,
-            border: '2px solid #86efac',
-            background: '#f0fdf4',
+            border: '2px solid var(--green)',
+            background: 'var(--green-subtle)',
             display: 'flex', alignItems: 'center', gap: 16,
             animation: 'wp-check-in 0.4s cubic-bezier(0.34,1.56,0.64,1)',
           }}>
             <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+              width: 48, height: 48, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -1116,8 +1119,8 @@ function StepWpConnect({
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>WordPress connected!</div>
-              <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
+              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>WordPress connected!</div>
+              <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
             </div>
           </div>
           <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -1161,7 +1164,7 @@ function StepWpConnect({
           </p>
 
           {connectMsg && (
-            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: '#fee2e2', color: '#dc2626', fontSize: '0.8125rem', marginBottom: 16 }}>
+            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: 16 }}>
               {connectMsg}
             </div>
           )}
@@ -1499,7 +1502,7 @@ function StepSchedule({
   return (
     <div>
       <StepTitle>Publishing schedule</StepTitle>
-      <StepSub>How often should this client&apos;s posts be published? You can change this later in the Schedule tab.</StepSub>
+      <StepSub>How often should this client&apos;s posts be published? You can change this later under Settings → Schedule on the Content tab.</StepSub>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
         {FREQ_OPTIONS.map(opt => (
@@ -1511,7 +1514,7 @@ function StepSchedule({
               padding: '1rem',
               borderRadius: 10,
               border: `2px solid ${schedule.frequency === opt.id ? 'var(--blue)' : 'var(--border)'}`,
-              background: schedule.frequency === opt.id ? '#eff6ff' : 'var(--bg-surface)',
+              background: schedule.frequency === opt.id ? 'var(--blue-subtle)' : 'var(--bg-surface)',
               cursor: 'pointer',
               textAlign: 'left',
             }}
@@ -1558,7 +1561,7 @@ function StepSchedule({
           />
           <div>
             <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Generate AI featured image</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Uses DALL-E to create a featured image for each post</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Uses the OpenAI image model chosen in Settings to create a featured image for each post</div>
           </div>
         </label>
 
@@ -1591,7 +1594,7 @@ function StepContentTypes({
     <div>
       <StepTitle>
         Additional Content Types
-        <span style={{ marginLeft: 10, verticalAlign: 'middle', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 8px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
+        <span className="badge badge-amber" style={{ marginLeft: 10, verticalAlign: 'middle', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', borderRadius: 999 }}>
           Coming soon
         </span>
       </StepTitle>
@@ -1726,7 +1729,9 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
           can add your own keywords by hand on the Keywords tab at any time.
         </StepSub>
         <a
-          href={`/admin/clients/${clientId}?tab=integrations`}
+          // The Integrations tab's id is `sources`; ?tab=integrations matched nothing and landed
+          // on Overview.
+          href={`/admin/clients/${clientId}?tab=sources`}
           target="_blank" rel="noopener noreferrer"
           className="btn btn-secondary"
           style={{ display: 'inline-block', fontSize: '0.875rem', marginTop: 4 }}
@@ -1769,7 +1774,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
             type="button"
             className="btn btn-secondary"
             style={{ fontSize: '0.75rem', marginBottom: 8 }}
-            onClick={() => setSeeds(servicesText)}
+            onClick={() => setSeeds(splitPhrases(servicesText).slice(0, SEED_MAX).join(', '))}
             disabled={busy}
           >
             Use the services from step 3
@@ -1782,6 +1787,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
               value={seeds}
               onChange={setSeeds}
               disabled={busy}
+              max={SEED_MAX}
               placeholder="permanent outdoor lighting, landscape lighting installation…"
             />
           </div>
@@ -1894,7 +1900,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {competitors.map((c, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
                           <a href={`https://${c}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace', textDecoration: 'none' }}>{c}</a>
                         </div>
                       ))}
@@ -2002,7 +2008,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {statusChecks.map(c => (
               <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>
-                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? '#dcfce7' : '#f3f4f6', color: c.ok ? '#16a34a' : '#9ca3af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
+                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? 'var(--green-subtle)' : 'var(--bg-subtle)', color: c.ok ? 'var(--green)' : 'var(--text-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
                   {c.ok ? '✓' : '—'}
                 </span>
                 <span style={{ color: c.ok ? 'var(--text-primary)' : 'var(--text-faint)' }}>{c.label}</span>
