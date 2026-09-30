@@ -1,56 +1,42 @@
 'use client'
 
-// The Keywords tab: deciding what this client should be found for.
+// The Keywords tab: deciding what this client's blog posts are written about.
+//
+// THE DECISION FIRST
+//
+// The page exists for one decision — which keywords blog topics are chosen from — and it used to
+// make you scroll past five tables of evidence to reach it, starting with a table of paid search
+// terms that no longer feed topics at all. It reads top to bottom in the order you think now:
+//
+//   Where this client stands   ticked vs available, the market, when research last looked and
+//                              when it looks again — and the one control that spends (Find new)
+//   What we write about        the list you tick, with what is in use shown above it
+//   What the data says         the evidence, one closed card per source, paid searches last
 //
 // ONE PAGE, NOT THREE VIEWS
 //
 // This was briefly a tablist — Evidence, Rankings, Pick. It read as three places to go and it was
-// really one subject, so the tabs cost a click to find out a view was empty and hid the rest of
-// the page while you were in any one of them. Most clients have at least one empty view: no
-// Google Ads, no Ahrefs, no DataForSEO, nothing published yet. Three tabs where two are blank is
-// worse than one page that simply does not draw the blank parts.
-//
-// Everything is stacked now, in the order you would read it:
-//
-//   Evidence   what the data already says — converting ad terms, organic positions, Search Console
-//   Rankings   how the posts that are live are actually doing
-//   Pick       what to write next, which is the decision the rest of the page exists to inform
-//
-// Sections with nothing in them render nothing at all rather than an empty card, so a client with
-// only Search Console sees a short page rather than a page of apologies.
+// really one subject, so the tabs cost a click to find out a view was empty and hid the rest of the
+// page while you were in any one of them. The evidence cards do the same job without hiding
+// anything: every source's header says what is in it before you open it.
 //
 // Research location is gone entirely. It was a second location field whose only job was to name
 // the market, which the first service area already does; nobody had ever set it. The market is
 // derived and shown, not asked for.
-//
-// "Add your own" is a disclosure rather than a card, because it is the rarer of the two ways in.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
-import SerpInsightsSection from '@/components/admin/SerpInsightsSection'
+import KeywordEvidence, { type AddProgress, type AhrefsRow, type EvidenceSources, type KeywordRankRow, type PaidTermRow } from '@/components/admin/KeywordEvidence'
+import { NoticeLine, PlusIcon, RefreshIcon, SkeletonRows, fmtDay, type Notice } from '@/components/admin/KeywordUi'
 import type { SerpInsightRow } from '@/lib/content/serpInsights'
 import type { SiteOption } from '@/lib/content/types'
-import { AnalyticsTab, type AhrefsRow, type EvidenceSources, type PaidTermRow } from '@/components/admin/KeywordEvidence'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
-
-/**
- * The result of the last add or research run, and how it should read.
- *
- * The colour used to come from a regex over the text, which painted "Nothing new to add" red and
- * would have painted a server sentence green unless it happened to contain "could not".
- */
-interface Notice { tone: 'success' | 'warning' | 'error' | 'neutral'; text: string }
-const NOTICE_COLOR: Record<Notice['tone'], string> = {
-  success: 'var(--green)',
-  warning: 'var(--amber)',
-  error:   'var(--red)',
-  neutral: 'var(--text-muted)',
-}
 
 interface Payload {
   researched:        ResearchKeyword[]
-  /** Converting paid search terms and Ahrefs rows, for the evidence tables. */
+  /** Converting paid search terms and Ahrefs rows, for the evidence cards. */
   paidTerms:         PaidTermRow[]
   ahrefs:            AhrefsRow[]
   researchLocation?: string | null
@@ -64,12 +50,15 @@ interface Payload {
   services:          string[]
 }
 
+/** Matches the monthly job: a client is due for research once its last run is 30 days old. */
+const RESEARCH_EVERY_DAYS = 30
+
 const NO_SITES: SiteOption[] = []
 
 export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITES, gscData, onResearchRun }: {
   clientId: string
   isActive: boolean
-  /** Search Console rows, for the Evidence view. */
+  /** Search Console rows, for the evidence. */
   gscData:  GscData
   /** The client's own sites, so their own line is marked in a list of competitors. */
   sites?:   SiteOption[]
@@ -78,10 +67,15 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
   /** After research runs here, so the parent bumps `epoch` and everything reading the pool reloads. */
   onResearchRun?: () => void
 }) {
+  const router = useRouter()
   const [data,    setData]    = useState<Payload | null>(null)
   const [error,   setError]   = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [reload,  setReload]  = useState(0)
+  // What Google showed for this client's keywords, and where its posts rank.
+  const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
+  const [ranks,    setRanks]    = useState<KeywordRankRow[] | null>(null)
+  const [rankTick, setRankTick] = useState(0)
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
@@ -89,14 +83,23 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
   // disabled until you press Enter, so typing a phrase and clicking Add does nothing.
   const [pending, setPending] = useState('')
   const [adding,  setAdding]  = useState(false)
-  const [busy,    setBusy]    = useState(false)
-  const [notice,  setNotice]  = useState<Notice | null>(null)
-  // What Google actually returns for the keywords in use — the talking points the writer is
-  // handed. Sits with the picking list, since it describes the keywords that were picked.
-  const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
+  const [addNotice, setAddNotice] = useState<Notice | null>(null)
+  /** Adds started from an evidence row, by lower-cased term. */
+  const [rowAdds, setRowAdds] = useState<AddProgress>(() => new Map())
 
-  // One read of keyword-sources for the whole tab. The evidence tables above the list used to
-  // fetch the same route again for themselves, on the same triggers.
+  const [busy,    setBusy]    = useState(false)
+  const [confirmResearch, setConfirmResearch] = useState(false)
+  const [researchNotice,  setResearchNotice]  = useState<Notice | null>(null)
+  const [dirty,   setDirty]   = useState(false)
+
+  const [refreshing,  setRefreshing]  = useState(false)
+  const [refreshNote, setRefreshNote] = useState<{ text: string; error: boolean } | null>(null)
+  // The server-rendered Search Console rows come back through router.refresh(); inside a
+  // transition, isPending says when they actually have.
+  const [gscPending, startGscRefresh] = useTransition()
+
+  // One read of keyword-sources for the whole tab — the list, the summary and the evidence all
+  // come from it — plus the saved Google results beside it.
   useEffect(() => {
     if (!isActive) return
     let cancelled = false
@@ -114,9 +117,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
         hasDataForSeo:    d.hasDataForSeo !== false,
         services:         Array.isArray(d.services) ? (d.services as unknown[]).map(String).filter(Boolean) : [],
       }) })
-      // Keep whatever was loaded before, and never stand in an empty list: an empty list shows
-      // the "Find keywords" button, which on a failed load invited a paid run that wipes the
-      // unchosen half of a pool that was there all along.
+      // Keep whatever was loaded before, and never stand in an empty list: an empty list offers to
+      // find keywords, which on a failed load invited a paid run that wipes the unchosen half of a
+      // pool that was there all along.
       .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load') })
       .finally(() => { if (!cancelled) setLoading(false) })
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
@@ -126,45 +129,120 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
     return () => { cancelled = true; setLoading(false) }
   }, [clientId, isActive, epoch, reload])
 
+  // Research ran elsewhere (epoch moved): forget the ranks so the loading state shows while they
+  // are fetched again.
+  useEffect(() => { setRanks(null) }, [epoch])
+
+  // Rankings are fetched each time the tab is shown, and again on epoch or Reload. A tab that
+  // fetched once and then trusted itself showed a list from before a research run until the page
+  // was reloaded.
+  useEffect(() => {
+    if (!isActive) return
+    let cancelled = false
+    fetch(`/api/admin/content/keyword-rankings?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { rankings: [] })
+      .then(d => { if (!cancelled) setRanks(((d as { rankings?: KeywordRankRow[] }).rankings ?? [])) })
+      .catch(() => { if (!cancelled) setRanks([]) })
+    return () => { cancelled = true }
+  }, [clientId, isActive, epoch, rankTick])
+
+  /**
+   * Re-read everything on the page from our own database. Nothing external, nothing billable.
+   *
+   * Syncing is a scheduled job; this is the button that shows you what the last sync brought in,
+   * and it is labelled Reload for that reason.
+   */
+  const reloadAll = useCallback(() => {
+    setRefreshing(true)
+    setRefreshNote(null)
+    setRanks(null)
+    setRankTick(t => t + 1)
+    setReload(v => v + 1)
+    // Search Console rows are rendered by the server component, so the page itself re-renders.
+    startGscRefresh(() => router.refresh())
+  }, [router])
+
+  // "Updated" is said when everything has actually come back — the rankings, the sources and the
+  // server-rendered Search Console rows — not the moment the button is pressed.
+  useEffect(() => {
+    if (!refreshing || ranks === null || loading || gscPending) return
+    setRefreshing(false)
+    setRefreshNote(error
+      ? { text: `Couldn’t reload everything (${error})`, error: true }
+      : { text: 'Updated just now', error: false })
+  }, [refreshing, ranks, loading, error, gscPending])
+
+  useEffect(() => {
+    if (!refreshNote) return
+    const t = setTimeout(() => setRefreshNote(null), 8000)
+    return () => clearTimeout(t)
+  }, [refreshNote])
+
   // Stable identities for what the children memoize on. Built inline, each was a new array on
   // every render, so the keyword list regrouped itself on every keystroke in the add box.
   const evidence = useMemo<EvidenceSources | null>(
     () => data ? { paidTerms: data.paidTerms, ahrefs: data.ahrefs } : null, [data])
+  const inUse = useMemo(
+    () => new Set((data?.researched ?? []).filter(k => k.chosen).map(k => k.keyword.toLowerCase())), [data])
   const ownDomains = useMemo(() => sites.map(s => s.siteUrl), [sites])
   const place    = data?.researchLocation ? data.researchLocation.split(',')[0] : null
   const geoWords = useMemo(() => place ? [place] : [], [place])
+  const hasDfs   = data?.hasDataForSeo !== false
   const reloadSources = useCallback(() => setReload(v => v + 1), [])
+
+  /**
+   * Put keywords into the pool, already chosen. The one path for both ways in: typed into the box,
+   * or added from a row of evidence. Throws with the server's sentence when it fails.
+   */
+  const addKeywords = useCallback(async (list: string[]): Promise<void> => {
+    const res = await fetch('/api/admin/content/keyword-research', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, add: list }),
+    })
+    const body = await res.json().catch(() => ({})) as { error?: string; added?: number; rechosen?: number }
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
+    const n = (body.added ?? 0) + (body.rechosen ?? 0)
+    setAddNotice(n
+      ? { tone: 'success', text: n === 1 && list.length === 1 ? `Added “${list[0]}” — it’s in use.` : `Added ${n}, in use.` }
+      : { tone: 'neutral', text: 'Nothing new to add — those are already in use.' })
+    setReload(v => v + 1)
+  }, [clientId])
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
     const list = splitPhrases([draft, pending].filter(Boolean).join(', '))
     if (!list.length) return
-    setAdding(true); setNotice(null)
+    setAdding(true); setAddNotice(null)
     try {
-      const res = await fetch('/api/admin/content/keyword-research', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: clientId, add: list }),
-      })
-      const body = await res.json().catch(() => ({})) as { error?: string; added?: number; rechosen?: number }
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
-      const n = (body.added ?? 0) + (body.rechosen ?? 0)
-      setNotice(n
-        ? { tone: 'success', text: `Added ${n}, in use.` }
-        : { tone: 'neutral', text: 'Nothing new to add — those are already in use.' })
+      await addKeywords(list)
       setDraft(''); setPending('')
       setShowAdd(false)
-      setReload(v => v + 1)
     } catch (e) {
-      setNotice({ tone: 'error', text: e instanceof Error ? e.message : 'Could not add those' })
+      setAddNotice({ tone: 'error', text: e instanceof Error ? `Couldn’t add: ${e.message}` : 'Couldn’t add those' })
     } finally {
       setAdding(false)
     }
-  }, [clientId, draft, pending])
+  }, [addKeywords, draft, pending])
+
+  /** Add one search from the evidence. Its row shows the progress; the list above shows the result. */
+  const addFromEvidence = useCallback(async (term: string) => {
+    const key = term.toLowerCase()
+    setRowAdds(m => new Map(m).set(key, { state: 'adding' }))
+    setAddNotice(null)
+    try {
+      await addKeywords([term])
+      setRowAdds(m => { const n = new Map(m); n.delete(key); return n })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Couldn’t add this'
+      setRowAdds(m => new Map(m).set(key, { state: 'error', error: msg }))
+      setAddNotice({ tone: 'error', text: `Couldn’t add “${term}”: ${msg}` })
+    }
+  }, [addKeywords])
 
   /** Look for new ideas. Replaces the unchosen; anything in use survives. */
-  const refresh = useCallback(async () => {
-    setBusy(true); setNotice(null)
+  const research = useCallback(async () => {
+    setBusy(true); setResearchNotice(null)
     try {
       const res = await fetch('/api/admin/content/keyword-research', {
         method: 'POST',
@@ -175,209 +253,278 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
       if (!res.ok) {
         // 403 for a viewer, 429 within the hour after the last run: the server's sentence says
         // which. The second is a wait, not a failure.
-        setNotice({ tone: res.status === 429 ? 'warning' : 'error', text: body.error ?? `Couldn’t look for new keywords (HTTP ${res.status}).` })
+        setResearchNotice({ tone: res.status === 429 ? 'warning' : 'error', text: body.error ?? `Couldn’t look for new keywords (HTTP ${res.status}).` })
         return
       }
       if (body.ok === false) {
         // Nothing new was stored — over budget, no connection, a failed write — and the pool was
         // left as it was, so there is nothing to reload. This is not success.
-        setNotice({ tone: 'warning', text: body.reason ?? 'Nothing new was stored.' })
+        setResearchNotice({ tone: 'warning', text: body.reason ?? 'Nothing new was stored.' })
         return
       }
       const n = body.discovered ?? 0
-      setNotice(n > 0
+      setResearchNotice(n > 0
         ? { tone: 'success', text: `Found ${n.toLocaleString()} new keyword${n === 1 ? '' : 's'}.` }
         : { tone: 'neutral', text: 'No new keywords this time.' })
       setReload(v => v + 1)
       onResearchRun?.()
     } catch (e) {
-      setNotice({ tone: 'error', text: e instanceof Error ? e.message : 'Could not look for new keywords' })
+      setResearchNotice({ tone: 'error', text: e instanceof Error ? e.message : 'Couldn’t look for new keywords' })
     } finally {
       setBusy(false)
     }
   }, [clientId, onResearchRun])
 
+  // ── What the summary says ────────────────────────────────────────────────
+  const ticked    = inUse.size
+  const available = data ? Math.max(data.poolTotal ?? 0, data.researched.length) : 0
+  const lastRun   = fmtDay(data?.lastResearchAt)
+  const nextRun   = useMemo(() => {
+    if (!data?.lastResearchAt) return null
+    const d = new Date(data.lastResearchAt)
+    if (Number.isNaN(d.getTime())) return null
+    d.setDate(d.getDate() + RESEARCH_EVERY_DAYS)
+    return d
+  }, [data?.lastResearchAt])
+  const nextLabel = nextRun
+    ? (nextRun.getTime() <= Date.now() ? 'Due now — the daily check picks it up within a day or two.' : `Looks again by itself around ${fmtDay(nextRun)}.`)
+    : 'The daily check runs it within a few days.'
+  const emptyServiceHint = hasDfs
+    ? (nextRun && nextRun.getTime() > Date.now() ? `Research looks for more around ${fmtDay(nextRun)}, or add your own.` : 'Research looks for more once a month, or add your own.')
+    : 'Add your own, or add one from the evidence below.'
+
   return (
-    <div>
-      <style>{'@keyframes ccSpin { to { transform: rotate(360deg) } }'}</style>
-
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-          Keywords
-        </h3>
-        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          What this client should be found for.
-        </p>
-      </div>
-
-      {/* Evidence, then Rankings. Empty sections draw nothing — see AnalyticsTab. */}
-      <AnalyticsTab
-        data={gscData} clientId={clientId}
-        isActive={isActive} epoch={epoch}
-        hasDataForSeo={data?.hasDataForSeo !== false}
-        sources={evidence}
-        sourcesLoading={loading}
-        sourcesError={error}
-        onRefreshed={reloadSources}
-      />
-
-      {/* What Google returns for the keywords in use — the talking points the writer gets. It
-          describes the picks, so it leads into the picking list rather than sitting among the
-          Search Console tables. */}
-      <div style={{ marginTop: 16 }}>
-        <SerpInsightsSection
-          rows={insights} loading={insights === null}
-          ownDomains={ownDomains}
-        />
-      </div>
-
-      {/* ── Pick: the decision the rest of the page exists to inform ──────── */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', margin: '28px 0 10px' }}>
-        <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-          Pick what to write about
-        </h4>
-        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          Topics are only chosen from the ones you tick.
-          {data?.hasDataForSeo !== false && ' Research looks for new ones by itself once a month.'}
-        </p>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          style={{ marginLeft: 'auto', fontSize: '0.8125rem', padding: '0.3rem 0.7rem', whiteSpace: 'nowrap' }}
-          onClick={() => setShowAdd(v => !v)}
-          disabled={adding || busy}
-        >
-          {showAdd ? 'Cancel' : 'Add your own'}
-        </button>
+    <div className="kw-page">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className="kw-head">
+        <div>
+          <h3 className="kw-title">Keywords</h3>
+          <p className="kw-lede">
+            The searches this client’s blog posts are written for. Tick them in the list; the data
+            further down helps you choose.
+          </p>
+        </div>
+        <div className="kw-head-actions">
+          {refreshNote && (
+            <span role="status" className={`kw-head-note${refreshNote.error ? ' kw-head-note--error' : ''}`}>{refreshNote.text}</span>
+          )}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={reloadAll}
+            disabled={refreshing}
+            title="Re-read everything on this tab from the last sync. Doesn’t contact Google or spend anything."
+          >
+            <RefreshIcon spinning={refreshing} />
+            {refreshing ? 'Reloading…' : 'Reload'}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div
-          role="alert"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-            marginBottom: 12, padding: '10px 12px', borderRadius: 8,
-            background: 'var(--red-subtle)', border: '1px solid var(--red)',
-          }}
-        >
-          <p style={{ margin: 0, flex: '1 1 220px', fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
+        <div role="alert" className="kw-alert">
+          <p>
             Couldn&apos;t load the keywords ({error}).
-            {data ? ' The list below is from the last time it loaded.' : ''}
+            {data ? ' What you see is from the last time it loaded.' : ' The list you tick from appears once it loads.'}
           </p>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ fontSize: '0.8125rem', padding: '0.3rem 0.7rem' }}
-            onClick={() => setReload(v => v + 1)}
-          >
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setReload(v => v + 1)}>
             Retry
           </button>
         </div>
       )}
 
-      {/* The result of the last add or refresh, where the button that caused it is — not at the
-          bottom of a scrolled page, which is where it used to appear and why adding a keyword
-          looked like it had done nothing. */}
-      {notice && (
-        <p role={notice.tone === 'error' ? 'alert' : 'status'} className="text-xs" style={{ margin: '0 0 12px', color: NOTICE_COLOR[notice.tone] }}>
-          {notice.text}
-        </p>
-      )}
+      {/* ── Where this client stands ───────────────────────────────────── */}
+      {!(data === null && error) && (
+        <section className="card kw-strip" aria-label="Where this client stands">
+          <div className="kw-stat">
+            <div className="kw-stat-label">Ticked for blog topics</div>
+            {data === null ? <StatSkeleton /> : (
+              <>
+                <div className="kw-stat-value">
+                  {ticked.toLocaleString()}
+                  {available > 0 && <> <small>of {available.toLocaleString()}</small></>}
+                </div>
+                <p className={`kw-stat-sub${ticked === 0 || dirty ? ' kw-stat-sub--warn' : ''}`}>
+                  {dirty
+                    ? 'You have unsaved changes in the list below.'
+                    : ticked === 0
+                      ? (available ? 'None yet. Tick some below to steer new topics.' : 'Nothing to choose from yet.')
+                      : 'New blog topics are chosen from these.'}
+                </p>
+              </>
+            )}
+          </div>
 
-      {/* Research still runs without DataForSEO — it reads the client's own converting Google Ads
-          search terms and any Ahrefs rows, both free and already in the database. What it cannot
-          do is put a number on any of it, or look beyond the client's own footprint. So this says
-          what is missing from THIS list and nothing else: the first version claimed "what Google
-          shows" was missing too, which was wrong twice over, because those snapshots have their
-          own section above and are bought when a keyword is picked. */}
-      {data && data.hasDataForSeo === false && (
-        <div
-          role="note"
-          style={{
-            marginBottom: 12, padding: '10px 12px', borderRadius: 8,
-            display: 'flex', alignItems: 'flex-start', gap: 9,
-            background: 'var(--amber-subtle, #fffbeb)',
-            border: '1px solid var(--amber, #d97706)',
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--amber, #d97706)" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ flexShrink: 0, marginTop: 1 }}>
-            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          {/* States a fact about the CONNECTION, not a claim about the rows below it.
-              The earlier wording said "these came from converting ad terms — which is why they have
-              leads but no search volume", which was wrong in both directions: it described an empty
-              list on a client with no pool at all, and it denied the volumes on a client that had
-              DataForSEO connected when research last ran and has since been disconnected. */}
-          <p style={{ margin: 0, fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
-            <strong style={{ fontWeight: 600 }}>DataForSEO is not connected for this client.</strong>{' '}
-            <span style={{ color: 'var(--text-muted)' }}>
-              Research can only draw on Ahrefs rows already synced — no keyword discovery, search
-              volume, difficulty, competitor keywords or rank tracking. You can still add keywords
-              by hand, and topics are still generated from Search Console.
-            </span>
-          </p>
-        </div>
-      )}
+          <div className="kw-stat">
+            <div className="kw-stat-label">Market</div>
+            {data === null ? <StatSkeleton /> : (
+              <>
+                <div className="kw-stat-value">{place ?? (hasDfs ? 'Whole country' : 'Not measured')}</div>
+                <p className="kw-stat-sub">
+                  {place
+                    ? 'Search counts are for this area — the first service area.'
+                    : hasDfs
+                      ? 'No local area resolved, so search counts are national.'
+                      : 'Search counts come with DataForSEO research.'}
+                </p>
+              </>
+            )}
+          </div>
 
-      {showAdd && (
-        <div className="card p-4" style={{ marginBottom: 12 }}>
-          <KeywordChipInput
-            value={draft}
-            onChange={setDraft}
-            onPending={setPending}
-            disabled={adding}
-            max={30}
-            ariaLabel="Keywords to add"
-            placeholder="permanent Christmas lights, soffit lighting installers…"
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+          <div className="kw-stat">
+            <div className="kw-stat-label">Research</div>
+            {data === null ? <StatSkeleton /> : hasDfs ? (
+              <>
+                <div className="kw-stat-value">{lastRun ? <>Looked {lastRun}</> : 'Not run yet'}</div>
+                <p className="kw-stat-sub">{nextLabel}</p>
+                {confirmResearch ? (
+                  <div className="kw-confirm" role="group" aria-label="Confirm looking for new keywords">
+                    This buys a fresh search from DataForSEO, which costs money. Keywords nobody
+                    ticked are replaced; ticked ones stay.
+                    <span className="kw-inline-actions">
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmResearch(false)}>Cancel</button>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => { setConfirmResearch(false); void research() }}>Look now</button>
+                    </span>
+                  </div>
+                ) : (
+                  <div className="kw-stat-action">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setConfirmResearch(true)}
+                      disabled={busy || adding}
+                      title="Asks DataForSEO for new keyword ideas now. Costs money; anything ticked stays."
+                    >
+                      <RefreshIcon spinning={busy} />
+                      {busy ? 'Looking…' : 'Find new keywords'}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="kw-stat-value">Not set up</div>
+                {/* States a fact about the CONNECTION, not a claim about the rows in the list:
+                    a client that had DataForSEO when research last ran keeps those numbers. A
+                    run from here could only report that there is no connection, so this says it
+                    up front instead of offering a button that can do nothing else. */}
+                <p className="kw-stat-sub">
+                  Finding keywords by itself needs a DataForSEO connection. Add your own below, or add
+                  them straight from the evidence.
+                </p>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+      <NoticeLine notice={researchNotice} />
+
+      {/* ── What we write about ────────────────────────────────────────── */}
+      {!(data === null && error) && (
+        <section className="card kw-pick-card" aria-labelledby={`kw-pick-${clientId}`}>
+          <div className="kw-card-head">
+            <div>
+              <h3 id={`kw-pick-${clientId}`} className="kw-card-title">What we write about</h3>
+              <p className="kw-card-desc">
+                Tick the keywords new blog topics should come from — nothing else is used for new
+                subjects. Changes count once saved.
+              </p>
+            </div>
             <button
               type="button"
-              className="btn btn-primary"
-              style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }}
-              onClick={() => void addTyped()}
-              disabled={adding || !splitPhrases([draft, pending].filter(Boolean).join(', ')).length}
+              className="btn btn-secondary btn-sm"
+              onClick={() => { setShowAdd(v => !v); setAddNotice(null) }}
+              disabled={adding || busy}
+              aria-expanded={showAdd}
             >
-              {adding ? 'Adding…' : 'Add'}
+              {showAdd ? 'Cancel' : (<><PlusIcon /> Add your own</>)}
             </button>
-            <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-              {data?.hasDataForSeo === false
-                ? 'Added in use, straight into the list below.'
-                : 'Added in use, with search volume where Google reports it.'}
-            </span>
           </div>
-        </div>
+
+          <div className="kw-card-body">
+            {showAdd && (
+              <div className="kw-add-box">
+                <KeywordChipInput
+                  value={draft}
+                  onChange={setDraft}
+                  onPending={setPending}
+                  disabled={adding}
+                  max={30}
+                  ariaLabel="Keywords to add"
+                  placeholder="permanent Christmas lights, soffit lighting installers…"
+                />
+                <div className="kw-add-row">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => void addTyped()}
+                    disabled={adding || !splitPhrases([draft, pending].filter(Boolean).join(', ')).length}
+                  >
+                    {adding ? 'Adding…' : 'Add'}
+                  </button>
+                  <span className="kw-add-note">
+                    {hasDfs
+                      ? 'Added ticked, with search counts where Google reports them. Separate several with commas.'
+                      : 'Added ticked, straight into the list. Separate several with commas.'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* The result of the last add, where the button that caused it is — not at the bottom
+                of a scrolled page, which is why adding a keyword used to look like it did nothing. */}
+            <NoticeLine notice={addNotice} />
+
+            {data === null ? (
+              <div className="kw-list" aria-busy="true" aria-label="Loading the keywords"><SkeletonRows rows={7} /></div>
+            ) : (
+              <KeywordResearchPanel
+                clientId={clientId}
+                keywords={data.researched}
+                services={data.services}
+                geoWords={geoWords}
+                place={place}
+                total={data.poolTotal}
+                lastResearchAt={data.lastResearchAt}
+                hideSummary
+                onChanged={reloadSources}
+                onDirtyChange={setDirty}
+                emptyHint={hasDfs
+                  ? 'Research fills this by itself once a month, or use Find new keywords above. You can also add your own.'
+                  : 'Add your own with the button above, or add them from the evidence below.'}
+                emptyServiceHint={emptyServiceHint}
+                // A forced run replaces the unchosen half of the pool, so a save racing it would
+                // write ticks against rows that are about to go. Adding by hand reloads the list too.
+                busy={busy || adding}
+              />
+            )}
+          </div>
+        </section>
       )}
 
-      {/* Nothing loaded and the load failed: the alert above says so and offers Retry. */}
-      {!(data === null && error) && (
-      <div className="card p-5">
-        {data === null ? (
-          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-faint)' }}>Loading…</p>
-        ) : (
-          <KeywordResearchPanel
-            clientId={clientId}
-            keywords={data.researched}
-            services={data.services}
-            geoWords={geoWords}
-            place={place}
-            total={data.poolTotal}
-            lastResearchAt={data.lastResearchAt}
-            onChanged={() => setReload(v => v + 1)}
-            /* Offered with or without DataForSEO: a run against the free database sources alone
-               is what a client like 5 Star Tuning gets, and it finds real keywords. */
-            onRefresh={() => void refresh()}
-            refreshing={busy}
-            refreshSpends={data.hasDataForSeo !== false}
-            // A forced run replaces the unchosen half of the pool, so a save racing it would
-            // write ticks against rows that are about to go. Adding by hand reloads the list too.
-            busy={busy || adding}
-          />
-        )}
-      </div>
-      )}
+      {/* ── What the data says ─────────────────────────────────────────── */}
+      <KeywordEvidence
+        gsc={gscData}
+        sources={evidence}
+        sourcesLoading={loading}
+        sourcesError={error}
+        ranks={ranks}
+        insights={insights}
+        ownDomains={ownDomains}
+        hasDataForSeo={hasDfs}
+        inUse={inUse}
+        adds={rowAdds}
+        onAdd={data ? (t => void addFromEvidence(t)) : undefined}
+      />
+    </div>
+  )
+}
+
+function StatSkeleton() {
+  return (
+    <div aria-hidden>
+      <span className="skeleton" style={{ display: 'block', width: 90, height: 22, marginTop: 8 }} />
+      <span className="skeleton" style={{ display: 'block', width: '70%', height: 10, marginTop: 9 }} />
     </div>
   )
 }

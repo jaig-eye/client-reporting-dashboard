@@ -2,13 +2,18 @@
 
 import { useMemo } from 'react'
 import type { SerpInsightRow, SerpInsight, SerpSource } from '@/lib/content/serpInsights'
-import { SectionHead } from '@/components/admin/KeywordEvidence'
+import { fmtDay } from '@/components/admin/KeywordUi'
 
 /**
- * SERP snapshots — the talking points the writer is handed, made visible.
+ * What Google shows — the talking points the writer is handed, made visible.
  *
- * One row per keyword that has a stored SERP snapshot: a post's target keyword (captured when
- * the post was written) or a starting keyword (captured when research ran).
+ * One row per keyword that has a stored copy of Google's results page: a post's target keyword
+ * (captured when the post was written) or one of the client's services (captured when research
+ * ran). The Keywords tab's evidence card around this carries the title, the explanation, the
+ * loading and the empty state; this is only the list.
+ *
+ * Badges are in plain words rather than SEO's: "Map results", "Answer box", "Quoted by AI" — the
+ * people reading this are not SEO specialists, and each badge's title says the rest.
  *
  * The opened row used to be five equal blocks in an auto-fit grid — questions, AI sources,
  * related searches, map pack, top results — each the same weight, so nothing led and the whole
@@ -23,40 +28,18 @@ import { SectionHead } from '@/components/admin/KeywordEvidence'
  * AND holds the featured snippet was three separate lines telling you about one competitor. It is
  * one line now, with three marks.
  */
-export default function SerpInsightsSection({ rows, loading, ownDomains }: {
-  rows:        SerpInsightRow[] | null
-  loading:     boolean
+export default function SerpInsightsSection({ rows, ownDomains }: {
+  rows:        SerpInsightRow[]
   /** The client's own sites, so "you" can be marked in a list of competitors. */
   ownDomains?: string[]
 }) {
-  const all = rows ?? []
   const own = useMemo(() => new Set((ownDomains ?? []).map(bareHost).filter(Boolean)), [ownDomains])
 
   return (
-    <div className="card p-5">
-      {/* Named for what it holds — a stored search-results page per keyword — rather than the
-          question it answers. "What Google shows" sat among six sections all of which show
-          something Google knows, and told you nothing about which one this was. */}
-      <SectionHead
-        title="SERP snapshots" provider="DataForSEO"
-        count={all.length > 0 ? all.length : undefined}
-        desc={!loading && all.length > 0
-          ? 'What Google returned when each post was written — the talking points its writer was actually handed.'
-          : undefined}
-      />
-      {loading ? (
-        <p className="section-desc" style={{ margin: 0 }}>Loading…</p>
-      ) : all.length === 0 ? (
-        <p className="section-desc" style={{ margin: 0 }}>
-          Nothing captured yet. One is kept for each post as it is written.
-        </p>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {all.slice(0, 40).map(r => <InsightRow key={r.keyword} row={r} own={own} />)}
-          {all.length > 40 && (
-            <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>Showing the 40 most recent of {all.length}.</p>
-          )}
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {rows.slice(0, 40).map(r => <InsightRow key={r.keyword} row={r} own={own} />)}
+      {rows.length > 40 && (
+        <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Showing the 40 most recent of {rows.length}.</p>
       )}
     </div>
   )
@@ -67,7 +50,7 @@ export default function SerpInsightsSection({ rows, loading, ownDomains }: {
 function InsightRow({ row, own }: { row: SerpInsightRow; own: Set<string> }) {
   const s = row.insight
   const place = s.location ? s.location.split(',')[0] : null
-  const when  = new Date(s.checked_at).toLocaleDateString()
+  const when  = fmtDay(s.checked_at) ?? ''
   const aiPresent = s.ai_overview?.present === true
   const results = rankedResults(s, own)
   const hasDetail = s.paa.length > 0 || s.related.length > 0 || results.length > 0 || s.local_pack.length > 0
@@ -93,11 +76,11 @@ function InsightRow({ row, own }: { row: SerpInsightRow; own: Set<string> }) {
             {aiPresent ? 'AI answer' : 'No AI answer'}
           </span>
         )}
-        {s.local_pack.length > 0 && <span className="badge badge-blue" title="Businesses in the map pack">Map pack · {s.local_pack.length}</span>}
-        {s.paa.length > 0 && <span className="badge badge-gray" title="Questions people also ask">{s.paa.length} question{s.paa.length === 1 ? '' : 's'}</span>}
-        {s.featured_snippet && <span className="badge badge-amber" title={`Featured snippet held by ${s.featured_snippet.domain}`}>Featured snippet</span>}
-        <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
-          {row.contentPostId ? 'for a post · ' : ''}{place ? `${place} · ` : ''}{when}
+        {s.local_pack.length > 0 && <span className="badge badge-blue" title="Businesses Google shows on its map for this search (the “map pack”)">{s.local_pack.length} map results</span>}
+        {s.paa.length > 0 && <span className="badge badge-gray" title="Questions Google lists under “People also ask”">{s.paa.length} question{s.paa.length === 1 ? '' : 's'}</span>}
+        {s.featured_snippet && <span className="badge badge-amber" title={`The answer box at the top (the “featured snippet”) quotes ${s.featured_snippet.domain}`}>Answer box</span>}
+        <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          {[row.contentPostId ? 'For a post' : 'At research', place, when].filter(Boolean).join(', ')}
         </span>
       </summary>
 
@@ -161,7 +144,7 @@ function InsightRow({ row, own }: { row: SerpInsightRow; own: Set<string> }) {
 
               {s.local_pack.length > 0 && (
                 <div>
-                  <ZoneHeading>{place ? `Map pack in ${place}` : 'Map pack'}</ZoneHeading>
+                  <ZoneHeading>{place ? `On the map in ${place}` : 'On the map'}</ZoneHeading>
                   <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column' }}>
                     {s.local_pack.map((p, i) => (
                       <li key={`${p.title}-${i}`} style={{
@@ -193,15 +176,15 @@ function InsightRow({ row, own }: { row: SerpInsightRow; own: Set<string> }) {
 // ─── Merging the three lists of domains into one ──────────────────────────────
 
 /** Every role a domain plays on this page. Shown as marks on its single line. */
-type Role = 'AI cites' | 'Snippet'
+type Role = 'Quoted by AI' | 'Answer box'
 
 const ROLE_TONE: Record<Role, string> = {
-  'AI cites': 'badge-blue',
-  'Snippet':  'badge-amber',
+  'Quoted by AI': 'badge-blue',
+  'Answer box':   'badge-amber',
 }
 const ROLE_TITLE: Record<Role, string> = {
-  'AI cites': "Google's AI answer quotes this page",
-  'Snippet':  'Holds the featured snippet',
+  'Quoted by AI': "Google's AI answer quotes this page",
+  'Answer box':   'Quoted in the answer box at the top of the results (the featured snippet)',
 }
 
 interface Result { rank: number; domain: string; url: string; title: string; isOwn: boolean; roles: Role[] }
@@ -225,8 +208,8 @@ function rankedResults(s: SerpInsight, own: Set<string>): Result[] {
     if (!key || seen.has(key)) continue      // one line per domain, deepest rank wins
     seen.add(key)
     const roles: Role[] = []
-    if (snippet && key === snippet) roles.push('Snippet')
-    if (aiDomains.has(key))         roles.push('AI cites')
+    if (snippet && key === snippet) roles.push('Answer box')
+    if (aiDomains.has(key))         roles.push('Quoted by AI')
     out.push({ rank: o.rank, domain: o.domain, url: o.url, title: '', isOwn: own.has(key), roles })
   }
 
@@ -236,7 +219,7 @@ function rankedResults(s: SerpInsight, own: Set<string>): Result[] {
     out.push({
       rank: 0, domain: s.featured_snippet.domain, url: s.featured_snippet.url,
       title: s.featured_snippet.title, isOwn: own.has(snippet),
-      roles: aiDomains.has(snippet) ? ['Snippet', 'AI cites'] : ['Snippet'],
+      roles: aiDomains.has(snippet) ? ['Answer box', 'Quoted by AI'] : ['Answer box'],
     })
   }
 
@@ -244,7 +227,7 @@ function rankedResults(s: SerpInsight, own: Set<string>): Result[] {
     const key = bareHost(src.domain)
     if (!key || seen.has(key)) continue
     seen.add(key)
-    out.push({ rank: 0, domain: src.domain, url: src.url, title: src.title, isOwn: own.has(key), roles: ['AI cites'] })
+    out.push({ rank: 0, domain: src.domain, url: src.url, title: src.title, isOwn: own.has(key), roles: ['Quoted by AI'] })
   }
 
   return out
