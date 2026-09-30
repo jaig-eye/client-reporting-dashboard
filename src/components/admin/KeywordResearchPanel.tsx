@@ -114,7 +114,7 @@ const NO_GEO: string[] = []
 
 export default function KeywordResearchPanel({
   clientId, keywords, geoWords = NO_GEO, onChanged, onDirtyChange, place, busy, onRefresh, refreshing,
-  total, lastResearchAt,
+  refreshSpends = true, total, lastResearchAt,
 }: {
   clientId:   string
   keywords:   ResearchKeyword[]
@@ -130,6 +130,11 @@ export default function KeywordResearchPanel({
   /** When given, a refresh control appears in the strip. */
   onRefresh?: () => void
   refreshing?: boolean
+  /**
+   * Whether that refresh goes to DataForSEO and spends. Without a connection it only re-reads the
+   * Ahrefs and Google Ads rows already here, and saying it costs money would be untrue.
+   */
+  refreshSpends?: boolean
   /** Candidates in the pool behind the ones shown, so "60 found" is not read as the whole pool. */
   total?:     number | null
   /** When research last ran, so the list can say how old it is. */
@@ -289,15 +294,17 @@ export default function KeywordResearchPanel({
     return (
       <div style={{ padding: '28px 8px', textAlign: 'center' }}>
         <p style={{ margin: '0 0 10px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          {confirmRefresh
-            ? 'This asks DataForSEO for keyword ideas and spends credit. Go ahead?'
-            : 'No keywords yet. Look for some, or add your own.'}
+          {!confirmRefresh
+            ? 'No keywords yet. Look for some, or add your own.'
+            : refreshSpends
+              ? 'This asks DataForSEO for keyword ideas and spends credit. Go ahead?'
+              : 'This looks for keyword ideas in the Ahrefs and Google Ads data already here. Go ahead?'}
         </p>
         {onRefresh && (confirmRefresh ? refreshConfirm : (
           <button
             type="button" className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}
             onClick={() => setConfirmRefresh(true)} disabled={refreshing || busy}
-            title="Asks DataForSEO for keyword ideas. Costs money."
+            title={refreshSpends ? 'Asks DataForSEO for keyword ideas. Costs money.' : 'Looks in the Ahrefs and Google Ads data already here. Free.'}
           >
             {refreshing ? 'Looking…' : 'Find keywords'}
           </button>
@@ -359,7 +366,9 @@ export default function KeywordResearchPanel({
               className="btn btn-secondary"
               onClick={() => setConfirmRefresh(true)}
               disabled={refreshing || busy}
-              title="Asks DataForSEO for new keyword ideas. Costs money, and anything already in use stays."
+              title={refreshSpends
+                ? 'Asks DataForSEO for new keyword ideas. Costs money, and anything already in use stays.'
+                : 'Looks again in the Ahrefs and Google Ads data already here. Free, and anything already in use stays.'}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', fontSize: '0.8125rem', padding: '0.3rem 0.65rem' }}
             >
               <RefreshIcon spinning={!!refreshing} />
