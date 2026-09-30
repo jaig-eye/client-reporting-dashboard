@@ -81,18 +81,28 @@ export async function registerKeyword(params: {
     // under the country default. Without this the chosen row was never claimed: it stayed in
     // "researched, not yet written about" and was offered for a second article, while a duplicate
     // row took the post link.
+    //
+    // Only a researched keyword someone ticked may be claimed this way: untracked, not dismissed,
+    // chosen, and not yet tied to a post. A hand-tracked keyword for another location, or a dismissed
+    // one, keeps its own history — claiming it would file that location's positions under this post
+    // and switch it to paid checks by post age.
     let fallback: { id?: string; content_post_id?: string | null } | null = null
     if (!existing) {
-      const { data: other } = await db
+      const { data: other, error: otherErr } = await db
         .from('seo_keywords')
         .select('id, content_post_id')
         .eq('client_id', params.clientId)
         .eq('normalized_keyword', normalized)
         .eq('language_code', language_code)
         .is('content_post_id', null)
+        .eq('is_tracked', false)
+        .is('dismissed_at', null)
+        .not('chosen_at', 'is', null)
+        .order('chosen_at', { ascending: true })
         .limit(1)
         .maybeSingle()
-      fallback = other as typeof fallback
+      // Without migrations 223/225 there is no chosen keyword to claim; register a row as before.
+      if (!otherErr) fallback = other as typeof fallback
     }
 
     const row = (existing ?? fallback) as { id?: string; content_post_id?: string | null; is_tracked?: boolean | null } | null
@@ -278,14 +288,14 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     if (postIds.length > 0) {
       type PostDates = {
         id: string; published_at: string | null; last_pushed_at: string | null; wp_status: string | null
-        target_publish_date: string | null; bc_post_id: string | number | null; published_url: string | null
+        target_publish_date: string | null
       }
       const posts: PostDates[] = []
       // Chunked: a client with a few hundred posts makes a single .in() a URL the proxy refuses.
       for (let i = 0; i < postIds.length; i += 100) {
         const { data: part, error: postsErr } = await db
           .from('content_posts')
-          .select('id, published_at, last_pushed_at, wp_status, target_publish_date, bc_post_id, published_url')
+          .select('id, published_at, last_pushed_at, wp_status, target_publish_date')
           .in('id', postIds.slice(i, i + 100))
         // Ages drive the whole cadence. A failed read leaves these posts without an anchor, so their
         // keywords read as awaiting publication and are skipped this run — no spend, but no checks.
@@ -304,14 +314,17 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
         //   indexing grace period.
         // - WordPress 'future' whose date has come: live on the site even before wp-reconcile has
         //   recorded the flip.
-        // - BigCommerce: pushed with a public URL is live. None of its push paths write wp_status,
-        //   so every BigCommerce keyword used to read as unpublished forever.
+        //
+        // BigCommerce posts are not anchored. Both push paths create the post as a DRAFT
+        // (is_published: false) and still store its permalink, and nothing records when a person
+        // publishes it in the store — so "has a URL" does not mean live, and anchoring on it bought
+        // depth-100 baselines of "not ranking" for drafts. They stay awaiting publication until a
+        // published signal exists.
         const scheduled = p.target_publish_date
         const anchor =
           p.published_at
           ?? (p.wp_status === 'publish' ? later(p.last_pushed_at, scheduled) : null)
           ?? (p.wp_status === 'future' && scheduled && scheduled <= today ? scheduled : null)
-          ?? (p.bc_post_id != null && p.published_url ? later(p.last_pushed_at, scheduled) : null)
         if (anchor) publishedAt.set(p.id, anchor)
       }
     }

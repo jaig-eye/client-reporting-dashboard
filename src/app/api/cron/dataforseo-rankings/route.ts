@@ -301,7 +301,7 @@ export async function GET(req: NextRequest) {
     `${skippedNotDue} not due, ${skippedUnpublished} awaiting publication`,
   )
 
-  let checked = 0, written = 0, unanswered = 0
+  let checked = 0, written = 0, unanswered = 0, refused = 0
   const usage = new Map<string, { cost: number; units: number }>()
   const checkedKeywordIds = new Set<string>()
 
@@ -347,6 +347,9 @@ export async function GET(req: NextRequest) {
       // false "dropped out" into the history, and stamping the keyword would spend its one
       // depth-100 baseline read on nothing. Leave both untouched so the next run asks again.
       if (!rank) { unanswered++; return }
+      // Refused (bad location code, invalid keyword): no reading to record, but stamped as checked,
+      // so it waits its interval instead of heading the queue — and being re-bought — every day.
+      if (rank.refused) { refused++; checkedKeywordIds.add(job.keywordId); return }
       checked++
       checkedKeywordIds.add(job.keywordId)
 
@@ -399,7 +402,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    ok: true, checked, written, unanswered, capped, stoppedEarly,
+    ok: true, checked, written, unanswered, refused, capped, stoppedEarly,
     skipped: { notWorthReading: skippedNotWorth, notDue: skippedNotDue, awaitingPublish: skippedUnpublished },
     cost: Number(totalCost.toFixed(4)),
   })

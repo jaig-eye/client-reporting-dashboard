@@ -185,6 +185,12 @@ export interface DfsRankResult {
   rank_absolute:  number | null   // position across all SERP elements
   url:            string | null
   serp_features:  string[]
+  /**
+   * Set when DataForSEO refused the task (bad location code, invalid keyword). Not a reading: the
+   * position fields are empty and must not be recorded. Distinct from a null return (no answer at
+   * all), because a refusal will repeat and should be backed off, while a timeout may not.
+   */
+  refused?:       string
 }
 
 export interface DfsSerpSource { url: string; domain: string; title: string }
@@ -282,7 +288,7 @@ export async function dfsSerpRank(
     const charged = readTopCost(json)
     if (charged) opts.onCost?.(charged)
     console.warn(`[dataforseo] rank check refused for "${keyword}": ${taskErr}`)
-    return null
+    return { ...empty, refused: taskErr }
   }
   opts.onCost?.(readTopCost(json) || estimateSerpCost(opts.depth ?? 100))
   const items = firstResultItems(json)
