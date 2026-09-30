@@ -26,6 +26,7 @@ import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
 import { styleTables }                    from '@/lib/content/contentHtml'
+import { computeInternalLinks }           from '@/lib/content/internalLinks'
 
 export const maxDuration = 300
 
@@ -72,7 +73,6 @@ function parseResponse(rawText: string) {
 
 function wordCount(html: string)    { return html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length }
 function headingCount(html: string) { return (html.match(/<h[23][^>]*>/gi) || []).length }
-function internalLinks(html: string){ return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http')).length }
 
 function stripDangerousHtml(html: string): string {
   return html
@@ -430,7 +430,10 @@ Requirements:
         topic_id:         newTopic.id,
         word_count:       wordCount(parsed.content),
         heading_count:    headingCount(parsed.content),
-        internal_links:   internalLinks(parsed.content),
+        // Absolute links into the client's own site count. The old counter skipped anything
+        // containing "http", and the allow-list above is absolute sitemap URLs, so every
+        // regenerated post recorded 0 internal links however many it had.
+        internal_links:   computeInternalLinks(parsed.content, allowedUrls),
         edit_notes:       edit_notes || null,
         ai_model:         model,
         prompt_used:      userPrompt,
