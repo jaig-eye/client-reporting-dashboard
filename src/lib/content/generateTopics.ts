@@ -248,6 +248,30 @@ export async function generateTopicsForClient(
     return { topics: [], clientName: '', count: 0, error: 'AI not configured. Add an API key in Agency Settings.' }
   }
 
+  // A failed read is not an empty client.
+  //
+  // PostgREST reports failure in the payload, so `(gscRawRes.data ?? [])` turns a broken query
+  // into "this client ranks for nothing" — and nothing downstream can tell the difference. That
+  // is not merely thin input: Search Console is the largest source of protectedKeywords, so a
+  // failure here silently DISARMS the cannibalization guard and the run cheerfully proposes
+  // topics competing with pages the client already ranks for. Better to stop before the AI call,
+  // which also saves buying topics we would not trust.
+  //
+  // A client with no Search Console connection is a different case and still proceeds: that query
+  // succeeds and returns no rows.
+  if (gscRawRes.error) {
+    console.error('[generateTopics] Search Console read failed:', gscRawRes.error.message)
+    return {
+      topics: [], clientName: '', count: 0,
+      error: 'Could not read this client’s Search Console data, so there is no way to tell which pages a new topic would compete with. Nothing was generated — try again shortly.',
+    }
+  }
+  // Secondary sources: a failure weakens the guard rather than blinding it, and both are absent
+  // for most clients anyway. Say so loudly instead of stopping the run.
+  if (ahrefsKwRes.error)     console.warn('[generateTopics] Ahrefs read failed — cannibalization guard is working without it:', ahrefsKwRes.error.message)
+  if (existingPostsRes.error) console.warn('[generateTopics] existing posts read failed — duplicate topics are likelier this run:', existingPostsRes.error.message)
+  if (existingTopicsRes.error) console.warn('[generateTopics] existing topics read failed — duplicate topics are likelier this run:', existingTopicsRes.error.message)
+
   const settings       = settingsRes.data
   const client         = clientRes.data
   const clientSettings = clientSettingsRes.data as Record<string, unknown> | null
@@ -879,53 +903,63 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
 
   // Routed through lib/ai/client so the call is metered. The inline provider branch this
   // replaces discarded the usage block, which is why AI spend was unmeasurable.
-  let rawText = ''
-  try {
-    const completion = await completeText({
-      provider: provider as 'anthropic' | 'openai',
-      model, apiKey,
-      system: systemPrompt,
-      user:   userPrompt,
-      maxTokens: 8192,
-      operation: 'topics',
-      clientId,
-    })
-    rawText = completion.text
-  } catch (err) {
-    return { topics: [], clientName, count: 0, error: String(err) }
+  /**
+   * One round-trip to the model: ask, parse, apply the blog-intent net.
+   *
+   * A function rather than a straight line because the cannibalization check below can reject
+   * what comes back and ask again. `extra` is appended to the user prompt on a retry and names
+   * exactly what was rejected and why.
+   */
+  async function requestTopics(extra: string): Promise<{ topics: TopicIdea[]; error?: string }> {
+    let rawText = ''
+    try {
+      const completion = await completeText({
+        provider: provider as 'anthropic' | 'openai',
+        model, apiKey,
+        system: systemPrompt,
+        user:   extra ? `${userPrompt}\n${extra}` : userPrompt,
+        maxTokens: 8192,
+        operation: 'topics',
+        clientId,
+      })
+      rawText = completion.text
+    } catch (err) {
+      return { topics: [], error: String(err) }
+    }
+
+    let parsed: TopicIdea[] = []
+    try {
+      const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+      const jsonMatch = stripped.match(/\[[\s\S]*\]/)
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]) as TopicIdea[]
+      else console.error('[generateTopics] no JSON array found in AI response, rawText length:', rawText.length)
+    } catch (parseErr) {
+      console.error('[generateTopics] JSON parse error:', parseErr, 'rawText snippet:', rawText.slice(0, 200))
+      return { topics: [], error: 'Failed to parse AI response' }
+    }
+    if (!Array.isArray(parsed)) return { topics: [], error: 'Failed to parse AI response' }
+
+    // Blog-intent safety net. The guardrail prompt is primary enforcement; this drops
+    // transactional/near-me leaks and relabels any non-informational intent the model slipped
+    // through. A short valid list beats a padded transactional one.
+    if (isBlog) {
+      const before = parsed.length
+      parsed = parsed.filter(t => t && !isForbiddenBlogKeyword(t.target_keyword))
+      parsed.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
+      if (parsed.length < before) {
+        console.warn(`[generateTopics] dropped ${before - parsed.length} transactional/near-me blog topic(s) for client ${clientId}`)
+      }
+    }
+    return { topics: parsed.filter(t => t && typeof t.topic === 'string' && t.topic.trim()) }
   }
 
-  // ── Parse ──────────────────────────────────────────────────────────────────
-  let topics: TopicIdea[] = []
-  try {
-    const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    const jsonMatch = stripped.match(/\[[\s\S]*\]/)
-    if (jsonMatch) topics = JSON.parse(jsonMatch[0]) as TopicIdea[]
-    else console.error('[generateTopics] no JSON array found in AI response, rawText length:', rawText.length)
-  } catch (parseErr) {
-    console.error('[generateTopics] JSON parse error:', parseErr, 'rawText snippet:', rawText.slice(0, 200))
-    return { topics: [], clientName, count: 0, error: 'Failed to parse AI response' }
-  }
+  const first = await requestTopics('')
+  if (first.error) return { topics: [], clientName, count: 0, error: first.error }
+  let topics: TopicIdea[] = first.topics
 
   if (!topics.length) {
-    console.error('[generateTopics] AI returned empty topics array, rawText length:', rawText.length)
+    console.error('[generateTopics] AI returned no usable topics')
     return { topics: [], clientName, count: 0, error: 'No topics returned from AI' }
-  }
-
-  // ── Blog-intent safety net ──────────────────────────────────────────────────
-  // The guardrail prompt is primary enforcement; this drops transactional/near-me
-  // leaks and relabels any non-informational intent the model slipped through. A
-  // short valid list beats a padded transactional one (mirrors the uniqueness rule).
-  if (isBlog) {
-    const before = topics.length
-    topics = topics.filter(t => !isForbiddenBlogKeyword(t.target_keyword))
-    topics.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
-    if (topics.length < before) {
-      console.warn(`[generateTopics] dropped ${before - topics.length} transactional/near-me blog topic(s) for client ${clientId}`)
-    }
-    if (!topics.length) {
-      return { topics: [], clientName, count: 0, error: 'All generated topics were transactional/near-me intent — none suitable for a blog. Try again.' }
-    }
   }
 
   // ── Cannibalization guard (enforced, not requested) ───────────────────────
@@ -978,47 +1012,96 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          gscPageFor(k.keyword))
   for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
 
-  // The guard redirects a topic. It never removes one.
+  // ── Cannibalization: catch it, then ask for a better topic ────────────────
   //
-  // It used to drop an exact collision outright, and if every proposal collided the whole run
-  // returned an error and saved nothing — a client who already ranks well for most of what they
-  // sell could get no post at all, from a guard whose job is to protect their rankings. That is
-  // the wrong trade: the risk being managed is one article outranking another, and the remedy for
-  // that is a narrower angle and an internal link, not silence.
+  // The prompt already tells the model what the client ranks for and not to compete with it. This
+  // is what happens when it does anyway — and since nothing here is reviewed until a finished POST
+  // is approved, "flag it and carry on" would mean a person's first sight of a collision is an
+  // article already written against it.
   //
-  // So both cases demote now. An exact collision says so more firmly, because "lawn care" against
-  // a #3 "lawn care" page needs the angle moved, not just a link added. Every demotion is on the
-  // pipeline card before anyone approves it, and page_to_support carries the link target into the
-  // writer — so a person still gets the double-check, and a post still goes out.
+  // So a flagged topic is rejected and regenerated: the model is asked again, told exactly which
+  // of its proposals collided and with what, and given the banned list a second time. Only
+  // topics that come back clean are kept.
+  //
+  // What it does NOT do is stop a post going out. After the retries are spent, whatever is still
+  // colliding is demoted to a supporting article — a real, non-cannibalizing brief with an
+  // internal link to the page it must not outrank — rather than dropped. Dropping was the old
+  // behaviour and it could empty the run: a client who already ranks for most of what they sell
+  // got an error and no post, from a guard meant to protect them.
+
+  /** The strongest protected phrase this keyword collides with, or null. */
+  const collisionFor = (targetKeyword: string | null | undefined) => {
+    const kw = normalizeKeyword(targetKeyword)
+    if (!kw) return null
+    // Exact collision first, then the longest protected phrase contained in this keyword —
+    // "lawn care" protected, "lawn care in winter" proposed. Whole-phrase match so "careers"
+    // never matches "care".
+    //
+    // The LONGEST match wins, not the first. Map order is insertion order — GSC, then Ahrefs,
+    // then tracked ranks — which says nothing about specificity, so first-match could tell a
+    // "lawn care in winter" article to support "care" and link to that page instead. A directive
+    // naming the wrong URL is worse than none: it points the internal link at the weaker page.
+    const direct = protectedKeywords.get(kw)
+    if (direct) return { prot: kw, info: direct, exact: true }
+    let best: { prot: string; info: { position: number; url: string | null }; exact: boolean } | null = null
+    for (const [prot, info] of Array.from(protectedKeywords.entries())) {
+      if (kw === prot) continue
+      if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
+      if (!best || prot.length > best.prot.length) best = { prot, info, exact: false }
+    }
+    return best
+  }
+
   if (protectedKeywords.size > 0) {
+    /** Extra model round-trips when topics collide. Each one is a billed call, so: few. */
+    const MAX_REGEN_ROUNDS = 2
+    const wanted = topics.length
+    let keep    = topics.filter(t => !collisionFor(t.target_keyword))
+    let flagged = topics.filter(t =>  collisionFor(t.target_keyword))
+
+    for (let round = 1; round <= MAX_REGEN_ROUNDS && flagged.length > 0 && keep.length < wanted; round++) {
+      const rejected = flagged.map(t => {
+        const c = collisionFor(t.target_keyword)!
+        return `  - "${t.target_keyword}" collides with "${c.prot}", which this client already ranks #${c.info.position} for`
+      }).join('\n')
+      const need = Math.min(flagged.length, wanted - keep.length)
+      console.warn(`[generateTopics] cannibalization: ${flagged.length} topic(s) rejected for client ${clientId}, regenerating (round ${round}):\n${rejected}`)
+
+      const retry = await requestTopics(
+        `\nREJECTED — these proposals cannibalize pages this client already ranks for:\n${rejected}\n` +
+        `Return exactly ${need} REPLACEMENT topic(s) in the same JSON format. Each must target a` +
+        ` keyword that is NOT one of the protected phrases above and does NOT contain one as a` +
+        ` whole phrase. Do not repeat any keyword you have already proposed in this conversation.` +
+        ` Narrower, more specific questions are the way out: if the client ranks for "lawn care",` +
+        ` "how often to dethatch a fescue lawn" is acceptable and "lawn care tips" is not.`,
+      )
+      // A failed retry is not a failed run — keep what is already clean and fall through to the
+      // demotion below, which still produces usable briefs.
+      if (retry.error) { console.warn(`[generateTopics] regeneration round ${round} failed: ${retry.error}`); break }
+
+      const seen = new Set(keep.map(t => normalizeKeyword(t.target_keyword)))
+      const fresh = retry.topics.filter(t => {
+        const kw = normalizeKeyword(t.target_keyword)
+        if (!kw || seen.has(kw) || collisionFor(t.target_keyword)) return false
+        seen.add(kw)
+        return true
+      })
+      // Retire exactly as many flagged topics as were actually replaced. Slicing `flagged` by
+      // fresh.length instead would discard more than were replaced whenever the model returned
+      // more than asked for — losing a topic silently instead of demoting it below.
+      const replaced = Math.min(fresh.length, need)
+      keep = keep.concat(fresh.slice(0, replaced))
+      flagged = flagged.slice(replaced)
+      if (replaced > 0) console.log(`[generateTopics] cannibalization: round ${round} replaced ${replaced} topic(s) for client ${clientId}`)
+    }
+
+    // Anything still colliding becomes a supporting article rather than nothing at all.
     const demoted: string[] = []
-    for (const t of topics) {
-      const kw = normalizeKeyword(t.target_keyword)
-      if (!kw) continue
-
-      // Exact collision first, then the longest protected phrase contained in this keyword —
-      // "lawn care" protected, "lawn care in winter" proposed. Whole-phrase match so "careers"
-      // never matches "care".
-      //
-      // The LONGEST match wins, not the first. Map order is insertion order — GSC, then Ahrefs,
-      // then tracked ranks — which says nothing about specificity, so first-match could tell a
-      // "lawn care in winter" article to support "care" and link to that page instead. A
-      // directive naming the wrong URL is worse than none: it points the internal link at the
-      // weaker page.
-      const direct = protectedKeywords.get(kw)
-      let best: { prot: string; info: { position: number; url: string | null }; exact: boolean } | null =
-        direct ? { prot: kw, info: direct, exact: true } : null
-      if (!best) {
-        for (const [prot, info] of Array.from(protectedKeywords.entries())) {
-          if (kw === prot) continue
-          if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
-          if (!best || prot.length > best.prot.length) best = { prot, info, exact: false }
-        }
-      }
-      if (!best) continue
-
-      const { prot, info, exact } = best
-      const at = info.url ? ` at ${info.url}` : ''
+    for (const t of flagged) {
+      const c = collisionFor(t.target_keyword)
+      if (!c) { keep.push(t); continue }
+      const { prot, info, exact } = c
+      const at   = info.url ? ` at ${info.url}` : ''
       const link = info.url ? ` (${info.url})` : ''
       const directive = exact
         ? `SUPPORTING ARTICLE — the client ALREADY RANKS #${info.position} for this exact keyword${at}.`
@@ -1033,15 +1116,14 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       // this page", so without it a demoted topic was written exactly like an undemoted one and
       // competed with the page it was supposed to support.
       if (info.url) t.page_to_support = info.url
-      demoted.push(
-        `"${t.target_keyword}" → supports "${prot}"${exact ? ' (exact)' : ''}` +
-        `${info.url ? '' : ' (no URL known — directive only)'}`,
-      )
+      demoted.push(`"${t.target_keyword}" → supports "${prot}"${exact ? ' (exact)' : ''}${info.url ? '' : ' (no URL known — directive only)'}`)
+      keep.push(t)
+    }
+    if (demoted.length > 0) {
+      console.warn(`[generateTopics] cannibalization: ${demoted.length} topic(s) still colliding after ${MAX_REGEN_ROUNDS} regeneration round(s) for client ${clientId}, demoted to supporting: ${demoted.join('; ')}`)
     }
 
-    if (demoted.length > 0) {
-      console.log(`[generateTopics] cannibalization: demoted ${demoted.length} topic(s) to supporting for client ${clientId}: ${demoted.join('; ')}`)
-    }
+    topics = keep
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
