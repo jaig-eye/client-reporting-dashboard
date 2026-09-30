@@ -25,7 +25,9 @@ import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/datafo
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
-import { resolveCannibalization } from '@/lib/content/cannibalization'
+// One normalizer for both sides of the guard: the protected set is keyed with it here, and the
+// collision check reads with it there. Two copies could drift and quietly stop matching.
+import { resolveCannibalization, normalizeKeyword } from '@/lib/content/cannibalization'
 
 interface TopicIdea {
   topic:               string
@@ -49,13 +51,6 @@ interface TopicIdea {
   page_to_support?:    string | null
 }
 
-/**
- * Compare keywords the way a search engine would treat them as the same request: case, spacing
- * and punctuation carry no meaning here.
- */
-function normalizeKeyword(kw: string | null | undefined): string {
-  return String(kw ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
-}
 
 function extractSitemapLocs(xml: string): string[] {
   return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
@@ -274,8 +269,7 @@ export async function generateTopicsForClient(
     db.from('agency_settings')
       .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
       .single(),
-    // website comes along for the brand check below, which needs a second form of the name.
-    db.from('clients').select('id, name, website').eq('id', clientId).single(),
+    db.from('clients').select('id, name').eq('id', clientId).single(),
     db.from('content_settings')
       .select('business_background, services, target_audience, geographic_focus, brand_voice, phone_number, sitemap_url, sitemap_urls, eeat_data, topic_guidelines')
       .eq('client_id', clientId)
