@@ -326,6 +326,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
             onPending={setPending}
             disabled={adding}
             max={30}
+            ariaLabel="Keywords to add"
             placeholder="permanent Christmas lights, soffit lighting installers…"
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>

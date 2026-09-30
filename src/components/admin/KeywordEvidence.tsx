@@ -348,6 +348,7 @@ export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = 
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
+          aria-label="Filter these tables by keyword or page"
           placeholder="Filter keywords or pages…"
           className="input"
           style={{ width: 240, maxWidth: '100%', fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}

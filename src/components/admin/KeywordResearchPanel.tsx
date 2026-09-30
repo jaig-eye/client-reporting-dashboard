@@ -346,6 +346,7 @@ export default function KeywordResearchPanel({
             className="input"
             value={filter}
             onChange={e => setFilter(e.target.value)}
+            aria-label="Filter the keyword list"
             placeholder="Filter…"
             style={{ maxWidth: 170, fontSize: '0.8125rem', padding: '0.3rem 0.55rem' }}
           />
@@ -447,6 +448,10 @@ export default function KeywordResearchPanel({
                     <>
                       <button
                         type="button"
+                        className="focus-ring"
+                        aria-expanded={open}
+                        // Starts with the visible words, so a voice command naming them still works.
+                        aria-label={open ? `hide similar to ${lead.keyword}` : `${rest.length} similar to ${lead.keyword}`}
                         onClick={() => setExpand(prev => {
                           const n = new Set(prev); if (n.has(group.label)) n.delete(group.label); else n.add(group.label); return n
                         })}

@@ -33,9 +33,15 @@ const FREQ_OPTS = [
   { value: 'monthly_end',   label: 'Monthly — end of month (28th)' },
 ]
 
-function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+function Label({ children, hint, htmlFor, id }: {
+  children: React.ReactNode; hint?: string
+  /** The control this names. A label without one names nothing for a screen reader. */
+  htmlFor?: string
+  /** For a group of controls, which points at the label with aria-labelledby instead. */
+  id?: string
+}) {
   return (
-    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+    <label htmlFor={htmlFor} id={id} className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
       {children}
       {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
     </label>
@@ -364,8 +370,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         </div>
 
         <div>
-          <Label>Site Connection</Label>
+          <Label htmlFor="cs-connection">Site Connection</Label>
           <select
+            id="cs-connection"
             className="input"
             value={form.connection_id ?? ''}
             onChange={e => {
@@ -383,40 +390,40 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         {isBc ? (
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
-              <input className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
+              <Label htmlFor="cs-bc-author" hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
+              <input id="cs-bc-author" className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
             </div>
             <div>
-              <Label hint="URL prefix for BigCommerce blog posts">Blog URL Prefix</Label>
-              <input className="input" type="text" value={blogUrlPrefix} onChange={e => setBlogUrlPrefix(e.target.value)} placeholder="/blog/" />
+              <Label htmlFor="cs-blog-prefix" hint="URL prefix for BigCommerce blog posts">Blog URL Prefix</Label>
+              <input id="cs-blog-prefix" className="input" type="text" value={blogUrlPrefix} onChange={e => setBlogUrlPrefix(e.target.value)} placeholder="/blog/" />
             </div>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Default Author</Label>
-                <select className="input" value={form.default_author_id ?? ''} onChange={e => set('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                <Label htmlFor="cs-author">Default Author</Label>
+                <select id="cs-author" className="input" value={form.default_author_id ?? ''} onChange={e => set('default_author_id', e.target.value ? Number(e.target.value) : null)}>
                   <option value="">— Default —</option>
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
               <div>
-                <Label>WP Publish Mode</Label>
-                <select className="input" value={form.wp_publish_mode ?? 'scheduled_draft'} onChange={e => set('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
+                <Label htmlFor="cs-publish-mode">WP Publish Mode</Label>
+                <select id="cs-publish-mode" className="input" value={form.wp_publish_mode ?? 'scheduled_draft'} onChange={e => set('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
                   <option value="scheduled_draft">Scheduled Draft</option>
                   <option value="draft_only">Draft Only</option>
                 </select>
               </div>
             </div>
             <div>
-              <Label hint="applied to every new post from this client">Default WP Categories</Label>
+              <Label id="cs-categories-label" hint="applied to every new post from this client">Default WP Categories</Label>
               {categories.length === 0 ? (
                 <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
                   {effectiveConn ? 'No categories found for this site.' : 'Select a site connection to choose categories.'}
                 </p>
               ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div role="group" aria-labelledby="cs-categories-label" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {categories.map(c => {
                     const on = categoryIds.includes(c.id)
                     return (
@@ -444,6 +451,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
                     value={newCategory}
                     onChange={e => setNewCategory(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void createCategory() } }}
+                    aria-label="New category name"
                     placeholder="New category…"
                     style={{ maxWidth: 200, fontSize: '0.8125rem', padding: '0.3rem 0.55rem' }}
                   />
@@ -480,9 +488,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         </div>
 
         <div>
-          <Label>Publishing cadence</Label>
+          <Label htmlFor="cs-cadence">Publishing cadence</Label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <select className="input" style={{ width: 200 }} value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
+            <select id="cs-cadence" className="input" style={{ width: 200 }} value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
               <option value="">Use global default</option>
               {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -509,7 +517,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
             </div>
             {showDayPicker && (<>
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
-              <select className="input" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
+              <select className="input" aria-label="Publish day" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
                 {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
               </select>
             </>)}
@@ -517,18 +525,18 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
             {/* 120px fits "09:00 AM" but not the clock button Chrome draws inside the field on
                 top of it, so the two overlapped. Wide enough for both, and minWidth holds it
                 there when the row is tight. */}
-            <input className="input" type="time" style={{ width: 150, minWidth: 150 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
+            <input className="input" type="time" aria-label="Publish time" style={{ width: 150, minWidth: 150 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label hint="how many publish dates to plan ahead">Weeks ahead</Label>
-            <input className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
+            <Label htmlFor="cs-weeks-ahead" hint="how many publish dates to plan ahead">Weeks ahead</Label>
+            <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
           </div>
           <div>
-            <Label hint="first date the schedule generates from">Start date</Label>
-            <input className="input" type="date" value={form.schedule_start_date ?? ''} onChange={e => set('schedule_start_date', e.target.value || null)} />
+            <Label htmlFor="cs-start-date" hint="first date the schedule generates from">Start date</Label>
+            <input id="cs-start-date" className="input" type="date" value={form.schedule_start_date ?? ''} onChange={e => set('schedule_start_date', e.target.value || null)} />
           </div>
         </div>
 
@@ -572,11 +580,12 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         {/* No maxWidth: the control lays itself out across the row. Boxed to 200px it had to
             stack, which is why the band sat under the field with the rest of the card empty. */}
         <div>
-          <Label>Target word count</Label>
+          <Label htmlFor="cs-target-length">Target word count</Label>
           {/* The generator holds posts to this band and revises anything past the ceiling, so the
               number is a budget, not a suggestion — posts averaged 135% of target while this was
               a sentence nobody read. Drawn to scale so the band is a shape rather than arithmetic. */}
           <LengthBudget
+            id="cs-target-length"
             value={form.target_length ?? 1500}
             onChange={v => set('target_length', v)}
           />
@@ -584,14 +593,14 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Writing instructions</Label>
-            <textarea className="input" rows={5} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+            <Label htmlFor="cs-writing-instructions">Writing instructions</Label>
+            <textarea id="cs-writing-instructions" className="input" rows={5} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
               value={form.post_structure ?? ''} onChange={e => set('post_structure', e.target.value)}
               placeholder={`e.g.\nAlways link to at least 2 priority pages.\nCite years of experience and named staff expertise.`} />
           </div>
           <div>
-            <Label>Topic restrictions</Label>
-            <textarea className="input" rows={5} style={{ width: '100%', resize: 'vertical' }}
+            <Label htmlFor="cs-topic-restrictions">Topic restrictions</Label>
+            <textarea id="cs-topic-restrictions" className="input" rows={5} style={{ width: '100%', resize: 'vertical' }}
               value={form.topic_guidelines ?? ''} onChange={e => set('topic_guidelines', e.target.value || null)}
               placeholder="e.g. Avoid bad-credit financing, payday loans, or topics with negative brand associations." />
           </div>
@@ -615,7 +624,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
  * labels under the band used to share one row with a sentence between them, which collided at
  * this width — the sentence is a tooltip now and only the scale's ends are drawn.
  */
-function LengthBudget({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function LengthBudget({ id, value, onChange }: { id?: string; value: number; onChange: (v: number) => void }) {
   const MIN = 300, MAX = 5000
   const floor   = Math.round(value * 0.9)
   const ceiling = Math.round(value * 1.15)
@@ -624,6 +633,7 @@ function LengthBudget({ value, onChange }: { value: number; onChange: (v: number
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
       <input
+        id={id}
         className="input"
         type="number" min={MIN} max={MAX} step={100}
         value={value}

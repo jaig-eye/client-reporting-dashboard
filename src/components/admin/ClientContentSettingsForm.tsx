@@ -35,8 +35,10 @@ const EMPTY_EEAT: EeatData = {
   common_objections:      '',
 }
 
-function Label({ children, hint, help }: {
+function Label({ children, hint, help, htmlFor }: {
   children: React.ReactNode
+  /** The control this names. A label without one names nothing for a screen reader. */
+  htmlFor?: string
   /** A few words, shown inline. */
   hint?: string
   /**
@@ -48,7 +50,7 @@ function Label({ children, hint, help }: {
   help?: string
 }) {
   return (
-    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+    <label htmlFor={htmlFor} className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
       {children}
       {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
       {help && (
@@ -90,12 +92,13 @@ export function SettingsLoadError({ message, onRetry }: { message: string; onRet
   )
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
       className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
       style={{ background: checked ? 'var(--blue)' : 'var(--bg-muted)' }}
@@ -304,6 +307,7 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             <input
               className="input"
               style={{ flex: 1 }}
+              aria-label="Website URL to analyze"
               placeholder="https://yourdomain.com"
               value={siteUrlInput}
               onChange={e => setSiteUrlInput(e.target.value)}
@@ -340,6 +344,7 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
                     className="input"
                     rows={6}
                     style={{ resize: 'vertical', fontSize: '0.8125rem' }}
+                    aria-label="Website text to analyze"
                     placeholder="Paste your homepage or about page text here…"
                     value={siteTextInput}
                     onChange={e => setSiteTextInput(e.target.value)}
@@ -373,22 +378,23 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
         )}
 
         <div>
-          <Label hint="What does this business do?">Business Background</Label>
-          <textarea className="input" rows={4} style={{ width: '100%' }} value={form.business_background} onChange={e => setField('business_background', e.target.value)} />
+          <Label htmlFor="bd-business-background" hint="What does this business do?">Business Background</Label>
+          <textarea id="bd-business-background" className="input" rows={4} style={{ width: '100%' }} value={form.business_background} onChange={e => setField('business_background', e.target.value)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <Label help={SERVICES_HELP}>What they sell</Label>
-            <KeywordChipInput value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical…" />
+            <Label htmlFor="bd-services" help={SERVICES_HELP}>What they sell</Label>
+            <KeywordChipInput id="bd-services" value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical…" />
           </div>
           <div>
-            <Label>Target Audience</Label>
-            <input className="input" style={{ width: '100%' }} value={form.target_audience} onChange={e => setField('target_audience', e.target.value)} />
+            <Label htmlFor="bd-target-audience">Target Audience</Label>
+            <input id="bd-target-audience" className="input" style={{ width: '100%' }} value={form.target_audience} onChange={e => setField('target_audience', e.target.value)} />
           </div>
           <div>
-            <Label hint="strongest first" help={SERVICE_AREAS_HELP}>Service Areas</Label>
+            <Label htmlFor="bd-service-areas" hint="strongest first" help={SERVICE_AREAS_HELP}>Service Areas</Label>
             <KeywordChipInput
+              id="bd-service-areas"
               value={form.geographic_focus}
               onChange={v => setField('geographic_focus', v)}
               placeholder="Start typing a city or county…"
@@ -397,8 +403,8 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             <MarketLine geographicFocus={form.geographic_focus} />
           </div>
           <div>
-            <Label>Brand Voice</Label>
-            <input className="input" style={{ width: '100%' }} value={form.brand_voice} onChange={e => setField('brand_voice', e.target.value)} />
+            <Label htmlFor="bd-brand-voice">Brand Voice</Label>
+            <input id="bd-brand-voice" className="input" style={{ width: '100%' }} value={form.brand_voice} onChange={e => setField('brand_voice', e.target.value)} />
           </div>
         </div>
 
@@ -407,13 +413,14 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             now, and this screen is only about who the business is. */}
 
         <div>
-          <Label hint="used when referencing phone in content" help={PHONE_HELP}>Phone Number</Label>
-          <input className="input" type="tel" style={{ width: '50%' }} value={form.phone_number} onChange={e => setField('phone_number', e.target.value)} placeholder="(321) 555-5555" />
+          <Label htmlFor="bd-phone" hint="used when referencing phone in content" help={PHONE_HELP}>Phone Number</Label>
+          <input id="bd-phone" className="input" type="tel" style={{ width: '50%' }} value={form.phone_number} onChange={e => setField('phone_number', e.target.value)} placeholder="(321) 555-5555" />
         </div>
 
         <div>
-          <Label hint="one per line" help={CTA_HELP}>Call-to-Action Options</Label>
+          <Label htmlFor="bd-cta" hint="one per line" help={CTA_HELP}>Call-to-Action Options</Label>
           <textarea
+            id="bd-cta"
             className="input"
             rows={3}
             style={{ width: '100%' }}
@@ -436,8 +443,9 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
               Turning this on bans invented rates/requirements/outcomes in the
               writer prompt AND enables figure detection in the quality gate. */}
           <div>
-            <Label>Regulated vertical</Label>
+            <Label htmlFor="bd-vertical">Regulated vertical</Label>
             <select
+              id="bd-vertical"
               className="input"
               style={{ width: '100%' }}
               value={vertical}
@@ -458,66 +466,66 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
 
           <div className="grid grid-cols-2 gap-4 eeat-grid">
             <div>
-              <Label help={FOUNDED_YEAR_HELP}>Year Founded</Label>
-              <input className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
+              <Label htmlFor="bd-founded-year" help={FOUNDED_YEAR_HELP}>Year Founded</Label>
+              <input id="bd-founded-year" className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
             </div>
             <div>
-              <Label>Reviews (count &amp; rating)</Label>
-              <input className="input" style={{ width: '100%' }} value={eeat.review_count} onChange={e => setEeatField('review_count', e.target.value)} placeholder="e.g. 4.9 stars · 387 reviews" />
+              <Label htmlFor="bd-reviews">Reviews (count &amp; rating)</Label>
+              <input id="bd-reviews" className="input" style={{ width: '100%' }} value={eeat.review_count} onChange={e => setEeatField('review_count', e.target.value)} placeholder="e.g. 4.9 stars · 387 reviews" />
             </div>
             <div>
-              <Label>Licenses &amp; Certifications</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.licenses} onChange={e => setEeatField('licenses', e.target.value)} placeholder="e.g. FL State Licensed HVAC #CAC1234" />
+              <Label htmlFor="bd-licenses">Licenses &amp; Certifications</Label>
+              <textarea id="bd-licenses" className="input" rows={2} style={{ width: '100%' }} value={eeat.licenses} onChange={e => setEeatField('licenses', e.target.value)} placeholder="e.g. FL State Licensed HVAC #CAC1234" />
             </div>
             <div>
-              <Label>Insurance &amp; Bonding</Label>
-              <input className="input" style={{ width: '100%' }} value={eeat.insurance} onChange={e => setEeatField('insurance', e.target.value)} placeholder="e.g. Fully insured & bonded" />
+              <Label htmlFor="bd-insurance">Insurance &amp; Bonding</Label>
+              <input id="bd-insurance" className="input" style={{ width: '100%' }} value={eeat.insurance} onChange={e => setEeatField('insurance', e.target.value)} placeholder="e.g. Fully insured & bonded" />
             </div>
             <div>
-              <Label>Awards &amp; Recognition</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.awards} onChange={e => setEeatField('awards', e.target.value)} placeholder="e.g. Angie's List Super Service Award 2023" />
+              <Label htmlFor="bd-awards">Awards &amp; Recognition</Label>
+              <textarea id="bd-awards" className="input" rows={2} style={{ width: '100%' }} value={eeat.awards} onChange={e => setEeatField('awards', e.target.value)} placeholder="e.g. Angie's List Super Service Award 2023" />
             </div>
             <div>
-              <Label>Owner / Founder</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.owner_details} onChange={e => setEeatField('owner_details', e.target.value)} placeholder="e.g. Family-owned by John Smith since 2002" />
+              <Label htmlFor="bd-owner">Owner / Founder</Label>
+              <textarea id="bd-owner" className="input" rows={2} style={{ width: '100%' }} value={eeat.owner_details} onChange={e => setEeatField('owner_details', e.target.value)} placeholder="e.g. Family-owned by John Smith since 2002" />
             </div>
             <div>
-              <Label>Team Experience</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.team_experience} onChange={e => setEeatField('team_experience', e.target.value)} placeholder="e.g. Average 12 years field experience per tech" />
+              <Label htmlFor="bd-team">Team Experience</Label>
+              <textarea id="bd-team" className="input" rows={2} style={{ width: '100%' }} value={eeat.team_experience} onChange={e => setEeatField('team_experience', e.target.value)} placeholder="e.g. Average 12 years field experience per tech" />
             </div>
             <div>
-              <Label>Service Guarantees</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.guarantees} onChange={e => setEeatField('guarantees', e.target.value)} placeholder="e.g. 100% satisfaction guarantee, 10-yr workmanship" />
+              <Label htmlFor="bd-guarantees">Service Guarantees</Label>
+              <textarea id="bd-guarantees" className="input" rows={2} style={{ width: '100%' }} value={eeat.guarantees} onChange={e => setEeatField('guarantees', e.target.value)} placeholder="e.g. 100% satisfaction guarantee, 10-yr workmanship" />
             </div>
             <div>
-              <Label>Brands / Products Used</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.brands_used} onChange={e => setEeatField('brands_used', e.target.value)} placeholder="e.g. Carrier, Trane, Lennox equipment" />
+              <Label htmlFor="bd-brands">Brands / Products Used</Label>
+              <textarea id="bd-brands" className="input" rows={2} style={{ width: '100%' }} value={eeat.brands_used} onChange={e => setEeatField('brands_used', e.target.value)} placeholder="e.g. Carrier, Trane, Lennox equipment" />
             </div>
             <div>
-              <Label>Financing Options</Label>
-              <input className="input" style={{ width: '100%' }} value={eeat.financing_options} onChange={e => setEeatField('financing_options', e.target.value)} placeholder="e.g. 12-month 0% financing available" />
+              <Label htmlFor="bd-financing">Financing Options</Label>
+              <input id="bd-financing" className="input" style={{ width: '100%' }} value={eeat.financing_options} onChange={e => setEeatField('financing_options', e.target.value)} placeholder="e.g. 12-month 0% financing available" />
             </div>
             <div>
-              <Label>Warranties</Label>
-              <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.warranties} onChange={e => setEeatField('warranties', e.target.value)} placeholder="e.g. 5-yr parts, 10-yr labor on new systems" />
+              <Label htmlFor="bd-warranties">Warranties</Label>
+              <textarea id="bd-warranties" className="input" rows={2} style={{ width: '100%' }} value={eeat.warranties} onChange={e => setEeatField('warranties', e.target.value)} placeholder="e.g. 5-yr parts, 10-yr labor on new systems" />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingTop: '1.25rem' }}>
-              <Toggle checked={eeat.emergency_availability} onChange={v => setEeatField('emergency_availability', v)} />
+              <Toggle label="24/7 emergency service available" checked={eeat.emergency_availability} onChange={v => setEeatField('emergency_availability', v)} />
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>24/7 Emergency Service Available</span>
             </div>
           </div>
 
           <div>
-            <Label>Case Studies / Notable Projects</Label>
-            <textarea className="input" rows={3} style={{ width: '100%' }} value={eeat.case_studies} onChange={e => setEeatField('case_studies', e.target.value)} placeholder="e.g. Replaced 200+ units in HOA communities, completed commercial projects for..." />
+            <Label htmlFor="bd-case-studies">Case Studies / Notable Projects</Label>
+            <textarea id="bd-case-studies" className="input" rows={3} style={{ width: '100%' }} value={eeat.case_studies} onChange={e => setEeatField('case_studies', e.target.value)} placeholder="e.g. Replaced 200+ units in HOA communities, completed commercial projects for..." />
           </div>
           <div>
-            <Label>Before / After Proof</Label>
-            <textarea className="input" rows={2} style={{ width: '100%' }} value={eeat.before_after_proof} onChange={e => setEeatField('before_after_proof', e.target.value)} placeholder="e.g. Before/after photos of installs available, documented energy savings" />
+            <Label htmlFor="bd-before-after">Before / After Proof</Label>
+            <textarea id="bd-before-after" className="input" rows={2} style={{ width: '100%' }} value={eeat.before_after_proof} onChange={e => setEeatField('before_after_proof', e.target.value)} placeholder="e.g. Before/after photos of installs available, documented energy savings" />
           </div>
           <div>
-            <Label hint="helps AI address real concerns in content">Common Customer Objections</Label>
-            <textarea className="input" rows={3} style={{ width: '100%' }} value={eeat.common_objections} onChange={e => setEeatField('common_objections', e.target.value)} placeholder="e.g. Price concerns, timing uncertainty, DIY temptation..." />
+            <Label htmlFor="bd-objections" hint="helps AI address real concerns in content">Common Customer Objections</Label>
+            <textarea id="bd-objections" className="input" rows={3} style={{ width: '100%' }} value={eeat.common_objections} onChange={e => setEeatField('common_objections', e.target.value)} placeholder="e.g. Price concerns, timing uncertainty, DIY temptation..." />
           </div>
         </div>
       </div>

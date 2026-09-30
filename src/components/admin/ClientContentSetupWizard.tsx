@@ -931,15 +931,17 @@ function StepSub({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Field({ label, children, drivesResearch }: {
+function Field({ label, htmlFor, children, drivesResearch }: {
   label: string
+  /** The id of the control this labels. Without it the label names nothing for a screen reader. */
+  htmlFor: string
   children: React.ReactNode
   /** Marks a field the research reads, as opposed to one that only shapes the writing. */
   drivesResearch?: boolean
 }) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+      <label htmlFor={htmlFor} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
         {label}
         {drivesResearch && (
           <span
@@ -1120,8 +1122,9 @@ function StepWpConnect({
         </>
       ) : (
         <>
-          <Field label="WordPress Site URL">
+          <Field label="WordPress Site URL" htmlFor="wiz-wp-url">
             <input
+              id="wiz-wp-url"
               type="url"
               value={siteUrlInput}
               onChange={e => setSiteUrlInput(e.target.value)}
@@ -1129,8 +1132,9 @@ function StepWpConnect({
               style={inputStyle}
             />
           </Field>
-          <Field label="WordPress Username">
+          <Field label="WordPress Username" htmlFor="wiz-wp-user">
             <input
+              id="wiz-wp-user"
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
@@ -1139,8 +1143,9 @@ function StepWpConnect({
               autoComplete="username"
             />
           </Field>
-          <Field label="Application Password">
+          <Field label="Application Password" htmlFor="wiz-wp-password">
             <input
+              id="wiz-wp-password"
               type="password"
               value={appPassword}
               onChange={e => setAppPassword(e.target.value)}
@@ -1204,6 +1209,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           type="url"
           value={analyzeUrl}
           onChange={e => setAnalyzeUrl(e.target.value)}
+          aria-label="Website URL to analyze"
           placeholder="https://example.com"
           style={{ ...inputStyle, flex: 1 }}
         />
@@ -1228,11 +1234,12 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
             {RESEARCH_FIELDS_NOTE}
           </p>
-          <Field label="Business Background">
-            <textarea value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
+          <Field label="Business Background" htmlFor="wiz-business-background">
+            <textarea id="wiz-business-background" value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
           </Field>
-          <Field label="What they sell" drivesResearch>
+          <Field label="What they sell" htmlFor="wiz-services" drivesResearch>
             <KeywordChipInput
+              id="wiz-services"
               value={brand.services}
               onChange={v => setBrand({ ...brand, services: v })}
               placeholder="Plumbing, HVAC, Electrical"
@@ -1241,12 +1248,13 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               {SERVICES_HELP}
             </p>
           </Field>
-          <Field label="Target Audience">
-            <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
+          <Field label="Target Audience" htmlFor="wiz-target-audience">
+            <input id="wiz-target-audience" type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
 
-          <Field label="Service Areas" drivesResearch>
+          <Field label="Service Areas" htmlFor="wiz-service-areas" drivesResearch>
             <KeywordChipInput
+              id="wiz-service-areas"
               value={brand.geographic_focus}
               onChange={v => setBrand({ ...brand, geographic_focus: v })}
               placeholder="Austin, Round Rock, Hill Country…"
@@ -1256,8 +1264,8 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           {/* Research Location used to sit here. It was a second place to name the market the
               first service area already names, and in production not one client had ever set it.
               The market is derived from the first service area and shown under it. */}
-          <Field label="Brand Voice">
-            <input type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
+          <Field label="Brand Voice" htmlFor="wiz-brand-voice">
+            <input id="wiz-brand-voice" type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
           </Field>
         </div>
       )}
@@ -1280,23 +1288,23 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
       <StepSub>These help the AI write with real authority. E-E-A-T signals significantly improve content quality and rankings for local businesses.</StepSub>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        <Field label="Year Founded">
-          <input type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
+        <Field label="Year Founded" htmlFor="wiz-founded-year">
+          <input id="wiz-founded-year" type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
         </Field>
-        <Field label="Phone Number">
-          <input type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />
+        <Field label="Phone Number" htmlFor="wiz-phone">
+          <input id="wiz-phone" type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />
         </Field>
-        <Field label="Number of Reviews">
-          <input type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} style={inputStyle} placeholder="200+ Google reviews" />
+        <Field label="Number of Reviews" htmlFor="wiz-reviews">
+          <input id="wiz-reviews" type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} style={inputStyle} placeholder="200+ Google reviews" />
         </Field>
-        <Field label="Owner / Operator Name">
-          <input type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} style={inputStyle} placeholder="John Smith" />
+        <Field label="Owner / Operator Name" htmlFor="wiz-owner">
+          <input id="wiz-owner" type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} style={inputStyle} placeholder="John Smith" />
         </Field>
-        <Field label="Licenses / Certifications">
-          <input type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} style={inputStyle} placeholder="Licensed, Bonded, Insured" />
+        <Field label="Licenses / Certifications" htmlFor="wiz-licenses">
+          <input id="wiz-licenses" type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} style={inputStyle} placeholder="Licensed, Bonded, Insured" />
         </Field>
-        <Field label="Guarantees / Warranties">
-          <input type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} style={inputStyle} placeholder="100% satisfaction guarantee" />
+        <Field label="Guarantees / Warranties" htmlFor="wiz-guarantees">
+          <input id="wiz-guarantees" type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} style={inputStyle} placeholder="100% satisfaction guarantee" />
         </Field>
       </div>
 
@@ -1401,6 +1409,7 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, f
           type="url"
           value={sitemapUrl}
           onChange={e => setSitemapUrl(e.target.value)}
+          aria-label="Sitemap URL"
           placeholder="https://example.com/sitemap.xml"
           style={{ ...inputStyle, flex: 1 }}
         />
@@ -1517,14 +1526,14 @@ function StepSchedule({
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
         {needsDay && (
-          <Field label="Day of Week">
-            <select value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
+          <Field label="Day of Week" htmlFor="wiz-day-of-week">
+            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
               {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
             </select>
           </Field>
         )}
-        <Field label="Publish Time">
-          <input type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
+        <Field label="Publish Time" htmlFor="wiz-publish-time">
+          <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
         </Field>
       </div>
 
@@ -1560,6 +1569,7 @@ function StepSchedule({
             type="text"
             value={imagePrompt}
             onChange={e => setImagePrompt(e.target.value)}
+            aria-label="Featured image style"
             placeholder="e.g. Outdoor lifestyle photo, warm tones, no text overlays"
             style={inputStyle}
           />
