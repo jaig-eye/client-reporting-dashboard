@@ -145,38 +145,48 @@ function originOf(url: string, base?: string): string {
  * turns a POST answered with 301/302 into a GET, so a publish or an update against a site that
  * redirects comes back 200 having written nothing — a GET of the posts list reads as success.
  *
- * So redirects are handled here: at most one is followed, only to the same site (http → https and
- * adding or dropping www. are the ordinary cases), re-sending the identical request. Anything else
- * fails closed with a log line naming both origins. A redirect answer means the server did not
- * process the request, so re-sending it cannot write twice.
+ * So redirects are handled here: up to MAX_SITE_REDIRECTS are followed, every hop staying on the
+ * site the request started on (http → https and adding or dropping www. are the ordinary cases —
+ * together they are two hops), re-sending the identical request. Anything else fails closed with a
+ * log line naming both origins. A redirect answer means the server did not process the request, so
+ * re-sending it cannot write twice.
  *
- * `init.signal` covers both hops, so a caller's timeout bounds the whole exchange.
+ * `init.signal` covers every hop, so a caller's timeout bounds the whole exchange.
  */
 export async function fetchWithSiteCredentials(url: string, init: RequestInit, label = '[wordpress]'): Promise<Response> {
-  const first = await fetch(url, { ...init, redirect: 'manual' })
-  if (!REDIRECT_STATUSES.has(first.status)) return first
+  let current = url
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current, { ...init, redirect: 'manual' })
+    if (!REDIRECT_STATUSES.has(res.status)) return res
 
-  const location = first.headers.get('location')
-  await first.body?.cancel().catch(() => {})
-  const next = location ? sameSiteRedirectTarget(url, location) : null
-  if (!next) {
-    const msg =
-      `${label} ${originOf(url)} answered ${first.status} with a redirect to ` +
-      `${location ? originOf(location, url) : '(no Location header)'} — not followed, because this ` +
-      `request carries the site's credentials and they only go to the site they belong to`
-    console.warn(msg)
-    throw new Error(msg)
+    const location = res.headers.get('location')
+    await res.body?.cancel().catch(() => {})
+    if (hop >= MAX_SITE_REDIRECTS) {
+      const msg = `${label} ${originOf(url)} redirected more than ${MAX_SITE_REDIRECTS} times (last via ${originOf(current)}) — not followed further`
+      console.warn(msg)
+      throw new Error(msg)
+    }
+    // Checked against the hop it came from (no https → http) AND the site the request started on,
+    // so a chain cannot walk the credentials off the site one "same host" step at a time.
+    const next = location ? sameSiteRedirectTarget(current, location) : null
+    if (!next || !isSameWpSite(url, next)) {
+      const msg =
+        `${label} ${originOf(current)} answered ${res.status} with a redirect to ` +
+        `${location ? originOf(location, current) : '(no Location header)'} — not followed, because this ` +
+        `request carries the site's credentials and they only go to the site they belong to`
+      console.warn(msg)
+      throw new Error(msg)
+    }
+    current = next
   }
-
-  const second = await fetch(next, { ...init, redirect: 'manual' })
-  if (REDIRECT_STATUSES.has(second.status)) {
-    await second.body?.cancel().catch(() => {})
-    const msg = `${label} ${originOf(url)} redirected more than once (via ${originOf(next)}) — not followed further`
-    console.warn(msg)
-    throw new Error(msg)
-  }
-  return second
 }
+
+/**
+ * Same-site hops followed before giving up. All fifteen live client sites answered their REST API
+ * with no redirect at all when checked (2026-09-30); three leaves room for a site moving to https
+ * and to www. without an unbounded chain.
+ */
+const MAX_SITE_REDIRECTS = 3
 
 async function wpGet(
   siteUrl: string,
