@@ -654,7 +654,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // A run that asked DataForSEO and got nothing back still answered the question, so it counts
     // against the 30-day window. A client with no connection has not been researched at all, so
     // it does not — otherwise connecting DataForSEO later would wait a month to take effect.
-    if (spentOnDfs) await stampResearchRun()
+    if (spentOnDfs && cost > 0) await stampResearchRun()
     return { ...empty, ok: true, competitors: competitorDomains, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources' }
   }
 
@@ -673,6 +673,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     .slice(0, 6)
   // ── Store, without disturbing anything a post already claimed ─────────────
   let stored = 0
+  let storeFailed = false
   let snapshotted = 0
   const bySource: Record<string, number> = {}
   try {
@@ -735,17 +736,18 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // Insert-or-skip on the table's own unique key, so a row the read above missed is skipped
     // rather than failing its whole chunk.
     for (let i = 0; i < rows.length; i += 200) {
-      const { error } = await db.from('seo_keywords').upsert(rows.slice(i, i + 200), {
+      // .select() returns only the rows actually inserted, so skipped duplicates are not counted as new.
+      const { data: inserted, error } = await db.from('seo_keywords').upsert(rows.slice(i, i + 200), {
         onConflict: 'client_id,normalized_keyword,location_code,language_code',
         ignoreDuplicates: true,
-      })
-      if (error) { console.error('[research] insert failed:', error.message); break }
-      stored += rows.slice(i, i + 200).length
+      }).select('id')
+      if (error) { console.error('[research] insert failed:', error.message); storeFailed = true; break }
+      stored += (inserted ?? []).length
     }
 
     // Paid for, discovered, and not kept. Reported as a failure — not stamped, so the next run
     // tries again — because "nothing found" would send the operator back to buy it again.
-    if (rows.length > 0 && stored === 0) {
+    if (rows.length > 0 && stored === 0 && storeFailed) {
       console.error('[research] nothing stored (apply migrations 189/222)')
       return { ...empty, ok: false, reason: 'storage failed', discovered: ranked.length, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }
     }
@@ -777,8 +779,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // Not stamped when the budget stopped the DataForSEO half, though: the database sources can
   // still produce candidates, and stamping on the strength of those would claim the market was
   // looked at when it was not — holding the next real run for thirty days after the month rolled
-  // over and the money came back.
-  if (spentOnDfs) await stampResearchRun()
+  // over and the money came back. Nor when every DataForSEO call failed (dead credentials, empty
+  // balance): nothing was billed because nothing answered, and a stamp would have the monthly job
+  // skip the client for thirty days.
+  if (spentOnDfs && cost > 0) await stampResearchRun()
 
   console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
   return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }
@@ -841,9 +845,9 @@ async function recordOwnRankings(
       // Insert-or-skip. The live rank check writes the same (keyword, date, device) key, and its
       // reading is fresher than a Labs position that lags weeks — overwriting it replaced today's
       // real position and URL with a stale one and a null URL.
-      const { error } = await db.from('seo_rankings').upsert(chunk, { onConflict: 'keyword_id,date,device', ignoreDuplicates: true })
+      const { data: kept, error } = await db.from('seo_rankings').upsert(chunk, { onConflict: 'keyword_id,date,device', ignoreDuplicates: true }).select('id')
       if (error) { console.error('[research] snapshot failed:', error.message); break }
-      written += chunk.length
+      written += (kept ?? []).length
     }
     return written
   } catch (e) {

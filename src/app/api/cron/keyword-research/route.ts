@@ -57,7 +57,12 @@ export async function GET(req: NextRequest) {
   for (const r of (cs ?? []) as { client_id: string; last_keyword_research_at: string | null }[]) {
     lastRun.set(r.client_id, r.last_keyword_research_at)
   }
-  const ordered = clientIds.sort((a, b) => String(lastRun.get(a) ?? '').localeCompare(String(lastRun.get(b) ?? '')))
+  // Only clients with content settings. Research is for the content pipeline, and a client with no
+  // settings row cannot be stamped — the stamp is an update to that row — so it would read as due,
+  // and be bought again, every day.
+  const ordered = clientIds
+    .filter(id => csErr || lastRun.has(id))
+    .sort((a, b) => String(lastRun.get(a) ?? '').localeCompare(String(lastRun.get(b) ?? '')))
 
   const researched: Array<{ clientId: string; ok: boolean; stored: number; cost: number; reason?: string }> = []
   let stoppedBy: string | null = null
