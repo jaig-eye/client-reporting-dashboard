@@ -455,6 +455,9 @@ export async function GET(request: NextRequest) {
         if (result.error) {
           console.error(`[content-topics cron] Topic generation refused for client ${client_id} slot ${slot}: ${result.error}`)
         }
+        for (const w of result.warnings ?? []) {
+          console.warn(`[content-topics cron] client ${client_id} slot ${slot}: ${w}`)
+        }
         if (result.topics.length > 0) {
           const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
           entry.items.push(...result.topics)
@@ -497,63 +500,67 @@ export async function GET(request: NextRequest) {
         .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
+      type PendingTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
+      // Only the dates pending topics sit on can collide, so only those are counted. Bounded by
+      // date alone, a long-running client's history filled PostgREST's 1,000-row cap and the count
+      // for the dates that mattered could be the part cut off — reading as "this slot is free".
+      const pendingDates = Array.from(new Set(((pendingTopics ?? []) as PendingTopic[])
+        .map(t => t.target_publish_date).filter((d): d is string => !!d)))
+
       // What already holds each slot. Without this the cap counts only pending topics, so a date
       // that already has an approved topic gets postsPerRun MORE approved on top of it.
-      const { data: alreadyApproved, error: approvedErr } = await db
-        .from('content_topics')
-        .select('target_publish_date')
-        .eq('client_id', client_id)
-        // The same list generation uses to decide a slot is taken (minus 'pending', which is
-        // what is being approved from). Counting fewer statuses here than there meant a slot
-        // generation had already declared full — say, holding a 'published' or 'rejected' topic
-        // — still looked free to approval, and a second post landed on the date.
-        .in('status', ['approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
-        .not('target_publish_date', 'is', null)
-        // Scoped and bounded. Unfiltered, PostgREST's default row cap can silently truncate the
-        // count, which reads as "this slot is free" and reintroduces the double-approval this
-        // query exists to prevent. Only dates the pending set could collide with matter.
-        .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
-        .limit(1000)
+      const { data: alreadyApproved, error: approvedErr } = pendingDates.length === 0
+        ? { data: [], error: null }
+        : await db
+          .from('content_topics')
+          .select('target_publish_date')
+          .eq('client_id', client_id)
+          // The same list generation uses to decide a slot is taken (minus 'pending', which is
+          // what is being approved from). Counting fewer statuses here than there meant a slot
+          // generation had already declared full — say, holding a 'published' or 'rejected' topic
+          // — still looked free to approval, and a second post landed on the date.
+          .in('status', ['approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
+          .in('target_publish_date', pendingDates)
       // A failed read here reads as "every slot is empty", which approves a full quota on top of
-      // whatever already holds the date — duplicate posts on a client's site, unattended. Skipping
-      // this client's approval round costs at most a day's delay, which is the cheaper mistake.
+      // whatever already holds the date — duplicate posts on a client's site, unattended. So the
+      // dated approval round is skipped. Only that round: this used to `continue`, which also
+      // skipped the client's briefs, post generation and the auto-push retry queue below.
       if (approvedErr) {
-        console.error(`[cron/content-topics] slot occupancy unreadable for ${client_id}, skipping approval:`, approvedErr.message)
-        continue
-      }
-      const approvedByDate = new Map<string, number>()
-      for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
-        const k = t.target_publish_date ?? 'none'
-        approvedByDate.set(k, (approvedByDate.get(k) ?? 0) + 1)
-      }
+        console.error(`[cron/content-topics] slot occupancy unreadable for ${client_id}, skipping this approval round:`, approvedErr.message)
+      } else {
+        const approvedByDate = new Map<string, number>()
+        for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
+          const k = t.target_publish_date ?? 'none'
+          approvedByDate.set(k, (approvedByDate.get(k) ?? 0) + 1)
+        }
 
-      // Group by date, pick up to postsPerRun per group, minus whatever already holds the slot
-      type PendingTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
-      const grouped = new Map<string, PendingTopic[]>()
-      for (const t of (pendingTopics ?? []) as PendingTopic[]) {
-        const key = t.target_publish_date ?? 'none'
-        grouped.set(key, [...(grouped.get(key) ?? []), t])
-      }
-      const toApprove: string[] = []
-      for (const [key, group] of Array.from(grouped)) {
-        const picked = (group as PendingTopic[])
-          .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
-            || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
-          // postsPerRun, not 1. Generation already produces postsPerRun topics per slot and the
-          // comment above says each group is "capped at posts_per_run" — but approval took one,
-          // so a client set to 2 got 2 topics and 1 post, with the loser stuck 'pending' forever
-          // while still occupying the slot. The setting looked applied and changed nothing.
-          // Minus what already holds this slot. The group only contains 'pending' topics, so
-          // taking postsPerRun of them on a date that already has approved ones over-fills it.
-          .slice(0, Math.max(0, postsPerRun - (approvedByDate.get(key) ?? 0)))
-        toApprove.push(...picked.map((t: PendingTopic) => t.id))
-      }
+        // Group by date, pick up to postsPerRun per group, minus whatever already holds the slot
+        const grouped = new Map<string, PendingTopic[]>()
+        for (const t of (pendingTopics ?? []) as PendingTopic[]) {
+          const key = t.target_publish_date ?? 'none'
+          grouped.set(key, [...(grouped.get(key) ?? []), t])
+        }
+        const toApprove: string[] = []
+        for (const [key, group] of Array.from(grouped)) {
+          const picked = (group as PendingTopic[])
+            .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
+              || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
+            // postsPerRun, not 1. Generation already produces postsPerRun topics per slot and the
+            // comment above says each group is "capped at posts_per_run" — but approval took one,
+            // so a client set to 2 got 2 topics and 1 post, with the loser stuck 'pending' forever
+            // while still occupying the slot. The setting looked applied and changed nothing.
+            // Minus what already holds this slot. The group only contains 'pending' topics, so
+            // taking postsPerRun of them on a date that already has approved ones over-fills it.
+            .slice(0, Math.max(0, postsPerRun - (approvedByDate.get(key) ?? 0)))
+          toApprove.push(...picked.map((t: PendingTopic) => t.id))
+        }
 
-      if (toApprove.length) {
-        await db.from('content_topics')
-          .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
-          .in('id', toApprove)
-        console.log(`[content-topics cron] auto-approved ${toApprove.length} topics (${grouped.size} date groups) for ${client_id}`)
+        if (toApprove.length) {
+          await db.from('content_topics')
+            .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
+            .in('id', toApprove)
+          console.log(`[content-topics cron] auto-approved ${toApprove.length} topics (${grouped.size} date groups) for ${client_id}`)
+        }
       }
 
       // Also approve dateless topics pending >3 days (1 per run)

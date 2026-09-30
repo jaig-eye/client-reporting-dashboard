@@ -42,11 +42,14 @@ export async function POST(request: NextRequest) {
   const db = createAdminClient()
 
   // ── Load saved schedule config ─────────────────────────────────────────────
-  const { data: schedule } = await db
+  const { data: schedule, error: scheduleErr } = await db
     .from('content_settings')
     .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead, schedule_start_date, posts_per_run')
     .eq('client_id', client_id)
     .maybeSingle()
+  // Unreadable is not "weekly on Monday": planning a client's calendar from defaults would put
+  // topics on dates that are not theirs.
+  if (scheduleErr) return NextResponse.json({ error: `Could not read the schedule: ${scheduleErr.message}` }, { status: 500 })
 
   const frequency  = (schedule?.schedule_frequency ?? 'weekly')
   const dayOfWeek  = (schedule?.schedule_day_of_week ?? 1)
@@ -75,11 +78,14 @@ export async function POST(request: NextRequest) {
   // Count what each slot already holds, rather than whether it holds anything. With
   // postsPerRun = 1 this behaves exactly as the old Set did — it still prevents duplicate topics
   // when the wizard fires twice — and above 1 it lets a date fill up to its quota.
-  const { data: existingTopics } = await db
+  const { data: existingTopics, error: existingErr } = await db
     .from('content_topics')
     .select('target_publish_date')
     .eq('client_id', client_id)
     .in('target_publish_date', slots)
+  // A failed read reads as "every slot is empty" and would generate a full quota on top of what the
+  // dates already hold. The cron path already refuses in this case; this path now does too.
+  if (existingErr) return NextResponse.json({ error: `Could not read existing topics: ${existingErr.message}` }, { status: 500 })
 
   const topicsOnDate = new Map<string, number>()
   for (const t of (existingTopics ?? []) as { target_publish_date: string }[]) {
@@ -151,12 +157,16 @@ export async function POST(request: NextRequest) {
       // Re-check open slots — a concurrent request may have queued its own job between
       // our sync check above and when this background task actually starts.
       const wantedDates = Array.from(new Set(openSlots))
-      const { data: nowFilled } = await db
+      const { data: nowFilled, error: filledErr } = await db
         .from('content_topics')
         .select('target_publish_date')
         .eq('client_id', client_id)
         .in('target_publish_date', wantedDates)
         .not('target_publish_date', 'is', null)
+      if (filledErr) {
+        console.error(`[calendar/generate] re-check of open slots failed for ${client_id}, not generating:`, filledErr.message)
+        return
+      }
       const filledOnDate = new Map<string, number>()
       for (const t of (nowFilled ?? []) as { target_publish_date: string }[]) {
         filledOnDate.set(t.target_publish_date, (filledOnDate.get(t.target_publish_date) ?? 0) + 1)

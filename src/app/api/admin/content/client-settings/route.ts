@@ -50,10 +50,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const [{ data }, { data: clientRow }] = await Promise.all([
+  const [{ data, error }, { data: clientRow }] = await Promise.all([
     readSettings(),
     db.from('clients').select('phone').eq('id', clientId).maybeSingle(),
   ])
+  // An error is not "no settings yet". Answering {} loaded the form blank, and the next Save wrote
+  // those blanks over the client's real Brand DNA. A missing row is still {} (maybeSingle → null).
+  if (error) return NextResponse.json({ error: `Could not read content settings: ${error.message}` }, { status: 500 })
 
   // The select string is built at runtime now, so supabase-js cannot type the row.
   const result: Record<string, unknown> = { ...((data ?? {}) as Record<string, unknown>) }
@@ -103,7 +106,14 @@ export async function PUT(request: NextRequest) {
   for (const f of CONTENT_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(body, f)) {
       // Array fields must remain arrays; everything else coerces null
-      if (f === 'sitemap_urls' || f === 'manual_link_urls' || f === 'foundational_keywords') {
+      if (f === 'foundational_keywords') {
+        // Strings only, trimmed, bounded — the same 40 the chip input allows. Research reads at
+        // most 25 of them, but an unbounded array of any shape was stored as sent.
+        row[f] = Array.isArray(body[f])
+          ? (body[f] as unknown[]).filter((v): v is string => typeof v === 'string')
+              .map(v => v.trim()).filter(v => v.length >= 2 && v.length <= 120).slice(0, 40)
+          : []
+      } else if (f === 'sitemap_urls' || f === 'manual_link_urls') {
         row[f] = Array.isArray(body[f]) ? body[f] : []
       } else if (f === 'research_location') {
         // A geo target or nothing — never an arbitrary object.

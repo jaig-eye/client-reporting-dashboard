@@ -109,16 +109,26 @@ export async function GET(req: NextRequest) {
   const readPaidTerms = async (): Promise<PaidTermRow[]> => {
     try {
       const since = new Date(Date.now() - PAID_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10)
-      const { data, error } = await db
-        .from('google_ads_search_terms')
-        .select('search_term, conversions, spend')
-        .eq('client_id', clientId)
-        .gte('date', since)
-        .gt('conversions', 0)
-        .limit(2000)
-      if (error) { console.warn('[keyword-sources] paid terms query failed:', error.message); return [] }
+      // Read in pages. Rows are per term per day per ad group, so a busy account passes PostgREST's
+      // 1,000-row cap in weeks, and the conversions, spend and cost per lead shown were sums over
+      // whichever thousand came back.
+      type PaidRow = { search_term: string; conversions: number | null; spend: number | null }
+      const data: PaidRow[] = []
+      for (let from = 0; from < 20_000; from += 1000) {
+        const { data: page, error } = await db
+          .from('google_ads_search_terms')
+          .select('search_term, conversions, spend')
+          .eq('client_id', clientId)
+          .gte('date', since)
+          .gt('conversions', 0)
+          .order('id', { ascending: true })
+          .range(from, from + 999)
+        if (error) { console.warn('[keyword-sources] paid terms query failed:', error.message); return [] }
+        data.push(...((page ?? []) as PaidRow[]))
+        if ((page ?? []).length < 1000) break
+      }
       const byTerm = new Map<string, { conversions: number; spend: number }>()
-      for (const r of (data ?? []) as { search_term: string; conversions: number | null; spend: number | null }[]) {
+      for (const r of data) {
         const term = String(r.search_term ?? '').trim()
         if (!term) continue
         const agg = byTerm.get(term) ?? { conversions: 0, spend: 0 }

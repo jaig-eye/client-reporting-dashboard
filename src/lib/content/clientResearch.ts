@@ -332,15 +332,23 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   const windowStart = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
   const paidConversions = new Map<string, number>()
   try {
-    const { data, error } = await db
-      .from('google_ads_search_terms')
-      .select('search_term, conversions')
-      .eq('client_id', clientId)
-      .gte('date', windowStart)
-      .gt('conversions', 0)
-      .limit(2000)
-    if (error) console.warn('[research] paid terms unavailable:', error.message)
-    for (const r of (data ?? []) as { search_term: string; conversions: number | null }[]) {
+    // Paged past PostgREST's 1,000-row cap: these sums feed score(), and a partial map under-credits
+    // exactly the terms that convert most (they have the most rows).
+    const data: { search_term: string; conversions: number | null }[] = []
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data: page, error } = await db
+        .from('google_ads_search_terms')
+        .select('search_term, conversions')
+        .eq('client_id', clientId)
+        .gte('date', windowStart)
+        .gt('conversions', 0)
+        .order('id', { ascending: true })
+        .range(from, from + 999)
+      if (error) { console.warn('[research] paid terms unavailable:', error.message); break }
+      data.push(...((page ?? []) as { search_term: string; conversions: number | null }[]))
+      if ((page ?? []).length < 1000) break
+    }
+    for (const r of data) {
       const term = String(r.search_term ?? '')
       const k = normalize(term)
       if (!k) continue
