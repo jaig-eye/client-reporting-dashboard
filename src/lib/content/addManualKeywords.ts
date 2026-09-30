@@ -27,6 +27,7 @@ import {
   resolveDfsCreds, resolveSeoConfig, dfsKeywordOverview, readResearchLocation,
   type DfsCreds, type SeoTrackingConfig,
 } from '@/lib/connectors/dataforseo'
+import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
 type Db = ReturnType<typeof createAdminClient>
@@ -143,6 +144,10 @@ export async function addManualKeywords(
   // batch; skipped entirely when there is no connection, which simply leaves the columns null.
   let cost = 0
   const metrics = new Map<string, { volume: number | null; difficulty: number | null; intent: string | null }>()
+  // The agency's monthly ceiling applies to this one call too. It is small — one Labs lookup per
+  // batch — but a ceiling with exceptions is not a ceiling, and a keyword typed in past the budget
+  // should land the same way it does for a client with no connection: added, without numbers.
+  if (creds && !(await canSpendOnDfs('manual keyword metrics'))) creds = null
   if (creds) {
     try {
       const rows = await dfsKeywordOverview(fresh, creds, {

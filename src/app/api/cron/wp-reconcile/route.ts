@@ -67,8 +67,23 @@ export async function GET(req: NextRequest) {
     // isPlaceholderLink below. That is the safe direction: a candidate missed costs a stale row,
     // a candidate wrongly matched costs a write. WordPress emits '?p=' anyway — it is the first
     // query parameter — so the two agree in practice.
+    // Any post whose recorded state could have moved on without us — not just the overdue ones.
+    //
+    // The narrow version asked three questions: is it scheduled and late, does it carry a '?p='
+    // placeholder, does it carry a wp-admin link. That missed whole stages of the cycle. A draft
+    // published by hand in WordPress stayed 'draft' here forever; production has three drafts with
+    // no permalink at all, which no LIKE can match because the column is null. A post scheduled
+    // for next week that someone publishes early, or deletes, was equally invisible until its date
+    // passed.
+    //
+    // So the question is inverted: a row is settled only when it says 'publish' AND carries a real
+    // permalink. Everything else is a candidate, at any stage. Rows already marked 'deleted' are
+    // skipped in the loop below — WordPress has nothing left to tell us about those, and they would
+    // otherwise match every run forever.
     .or(
-      `and(wp_status.eq.future,target_publish_date.lte.${today}),` +
+      `wp_status.is.null,` +
+      `and(wp_status.neq.publish,wp_status.neq.deleted),` +
+      `published_url.is.null,` +
       `published_url.like.*?p=*,` +
       `published_url.like.*wp-admin*`,
     )
@@ -170,6 +185,10 @@ export async function GET(req: NextRequest) {
   let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0
 
   for (const post of posts) {
+    // Already known gone. The or-clause above can still match one of these through the
+    // published_url tests, and re-asking WordPress about a post it has deleted only earns another
+    // 404 — every run, forever.
+    if (post.wp_status === 'deleted') continue
     const candidates = fallbackByClient.get(post.client_id) ?? []
     const auth    = (post.connection_id ? authByConnection.get(post.connection_id) : undefined)
                  // Prefer the connection for the site this post actually lives on; only fall back

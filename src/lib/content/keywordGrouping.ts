@@ -54,7 +54,7 @@ function stem(word: string): string {
  * `geoWords` are the parts of the client's market — "los angeles", "california" — which appear in
  * most keywords and would otherwise group everything under the city.
  */
-export function themeKey(keyword: string, geoWords: Iterable<string> = []): string {
+function themeKey(keyword: string, geoWords: Iterable<string> = []): string {
   const geo = new Set(Array.from(geoWords).flatMap(g =>
     String(g).toLowerCase().split(/[\s,]+/).map(w => w.trim()).filter(Boolean)))
 

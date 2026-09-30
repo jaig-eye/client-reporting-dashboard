@@ -978,65 +978,69 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          gscPageFor(k.keyword))
   for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
 
+  // The guard redirects a topic. It never removes one.
+  //
+  // It used to drop an exact collision outright, and if every proposal collided the whole run
+  // returned an error and saved nothing — a client who already ranks well for most of what they
+  // sell could get no post at all, from a guard whose job is to protect their rankings. That is
+  // the wrong trade: the risk being managed is one article outranking another, and the remedy for
+  // that is a narrower angle and an internal link, not silence.
+  //
+  // So both cases demote now. An exact collision says so more firmly, because "lawn care" against
+  // a #3 "lawn care" page needs the angle moved, not just a link added. Every demotion is on the
+  // pipeline card before anyone approves it, and page_to_support carries the link target into the
+  // writer — so a person still gets the double-check, and a post still goes out.
   if (protectedKeywords.size > 0) {
-    const dropped: string[] = []
     const demoted: string[] = []
-    topics = topics.filter(t => {
+    for (const t of topics) {
       const kw = normalizeKeyword(t.target_keyword)
-      if (!kw) return true
+      if (!kw) continue
 
-      // Exact collision: a new primary page for a keyword already on page one.
-      const direct = protectedKeywords.get(kw)
-      if (direct) {
-        dropped.push(`"${t.target_keyword}" (already #${direct.position}${direct.url ? ` at ${direct.url}` : ''})`)
-        return false
-      }
-
-      // A longer variant of a protected keyword — "lawn care" protected, "lawn care in winter"
-      // proposed. That is a legitimate article, but only as a supporting one. Whole-phrase match
-      // so "careers" never matches "care".
+      // Exact collision first, then the longest protected phrase contained in this keyword —
+      // "lawn care" protected, "lawn care in winter" proposed. Whole-phrase match so "careers"
+      // never matches "care".
       //
       // The LONGEST match wins, not the first. Map order is insertion order — GSC, then Ahrefs,
       // then tracked ranks — which says nothing about specificity, so first-match could tell a
       // "lawn care in winter" article to support "care" and link to that page instead. A
       // directive naming the wrong URL is worse than none: it points the internal link at the
       // weaker page.
-      let best: { prot: string; info: { position: number; url: string | null } } | null = null
-      for (const [prot, info] of Array.from(protectedKeywords.entries())) {
-        if (kw === prot) continue
-        if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
-        if (!best || prot.length > best.prot.length) best = { prot, info }
+      const direct = protectedKeywords.get(kw)
+      let best: { prot: string; info: { position: number; url: string | null }; exact: boolean } | null =
+        direct ? { prot: kw, info: direct, exact: true } : null
+      if (!best) {
+        for (const [prot, info] of Array.from(protectedKeywords.entries())) {
+          if (kw === prot) continue
+          if (!new RegExp(`(^|\\s)${escapeRegex(prot)}(\\s|$)`).test(kw)) continue
+          if (!best || prot.length > best.prot.length) best = { prot, info, exact: false }
+        }
       }
-      if (best) {
-        const { prot, info } = best
-        const directive =
-          `SUPPORTING ARTICLE — the client already ranks #${info.position} for "${prot}"` +
-          `${info.url ? ` at ${info.url}` : ''}. This must not compete with that page: cover a` +
-          ` genuinely narrower question and link to it${info.url ? ` (${info.url})` : ''} as the primary internal link.`
-        t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
-        // The directive above is for the operator reading the pipeline card. This is the half the
-        // writer acts on: page_to_support is the only field the article prompt reads for "link to
-        // this page", so without it a demoted topic was written exactly like an undemoted one and
-        // competed with the page it was supposed to support.
-        if (info.url) t.page_to_support = info.url
-        demoted.push(`"${t.target_keyword}" → supports "${prot}"${info.url ? '' : ' (no URL known — directive only)'}`)
-      }
-      return true
-    })
+      if (!best) continue
 
-    if (dropped.length > 0) {
-      console.warn(`[generateTopics] cannibalization: dropped ${dropped.length} topic(s) for client ${clientId}: ${dropped.join('; ')}`)
+      const { prot, info, exact } = best
+      const at = info.url ? ` at ${info.url}` : ''
+      const link = info.url ? ` (${info.url})` : ''
+      const directive = exact
+        ? `SUPPORTING ARTICLE — the client ALREADY RANKS #${info.position} for this exact keyword${at}.`
+          + ` Do NOT write another page targeting it. Shift to a genuinely narrower question this`
+          + ` page does not answer, and link to it${link} as the primary internal link.`
+        : `SUPPORTING ARTICLE — the client already ranks #${info.position} for "${prot}"${at}.`
+          + ` This must not compete with that page: cover a genuinely narrower question and link`
+          + ` to it${link} as the primary internal link.`
+      t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
+      // The directive above is for the operator reading the pipeline card. This is the half the
+      // writer acts on: page_to_support is the only field the article prompt reads for "link to
+      // this page", so without it a demoted topic was written exactly like an undemoted one and
+      // competed with the page it was supposed to support.
+      if (info.url) t.page_to_support = info.url
+      demoted.push(
+        `"${t.target_keyword}" → supports "${prot}"${exact ? ' (exact)' : ''}` +
+        `${info.url ? '' : ' (no URL known — directive only)'}`,
+      )
     }
+
     if (demoted.length > 0) {
       console.log(`[generateTopics] cannibalization: demoted ${demoted.length} topic(s) to supporting for client ${clientId}: ${demoted.join('; ')}`)
-    }
-    if (!topics.length) {
-      // Every proposal collided. Saying so beats saving nothing silently or, worse, saving the
-      // collisions.
-      return {
-        topics: [], clientName, count: 0,
-        error: 'Every generated topic targeted a keyword this client already ranks on page one for. Nothing was saved — try again, or widen the silo.',
-      }
     }
   }
 

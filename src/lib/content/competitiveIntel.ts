@@ -20,6 +20,7 @@
 
 import type { createAdminClient } from '@/lib/supabase/server'
 import { formatCompetitorGap, formatSerpIntel, buildCompetitorResearch, researchCompetitors, type CompetitorResearch } from './competitorResearch'
+import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
 import { resolveDfsCreds, resolveSeoConfig, dfsSerpIntel, readResearchLocation, type DfsCreds, type SeoTrackingConfig, type ResearchLocation } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, saveSerpInsight, type SerpInsight } from './serpInsights'
@@ -50,6 +51,12 @@ export async function getClientDfsContext(db: Db, clientId: string): Promise<Dfs
     const rows = (data ?? []) as Array<{ external_id?: string; config?: Record<string, unknown>; connector?: { type?: string; auth?: Record<string, unknown>; config?: Record<string, unknown> } }>
     const dfsRow = rows.find(r => r.connector?.type === 'dataforseo')
     if (!dfsRow) return null   // client not connected to DataForSEO → dormant
+    // The agency's monthly ceiling applies here too. This is the context every paid call during
+    // WRITING resolves through — one SERP lookup and one keyword overview per article — and it
+    // was the last spend path that could carry on past a budget the operator had set. Returning
+    // null degrades exactly the way "not connected" does: the article is still written, with the
+    // talking points left out.
+    if (!(await canSpendOnDfs('competitive intel'))) return null
     const creds = resolveDfsCreds(dfsRow.connector?.auth ?? {})   // env fills the password if absent
     if (!creds) return null
     const config = resolveSeoConfig(dfsRow.connector?.config, dfsRow.config)

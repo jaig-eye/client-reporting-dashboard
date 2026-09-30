@@ -46,7 +46,7 @@ const NUMERALS: Array<[string, string]> = [
  * That is harmless: both sides of every comparison go through this same function, so the two
  * agree, and the result is only ever compared, never shown.
  */
-export function compactBrand(s: string): string {
+function compactBrand(s: string): string {
   let out = String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
   for (const [word, digit] of NUMERALS) out = out.split(word).join(digit)
   return out
