@@ -11,6 +11,7 @@ import IntegrationModal from '@/components/admin/IntegrationModal'
 import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
 import AiUsagePanel from '@/components/admin/AiUsagePanel'
 import { useTheme } from '@/components/ThemeProvider'
+import { IMAGE_MODELS, resolveImageModel } from '@/lib/content/imageModels'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
@@ -50,6 +51,7 @@ interface Settings {
   ai_model:                       string
   ai_api_key:                     string
   openai_api_key:                 string
+  image_model:                    string
   notification_email:             string
   notify_topics_created:          boolean
   notify_post_generated:          boolean
@@ -108,6 +110,7 @@ const DEFAULT: Settings = {
   ai_model:                       'claude-sonnet-4-6',
   ai_api_key:                     '',
   openai_api_key:                 '',
+  image_model:                    'gpt-image-1',
   notification_email:             '',
   notify_topics_created:          true,
   notify_post_generated:          true,
@@ -201,12 +204,16 @@ export default function AgencySettingsPage() {
   }
 
   async function saveImgCredential() {
+    // The key may be left blank to keep the stored one; the model is always sent, so switching
+    // model without retyping the key works.
+    const patch: Record<string, string> = { image_model: resolveImageModel(form.image_model) }
+    if (imgModalKey) patch.openai_api_key = imgModalKey
     const res = await fetch('/api/admin/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ openai_api_key: imgModalKey }),
+      body: JSON.stringify(patch),
     })
     if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
-    setForm(f => ({ ...f, openai_api_key: imgModalKey }))
+    if (imgModalKey) setForm(f => ({ ...f, openai_api_key: imgModalKey }))
   }
 
   async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -330,6 +337,10 @@ export default function AgencySettingsPage() {
     delete saveForm.serp_api_provider
     delete saveForm.discord_bot_token
     delete saveForm.discord_ops_channel_id
+    // image_model belongs to the Image Generation modal, which saves it on its own. Sending it
+    // from here as well would make every save on this page depend on migration 227: one unknown
+    // column fails the whole PATCH, so saving an agency name would break until the column exists.
+    delete saveForm.image_model
     const res = await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -697,10 +708,29 @@ export default function AgencySettingsPage() {
           >
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-                OpenAI API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— used for DALL-E 3 image generation only</span>
+                OpenAI API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— used for featured image generation only</span>
               </label>
               <input className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
-                placeholder="sk-…" autoComplete="off" style={{ width: '100%' }} />
+                placeholder={form.openai_api_key ? '•••••• (leave blank to keep)' : 'sk-…'} autoComplete="off" style={{ width: '100%' }} />
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+                Model <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— which one draws the featured image</span>
+              </label>
+              <select
+                className="input"
+                style={{ width: '100%' }}
+                value={resolveImageModel(form.image_model)}
+                onChange={e => setForm(f => ({ ...f, image_model: e.target.value }))}
+              >
+                {Object.entries(IMAGE_MODELS).map(([id, m]) => (
+                  <option key={id} value={id}>{m.label}</option>
+                ))}
+              </select>
+              <p className="section-desc" style={{ margin: '6px 0 0' }}>
+                Same price per image either way. Each is asked in its own dialect — landscape and
+                quality settings differ between the two — so switching needs nothing else changed.
+              </p>
             </div>
           </IntegrationModal>
 

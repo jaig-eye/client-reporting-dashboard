@@ -7,6 +7,7 @@ import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirectio
 import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
+import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 
 type PostRow = {
   id:             string
@@ -245,7 +246,24 @@ export async function generatePostImage(
   let usedProvider = ''
   let lastError = ''
 
-  // ── OpenAI Image Generation (gpt-image-1) ───────────────────────────────────
+  // Which model, and the arguments it will actually accept.
+  //
+  // The two OpenAI image models do NOT take the same parameters, so this cannot be a bare model
+  // swap: gpt-image-1 wants quality low|medium|high and a 1536x1024 landscape, while dall-e-3
+  // rejects both and wants standard|hd at 1792x1024. Sending one model the other's arguments is a
+  // 400, which would have looked like "the new model is broken" rather than "we asked wrongly".
+  const chosenModel = await (async () => {
+    try {
+      const { data, error } = await db.from('agency_settings').select('image_model').maybeSingle()
+      // Column absent (migration 227 not applied) or unreadable: the default is what shipped
+      // before this was configurable, so nothing changes.
+      if (error) return DEFAULT_IMAGE_MODEL
+      return resolveImageModel((data as { image_model?: unknown } | null)?.image_model)
+    } catch { return DEFAULT_IMAGE_MODEL }
+  })()
+  const modelArgs = IMAGE_MODELS[chosenModel]
+
+  // ── OpenAI image generation ─────────────────────────────────────────────────
   if (effectiveKey) {
     try {
       const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
@@ -255,11 +273,14 @@ export async function generatePostImage(
           'Authorization': `Bearer ${effectiveKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-image-1',
+          model:   chosenModel,
           prompt,
           n: 1,
-          size: '1536x1024',
-          quality: 'medium',
+          size:    modelArgs.size,
+          quality: modelArgs.quality,
+          // Only where the model needs asking — see IMAGE_MODELS. Storing the image ourselves is
+          // the point: an OpenAI-hosted URL expires within the hour.
+          ...(modelArgs.b64 ? { response_format: 'b64_json' } : {}),
         }),
       })
       if (dalleRes.ok) {
@@ -267,18 +288,35 @@ export async function generatePostImage(
         // priceImages. Only a successful generation is charged.
         await recordAiUsage({
           provider: 'openai',
-          model:    'gpt-image-1',
+          model:    chosenModel,
           operation: 'image',
           units:    1,
-          costUsd:  priceImages('gpt-image-1', 1),
+          costUsd:  priceImages(chosenModel, 1),
           clientId: String(post.client_id ?? '') || null,
           postId,
         })
         const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
         const item = data.data?.[0]
+
+        // Both shapes end up in our own storage. base64 is what both models are asked for, so it
+        // is the normal path; a url is the awkward one — it is OpenAI-hosted and expires within
+        // the hour, so it has to be fetched now rather than saved as the post's image.
+        let buffer: Buffer | null = null
         if (item?.b64_json) {
-          // gpt-image-1 returns base64 — decode and upload to Supabase directly
-          const buffer   = Buffer.from(item.b64_json, 'base64')
+          buffer = Buffer.from(item.b64_json, 'base64')
+        } else if (item?.url) {
+          try {
+            const fetched = await fetch(item.url)
+            if (fetched.ok) buffer = Buffer.from(await fetched.arrayBuffer())
+            else lastError = `Could not fetch the generated image (${fetched.status})`
+          } catch (e) {
+            lastError = `Could not fetch the generated image: ${e instanceof Error ? e.message : String(e)}`
+          }
+        } else {
+          lastError = `${chosenModel} returned no image`
+        }
+
+        if (buffer) {
           const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
@@ -286,20 +324,17 @@ export async function generatePostImage(
           if (!upErr) {
             const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
             imageUrl     = publicUrl
-            usedProvider = 'gpt-image-1'
+            usedProvider = chosenModel
           } else {
             lastError = `Storage upload failed: ${upErr.message}`
           }
-        } else if (item?.url) {
-          imageUrl     = item.url
-          usedProvider = 'gpt-image-1'
         }
       } else {
         const errData = await dalleRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `DALL-E error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
+        lastError = `${chosenModel} error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
       }
     } catch (e) {
-      lastError = `DALL-E request failed: ${e instanceof Error ? e.message : String(e)}`
+      lastError = `${chosenModel} request failed: ${e instanceof Error ? e.message : String(e)}`
     }
   } else {
     lastError = 'No OpenAI API key configured — add it in Agency Settings → AI → Image Generation'

@@ -1,9 +1,9 @@
 # Pending production migrations
 
 Migrations that exist in `supabase/migrations/` and have **not** been applied to production.
-Apply them in numeric order, oldest first: 189, 190, 191, 222, 223, 224.
+Apply them in numeric order, oldest first: 189, 190, 191, 222, 223, 224, 225, 226, 227.
 
-All six are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
+All nine are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
 live dashboard reads either until the tables exist, so applying them changes nothing on its own.
 
 | File | What it adds | What stays broken without it |
@@ -14,6 +14,9 @@ live dashboard reads either until the tables exist, so applying them changes not
 | `222_foundational_keywords.sql` | `content_settings.foundational_keywords` + `last_keyword_research_at`; widens `seo_keywords.source` to allow `google_ads` | Seed keywords from the wizard are dropped on save; the 30-day research reuse gate falls back to row ages; database-only research rows fail the `source` check. The code tolerates all three being absent, but each logs a warning naming this file |
 | `223_seo_keyword_dismissal.sql` | `seo_keywords.dismissed_at` | The × on a researched keyword in the wizard answers 501, so dismissed keywords cannot be kept out of the pool. Every read tolerates the column being absent |
 | `224_research_location.sql` | `content_settings.research_location` | The Research Location picked in Brand DNA or the wizard is dropped on save, so research and rank checks stay country-wide: national volumes, national competitors. Every read tolerates the column being absent |
+| `225_keyword_selection.sql` | `seo_keywords.chosen_at` + its partial index | Selection has nowhere to record itself, so the pool falls back to unfiltered — every one of a few hundred researched candidates feeds the writer again, which is the behaviour this column exists to end. Ticking a keyword in the wizard answers an error |
+| `226_dataforseo_budget.sql` | `agency_settings.dataforseo_monthly_budget` (default 100) + an index on the usage ledger's date | No monthly ceiling: spend is recorded and displayed but never stopped. Reads treat the missing column as no limit, which is the pre-226 behaviour |
+| `227_image_model.sql` | `agency_settings.image_model` (default `gpt-image-1`) | The image model stays hard-coded to `gpt-image-1`. Picking `dall-e-3` in Settings → Image Generation answers an error; generation itself keeps working on the default |
 
 `190` builds on `seo_keywords`, so `189` has to land first, and `222` after `190` — its `seo_keywords` change is guarded so it cannot fail if run early, but the guard means that part silently does nothing until the table exists. Applying out of order fails loudly
 rather than silently, but there is no reason to find that out.

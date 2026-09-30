@@ -25,7 +25,7 @@ import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/datafo
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
-import { resolveCannibalization, type ProtectedPage } from '@/lib/content/cannibalization'
+import { resolveCannibalization } from '@/lib/content/cannibalization'
 
 interface TopicIdea {
   topic:               string
@@ -55,11 +55,6 @@ interface TopicIdea {
  */
 function normalizeKeyword(kw: string | null | undefined): string {
   return String(kw ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-/** Escape a keyword for use inside a RegExp — keywords are data and can contain anything. */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function extractSitemapLocs(xml: string): string[] {

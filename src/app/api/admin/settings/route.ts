@@ -6,6 +6,7 @@ import { getAdminSession, isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
 import { SECRET_FIELDS, maskSecrets, isUnchangedSecret, isClearedSecret } from '@/lib/secretMask'
+import { isImageModel } from '@/lib/content/imageModels'
 
 // This file used to define its OWN isAdminAuthed that shadowed the imported one
 // and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
@@ -69,7 +70,7 @@ export async function PUT(request: NextRequest) {
     'cron_enabled',
     'default_lead_action', 'default_lead_action_fallback',
     'default_purchase_action', 'default_purchase_action_fallback',
-    'ai_provider', 'ai_model', 'ai_api_key', 'openai_api_key',
+    'ai_provider', 'ai_model', 'ai_api_key', 'openai_api_key', 'image_model',
     'chart_color_spend', 'chart_color_prior_spend',
     'chart_color_conversions', 'chart_color_prior_conversions',
     'notification_email',
@@ -133,6 +134,14 @@ export async function PUT(request: NextRequest) {
       )
     }
     patch.contact_stale_days = n
+  }
+
+  // The two image models take different size and quality arguments, so an unrecognised value is
+  // not a worse image — it is a 400 from OpenAI on every generation. Generation coerces unknown
+  // text to the default anyway; refusing here means the stored value always matches the select,
+  // which would otherwise render blank on a value it has no option for.
+  if (patch.image_model !== undefined && !isImageModel(patch.image_model)) {
+    return NextResponse.json({ error: 'Unknown image model.' }, { status: 400 })
   }
 
   const db = createAdminClient()
