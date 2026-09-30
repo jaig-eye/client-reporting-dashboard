@@ -1,65 +1,66 @@
 # Pending production migrations
 
-Migrations that exist in `supabase/migrations/` and have **not** been applied to production.
-Apply them in numeric order, oldest first: 189, 190, 191, 222, 223, 224, 225, 226, 227.
+Migrations in `supabase/migrations/` that have **not** been applied to production. Production has
+no migration history table — migrations are applied by hand — so this list was checked against the
+live schema (columns and tables in `information_schema`), not taken on trust.
 
-All nine are additive — new tables and columns, no drops, no rewrites of existing rows. Nothing in the
-live dashboard reads either until the tables exist, so applying them changes nothing on its own.
+**Checked 2026-09-30.** Already in production, and removed from this folder: 189, 190, 191, 222,
+223, 224, 225. Still to apply, in this order:
 
 | File | What it adds | What stays broken without it |
 |---|---|---|
-| `189_openseo_connector.sql` | `seo_keywords`, the keyword registry | Research stores nothing; topic selection loses the researched-opportunities section |
-| `190_dataforseo_tracking.sql` | `seo_rankings` and the tracking config | No rank history — neither the site-wide snapshot nor the live checks have anywhere to write |
-| `191_dataforseo_usage.sql` | `dataforseo_usage`, the spend ledger | Every DataForSEO cost is silently unrecorded: the agency usage panel stays empty and the `$` figures the wizard shows are never kept. Nothing else breaks — the ledger soft-fails by design — which is how this one went unlisted |
-| `222_foundational_keywords.sql` | `content_settings.foundational_keywords` + `last_keyword_research_at`; widens `seo_keywords.source` to allow `google_ads` | Seed keywords from the wizard are dropped on save; the 30-day research reuse gate falls back to row ages; database-only research rows fail the `source` check. The code tolerates all three being absent, but each logs a warning naming this file |
-| `223_seo_keyword_dismissal.sql` | `seo_keywords.dismissed_at` | The × on a researched keyword in the wizard answers 501, so dismissed keywords cannot be kept out of the pool. Every read tolerates the column being absent |
-| `224_research_location.sql` | `content_settings.research_location` | The Research Location picked in Brand DNA or the wizard is dropped on save, so research and rank checks stay country-wide: national volumes, national competitors. Every read tolerates the column being absent |
-| `225_keyword_selection.sql` | `seo_keywords.chosen_at` + its partial index | Selection has nowhere to record itself, so the pool falls back to unfiltered — every one of a few hundred researched candidates feeds the writer again, which is the behaviour this column exists to end. Ticking a keyword in the wizard answers an error |
-| `226_dataforseo_budget.sql` | `agency_settings.dataforseo_monthly_budget` (default 100) + an index on the usage ledger's date | No monthly ceiling: spend is recorded and displayed but never stopped. Reads treat the missing column as no limit, which is the pre-226 behaviour |
-| `227_image_model.sql` | `agency_settings.image_model` (default `gpt-image-1`) | The image model stays hard-coded to `gpt-image-1`. Picking `dall-e-3` in Settings → Image Generation answers an error; generation itself keeps working on the default |
+| `226_dataforseo_budget.sql` | `agency_settings.dataforseo_monthly_budget` (default 100) + an index on the usage ledger's date | No monthly ceiling: spend is recorded and displayed but never stopped. Reads treat the missing column as no limit, and the limit cannot be saved (the panel answers 501) |
+| `227_image_model.sql` | `agency_settings.image_model` (no default — empty means the code's default model) | The model picker in Settings → Image Generation cannot save a choice (the key still saves, with a warning). Generation keeps working on the default model |
+| `228_seo_tables_rls.sql` | RLS on `seo_keywords`, `seo_rankings`, `dataforseo_usage`; `security_invoker` on the `seo_keyword_current` view; revokes anon/authenticated | Nothing visible — production already has RLS on these tables and no public grants. This puts that in the migration files, so a database built from them is not exposed |
 
-`190` builds on `seo_keywords`, so `189` has to land first, and `222` after `190` — its `seo_keywords` change is guarded so it cannot fail if run early, but the guard means that part silently does nothing until the table exists. Applying out of order fails loudly
-rather than silently, but there is no reason to find that out.
+All three are additive and idempotent: no drops, no rewrites of existing rows, safe to re-run.
 
-## After applying
+Apply them **before** deploying the branch. The code tolerates each column being absent, but the
+ceiling and the image model only take effect once they exist.
 
-Everything stays inert until a client actually has a `dataforseo` connection with a domain in
-`external_id`. Until then every path soft-fails to empty: prompts get smaller, the cron reports
-`dormant: true`, and nothing is billed.
+## Migration numbers shared with another branch
+
+`feat/ui-overhaul` also has a `222_…` and a `223_…` (`google_ads_conversion_actions`,
+`seo_work_note`). Nothing tracks migration numbers here, so nothing breaks — but whichever branch
+merges second should renumber its two so "is 222 applied?" has one answer.
 
 ## Where the DataForSEO spend comes from
 
-Three places, and it is worth knowing which is which when reading `dataforseo_usage`:
+Four places, and it is worth knowing which is which when reading `dataforseo_usage`:
 
-**Research** — from the setup wizard, Brand DNA's "Look again", or inline at topic selection when
-nothing fresh exists: around ten Labs calls (roughly ten cents) and, when a research location is
-set (224), five live SERPs of the starting keywords (~2¢) plus one Google Ads local-volume task
-(9¢). At most once every 30 days per client (`RESEARCH_MAX_AGE_DAYS` in
-`lib/content/clientResearch.ts`) unless someone presses Look again. Reuse is the normal path.
+**Research** — `/api/cron/keyword-research`, daily at 04:30 UTC, for clients whose research is 30+
+days old (at most three per run), and on an explicit button press in the Keywords tab or the setup
+wizard. Around ten Labs calls (roughly ten cents) and, when a research location is set, five live
+SERPs of the starting keywords (~2¢) plus one Google Ads local-volume task (9¢). A forced re-run is
+refused within an hour of the last one. Topic generation never buys research: it reads the
+keywords a person ticked.
 
 **One live SERP per generated post** — `gatherCompetitorGap` in `lib/content/competitiveIntel.ts`,
 for the post's target keyword, in the research location when set: the talking points the writer is
-handed and the Analytics tab's "What Google shows" card. Under a cent each.
+handed and the Keywords tab's "What Google shows" card. Under a cent each. Skipped for a supporting
+article whose topic collided exactly with a page the client already ranks for.
 
 **The site-wide ranking snapshot** — free. It is the same `ranked_keywords` response research
 already fetched; every row carries a position, so recording them costs no extra call. Written as
-`device: 'desktop'`, `provider: 'dataforseo_labs'`.
+`device: 'desktop'`, `provider: 'dataforseo_labs'`, and never over a same-day live reading.
 
-**Live checks for recent posts** — `/api/cron/dataforseo-rankings`, daily at 05:00. Only posts
-inside the 60-day window, mobile weekly and desktop monthly, at depth 30. A keyword's first
-reading goes to depth 100 so a post entering at 67 is recorded as 67 rather than "not found".
+**Live checks for published posts** — `/api/cron/dataforseo-rankings`, daily at 05:00. Nothing in a
+post's first 14 days (still indexing). Days 14–60: mobile every 14 days, desktop every 30. Then
+mobile only, every 60 days to a year and every 182 after, and no paid checks past two years. Depth
+30; a keyword's first reading goes to depth 100 so a post entering at 67 is recorded as 67 rather
+than "not found". A check missed on its day is picked up the next run; a run is sized to the money
+left under the monthly ceiling.
 
-Expect roughly $10/month across ten clients publishing twice a week. Watch `dataforseo_usage` for
-the first fortnight; the first run after a connection is made reads every eligible keyword at
-once, and the per-run cap spreads that over a few days.
+Watch `dataforseo_usage` for the first fortnight after connecting a client: the first run reads
+every eligible keyword at once, and the per-run cap spreads that over a few days.
 
 ## Why the snapshot and the live checks both exist
 
 Labs positions are refreshed weekly against a SERP database that lags 30–90 days on
 low-popularity queries — which is most of what a local business ranks for. That is fine for a
 baseline across the whole site and useless for "did last week's post move", which is exactly when
-someone asks. Hence a cheap broad snapshot, plus live readings for the short window where
-freshness is the entire point.
+someone asks. Hence a cheap broad snapshot, plus live readings for the window where freshness is
+the entire point.
 
 ## `is_tracked` defaults to TRUE
 
