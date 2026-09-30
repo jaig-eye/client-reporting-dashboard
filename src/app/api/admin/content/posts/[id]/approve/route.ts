@@ -152,7 +152,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
+    .select('id, client_id, connection_id, status, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
     .eq('id', id)
     .maybeSingle()
 
@@ -161,6 +161,16 @@ export async function POST(
   }
 
   const p = post as Record<string, unknown>
+
+  // Never while a regenerate is running. full-regenerate's background job owns the row until it
+  // writes the new article and sets 'for_review'; approving in between either pushes the text
+  // that is about to be replaced (WordPress, BigCommerce) or records an approval of it
+  // (approve_only) — and the job's save then puts a post nobody has read under that approval.
+  // Checked before every path below, so approve_only, WordPress and BigCommerce all refuse.
+  const GENERATING_REFUSAL = 'This post is still being regenerated — approve it once it finishes'
+  if (p.status === 'generating') {
+    return NextResponse.json({ error: GENERATING_REFUSAL }, { status: 409 })
+  }
 
   // A post that is already on a CMS is UPDATED in place, not duplicated.
   //
@@ -179,14 +189,21 @@ export async function POST(
     const approvedBy   = adminSession?.email ?? (adminSession?.isSuperAdmin ? 'super_admin' : 'admin')
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateErr } = await (db as any).from('content_posts').update({
+    const { data: approvedRows, error: updateErr } = await (db as any).from('content_posts').update({
       status:            'approved',
       admin_approved_at: new Date().toISOString(),
       admin_approved_by: approvedBy,
     }).eq('id', id)
+      // The check above read the status a moment ago; a regenerate claimed since then must still
+      // win. Conditional in the write itself, so there is no window between check and update.
+      .neq('status', 'generating')
+      .select('id')
 
     if (updateErr) {
       return NextResponse.json({ error: 'Failed to approve post' }, { status: 500 })
+    }
+    if (!approvedRows?.length) {
+      return NextResponse.json({ error: GENERATING_REFUSAL }, { status: 409 })
     }
 
     logActivity(adminSession, 'approved', 'post', {
@@ -1075,11 +1092,15 @@ export async function POST(
     // It also makes regeneration self-healing: the cron re-pushes a live post whose DB copy is
     // newer than its CMS copy, so regenerating an approved article now reaches the site
     // without anyone re-approving it.
+    //
+    // Not over 'generating' either. A regenerate that claimed the row during this push owns it;
+    // overwriting the claim hands the half-rewritten post to the cron's push stage and lets a
+    // second regenerate start alongside the first.
     const { error: markErr } = await db
       .from('content_posts')
       .update({ status: 'approved', admin_approved_at: new Date().toISOString() })
       .eq('id', id)
-      .not('status', 'in', '("published","draft_saved")')
+      .not('status', 'in', '("published","draft_saved","generating")')
     if (markErr) {
       console.error(`[approve] push failed AND could not mark ${id} for retry:`, markErr.message)
     }

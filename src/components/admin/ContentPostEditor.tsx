@@ -1324,6 +1324,14 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   /** Nothing to send: it is on the site, unedited here, and the site has this version. */
   const nothingToPush = isOnSite && !isDirty && !liveIsStale
 
+  /**
+   * A regenerate is rewriting this post — its background job holds the row ('generating'), or one
+   * started from this drawer is still in flight. Approving now would push, or approve, the text
+   * about to be replaced, so every approve control waits. The route refuses it with a 409 too.
+   */
+  const regenInProgress = post?.status === 'generating' || regenerating || fullRegenerating
+  const regenBlockedTitle = 'This post is still being regenerated — approve it once it finishes'
+
   // Live-post links (built once from the loaded post) — see lib/content/postLinks.ts
   const liveUrl        = post ? viewLiveUrl(post) : null
   const showLiveLink   = isPublicPermalink(liveUrl)
@@ -1414,7 +1422,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             </button>
           )}
           {isOnSite && !post?.wpPostId && !post?.bcPostId && (
-            <button type="button" onClick={handleRetry} disabled={retrying} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
+            <button type="button" onClick={handleRetry} disabled={retrying || regenInProgress} title={regenInProgress ? regenBlockedTitle : undefined} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
               {retrying ? 'Pushing…' : 'Retry Push'}
             </button>
           )}
@@ -2071,8 +2079,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 // Nothing to push when the article is already live and unchanged. Leaving it
                 // enabled invited a pointless round trip to the client's site, and leaving it
                 // labelled "Approve" asked for an approval that had already happened.
-                disabled={saving || nothingToPush}
-                title={isOnSite
+                disabled={saving || nothingToPush || regenInProgress}
+                title={regenInProgress
+                  ? regenBlockedTitle
+                  : isOnSite
                   ? (isDirty
                       ? 'Send your changes to the live article'
                       : liveIsStale
@@ -2082,7 +2092,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 className="btn btn-sm btn-primary"
                 style={{
                   background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
-                  opacity: nothingToPush ? 0.55 : 1,
+                  opacity: nothingToPush || regenInProgress ? 0.55 : 1,
                 }}
               >
                 {saving ? '…' : isOnSite ? 'Push update' : 'Approve →'}
@@ -2105,8 +2115,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <button
                 type="button"
                 onClick={handleMonthlyApprove}
-                disabled={approving || nothingToPush}
-                title={isOnSite
+                disabled={approving || nothingToPush || regenInProgress}
+                title={regenInProgress
+                  ? regenBlockedTitle
+                  : isOnSite
                   ? (isDirty
                       ? 'Send your changes to the live article'
                       : liveIsStale
@@ -2116,7 +2128,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 className="btn btn-primary"
                 style={{
                   fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 5,
-                  opacity: nothingToPush ? 0.55 : 1,
+                  opacity: nothingToPush || regenInProgress ? 0.55 : 1,
                 }}
               >
                 <ArrowCircleRight size={15} weight="bold" />
