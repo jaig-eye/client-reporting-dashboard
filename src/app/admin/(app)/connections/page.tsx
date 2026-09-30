@@ -20,6 +20,7 @@ import type { ConnectorType } from '@/lib/types'
 import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
 import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
+import DataForSeoUsagePanel from '@/components/admin/DataForSeoUsagePanel'
 import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
 import { resolveDfsCreds }  from '@/lib/connectors/dataforseo'
 import type { SeoDevice }   from '@/lib/connectors/dataforseo'
@@ -302,10 +303,10 @@ export default async function ConnectionsPage({
           initialDepth={dfsDepth}
           initialDevices={dfsDevices}
         />
-        {/* DataForSEO usage and spend is not shown here for now: spend belongs on a reporting
-            surface, not among the connection cards. The component and its route stay
-            (src/components/admin/DataForSeoUsagePanel.tsx, /api/admin/dataforseo-usage) for when
-            it gets a home. */}
+        {/* Spend, and the monthly limit that governs it. It has to be somewhere reachable: with it
+            unmounted, the budget research and rank checks stop at could not be set or seen from
+            anywhere in the app. Only with usable credentials, which is when anything can spend. */}
+        {dfsHasCreds && <DataForSeoUsagePanel />}
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard
           initialApiKey={agencySettings?.serp_api_key ? SECRET_MASK : ''}

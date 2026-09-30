@@ -46,7 +46,9 @@ export default function DataForSeoUsagePanel() {
   const [loading, setLoading] = useState(true)
   const [budgetDraft,  setBudgetDraft]  = useState('')
   const [savingBudget, setSavingBudget] = useState(false)
-  const [budgetMsg,    setBudgetMsg]    = useState('')
+  // The colour comes from `error`, not from the words: a regex over the message painted any
+  // server sentence without "could", "need" or "http" in it green.
+  const [budgetMsg,    setBudgetMsg]    = useState<{ text: string; error: boolean } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -62,21 +64,41 @@ export default function DataForSeoUsagePanel() {
       <div className="card p-5" style={{ color: 'var(--text-faint)', fontSize: '0.85rem' }}>Loading DataForSEO usage…</div>
     )
   }
-  if (!data) return null
+  // This card is the only place the monthly limit can be seen or set, so it does not vanish when
+  // the read fails.
+  if (!data) {
+    return (
+      <div className="card p-5" role="alert" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+        Couldn&apos;t load DataForSEO usage and the monthly limit. Reload the page to try again.
+      </div>
+    )
+  }
 
   async function saveBudget() {
-    setSavingBudget(true); setBudgetMsg('')
+    setSavingBudget(true); setBudgetMsg(null)
     try {
       const res = await fetch('/api/admin/dataforseo-usage', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ monthly_budget: budgetDraft.trim() === '' ? null : budgetDraft.trim() }),
       })
-      const d = await res.json().catch(() => ({})) as { error?: string }
-      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
-      setBudgetMsg(budgetDraft.trim() === '' ? 'No limit' : 'Saved')
+      const d = await res.json().catch(() => ({})) as { error?: string; monthly_budget?: number | null }
+      // A viewer gets a 403 whose sentence says they cannot change it; shown as it is.
+      if (!res.ok) throw new Error(d.error ?? `Couldn’t save the limit (HTTP ${res.status})`)
+      // The line beside the field reads the budget, so it has to change with the save. It kept
+      // describing the old limit until the page was reloaded.
+      const limit = d.monthly_budget === undefined
+        ? (budgetDraft.trim() === '' ? null : Number(budgetDraft))
+        : d.monthly_budget
+      setData(prev => {
+        if (!prev) return prev
+        const spent = prev.budget?.spent ?? prev.summary.total
+        return { ...prev, budget: { ...prev.budget, spent, limit, allowed: limit == null || spent < limit } }
+      })
+      setBudgetDraft(limit == null ? '' : String(limit))
+      setBudgetMsg({ text: limit == null ? 'Saved — no limit' : 'Saved', error: false })
     } catch (e) {
-      setBudgetMsg(e instanceof Error ? e.message : 'Could not save')
+      setBudgetMsg({ text: e instanceof Error ? e.message : 'Couldn’t save the limit', error: true })
     } finally {
       setSavingBudget(false)
     }
@@ -108,12 +130,14 @@ export default function DataForSeoUsagePanel() {
         padding: '10px 12px', marginBottom: 14, borderRadius: 10,
         background: 'var(--bg-subtle)', border: '1px solid var(--border)',
       }}>
-        <label className="text-xs" style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Monthly limit</label>
-        <span style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>$</span>
+        <label htmlFor="dfs-monthly-limit" className="text-xs" style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Monthly limit</label>
+        <span aria-hidden style={{ color: 'var(--text-faint)', fontSize: '0.8125rem' }}>$</span>
         <input
+          id="dfs-monthly-limit"
           className="input"
           value={budgetDraft}
-          onChange={e => setBudgetDraft(e.target.value)}
+          onChange={e => { setBudgetDraft(e.target.value); setBudgetMsg(null) }}
+          onKeyDown={e => { if (e.key === 'Enter' && !savingBudget) { e.preventDefault(); void saveBudget() } }}
           placeholder="no limit"
           inputMode="decimal"
           style={{ width: 96, fontSize: '0.8125rem', padding: '0.3rem 0.5rem', fontVariantNumeric: 'tabular-nums' }}
@@ -135,8 +159,8 @@ export default function DataForSeoUsagePanel() {
               : 'Reached — paid research is paused until next month.'}
         </span>
         {budgetMsg && (
-          <span className="text-xs" style={{ color: /could|need|http/i.test(budgetMsg) ? 'var(--red)' : 'var(--green)' }}>
-            {budgetMsg}
+          <span role={budgetMsg.error ? 'alert' : 'status'} className="text-xs" style={{ color: budgetMsg.error ? 'var(--red)' : 'var(--green)' }}>
+            {budgetMsg.text}
           </span>
         )}
       </div>
@@ -165,7 +189,7 @@ export default function DataForSeoUsagePanel() {
                     <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(o.cost)}</span>
                   </div>
                   <div style={{ height: 5, borderRadius: 3, background: 'var(--bg-muted)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${Math.max(3, (o.cost / maxOp) * 100)}%`, background: '#6366f1', borderRadius: 3 }} />
+                    <div style={{ height: '100%', width: `${Math.max(3, (o.cost / maxOp) * 100)}%`, background: 'var(--accent)', borderRadius: 3 }} />
                   </div>
                 </div>
               ))}
@@ -193,7 +217,7 @@ export default function DataForSeoUsagePanel() {
                 {s.daily.map(d => (
                   <div key={d.date} title={`${fmtDay(d.date)} · ${fmtMoney(d.cost)}`}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 14 }}>
-                    <div style={{ width: 10, height: `${Math.max(2, (d.cost / maxDay) * 44)}px`, background: '#6366f1', borderRadius: 2 }} />
+                    <div style={{ width: 10, height: `${Math.max(2, (d.cost / maxDay) * 44)}px`, background: 'var(--accent)', borderRadius: 2 }} />
                     <span style={{ fontSize: '0.55rem', color: 'var(--text-faint)' }}>{fmtDay(d.date)}</span>
                   </div>
                 ))}

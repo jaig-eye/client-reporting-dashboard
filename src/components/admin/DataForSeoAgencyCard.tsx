@@ -94,7 +94,7 @@ export default function DataForSeoAgencyCard({
               <li>Paste them below, then attach each client&apos;s domain from their Integrations tab to start rank tracking.</li>
             </ol>
             <p style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-              Checking both devices doubles the daily rank-tracking cost. Set a monthly ceiling under DataForSEO usage in Agency Settings — once the month&apos;s spend reaches it, research and rank checks stop until it resets.
+              Checking both devices doubles the daily rank-tracking cost. Set a monthly limit in the DataForSEO Usage &amp; Spend panel just below this card on the Integrations page — it appears once these credentials are saved. When the month&apos;s spend reaches it, research and rank checks stop until the next month.
             </p>
           </div>
         }
