@@ -112,6 +112,17 @@ export default function KeywordChipInput({
   const optionId = (i: number) => `${listId}-${i}`
   const listOpen = suggestPlaces && openList && places.length > 0
 
+  // Bring the whole list into view when it opens.
+  //
+  // In the setup wizard, Service Areas sits near the bottom of a modal that scrolls on its own, and
+  // the list opened below the field ran past the modal's edge: the last places were cut off, with
+  // nothing to say there were more. Scrolling whatever box holds the field just far enough to show
+  // the list fixes that anywhere this input is used, and moves nothing when it already fits.
+  const listRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (listOpen) listRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [listOpen, places.length])
+
   /**
    * Add text as chips, read back exactly the way the stored value will be read.
    *
@@ -228,6 +239,7 @@ export default function KeywordChipInput({
       {/* Real places, named exactly as the search will find them again. */}
       {listOpen && (
         <ul
+          ref={listRef}
           id={listId}
           role="listbox"
           aria-label="Matching places"
