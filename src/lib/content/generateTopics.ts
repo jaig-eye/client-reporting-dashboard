@@ -277,12 +277,22 @@ export async function generateTopicsForClient(
       .not('query', 'eq', '')
       .limit(2000)
   }
+  // Failed twice: carry on without it rather than produce nothing.
+  //
+  // This was an abort, on the reasoning that Search Console is the largest source of
+  // protectedKeywords and a failed read leaves the enforced guard weaker than it looks. True, but
+  // it made a transient database error the one new way this branch could stop a post that main
+  // would have published — and the pipeline is meant to run itself. The prompt still carries the
+  // instruction not to cannibalize, Ahrefs and tracked ranks still feed the enforced guard where
+  // a client has them, and the next cron pass reads Search Console again two hours later.
+  //
+  // Loud, because a run that quietly produced weaker topics is exactly what nobody notices.
   if (gscRawRes.error) {
-    console.error('[generateTopics] Search Console read failed twice, not generating:', gscRawRes.error.message)
-    return {
-      topics: [], clientName: '', count: 0,
-      error: 'Could not read this client’s Search Console data, so there is no way to tell which pages a new topic would compete with. Nothing was generated — the next scheduled run will try again.',
-    }
+    console.error(
+      `[generateTopics] Search Console read failed twice for client ${clientId} — generating without it.` +
+      ` Topic quality is reduced and the cannibalization guard is relying on Ahrefs, tracked ranks` +
+      ` and the prompt instruction alone: ${gscRawRes.error.message}`,
+    )
   }
   // Secondary sources: a failure weakens the guard rather than blinding it, and both are absent
   // for most clients anyway. Say so loudly instead of stopping the run.
