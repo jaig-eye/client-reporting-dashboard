@@ -447,8 +447,9 @@ const MAX_REASON_CHARS = 300
 /**
  * Leave the reason on the post when no image came out of a run, and return it.
  *
- * Two of the three callers start this in the background and discard what it returns — a post
- * written by the pipeline used to ship with no featured image and nothing anywhere saying why.
+ * Two of the three callers start this in the background, where nobody sees what it returns (the
+ * blog route discards it outright) — so a post written by the pipeline used to ship with no
+ * featured image and nothing on it saying why.
  * content_posts.image_generation_error (migration 108) is where that goes. It is only a trace: the
  * featured image already on the post, if any, is left alone, so a failed regenerate never costs a
  * working picture.
