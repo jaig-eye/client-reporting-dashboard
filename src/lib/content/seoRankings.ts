@@ -66,7 +66,7 @@ export async function registerKeyword(params: {
   const language_code  = params.languageCode ?? 'en'
   try {
     const db = createAdminClient()
-    const { data: existing } = await db
+    const { data: existing, error: exErr } = await db
       .from('seo_keywords')
       .select('id, content_post_id, is_tracked')
       .eq('client_id', params.clientId)
@@ -74,8 +74,28 @@ export async function registerKeyword(params: {
       .eq('location_code', location_code)
       .eq('language_code', language_code)
       .maybeSingle()
+    if (exErr) { console.warn('[seoRankings] registerKeyword lookup failed:', exErr.message); return null }
 
-    const row = existing as { id?: string; content_post_id?: string | null; is_tracked?: boolean | null } | null
+    // The same keyword filed under another location — a keyword typed or researched while a
+    // research location was set is stored under that market's code, and the writer registers
+    // under the country default. Without this the chosen row was never claimed: it stayed in
+    // "researched, not yet written about" and was offered for a second article, while a duplicate
+    // row took the post link.
+    let fallback: { id?: string; content_post_id?: string | null } | null = null
+    if (!existing) {
+      const { data: other } = await db
+        .from('seo_keywords')
+        .select('id, content_post_id')
+        .eq('client_id', params.clientId)
+        .eq('normalized_keyword', normalized)
+        .eq('language_code', language_code)
+        .is('content_post_id', null)
+        .limit(1)
+        .maybeSingle()
+      fallback = other as typeof fallback
+    }
+
+    const row = (existing ?? fallback) as { id?: string; content_post_id?: string | null; is_tracked?: boolean | null } | null
     if (row?.id) {
       // Fill the post link only if empty — never overwrite an earlier post's claim.
       if (params.contentPostId && !row.content_post_id) {
@@ -256,24 +276,42 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     const postIds = Array.from(new Set(rows.map(r => r.content_post_id).filter((v): v is string => typeof v === 'string')))
     const publishedAt = new Map<string, string>()
     if (postIds.length > 0) {
-      const { data: posts, error: postsErr } = await db
-        .from('content_posts')
-        .select('id, published_at, last_pushed_at, wp_status')
-        .in('id', postIds)
-      // Ages drive the whole cadence. A failure leaves every age null, which reads as "money
-      // keyword" and puts the entire universe on the fastest check interval — the expensive
-      // direction, silently.
-      if (postsErr) console.warn('[seoRankings] cannot read post dates, ages unavailable:', postsErr.message)
-      // published_at is only written by the legacy /content/publish route. Everything that goes
-      // out through Approve & Push — which is everything, in practice — stamps last_pushed_at
-      // instead, so reading published_at alone left every real post looking unpublished:
-      // awaiting_publish stayed true and the rankings cron skipped the entire universe.
-      for (const p of (posts ?? []) as { id: string; published_at: string | null; last_pushed_at: string | null; wp_status: string | null }[]) {
-        // last_pushed_at only counts when the post is actually LIVE. Approve stamps it the moment
-        // it pushes, including for a post scheduled weeks ahead as 'future' — so using it
-        // unconditionally told the cron those were published and had it buy depth-100 live checks
-        // for articles nobody could rank yet, defeating the awaiting_publish guard.
-        const anchor = p.published_at ?? (p.wp_status === 'publish' ? p.last_pushed_at : null)
+      type PostDates = {
+        id: string; published_at: string | null; last_pushed_at: string | null; wp_status: string | null
+        target_publish_date: string | null; bc_post_id: string | number | null; published_url: string | null
+      }
+      const posts: PostDates[] = []
+      // Chunked: a client with a few hundred posts makes a single .in() a URL the proxy refuses.
+      for (let i = 0; i < postIds.length; i += 100) {
+        const { data: part, error: postsErr } = await db
+          .from('content_posts')
+          .select('id, published_at, last_pushed_at, wp_status, target_publish_date, bc_post_id, published_url')
+          .in('id', postIds.slice(i, i + 100))
+        // Ages drive the whole cadence. A failed read leaves these posts without an anchor, so their
+        // keywords read as awaiting publication and are skipped this run — no spend, but no checks.
+        if (postsErr) console.warn('[seoRankings] cannot read post dates, skipping those keywords this run:', postsErr.message)
+        posts.push(...((part ?? []) as PostDates[]))
+      }
+      const today = new Date().toISOString().slice(0, 10)
+      const later = (a: string | null, b: string | null) => (!a ? b : !b ? a : a > b ? a : b)
+      for (const p of posts) {
+        // When the article went live, which is what its time in the index is measured from.
+        //
+        // - published_at: the legacy /content/publish route.
+        // - WordPress 'publish': pushed and live. A post scheduled ahead is pushed weeks before its
+        //   date and flipped to 'publish' later, so the later of push and scheduled date is when it
+        //   went live — the push time alone made a new post look weeks old and skipped the
+        //   indexing grace period.
+        // - WordPress 'future' whose date has come: live on the site even before wp-reconcile has
+        //   recorded the flip.
+        // - BigCommerce: pushed with a public URL is live. None of its push paths write wp_status,
+        //   so every BigCommerce keyword used to read as unpublished forever.
+        const scheduled = p.target_publish_date
+        const anchor =
+          p.published_at
+          ?? (p.wp_status === 'publish' ? later(p.last_pushed_at, scheduled) : null)
+          ?? (p.wp_status === 'future' && scheduled && scheduled <= today ? scheduled : null)
+          ?? (p.bc_post_id != null && p.published_url ? later(p.last_pushed_at, scheduled) : null)
         if (anchor) publishedAt.set(p.id, anchor)
       }
     }

@@ -30,8 +30,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, readResearchLocation, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
-import { canSpendOnDfs, getDfsBudget } from '@/lib/content/dfsBudget'
+import { resolveDfsCreds, resolveSeoConfig, dfsSerpRank, readResearchLocation, estimateSerpCost, type SeoDevice, type DfsCreds } from '@/lib/connectors/dataforseo'
+import { canSpendOnDfs, getDfsBudget, remainingDfsBudget } from '@/lib/content/dfsBudget'
 import { getTrackedKeywords, upsertRanking } from '@/lib/content/seoRankings'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 
@@ -138,6 +138,9 @@ const ROUTINE_DEPTH = 30
 /** Bound a run. Well above the expected volume; a backstop, not a throttle. */
 const MAX_CHECKS_PER_RUN = 400
 
+/** Live checks in flight at once. */
+const CHECK_CONCURRENCY = 4
+
 /** Small stable hash, so a keyword's slot within its interval never moves between runs. */
 function stableOffset(seed: string, modulo: number): number {
   let h = 2166136261
@@ -161,10 +164,18 @@ export async function GET(req: NextRequest) {
     connector?: { type?: string; auth?: Record<string, unknown>; config?: Record<string, unknown> }
   }> = []
   try {
-    const { data } = await db
+    // Filtered in the query, not in JS: an unfiltered select of every connection is cut at 1,000
+    // rows, and DataForSEO clients past that silently dropped out. Paused connections are not billed.
+    const { data, error } = await db
       .from('client_connections')
-      .select('client_id, external_id, config, connector:connectors(type, auth, config)')
-    connections = ((data ?? []) as typeof connections).filter(c => c.connector?.type === 'dataforseo')
+      .select('client_id, external_id, config, connector:connectors!inner(type, auth, config)')
+      .eq('connector.type', 'dataforseo')
+      .eq('status', 'active')
+    if (error) {
+      console.error('[cron/dataforseo-rankings] connections unreadable:', error.message)
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    }
+    connections = (data ?? []) as typeof connections
   } catch (e) {
     console.warn('[cron/dataforseo-rankings] no connections queryable:', e)
     return NextResponse.json({ ok: true, dormant: true, checked: 0 })
@@ -237,7 +248,14 @@ export async function GET(req: NextRequest) {
         // A keyword never read before is read now: that first reading is the baseline every later
         // comparison is measured against, and waiting for its slot would lose the entry position.
         const firstRead = !kw.last_checked_at
-        if (!firstRead && (epochDay + stableOffset(kw.id + device, interval)) % interval !== 0) {
+        // Read today already: a second run the same day (a retry, a manual trigger) would buy the
+        // same answer again.
+        if (kw.last_checked_at && kw.last_checked_at.slice(0, 10) === today) { skippedNotDue++; continue }
+        // The hashed slot spreads keywords across the interval. It is not the only way in: a check
+        // missed on its slot (time budget, no answer, budget hold) used to wait a whole interval —
+        // up to half a year — because due-ness never looked at when the keyword was last read.
+        const overdue = !!kw.last_checked_at && (Date.parse(today) - Date.parse(kw.last_checked_at.slice(0, 10))) / 86_400_000 > interval
+        if (!firstRead && !overdue && (epochDay + stableOffset(kw.id + device, interval)) % interval !== 0) {
           skippedNotDue++
           continue
         }
@@ -256,10 +274,26 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  // Oldest first, so a cap that binds rotates through the universe instead of starving the tail.
+  // Oldest first, so a cap that binds rotates through the universe instead of starving the tail —
+  // and, with the overdue rule above, what a cap leaves behind is first in line tomorrow.
   jobs.sort((a, b) => (a.lastChecked ?? '').localeCompare(b.lastChecked ?? ''))
-  const capped  = jobs.length > MAX_CHECKS_PER_RUN
-  const runJobs = jobs.slice(0, MAX_CHECKS_PER_RUN)
+
+  // Sized to the money left. One "allowed" at the start used to buy the whole run, so the ceiling
+  // could be overshot by up to 400 checks' worth; now the run stops where the budget does.
+  const remaining = await remainingDfsBudget()
+  let affordable = 0, planned = 0
+  for (const j of jobs) {
+    const next = planned + estimateSerpCost(j.depth)
+    if (next > remaining) break
+    planned = next
+    affordable++
+  }
+  const limit   = Math.min(MAX_CHECKS_PER_RUN, affordable)
+  const capped  = jobs.length > limit
+  const runJobs = jobs.slice(0, limit)
+  if (affordable < Math.min(jobs.length, MAX_CHECKS_PER_RUN)) {
+    console.warn(`[cron/dataforseo-rankings] budget covers ${affordable} of ${jobs.length} due check(s) this run`)
+  }
 
   console.log(
     `[cron/dataforseo-rankings] ${runJobs.length} live check(s); ` +
@@ -287,8 +321,16 @@ export async function GET(req: NextRequest) {
   const TIME_BUDGET_MS = 240_000
   let stoppedEarly = false
 
-  for (const job of runJobs) {
-    if (Date.now() - startedAt > TIME_BUDGET_MS) { stoppedEarly = true; break }
+  // A few at a time. One after another, a slow live SERP each, the time budget bound long before
+  // the cap did; four in flight is well inside DataForSEO's rate limits.
+  let next = 0
+  const worker = async () => {
+    while (next < runJobs.length) {
+      if (Date.now() - startedAt > TIME_BUDGET_MS) { stoppedEarly = true; return }
+      await runOne(runJobs[next++])
+    }
+  }
+  const runOne = async (job: Job) => {
     try {
       const rank = await dfsSerpRank(job.domain, job.keyword, job.creds, {
         locationCode: job.locationCode,
@@ -304,7 +346,7 @@ export async function GET(req: NextRequest) {
       // null means DataForSEO did not answer. That is not a reading: recording it would write a
       // false "dropped out" into the history, and stamping the keyword would spend its one
       // depth-100 baseline read on nothing. Leave both untouched so the next run asks again.
-      if (!rank) { unanswered++; continue }
+      if (!rank) { unanswered++; return }
       checked++
       checkedKeywordIds.add(job.keywordId)
 
@@ -324,6 +366,7 @@ export async function GET(req: NextRequest) {
       console.warn(`[cron/dataforseo-rankings] check failed for "${job.keyword}" (${job.device}):`, e)
     }
   }
+  await Promise.all(Array.from({ length: CHECK_CONCURRENCY }, worker))
 
   // The checkpoint. A silent failure here is the expensive one: every keyword still reads as
   // never-checked, so tomorrow's run re-buys the same depth-100 first reads — and a throw would

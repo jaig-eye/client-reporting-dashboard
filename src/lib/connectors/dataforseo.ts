@@ -162,7 +162,7 @@ function readTopCost(json: Record<string, unknown> | null): number {
   return typeof c === 'number' && c > 0 ? c : 0
 }
 /** Estimated live/advanced SERP cost (priced per 10 results) when the response omits cost. */
-function estimateSerpCost(depth: number): number {
+export function estimateSerpCost(depth: number): number {
   return Math.max(1, Math.ceil((depth || 100) / 10)) * 0.002
 }
 const DFS_LABS_COST_ESTIMATE = 0.01
@@ -274,6 +274,16 @@ export async function dfsSerpRank(
     depth:         opts.depth ?? 100,
   })
   if (!json) return null   // no answer — not a reading
+  // A refused task (bad location code, invalid keyword) is not a reading either. It used to be
+  // billed at the estimate and returned as "not ranking", which wrote a false null into the history,
+  // stamped the keyword as checked and spent its one depth-100 baseline read.
+  const taskErr = firstTaskError(json)
+  if (taskErr) {
+    const charged = readTopCost(json)
+    if (charged) opts.onCost?.(charged)
+    console.warn(`[dataforseo] rank check refused for "${keyword}": ${taskErr}`)
+    return null
+  }
   opts.onCost?.(readTopCost(json) || estimateSerpCost(opts.depth ?? 100))
   const items = firstResultItems(json)
   if (!items.length) return empty

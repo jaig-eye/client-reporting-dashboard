@@ -67,9 +67,15 @@ export async function addManualKeywords(
   raw: string[],
 ): Promise<AddResult> {
   const none: AddResult = { added: 0, rechosen: 0, enriched: false, cost: 0 }
-  const wanted = Array.from(new Set(
-    raw.map(k => String(k ?? '').trim()).filter(k => k.length >= 2 && k.length <= 120),
-  )).slice(0, MAX_PER_CALL)
+  // Deduplicated the way the table's unique key sees them. A case-sensitive Set let "Roof Repair"
+  // and "roof repair" through as two rows with one normalized key, and the single insert then
+  // failed the whole typed batch.
+  const byNormal = new Map<string, string>()
+  for (const k of raw.map(k => String(k ?? '').trim()).filter(k => k.length >= 2 && k.length <= 120)) {
+    const n = normalize(k)
+    if (n && !byNormal.has(n)) byNormal.set(n, k)
+  }
+  const wanted = Array.from(byNormal.values()).slice(0, MAX_PER_CALL)
   if (!clientId || wanted.length === 0) return none
 
   // The client's market, so a manual keyword is filed against the same location as every other
