@@ -135,6 +135,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // NOT move it: for a rolling-monthly client that date IS the publish-day anchor, so
   // overwriting it with today silently shifts every future publish date.
   const [existingStartDate, setExistingStartDate] = useState<string | null>(null)
+  // The client's saved settings could not be read; saving is refused so defaults never overwrite them.
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [imageGen,    setImageGen]    = useState(false)
   const [imagePrompt, setImagePrompt] = useState('')
 
@@ -360,8 +362,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             // Only when a live connection did not already give us a better site URL.
             if (derivedSite && !connectionDetectedUrl) setAnalyzeUrl(derivedSite)
           }
+        } else {
+          setSettingsLoadFailed(true)
         }
-      } catch { /* ignore */ }
+      } catch { setSettingsLoadFailed(true) }
     }
     loadInit()
   }, [clientId])
@@ -593,6 +597,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * was, so researching from a re-opened wizard does not mark a set-up client as unfinished.
    */
   async function saveSettings(wizardCompleted?: boolean) {
+    // Every field below is written. If the client's saved settings never loaded, the form holds
+    // defaults — blank Brand DNA, a weekly Monday schedule, no seeds — and saving would write those
+    // over the real ones. Refuse instead; every caller shows this message.
+    if (settingsLoadFailed) {
+      throw new Error('This client’s saved settings couldn’t be loaded, so saving now would overwrite them with blanks. Close the wizard and open it again.')
+    }
     const eeatData = {
       founded_year:           brand.founded_year,
       years_in_business:      brand.years_in_business,
@@ -656,8 +666,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     try {
       await saveSettings(true)
       onComplete()
-    } catch {
-      setSaveMsg('Save failed — please try again.')
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : 'Save failed — please try again.')
     } finally {
       setSaving(false)
     }
@@ -756,6 +766,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             Skip Setup
           </button>
         </div>
+
+        {settingsLoadFailed && (
+          <div role="alert" style={{ margin: '1rem 1.5rem 0', padding: '0.625rem 0.875rem', borderRadius: 8, border: '1px solid var(--red)', background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem' }}>
+            This client’s saved settings couldn’t be loaded. You can look through the steps, but nothing will be saved — close the wizard and open it again.
+          </div>
+        )}
 
         {/* Step body */}
         <div style={{ padding: '1.5rem', flex: 1 }}>
