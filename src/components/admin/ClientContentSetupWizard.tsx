@@ -93,6 +93,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   // Step 1 state
   const [hasGsc, setHasGsc] = useState<boolean | null>(null)
+  /** Whether DataForSEO is connected — the research step is the only one that needs it. */
+  const [hasDfs, setHasDfs] = useState(false)
   const [wpUrl,  setWpUrl]  = useState('')
 
   // Step 2 state
@@ -218,6 +220,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             setDetectedConnectionId(detectedId)
           }
           setHasGsc(conns.some(c => c.type === 'google_search_console'))
+          setHasDfs(conns.some(c => c.type === 'dataforseo'))
         } else {
           setHasGsc(false)
         }
@@ -487,7 +490,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     // On the research step itself — the screen that says this uses the DataForSEO balance —
     // not the step before it, which used to run a paid call while telling the operator that
     // "nothing here is saved".
-    if (step !== 8 || researchStarted.current) return
+    // And not at all without DataForSEO: the step shows a connect prompt in that case, and firing
+    // a research run behind it would save settings and stamp the client as researched on the
+    // strength of a call that can only come back empty.
+    if (step !== 8 || !hasDfs || researchStarted.current) return
     researchStarted.current = true
     void (async () => {
       try {
@@ -513,7 +519,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     })()
     // saveSettings and clientId are read inside the async body from this render's closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step])
+  }, [step, hasDfs])
 
   const [rerunning, setRerunning] = useState(false)
 
@@ -773,6 +779,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setSeeds={v => { seedsPrefilled.current = true; setFoundationalKeywords(v) }}
               onRerun={rerunResearch}
               rerunning={rerunning}
+              hasDfs={hasDfs}
             />
           )}
           {step === 9 && (
@@ -811,7 +818,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               className="btn btn-primary"
               style={{ fontSize: '0.875rem' }}
             >
-              {step === 7 ? 'Skip →' : 'Continue →'}
+              {step === 7 || (step === 8 && !hasDfs) ? 'Skip →' : 'Continue →'}
             </button>
           </div>
         )}
@@ -1596,7 +1603,7 @@ function StepContentTypes({
 
 // --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning }: {
+function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning, hasDfs }: {
   research:  ResearchData | null
   done:      boolean
   clientId:  string
@@ -1606,9 +1613,41 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
   setSeeds:  (v: string) => void
   onRerun:   () => void
   rerunning: boolean
+  /** Whether this client has a DataForSEO connection. Without one there is nothing to research. */
+  hasDfs:    boolean
 }) {
-  const busy = !done || rerunning
+  // Every hook first. An early return above a useState changes the hook order between renders,
+  // which React refuses — and this component is rendered with hasDfs false and then true as the
+  // connection check resolves, so it would have hit exactly that.
   const [confirming, setConfirming] = useState(false)
+
+  // Nothing to research without DataForSEO, so ask for it here instead of running a step that can
+  // only come back empty. Everything else in the wizard works without it; this is the one screen
+  // that does not, and it is better to say so than to show an empty list and let the operator
+  // wonder which of the previous eight answers was wrong.
+  if (!hasDfs) {
+    return (
+      <div>
+        <StepTitle>Connect DataForSEO to research keywords</StepTitle>
+        <StepSub>
+          Keyword research needs DataForSEO — it is what finds what people search for, what this
+          client already ranks for, and what competitors rank for. Connect it on the client&apos;s
+          Integrations tab and come back, or skip: everything else here is already set up, and you
+          can add your own keywords by hand on the Keywords tab at any time.
+        </StepSub>
+        <a
+          href={`/admin/clients/${clientId}?tab=integrations`}
+          target="_blank" rel="noopener noreferrer"
+          className="btn btn-secondary"
+          style={{ display: 'inline-block', fontSize: '0.875rem', marginTop: 4 }}
+        >
+          Open Integrations →
+        </a>
+      </div>
+    )
+  }
+
+  const busy = !done || rerunning
   const keywords     = research?.keywords ?? []
   const shown        = keywords.slice(0, 60)
   const competitors  = research?.competitors ?? []
