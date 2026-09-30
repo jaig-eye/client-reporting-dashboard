@@ -29,6 +29,7 @@ import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
 import { saveSerpInsightById, type SerpInsight } from '@/lib/content/serpInsights'
 import { registerKeyword } from '@/lib/content/seoRankings'
 import { readDemotion, normalizeKeyword } from '@/lib/content/cannibalization'
+import { computeInternalLinks } from '@/lib/content/internalLinks'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
@@ -371,37 +372,6 @@ function computeWordCount(html: string): number {
 }
 function computeHeadingCount(html: string): number {
   return (html.match(/<h[234][^>]*>/gi) || []).length
-}
-/**
- * How many of the article's links point back into the client's own site.
- *
- * `allowed` is the set the pipeline was permitted to link to — the sitemap, manual links, silo
- * pages — which is the same set stripHallucinatedLinks validates against. Anything in it is by
- * definition internal, whatever shape the URL takes.
- *
- * The previous version counted anchors containing neither http:// nor https://, i.e. it assumed
- * internal links are relative. They are not: the pipeline injects absolute URLs read from the
- * client's own sitemap, so every genuine internal link was counted as external and every post
- * recorded zero. The links were always there; the number was always wrong.
- */
-function computeInternalLinks(html: string, allowed?: Iterable<string>): number {
-  const hrefs = Array.from(html.matchAll(/<a [^>]*href=["']([^"']+)["']/gi)).map(m => m[1])
-  if (!hrefs.length) return 0
-
-  // Compare on host + path so a trailing slash or a http/https difference does not hide a match.
-  const key = (u: string) => u.trim().toLowerCase()
-    .replace(/^https?:\/\//, '').replace(/[?#].*$/, '').replace(/\/+$/, '')
-  const allowedKeys = new Set(Array.from(allowed ?? []).map(key))
-  const ownHosts = new Set(Array.from(allowedKeys).map(k => k.split('/')[0]).filter(Boolean))
-
-  return hrefs.filter(h => {
-    const raw = h.trim()
-    if (!raw || raw.startsWith('#') || /^(mailto|tel):/i.test(raw)) return false
-    // A relative path can only be our own site.
-    if (!/^https?:\/\//i.test(raw)) return true
-    const k = key(raw)
-    return allowedKeys.has(k) || ownHosts.has(k.split('/')[0])
-  }).length
 }
 
 // ─── Link validator ───────────────────────────────────────────────────────────

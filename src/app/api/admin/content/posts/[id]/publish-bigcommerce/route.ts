@@ -32,12 +32,18 @@ export async function POST(
   // Selecting a non-existent column causes PostgREST to error → "Post not found" 404.
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url')
+    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url, status')
     .eq('id', id)
     .maybeSingle()
 
   if (postErr || !post) {
     return NextResponse.json({ error: 'Post not found' }, { status: 404 })
+  }
+
+  // Same guard as /approve: a regenerate in progress will overwrite this content when it finishes,
+  // so pushing now sends the old text to the store and leaves the store and the dashboard apart.
+  if ((post as { status?: string | null }).status === 'generating') {
+    return NextResponse.json({ error: 'This post is still being regenerated — push it once it finishes.' }, { status: 409 })
   }
 
   const p = post as Record<string, unknown>
