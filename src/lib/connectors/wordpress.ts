@@ -89,6 +89,28 @@ export function isSameWpSite(a: string | null | undefined, b: string | null | un
   return !!ha && ha === wpSiteHost(b)
 }
 
+/**
+ * WordPress's link for content with no public permalink yet: '?p=N' for a post, '?page_id=N' for
+ * a page. A site left on plain permalinks serves the same shape as its permanent URL, so callers
+ * treat it as a placeholder only while the status is not 'publish'.
+ */
+export function isWpPlaceholderLink(url: string | null | undefined): boolean {
+  return !!url && /[?&](?:p|page_id)=\d+/.test(url)
+}
+
+/**
+ * Is a link WordPress returned fit to store as the post's published_url? It must be an absolute
+ * http(s) URL on the site the post lives on (scheme and a leading www. ignored).
+ *
+ * published_url is rendered as "View live" and injected into other articles as an internal link,
+ * so a relative path, a javascript: URL, or a link to some other host would be carried straight
+ * into client content. WordPress builds the link from its own home_url, so on a healthy site this
+ * always holds; when it does not, storing nothing is the safe answer.
+ */
+export function isLinkOnSite(link: string | null | undefined, siteUrl: string | null | undefined): boolean {
+  return !!link && /^https?:\/\//i.test(link) && isSameWpSite(link, siteUrl)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Credentialed requests and redirects
 // ─────────────────────────────────────────────────────────────────────────────

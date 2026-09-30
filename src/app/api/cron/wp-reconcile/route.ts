@@ -26,7 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { fetchPost } from '@/lib/connectors/wordpress'
+import { fetchPost, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -48,8 +48,6 @@ type PostRow = {
   content_type: string | null
 }
 
-const isPlaceholderLink = (url: string | null) => !!url && /[?&]p=\d+/.test(url)
-
 export async function GET(req: NextRequest) {
   if (!verifyCronAuth(req.headers.get('authorization'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -64,7 +62,7 @@ export async function GET(req: NextRequest) {
     .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id, content_type')
     .not('wp_post_id', 'is', null)
     // LIKE cannot express the '&p=' form, so this is fractionally narrower than
-    // isPlaceholderLink below. That is the safe direction: a candidate missed costs a stale row,
+    // isWpPlaceholderLink below. That is the safe direction: a candidate missed costs a stale row,
     // a candidate wrongly matched costs a write. WordPress emits '?p=' anyway — it is the first
     // query parameter — so the two agree in practice.
     // Any post whose recorded state could have moved on without us — not just the overdue ones.
@@ -221,8 +219,11 @@ export async function GET(req: NextRequest) {
       const patch: Record<string, unknown> = {}
       if (live.status && live.status !== post.wp_status) patch.wp_status = live.status
       // Only a real permalink is worth storing; the placeholder is what we were trying to escape.
-      if (live.link && !isPlaceholderLink(live.link) && live.link !== post.published_url) {
-        patch.published_url = live.link
+      // And only one on this post's own site: published_url becomes "View live" and an internal
+      // link in other articles, so a relative, non-http or off-site link must not land there.
+      if (live.link && !isWpPlaceholderLink(live.link) && live.link !== post.published_url) {
+        if (isLinkOnSite(live.link, siteUrl)) patch.published_url = live.link
+        else console.warn(`[cron/wp-reconcile] post ${post.id}: WordPress returned a link that is not an http(s) URL on ${siteUrl} — not stored`)
       }
 
       if (Object.keys(patch).length > 0) {

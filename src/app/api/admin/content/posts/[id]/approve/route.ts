@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta, fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta, fetchWithSiteCredentials, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
 import { xmlrpcSetPostMeta } from '@/lib/connectors/wordpressXmlrpc'
 import { rankMathUpdateMeta } from '@/lib/connectors/rankMathApi'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
@@ -17,16 +17,6 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 import { isPublicPermalink }   from '@/lib/content/postLinks'
-
-/**
- * WordPress's pre-publication placeholder link shape.
- *
- * Only a placeholder while the post is not public — a site on plain permalinks serves exactly this
- * as its permanent URL, so the status has to be checked alongside it.
- */
-function isPlaceholderPermalink(url: string): boolean {
-  return /[?&]p=\d+/.test(url)
-}
 
 /**
  * The Rank Math block sent with every post and page.
@@ -911,6 +901,31 @@ export async function POST(
       ? `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
       : `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
 
+    // Only a real permalink goes in published_url; the wp-admin fallback lives in
+    // platform_edit_url so internal-link injection never emits it. And when WP returns no link at
+    // all, keep whatever was already stored rather than nulling a permalink that was previously
+    // correct.
+    //
+    // A '?p=<id>' (post) or '?page_id=<id>' (page) link is WordPress's placeholder for content that
+    // isn't public yet. Storing it makes an unpublished post look published and leaves a URL that
+    // will be wrong the moment it goes live, so it is not written while the post is unpublished —
+    // /api/cron/wp-reconcile collects the real permalink once the post is out. Once the post IS
+    // public that same shape is the real thing: a site left on plain permalinks serves '?p=123'
+    // permanently, and refusing it there would leave that client with no published_url at all.
+    //
+    // And it must be an absolute link on the site we just pushed to. published_url becomes "View
+    // live" and an internal link in other articles, so anything else would be carried into client
+    // content; not storing it costs a missing link, which reconcile retries.
+    const storedLink = (() => {
+      if (!result.link) return null
+      if (isWpPlaceholderLink(result.link) && (result.status || wpPublishStatus) !== 'publish') return null
+      if (!isLinkOnSite(result.link, siteUrl)) {
+        console.warn(`[approve] post ${id}: WordPress returned a link that is not an http(s) URL on ${siteUrl} — published_url not stored`)
+        return null
+      }
+      return result.link
+    })()
+
     await db.from('content_posts').update({
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
@@ -920,22 +935,8 @@ export async function POST(
       // becomes a draft) and answers 200 either way, so the two diverge without a trace.
       wp_status:         result.status || wpPublishStatus,
       status:            'draft_saved',
-      // Only a real permalink goes in published_url; the wp-admin fallback lives
-      // in platform_edit_url so internal-link injection never emits it. And when
-      // WP returns no link at all, keep whatever was already stored rather than
-      // nulling a permalink that was previously correct.
-      //
-      // A '?p=<id>' link is WordPress's placeholder for a post that isn't public yet. Storing it
-      // makes an unpublished post look published and leaves a URL that will be wrong the moment it
-      // goes live, so it is not written while the post is unpublished — /api/cron/wp-reconcile
-      // collects the real permalink once the post is out.
-      //
-      // Once the post IS public that same shape is the real thing: a site left on plain permalinks
-      // serves '?p=123' permanently, and refusing it there would leave that client with no
-      // published_url at all.
-      ...(result.link && !(isPlaceholderPermalink(result.link) && (result.status || wpPublishStatus) !== 'publish')
-        ? { published_url: result.link }
-        : {}),
+      // See storedLink above.
+      ...(storedLink ? { published_url: storedLink } : {}),
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
@@ -1071,8 +1072,9 @@ export async function POST(
       // The DB write above deliberately keeps admin URLs out of published_url;
       // returning wpEditUrl here put one straight back into the editor's local
       // state, so the just-pushed post showed no 'View live' link until a full
-      // reload. Report exactly what was stored.
-      published_url: isPublicPermalink(result.link) ? result.link : null,
+      // reload. Report exactly what was stored — a link refused above must not reach "View live"
+      // through the response either.
+      published_url: storedLink && isPublicPermalink(storedLink) ? storedLink : null,
     })
   } catch (err) {
     // A FAILED PUSH IS NOT A FAILED APPROVAL.
