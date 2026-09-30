@@ -245,6 +245,10 @@ export default function KeywordResearchPanel({
   /** Themes inside a bucket, chosen themes first — keyed off the SAVED flag, so a row does not jump away as you tick it. */
   const themed = useCallback((mine: ResearchKeyword[]) => {
     const all = groupKeywords(mine, k => k.keyword, strengthOf, geoWords)
+      // A saved choice leads its theme, so what is in use is never folded away under "3 similar"
+      // — a keyword added from the evidence has no search count and would otherwise sit behind a
+      // stronger variant. Keyed off the saved flag too, so ticking a variant does not move it.
+      .map(g => ({ ...g, members: [...g.members.filter(m => m.chosen), ...g.members.filter(m => !m.chosen)] }))
     const isChosen = (g: typeof all[number]) => g.members.some(m => m.chosen)
     return [...all.filter(isChosen), ...all.filter(g => !isChosen(g))]
   }, [geoWords])
