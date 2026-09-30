@@ -168,7 +168,11 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } finally {
       setLoadingId(null)
     }
-  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone, pushStates])
+    // pushStates is deliberately NOT a dependency: every write to it above uses the functional
+    // setPushStates(prev => …) form, so this callback never reads it. Listing it rebuilt doApprove
+    // three times per approval — pushing, then live or failed — while the reviewer was working
+    // down the list. approvedIds and rejectedIds stay: those are read directly.
+  }, [initialPosts, postsByClient, approvedIds, rejectedIds, totalPosts, playApprove, playClientDone, playMonthDone])
 
   const doReject = useCallback(async (postId: string, discard?: boolean, cms: CmsAction = 'leave') => {
     setLoadingId(postId)
