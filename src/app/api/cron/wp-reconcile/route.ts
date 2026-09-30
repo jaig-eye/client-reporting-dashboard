@@ -26,7 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { fetchPost, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
+import { readPostState, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -75,15 +75,17 @@ export async function GET(req: NextRequest) {
     // passed.
     //
     // So the question is inverted: a row is settled only when it says 'publish' AND carries a real
-    // permalink. Everything else is a candidate, at any stage. Rows already marked 'deleted' are
-    // skipped in the loop below — WordPress has nothing left to tell us about those, and they would
-    // otherwise match every run forever.
+    // permalink. Everything else is a candidate, at any stage — except rows already marked
+    // 'deleted'. WordPress has nothing left to tell us about those, and the published_url tests
+    // would otherwise match them every run, forever, each one taking a slot under the cap.
     .or(
       `wp_status.is.null,` +
-      `and(wp_status.neq.publish,wp_status.neq.deleted),` +
-      `published_url.is.null,` +
-      `published_url.like.*?p=*,` +
-      `published_url.like.*wp-admin*`,
+      `and(wp_status.neq.deleted,or(` +
+        `wp_status.neq.publish,` +
+        `published_url.is.null,` +
+        `published_url.like.*?p=*,` +
+        `published_url.like.*wp-admin*` +
+      `))`,
     )
     // Overdue first. Without an order, PostgREST hands back an arbitrary slice of the
     // candidates, and a row that can never be fixed — a '?p=' placeholder on a post WordPress
@@ -183,9 +185,7 @@ export async function GET(req: NextRequest) {
   let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0
 
   for (const post of posts) {
-    // Already known gone. The or-clause above can still match one of these through the
-    // published_url tests, and re-asking WordPress about a post it has deleted only earns another
-    // 404 — every run, forever.
+    // Already known gone. The select excludes these; this is the belt to that brace.
     if (post.wp_status === 'deleted') continue
     const candidates = fallbackByClient.get(post.client_id) ?? []
     const auth    = (post.connection_id ? authByConnection.get(post.connection_id) : undefined)
@@ -200,10 +200,20 @@ export async function GET(req: NextRequest) {
       checked++
       // Service-area rows hold a PAGE id; asking /posts for one returns 404, which this loop
       // would record as "deleted from WordPress" against a page that is live.
-      const live = await fetchPost(siteUrl, auth, post.wp_post_id, post.content_type === 'service_area' ? 'page' : 'post')
+      const state = await readPostState(siteUrl, auth, post.wp_post_id, post.content_type === 'service_area' ? 'page' : 'post')
 
-      // Gone from WordPress. Someone deleted it there; say so rather than keep claiming it exists.
-      if (!live) {
+      // Anything short of an answer from a working WordPress — a parked domain, a security plugin,
+      // plain permalinks, a 5xx, a timeout — says nothing about the post. The row is left alone.
+      if (state.outcome === 'unreadable') {
+        unreadable++
+        console.warn(`[cron/wp-reconcile] could not read wp ${post.wp_post_id} on ${siteUrl}: ${state.reason}`)
+        continue
+      }
+
+      // Gone from WordPress: its own REST API, demonstrably working, says the id does not exist.
+      // Someone deleted it there; say so rather than keep claiming it exists. This is permanent —
+      // deleted rows are never selected again — which is why readPostState demands both proofs.
+      if (state.outcome === 'gone') {
         await db.from('content_posts')
           // No updated_at. Migration 206's trigger discards it on bookkeeping writes anyway, and
           // on a database with 200 but not 206 an explicit stamp pushes updated_at past
@@ -215,6 +225,7 @@ export async function GET(req: NextRequest) {
         console.warn(`[cron/wp-reconcile] post ${post.id} (wp ${post.wp_post_id}) no longer exists on ${siteUrl}`)
         continue
       }
+      const live = state
 
       const patch: Record<string, unknown> = {}
       if (live.status && live.status !== post.wp_status) patch.wp_status = live.status

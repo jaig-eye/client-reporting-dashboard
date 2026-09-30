@@ -461,6 +461,8 @@ export async function updatePost(
  * `kind` matters: a service-area row stores a WordPress PAGE id, and /wp/v2/posts/{pageId}
  * answers 404 for it. Reconcile read every row through /posts and took that 404 as proof the
  * content had been deleted, writing wp_status 'deleted' over live pages.
+ *
+ * null is ANY 404, which is not proof of deletion — see readPostState, which reconcile uses.
  */
 export async function fetchPost(
   siteUrl: string,
@@ -480,6 +482,77 @@ export async function fetchPost(
   }
   const data = (await res.json()) as Record<string, unknown>
   return { id: Number(data.id), link: String(data.link || ''), status: String(data.status || '') }
+}
+
+/**
+ * What WordPress says about one post or page, in the three answers reconcile needs to tell apart.
+ *
+ *   found      — WordPress returned the post object.
+ *   gone       — WordPress itself says the id does not exist, AND its REST API demonstrably works.
+ *   unreadable — anything else. Not evidence of anything; the caller leaves the row alone.
+ *
+ * fetchPost's null means "any 404", and a 404 is far weaker evidence than it looks. A lapsed
+ * domain parked with a registrar 404s every path. A security plugin can 404 /wp-json. A site on
+ * plain permalinks has no /wp-json route at all. Reconcile took each of those as "deleted from
+ * WordPress" and wrote it permanently, and rows marked deleted are never read again — so a live
+ * article dropped out of the dashboard for good.
+ *
+ * So 'gone' needs both halves of the proof: the 404 carries WordPress's own rest_post_invalid_id
+ * (the posts controller serves pages too, and uses the same code for them), and the collection
+ * route on the same site, asked with the same credentials, answers 200 with a list.
+ */
+export type WpPostState =
+  | { outcome: 'found'; id: number; link: string; status: string }
+  | { outcome: 'gone' }
+  | { outcome: 'unreadable'; reason: string }
+
+export async function readPostState(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+  kind: 'post' | 'page' = 'post',
+): Promise<WpPostState> {
+  const base = kind === 'page' ? 'pages' : 'posts'
+  const unreadable = (reason: string): WpPostState => ({ outcome: 'unreadable', reason })
+
+  let res: Response
+  try {
+    res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
+    })
+  } catch (e) {
+    return unreadable(String(e instanceof Error ? e.message : e).slice(0, 200))
+  }
+
+  const text = await res.text().catch(() => '')
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { /* not JSON — decided below */ }
+  const obj = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
+
+  if (res.ok) {
+    // A parked page or a plugin's HTML answers 200 too; only a post object counts as found.
+    if (!obj || obj.id == null || typeof obj.status !== 'string') return unreadable(`HTTP ${res.status} without a ${kind} object`)
+    return { outcome: 'found', id: Number(obj.id), link: String(obj.link || ''), status: obj.status }
+  }
+
+  const code = obj && typeof obj.code === 'string' ? obj.code : ''
+  if (res.status !== 404 || code !== 'rest_post_invalid_id') {
+    return unreadable(`HTTP ${res.status}${code ? ` ${code}` : ' (not a WordPress REST error)'}`)
+  }
+
+  // WordPress says the id is invalid. Prove the API answering is really this site's, working.
+  try {
+    const probe = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}?per_page=1&_fields=id`), {
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
+    })
+    const list = probe.ok ? await probe.json().catch(() => null) : null
+    if (!Array.isArray(list)) return unreadable(`404 rest_post_invalid_id, but /${base} answered ${probe.status} without a list`)
+  } catch (e) {
+    return unreadable(`404 rest_post_invalid_id, but /${base} could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`)
+  }
+  return { outcome: 'gone' }
 }
 
 /**
