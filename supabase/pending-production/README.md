@@ -30,10 +30,12 @@ Four places, and it is worth knowing which is which when reading `dataforseo_usa
 
 **Research** — `/api/cron/keyword-research`, daily at 04:30 UTC, for clients whose research is 30+
 days old (at most three per run), and on an explicit button press in the Keywords tab or the setup
-wizard. Around ten Labs calls (roughly ten cents) and, when a research location is set, five live
-SERPs of the starting keywords (~2¢) plus one Google Ads local-volume task (9¢). A forced re-run is
-refused within an hour of the last one. Topic generation never buys research: it reads the
-keywords a person ticked.
+wizard. Labs calls for the site and its competitors, then two per service — a keyword-ideas
+expansion and a local-suggestions call, for up to six services, every service treated alike —
+roughly 15–25 cents in all; and, when the market resolves, five live SERPs of the services (~2¢)
+plus one Google Ads local-volume task (9¢). Each stored keyword records the service it is about. A
+forced re-run is refused within an hour of the last one. Topic generation never buys research: it
+reads the keywords a person ticked.
 
 **One live SERP per generated post** — `gatherCompetitorGap` in `lib/content/competitiveIntel.ts`,
 for the post's target keyword, in the research location when set: the talking points the writer is
