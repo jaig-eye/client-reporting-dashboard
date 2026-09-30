@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo } from 'react'
 import type { SerpInsightRow, SerpInsight, SerpSource } from '@/lib/content/serpInsights'
 import { SectionHead } from '@/components/admin/KeywordEvidence'
 
@@ -22,16 +23,14 @@ import { SectionHead } from '@/components/admin/KeywordEvidence'
  * AND holds the featured snippet was three separate lines telling you about one competitor. It is
  * one line now, with three marks.
  */
-export default function SerpInsightsSection({ rows, loading, search, ownDomains }: {
+export default function SerpInsightsSection({ rows, loading, ownDomains }: {
   rows:        SerpInsightRow[] | null
   loading:     boolean
-  search:      string
   /** The client's own sites, so "you" can be marked in a list of competitors. */
   ownDomains?: string[]
 }) {
   const all = rows ?? []
-  const filtered = all.filter(r => !search || r.keyword.toLowerCase().includes(search.toLowerCase()))
-  const own = new Set((ownDomains ?? []).map(bareHost).filter(Boolean))
+  const own = useMemo(() => new Set((ownDomains ?? []).map(bareHost).filter(Boolean)), [ownDomains])
 
   return (
     <div className="card p-5">
@@ -40,24 +39,22 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
           something Google knows, and told you nothing about which one this was. */}
       <SectionHead
         title="SERP snapshots" provider="DataForSEO"
-        count={all.length > 0 ? filtered.length : undefined}
-        desc={!loading && filtered.length > 0
+        count={all.length > 0 ? all.length : undefined}
+        desc={!loading && all.length > 0
           ? 'What Google returned when each post was written — the talking points its writer was actually handed.'
           : undefined}
       />
       {loading ? (
         <p className="section-desc" style={{ margin: 0 }}>Loading…</p>
-      ) : filtered.length === 0 ? (
+      ) : all.length === 0 ? (
         <p className="section-desc" style={{ margin: 0 }}>
-          {search
-            ? `Nothing matches "${search}".`
-            : 'Nothing captured yet. One is kept for each post as it is written.'}
+          Nothing captured yet. One is kept for each post as it is written.
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {filtered.slice(0, 40).map(r => <InsightRow key={r.keyword} row={r} own={own} />)}
-          {filtered.length > 40 && (
-            <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>Showing the 40 most recent of {filtered.length}.</p>
+          {all.slice(0, 40).map(r => <InsightRow key={r.keyword} row={r} own={own} />)}
+          {all.length > 40 && (
+            <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-faint)' }}>Showing the 40 most recent of {all.length}.</p>
           )}
         </div>
       )}

@@ -223,71 +223,30 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch, view = 'all', hasDataForSeo = true, onRefreshed }: {
-  data: GscData; isEcom: boolean; clientId: string; isActive: boolean; epoch: number
-  /** 'evidence' = what to write about next. 'rankings' = whether it is working. */
-  view?: 'all' | 'evidence' | 'rankings'
+export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = true, onRefreshed }: {
+  data: GscData; clientId: string; isActive: boolean; epoch: number
   /** Rankings is the one section that is purely DataForSEO, so it says so when there is none. */
   hasDataForSeo?: boolean
   /** Refresh re-reads the whole page, including the parts this component does not own. */
   onRefreshed?: () => void
 }) {
-  const showEvidence = view === 'all' || view === 'evidence'
-  const showRankings = view === 'all' || view === 'rankings'
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
   const [sources, setSources]       = useState<SourcesPayload | null>(null)
-
-  // A plain sentence when a remove or restore could not be done. Never the server's words.
-  const [researchMsg, setResearchMsg] = useState<string | null>(null)
-  // Keywords removed this session, so a misclick can be undone with Restore.
-  const [removed, setRemoved]         = useState<ResearchRow[]>([])
   const [refreshNote, setRefreshNote] = useState<string | null>(null)
 
   // Research ran elsewhere (epoch moved): forget what was loaded so the loading state shows
   // while the effects below fetch again. Runs once on mount as well, where clearing
   // already-empty state changes nothing.
-  useEffect(() => { setRanks(null); setSources(null); setRemoved([]) }, [epoch])
+  useEffect(() => { setRanks(null); setSources(null) }, [epoch])
 
   // Every table is fetched each time this tab is shown, and again on epoch or Refresh. A tab
   // that fetched once and then trusted itself showed a list from before a "Look again" run
   // until the page was reloaded — the old rows stayed on screen while a fetch is in flight.
   const [loadTick, setLoadTick] = useState(0)
   useEffect(() => { if (isActive) setLoadTick(t => t + 1) }, [isActive, epoch])
-
-  async function setDismissed(keyword: string, dismissed: boolean): Promise<boolean> {
-    try {
-      const res = await fetch('/api/admin/content/keyword-research', {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ client_id: clientId, keyword, dismissed }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({})) as { error?: string }
-        console.warn('[analytics] keyword dismiss failed:', res.status, d.error)
-        return false
-      }
-      return true
-    } catch (e) {
-      console.warn('[analytics] keyword dismiss failed:', e)
-      return false
-    }
-  }
-
-  /** "Not this one." The row moves to a Removed line with Restore; put back if the write fails. */
-  async function handleRestore(row: ResearchRow) {
-    setResearchMsg(null)
-    setRemoved(prev => prev.filter(r => r.keyword !== row.keyword))
-    setSources(prev => prev ? { ...prev, researched: [row, ...prev.researched] } : prev)
-    if (!(await setDismissed(row.keyword, false))) {
-      // Put it back where the server still has it, so Restore stays on offer.
-      setSources(prev => prev ? { ...prev, researched: prev.researched.filter(r => r.keyword !== row.keyword) } : prev)
-      setRemoved(prev => [row, ...prev.filter(r => r.keyword !== row.keyword)])
-      setResearchMsg('Couldn’t restore that keyword. Try again in a moment.')
-    }
-  }
 
   useEffect(() => {
     if (!loadTick) return
@@ -394,8 +353,6 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
       </div>
 
       {/* ── The sources that feed topic selection ──────────────────────────── */}
-      {showEvidence && (
-      <>
       <SourceSection<PaidTermRow>
         title="Converted in paid" provider="Google Ads"
         note="Terms that produced leads in the last 90 days. These are buying searches — the service page should own them, so write the question a buyer asks on the way there."
@@ -422,29 +379,6 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
         ]}
       />
 
-      {/* Keyword choosing lives in its own tab now — see KeywordsTab. Analytics keeps the
-          read-only sources and the SERP snapshots, which are reporting rather than decisions. */}
-      {(removed.length > 0 || researchMsg) && (
-        <div style={{ margin: '-8px 0 16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          {researchMsg && <p style={{ margin: '0 0 6px', color: 'var(--red)' }}>{researchMsg}</p>}
-          {removed.length > 0 && (
-            <p style={{ margin: 0 }}>
-              Removed:{' '}
-              {removed.map(r => (
-                <span key={r.keyword} style={{ marginRight: 10, whiteSpace: 'nowrap' }}>
-                  {r.keyword}{' '}
-                  <button type="button" onClick={() => handleRestore(r)} style={{ border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>
-                    Restore
-                  </button>
-                </span>
-              ))}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* The client's own sites, so the result list can mark which line is theirs rather than
-          leaving the operator to recognise their own domain among ten competitors. */}
       {/* ── Search Console insights ────────────────────────────────────────── */}
       {/* Labelled the same way whether or not it has anything in it — an unlabelled card of grey
           text in the middle of a labelled page reads as something having gone wrong. */}
@@ -466,14 +400,11 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
           </>
         )}
       </div>
-      </>
-      )}
 
       {/* ── Rankings ───────────────────────────────────────────────────────── */}
       {/* Last, because it reports on what is already published rather than informing what to write
           next, and because it is the one section that is purely DataForSEO — a client without a
           connection has nothing here and should be told why rather than shown an empty table. */}
-      {showRankings && (
       <div className="card p-5">
         <SectionHead
           title="Rankings" provider="DataForSEO"
@@ -482,7 +413,6 @@ export function AnalyticsTab({ data, isEcom: _isEcom, clientId, isActive, epoch,
         />
         <KeywordRankTable ranks={filteredRanks} loading={ranks === null} hasDataForSeo={hasDataForSeo} />
       </div>
-      )}
     </div>
   )
 }

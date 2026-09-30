@@ -1,6 +1,6 @@
 'use client'
 
-// Choosing which keywords the writer gets to see.
+// Choosing which keywords topics are chosen from.
 //
 // Mounted twice: in the setup wizard for a first run, and in the Keywords tab so the list can be
 // revisited. Curation is ongoing work — a wizard is the wrong place to lock it away.
@@ -10,15 +10,15 @@
 // Three questions were being answered by a paragraph above the table: what are these, where did
 // they come from, and which ones count. They are answered by the table itself now.
 //
-//   Grouped by origin    — "You added these", "Suggested for what you sell", "You already rank
-//                          for these", "Competitors rank for these". Each header says who found
-//                          the keyword, so the question stops being asked.
+//   Grouped by source    — "Added by hand", "DataForSEO", "Ahrefs", "Google Ads": the platform
+//                          that reported each keyword, which is the thing to go and check when a
+//                          number looks wrong. The same sources are offered as filter chips.
 //   Grouped by theme     — a real run for a Los Angeles lighting installer returned eight
 //                          variations of "christmas lights" at the top by volume, burying
 //                          landscape lighting and security lighting. The strongest of each theme
 //                          leads, variants one click away. Nothing is discarded.
-//   Counted in the strip — "12 in use · 241 researched · Los Angeles · last run Sep 29" instead
-//                          of two sentences saying the same thing.
+//   Counted in the strip — "12 in use · 241 researched · measured in Los Angeles · last run
+//                          Sep 29" instead of two sentences saying the same thing.
 //
 // COLUMNS ARE NOT FIXED
 //
@@ -28,8 +28,8 @@
 // came from converting ad terms, and how many leads a term produced is a better reason to write
 // about it than search volume ever was.
 //
-// Nothing is used until it is chosen. No provider names, no costs: which vendor answered and what
-// it cost are our concerns, not the operator's.
+// Nothing is used until it is ticked and saved: topic selection reads only chosen keywords. The
+// one control here that spends money — Find new — says so before it runs.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { groupKeywords } from '@/lib/content/keywordGrouping'
@@ -40,8 +40,6 @@ export interface ResearchKeyword {
   difficulty:    number | null
   intent:        string | null
   source:        string | null
-  /** 'manual' | 'site' | 'competitor' | 'idea' — how research found it. */
-  foundVia?:     string | null
   score:         number | null
   local_volume:  number | null
   chosen:        boolean
@@ -237,7 +235,7 @@ export default function KeywordResearchPanel({
       //
       // It is only in the pool because someone typed it, so un-ticking it is the whole of the
       // decision — there is no "keep it as a candidate" to fall back to, and leaving it sitting
-      // unchosen under "You added these" forever reads as the save having failed. Discovered
+      // unchosen under "Added by hand" forever reads as the save having failed. Discovered
       // candidates are different: un-ticking one means "not this time", and it stays available.
       const manual = new Set(keywords.filter(k => originOf(k) === 'manual').map(k => k.keyword.toLowerCase()))
       const remove = drop.filter(k => manual.has(k))

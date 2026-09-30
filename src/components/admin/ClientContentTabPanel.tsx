@@ -34,7 +34,8 @@ export interface GscData {
 interface Props {
   clientId:        string
   clientName:      string
-  isEcom:          boolean
+  /** Unused since the Keywords tab stopped reading it; the client page still passes it. */
+  isEcom?:         boolean
   sites:           SiteOption[]
   contentSettings: ContentSettings
   aiConfigured:    boolean
@@ -63,7 +64,7 @@ interface TabDef { id: SubTab; label: string; icon: React.ReactNode; badge?: num
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ClientContentTabPanel({
-  clientId, clientName, isEcom, sites, contentSettings, aiConfigured, overviewStats, gscData, initialSubTab,
+  clientId, clientName, sites, contentSettings, aiConfigured, overviewStats, gscData, initialSubTab,
 }: Props) {
   const router       = useRouter()
   const pathname     = usePathname()
@@ -84,9 +85,9 @@ export default function ClientContentTabPanel({
   const [activeTab,    setActiveTab]    = useState<SubTab>(initial)
   const [visited,      setVisited]      = useState<Set<SubTab>>(() => new Set([initial]))
   const [animatingTab, setAnimatingTab] = useState<SubTab | null>(initial)
-  // Bumped when the setup wizard closes or research is re-run from Settings, so the Analytics
-  // tab drops its cached keyword data and refetches. Research run elsewhere used to stay
-  // invisible there until a hard reload, which read as "research did nothing".
+  // Bumped when the setup wizard closes or research runs on the Keywords tab, so the Keywords tab
+  // drops its cached keyword data and refetches. Research run elsewhere used to stay invisible
+  // there until a hard reload, which read as "research did nothing".
   const [researchEpoch, setResearchEpoch] = useState(0)
   const [showWizard, setShowWizard] = useState(() => {
     const s = contentSettings as Record<string, unknown> | null
@@ -215,7 +216,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('settings') && (
           <div style={{ display: activeTab === 'settings' ? 'block' : 'none' }} className={animatingTab === 'settings' ? 'cc-tab-content' : ''}>
-            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} aiConfigured={aiConfigured} />
+            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} />
           </div>
         )}
         {visited.has('sitemap') && (
@@ -225,7 +226,7 @@ export default function ClientContentTabPanel({
         )}
         {visited.has('keywords') && (
           <div style={{ display: activeTab === 'keywords' ? 'block' : 'none' }} className={animatingTab === 'keywords' ? 'cc-tab-content' : ''}>
-            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} sites={sites} gscData={gscData} isEcom={isEcom} onResearchRun={() => setResearchEpoch(e => e + 1)} />
+            <KeywordsTab clientId={clientId} isActive={activeTab === 'keywords'} epoch={researchEpoch} sites={sites} gscData={gscData} onResearchRun={() => setResearchEpoch(e => e + 1)} />
           </div>
         )}
       </div>

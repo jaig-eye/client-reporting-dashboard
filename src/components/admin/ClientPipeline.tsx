@@ -248,7 +248,12 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topics generated`, 'success')
           }
         }, 15_000)
-      } else { showToast(data.reason ?? `${data.count ?? 0} topics generated across ${data.dates ?? data.slots?.length ?? modalWeeks} publish dates`); loadPipeline() }
+      } else {
+        // Not queued means nothing was generated — the route only answers this way when every
+        // slot already has a topic or was deliberately emptied, and it always says which. The old
+        // "N topics generated" fallback here could never show, and nothing changed to reload.
+        showToast(data.reason ?? 'Nothing to generate — every date already has a topic.', 'info')
+      }
     } else showToast(data.error || 'Generation failed', 'error')
   }
 

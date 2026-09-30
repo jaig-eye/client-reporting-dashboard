@@ -59,17 +59,16 @@ interface Payload {
   hasDataForSeo?:    boolean
 }
 
-export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gscData, isEcom = false, onResearchRun }: {
+export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gscData, onResearchRun }: {
   clientId: string
   isActive: boolean
   /** Search Console rows, for the Evidence view. */
   gscData:  GscData
-  isEcom?:  boolean
   /** The client's own sites, so their own line is marked in a list of competitors. */
   sites?:   SiteOption[]
   /** Bumped when research reruns elsewhere, so this refetches rather than showing a stale list. */
   epoch:    number
-  /** After research runs here, so the Analytics tab drops its cached copy too. */
+  /** After research runs here, so the parent bumps `epoch` and everything reading the pool reloads. */
   onResearchRun?: () => void
 }) {
   const [data,   setData]   = useState<Payload | null>(null)
@@ -191,9 +190,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
 
       {/* Evidence, then Rankings. Empty sections draw nothing — see AnalyticsTab. */}
       <AnalyticsTab
-        data={gscData} isEcom={isEcom} clientId={clientId}
+        data={gscData} clientId={clientId}
         isActive={isActive} epoch={epoch}
-        view="all"
         hasDataForSeo={data?.hasDataForSeo !== false}
         onRefreshed={() => setReload(v => v + 1)}
       />
@@ -203,7 +201,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           Search Console tables. */}
       <div style={{ marginTop: 16 }}>
         <SerpInsightsSection
-          rows={insights} loading={insights === null} search=""
+          rows={insights} loading={insights === null}
           ownDomains={sites.map(s => s.siteUrl)}
         />
       </div>

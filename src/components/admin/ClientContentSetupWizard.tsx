@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import MarketLine from './MarketLine'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
@@ -472,18 +472,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     }
   }
 
-  /**
-   * Seed the foundational keywords from the services once, when there is nothing to lose.
-   *
-   * The services are already used as research seeds either way — this only puts them in front of
-   * the operator so they can be corrected before anything is spent, rather than being applied
-   * invisibly. Runs only while the box is untouched and empty, so a saved value and anything
-   * typed by hand both survive; clearing the box deliberately leaves it cleared.
-   */
-  // Deliberately not pre-filled from Services any more. Both steps now offer "use the services"
-  // as a button, so the default is one click away and the two fields stop looking like one field
-  // shown twice. seedsPrefilled survives as the guard that a saved value is never overwritten.
-  const seedsPrefilled = useRef(false)
+  // The starting keywords are deliberately not pre-filled from Services: the research step offers
+  // "Use the services from step 3" as a button, so the default is one click away and the two
+  // fields stop looking like one field shown twice.
 
   /**
    * Research this market. Spends, so it runs only when the operator presses the button.
@@ -841,7 +832,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               clientId={clientId}
               servicesText={brand.services}
               seeds={foundationalKeywords}
-              setSeeds={v => { seedsPrefilled.current = true; setFoundationalKeywords(v) }}
+              setSeeds={setFoundationalKeywords}
               onResearch={() => void researchMarket()}
               hasDfs={hasDfs}
               onPicksSaved={reloadStoredResearch}
@@ -1202,7 +1193,6 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
   brand: BrandDna
   setBrand: (b: BrandDna) => void
   brandLoaded: boolean
-  /** Marks the seeds as operator-owned so the services pre-fill never runs again. */
 }) {
   return (
     <div>
@@ -1876,7 +1866,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
             {researching ? (
-              <StatusRow label="Finding competing sites…" status="loading" />
+              <LoadingRow label="Finding competing sites…" />
             ) : competitors.length === 0 && localPack.length === 0 ? (
               <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
                 {/* Competing sites come back from a run and are not stored, so a list read from
@@ -1945,12 +1935,10 @@ const OUTCOME_TONE: Record<ResearchOutcome['tone'], 'green' | 'amber' | 'red'> =
   error:   'red',
 }
 
-function StatusRow({ label, status }: { label: string; status: 'loading' | 'done' | 'error' }) {
+function LoadingRow({ label }: { label: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-      {status === 'loading' && <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>}
-      {status === 'done'    && <span style={{ color: '#16a34a' }}>✓</span>}
-      {status === 'error'   && <span style={{ color: '#dc2626' }}>✗</span>}
+    <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+      <span aria-hidden style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
       {label}
     </div>
   )

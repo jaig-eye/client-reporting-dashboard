@@ -17,11 +17,9 @@ interface Author   { id: number; name: string }
 interface WpCategory { id: number; name: string }
 
 interface Props {
-  /** Called after keyword research is re-run from Brand DNA, so the Analytics tab refetches. */
   clientId:     string
   clientName:   string
   sites:        SiteOption[]
-  aiConfigured: boolean
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -354,7 +352,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           (not conditionally rendered) so unsaved edits survive a sub-nav switch —
           it holds its own internal form state, unlike the parent-owned sections below. */}
       <div style={{ display: activeSection === 'brand' ? 'block' : 'none' }}>
-        <ClientContentSettingsForm clientId={clientId} sites={sites} />
+        <ClientContentSettingsForm clientId={clientId} />
       </div>
 
       {/* ── Publishing ─────────────────────────────────────────────────────── */}

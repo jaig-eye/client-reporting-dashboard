@@ -6,13 +6,6 @@ import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import MarketLine from '@/components/admin/MarketLine'
 import type { EeatData }       from '@/lib/content/types'
 
-interface SiteOption {
-  connectionId: string
-  siteUrl:      string
-  siteName:     string
-  clientId:     string
-}
-
 interface BrandDnaForm {
   business_background: string
   services:            string
@@ -115,13 +108,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   )
 }
 
-export default function ClientContentSettingsForm({
-  clientId,
-  sites: _sites,
-}: {
-  clientId: string
-  sites:    SiteOption[]
-}) {
+export default function ClientContentSettingsForm({ clientId }: { clientId: string }) {
   const [form,        setForm]        = useState<BrandDnaForm>({ business_background: '', services: '', target_audience: '', geographic_focus: '', brand_voice: '', phone_number: '', cta_list: '' })
   const [eeat,        setEeat]        = useState<EeatData>(EMPTY_EEAT)
   const [saving,      setSaving]      = useState(false)
