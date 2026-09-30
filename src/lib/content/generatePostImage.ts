@@ -1,5 +1,5 @@
-// Shared image generation logic — called by the generate-image API route and
-// by the content generate route (auto-gen after post creation).
+// Shared image generation logic — called by the generate-image API route (a reviewer's
+// regenerate) and in the background by the blog and service-area generate routes.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
@@ -8,6 +8,7 @@ import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages, priceImageUsage, type ImageUsage } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+import { splitPhrases } from '@/lib/content/phrases'
 
 /** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
 const OPENAI_TIMEOUT_MS = 120_000
@@ -56,7 +57,6 @@ const INTENT_SCENE: Record<string, string> = {
   informational:    'an editorial establishing shot of the subject in its real-world setting',
 }
 
-// PostRow carries no search_intent, so infer the angle from the title/keyword.
 /**
  * The same seven intents, said the way a person describes a photograph.
  *
@@ -80,14 +80,23 @@ function article(word: string): string {
   return /^[aeiou]/i.test(word.trim()) ? 'an' : 'a'
 }
 
-/** The industry and place both the prompt and the alt text situate the picture in. */
+/**
+ * The industry and place both the prompt and the alt text situate the picture in: the first
+ * service and the first (primary) service area.
+ *
+ * Both lists are read with splitPhrases, the way the chip input wrote them. Cutting services on
+ * the first comma turned "gutter guards (mesh, micro-mesh)" into "gutter guards (mesh", and the
+ * whole geographic_focus string put every service area into one sentence the picture is "in" —
+ * "in Melbourne, FL, Palm Bay, FL, Cocoa, FL" — which reads badly aloud as alt text.
+ */
 function describeSetting(settings: ClientSettings | null): { industry: string; location: string } {
   return {
-    industry: settings?.services?.split(',')[0]?.trim() || 'local service',
-    location: settings?.geographic_focus?.trim() || '',
+    industry: splitPhrases(settings?.services)[0] || 'local service',
+    location: splitPhrases(settings?.geographic_focus)[0] || '',
   }
 }
 
+// PostRow carries no search_intent, so infer the angle from the title/keyword.
 function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
   const s = t.toLowerCase()
   if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
@@ -115,7 +124,7 @@ export function buildImagePrompt(
   const context = title ? ` for a blog article titled "${title}"` : ''
   const setting = `real-world ${industry} setting${location ? ` in ${location}` : ''}`
 
-  // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
+  // Push hard toward a REAL photograph. Image models default to a glossy, over-lit,
   // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
   // (the visual equivalent of the banned-phrase list for copy) counters it.
   // Style comes from the chosen direction. It used to be hardcoded photojournalism, which
@@ -198,8 +207,9 @@ export type ImageGenResult =
   | { ok: false; error: string }
 
 /**
- * Generate a featured image for a post and write the result back to the DB.
- * Pass `openaiKey` from agency_settings.openai_api_key (or env fallback).
+ * Generate a featured image for a post and write the result back to the DB — the image on
+ * success, the reason in image_generation_error on failure.
+ * Pass `openaiKey` from agency_settings.openai_api_key; null falls back to OPENAI_API_KEY.
  */
 export async function generatePostImage(
   db: ReturnType<typeof createAdminClient>,
@@ -406,30 +416,10 @@ export async function generatePostImage(
   if (!imageUrl)
     return { ok: false, error: await recordImageFailure(db, postId, failures.join(' · ') || 'Image generation failed') }
 
-  // gpt-image-1 responses are already uploaded to Supabase above (b64_json path).
-  // If a temp URL was returned (url path), download and re-upload so it doesn't expire.
-  let finalUrl = imageUrl
-  if (usedProvider === 'gpt-image-1' && imageUrl && !imageUrl.includes('supabase')) {
-    try {
-      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
-      if (imgRes.ok) {
-        const buffer   = Buffer.from(await imgRes.arrayBuffer())
-        const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
-        const { error: upErr } = await db.storage
-          .from('uploads')
-          .upload(filename, buffer, { contentType: 'image/png', upsert: true })
-        if (!upErr) {
-          const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
-          finalUrl = publicUrl
-        }
-      }
-    } catch {
-      // keep temp URL — will expire but better than nothing
-    }
-  }
-
+  // Both providers hand back bytes, and both paths above upload them before setting imageUrl, so
+  // it is always our own storage URL — never a provider-hosted link that expires.
   const { error: saveErr } = await updatePostReleasingMediaLink(db, postId, {
-    featured_image_url:     finalUrl,
+    featured_image_url:     imageUrl,
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
     // Cleared here, on the only path that produced an image, so a reason recorded by an earlier
@@ -448,7 +438,7 @@ export async function generatePostImage(
   if (saveErr)
     return { ok: false, error: await recordImageFailure(db, postId, `The image was generated but could not be attached to the post: ${saveErr.message}`) }
 
-  return { ok: true, url: finalUrl, prompt, provider: usedProvider }
+  return { ok: true, url: imageUrl, prompt, provider: usedProvider }
 }
 
 /** Long enough for a provider's own explanation; short enough to read at a glance. */

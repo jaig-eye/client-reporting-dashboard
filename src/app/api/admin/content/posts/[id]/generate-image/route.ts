@@ -1,6 +1,7 @@
 // POST /api/admin/content/posts/[id]/generate-image
-// Generates a featured image for a post using DALL-E 3 (primary)
-// or Gemini Imagen 3 (fallback if GEMINI_API_KEY is set).
+// Regenerates a post's featured image with the OpenAI image model chosen in Settings → AI →
+// Image Generation (lib/content/imageModels.ts). See lib/content/generatePostImage.ts for the
+// Gemini fallback and where a failure's reason is recorded.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
