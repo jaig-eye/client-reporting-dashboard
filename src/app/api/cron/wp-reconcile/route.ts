@@ -26,7 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { readPostState, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
+import { readPostState, isWpPlaceholderLink, isLinkOnSite, isSameWpSite, wpSiteHost } from '@/lib/connectors/wordpress'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -110,41 +110,66 @@ export async function GET(req: NextRequest) {
   // one and falls back to any active WordPress connection for the client. Reconcile has to follow
   // the same rule or it silently skips the posts that took the fallback — which is most of the
   // ones it exists to fix.
+  //
+  // EVERY path checks the site. A credential is used only when its connection's site is the host
+  // the post lives on (scheme and a leading www. ignored) — the application password goes to the
+  // site it belongs to and nowhere else. The old fallback lent a client's only WordPress
+  // connection to any post of that client, so a post recorded against a site the client has since
+  // left had the new site's password sent to the old domain — whoever holds it now.
+  type Creds    = { username: string; app_password: string }
+  type SiteCred = { site: string; auth: Creds }
+  type Conn     = { type?: string; auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
+  const one = (c: Conn | Conn[] | null) => (Array.isArray(c) ? c[0] : c) ?? null
+  /**
+   * Credentials sit in either place depending on how the connection was set up — the push path
+   * reads config first, then auth, and this has to agree with it or a site that works for
+   * publishing would silently fail to reconcile. The site is resolved exactly as the push path
+   * resolves it. null when the connection is not a usable WordPress credential.
+   */
+  const siteCredOf = (conn: Conn | null, externalId: string | null): SiteCred | null => {
+    if (conn?.type !== 'wordpress') return null
+    const config = conn.config ?? {}
+    const auth   = conn.auth   ?? {}
+    const username = String(config.username     ?? auth.username     ?? '')
+    const appPass  = String(config.app_password ?? auth.app_password ?? '')
+    const site     = String(config.site_url || externalId || '')
+    return username && appPass && site ? { site, auth: { username, app_password: appPass } } : null
+  }
+
   const connectionIds = Array.from(new Set(posts.map(p => p.connection_id).filter((c): c is string => !!c)))
-  const authByConnection = new Map<string, { username: string; app_password: string }>()
+  const credByConnection = new Map<string, SiteCred>()
   if (connectionIds.length > 0) {
     const { data: conns, error: connErr } = await db
       .from('client_connections')
-      .select('id, connector:connectors(auth, config)')
+      .select('id, external_id, connector:connectors(type, auth, config)')
       .in('id', connectionIds)
+      // As on the fallback path: a paused or errored connection is not a credential source.
+      .eq('status', 'active')
     // This exact query once selected a column that does not exist. It returned no rows and no
     // exception, every post counted unreadable, and the cron reported ok:true having done nothing.
     if (connErr) console.error('[cron/wp-reconcile] connection lookup failed:', connErr.message)
     // auth and config both live on the connector, not on the client_connections row.
-    type Conn = { auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
-    type ConnRow = { id: string; connector: Conn | Conn[] | null }
+    type ConnRow = { id: string; external_id: string | null; connector: Conn | Conn[] | null }
     for (const c of (conns ?? []) as ConnRow[]) {
-      // Credentials sit in either place depending on how the connection was set up — the push
-      // path reads config first, then auth, and this has to agree with it or a site that works
-      // for publishing would silently fail to reconcile.
-      const conn   = Array.isArray(c.connector) ? c.connector[0] : c.connector
-      const config = conn?.config ?? {}
-      const auth   = conn?.auth   ?? {}
-      const username = String(config.username     ?? auth.username     ?? '')
-      const appPass  = String(config.app_password ?? auth.app_password ?? '')
-      if (username && appPass) authByConnection.set(c.id, { username, app_password: appPass })
+      const cred = siteCredOf(one(c.connector), c.external_id)
+      if (cred) credByConnection.set(c.id, cred)
     }
   }
 
-  // The per-client fallback, resolved once for the clients that need it.
+  /** The post's own connection, if it is active, WordPress, and for the site the post lives on. */
+  const viaConnection = (p: PostRow): Creds | undefined => {
+    const cred = p.connection_id ? credByConnection.get(p.connection_id) : undefined
+    return cred && isSameWpSite(cred.site, p.wp_site_url) ? cred.auth : undefined
+  }
+
+  // The per-client fallback, resolved once for the clients that need it — a post can have no
+  // connection_id and still have published, because the push path falls back to any active
+  // WordPress connection for the client.
   //
   // Keyed by client, but a client can have more than one WordPress site, so each candidate keeps
-  // the site it belongs to. Borrowing the other site's credentials fails the read and counts the
-  // post unreadable — silently reopening the gap this fallback was added to close.
-  const fallbackByClient = new Map<string, Array<{ site: string; auth: { username: string; app_password: string } }>>()
-  const clientsNeedingFallback = Array.from(new Set(
-    posts.filter(p => !p.connection_id || !authByConnection.has(p.connection_id)).map(p => p.client_id),
-  ))
+  // the site it belongs to, and only a candidate for the post's own site is ever used.
+  const fallbackByClient = new Map<string, SiteCred[]>()
+  const clientsNeedingFallback = Array.from(new Set(posts.filter(p => !viaConnection(p)).map(p => p.client_id)))
   if (clientsNeedingFallback.length > 0) {
     const { data: conns, error: fbErr } = await db
       .from('client_connections')
@@ -154,47 +179,40 @@ export async function GET(req: NextRequest) {
       // source there and must not become one here.
       .eq('status', 'active')
     if (fbErr) console.error('[cron/wp-reconcile] fallback connection lookup failed:', fbErr.message)
-    type FallbackConn = { type?: string; auth?: Record<string, unknown> | null; config?: Record<string, unknown> | null }
-    type FallbackRow = {
-      client_id: string
-      external_id: string | null
-      connector: FallbackConn | FallbackConn[] | null
-    }
+    type FallbackRow = { client_id: string; external_id: string | null; connector: Conn | Conn[] | null }
     for (const c of (conns ?? []) as FallbackRow[]) {
-      const conn = Array.isArray(c.connector) ? c.connector[0] : c.connector
-      if (conn?.type !== 'wordpress') continue
-      const config   = conn.config ?? {}
-      const connAuth = conn.auth   ?? {}
-      const username = String(config.username     ?? connAuth.username     ?? '')
-      const appPass  = String(config.app_password ?? connAuth.app_password ?? '')
-      if (!username || !appPass) continue
-      // Site resolved exactly as the push path resolves it.
-      const site = String(config.site_url ?? c.external_id ?? '')
+      const cred = siteCredOf(one(c.connector), c.external_id)
+      if (!cred) continue
       const list = fallbackByClient.get(c.client_id) ?? []
-      list.push({ site, auth: { username, app_password: appPass } })
+      list.push(cred)
       fallbackByClient.set(c.client_id, list)
     }
   }
 
-  /** Compare sites the way a human would: protocol, case and trailing slash carry no meaning. */
-  const sameSite = (a: string, b: string) => {
-    const norm = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '')
-    return !!a && !!b && norm(a) === norm(b)
-  }
+  /** Credentials for this post's own site, or undefined. Never another site's. */
+  const credentialFor = (p: PostRow): Creds | undefined =>
+    viaConnection(p)
+    ?? (fallbackByClient.get(p.client_id) ?? []).find(c => isSameWpSite(c.site, p.wp_site_url))?.auth
 
-  let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0
+  let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0, noCredential = 0
+  const noCredentialLogged = new Set<string>()
 
   for (const post of posts) {
     // Already known gone. The select excludes these; this is the belt to that brace.
     if (post.wp_status === 'deleted') continue
-    const candidates = fallbackByClient.get(post.client_id) ?? []
-    const auth    = (post.connection_id ? authByConnection.get(post.connection_id) : undefined)
-                 // Prefer the connection for the site this post actually lives on; only fall back
-                 // to the client's single WordPress connection when there is no better match.
-                 ?? candidates.find(c => sameSite(c.site, post.wp_site_url ?? ''))?.auth
-                 ?? (candidates.length === 1 ? candidates[0].auth : undefined)
     const siteUrl = post.wp_site_url
-    if (!auth || !siteUrl || post.wp_post_id == null) { unreadable++; continue }
+    const auth    = credentialFor(post)
+    if (!auth || !siteUrl || post.wp_post_id == null) {
+      // Nothing was asked, so nothing is known about the post: counted apart from 'unreadable',
+      // which means WordPress was asked and gave no usable answer.
+      noCredential++
+      const key = `${post.client_id} ${wpSiteHost(siteUrl) ?? '(no site)'}`
+      if (!noCredentialLogged.has(key)) {
+        noCredentialLogged.add(key)
+        console.warn(`[cron/wp-reconcile] client ${post.client_id}: no active WordPress connection for ${siteUrl ?? '(no site recorded)'} — its posts are skipped`)
+      }
+      continue
+    }
 
     try {
       checked++
@@ -266,5 +284,5 @@ export async function GET(req: NextRequest) {
     console.warn(`[cron/wp-reconcile] ${missedSchedule} post(s) missed their schedule — WP-Cron may not be running on those sites`)
   }
 
-  return NextResponse.json({ ok: true, checked, updated, missedSchedule, unreadable })
+  return NextResponse.json({ ok: true, checked, updated, missedSchedule, unreadable, noCredential })
 }
