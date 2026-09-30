@@ -60,6 +60,8 @@ interface Payload {
   lastResearchAt?:   string | null
   /** Whether this client has a DataForSEO connection — without one nothing can be researched. */
   hasDataForSeo?:    boolean
+  /** The client's services in its own order; the list can be read service by service. */
+  services:          string[]
 }
 
 const NO_SITES: SiteOption[] = []
@@ -110,6 +112,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
         poolTotal:        d.poolTotal ?? null,
         lastResearchAt:   d.lastResearchAt ?? null,
         hasDataForSeo:    d.hasDataForSeo !== false,
+        services:         Array.isArray(d.services) ? (d.services as unknown[]).map(String).filter(Boolean) : [],
       }) })
       // Keep whatever was loaded before, and never stand in an empty list: an empty list shows
       // the "Find keywords" button, which on a failed load invited a paid run that wipes the
@@ -357,6 +360,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
           <KeywordResearchPanel
             clientId={clientId}
             keywords={data.researched}
+            services={data.services}
             geoWords={geoWords}
             place={place}
             total={data.poolTotal}
