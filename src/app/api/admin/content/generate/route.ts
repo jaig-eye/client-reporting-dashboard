@@ -10,6 +10,7 @@ import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { styleTables } from '@/lib/content/contentHtml'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
+import { lengthBudget, lengthInstruction, isOverLength, tightenPrompt, judgeTightened } from '@/lib/content/lengthRules'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -31,6 +32,12 @@ import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
 export const maxDuration = 300
+
+/**
+ * Past this point in a topic's background job the tighten pass is skipped. A full-article call runs
+ * 1–2 minutes; starting one after 2.5 minutes risks the 300-second kill taking the saved draft with it.
+ */
+const TIGHTEN_START_DEADLINE_MS = 150_000
 
 /**
  * POST /api/admin/content/generate
@@ -639,6 +646,7 @@ async function runTopicGeneration({
   suppressEmail:    boolean
   adminSession?:    AdminSession | null
 }): Promise<void> {
+  const startedAt = Date.now()
   const provider = agencySettings.ai_provider || 'anthropic'
   const model    = agencySettings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
   const apiKey   = agencySettings.ai_api_key
@@ -887,15 +895,8 @@ async function runTopicGeneration({
     // One number decides this. The brief's target wins when it has one, otherwise the client's
     // setting. "Approximately" is deliberately gone: measured against 50 posts it read as a floor,
     // and the model cleared it by 35% on average.
-    const wordTarget = Math.max(300, Number(brief?.word_count_target ?? targetLength) || 1500)
-    const wordFloor  = Math.round(wordTarget * 0.9)
-    const wordCeil   = Math.round(wordTarget * 1.15)
-    const lengthInstruction =
-      `LENGTH — this is a requirement, not a guide.\n` +
-      `Write between ${wordFloor} and ${wordCeil} words. ${wordTarget} is the target.\n` +
-      `Going over ${wordCeil} words is a failure of the brief, however good the writing is. ` +
-      `Cover the brief fully within that budget: fewer sections, tighter sentences, no recap of ` +
-      `what you already said, no restating the question before answering it.`
+    const budget = lengthBudget(brief?.word_count_target ?? targetLength)
+    const lengthRequirement = lengthInstruction(budget)
 
     const briefLines: string[] = []
     if (brief) {
@@ -1066,7 +1067,7 @@ ${competitorGapSection}
 ${editNotesSection}
 ${intentSection}
 
-${lengthInstruction}${writingRulesReminder}`
+${lengthRequirement}${writingRulesReminder}`
 
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
@@ -1109,16 +1110,16 @@ ${lengthInstruction}${writingRulesReminder}`
     // alternative is a 2,700-word post against a 1,500-word brief, which is what production has
     // been shipping. Only one attempt: if it comes back still long, the post is kept and the
     // overshoot is recorded rather than spending a third call.
-    let tightenedFrom: number | null = null
-    if (wc0 > wordCeil) {
+    //
+    // It runs inside the same background job as the first draft, capped at maxDuration. A job
+    // killed mid-rewrite loses the draft it already paid for and leaves the topic 'generating' until
+    // the cron's reaper frees it an hour later, when it is written again from scratch. So when the
+    // first draft already used most of the window, the draft ships as it is.
+    if (isOverLength(budget, wc0) && Date.now() - startedAt > TIGHTEN_START_DEADLINE_MS) {
+      console.warn(`[generate] topic ${topicId}: ${wc0} words (ceiling ${budget.ceiling}) — no time left for a tighten pass`)
+    } else if (isOverLength(budget, wc0)) {
       try {
-        const tightenPrompt =
-          `The article below is ${wc0} words. The brief allows at most ${wordCeil}, targeting ${wordTarget}.\n\n` +
-          `Cut it to ${wordTarget} words. Keep every heading, every fact, the internal links, and the ` +
-          `FAQ if there is one. Remove repetition, throat-clearing openings, sentences that restate ` +
-          `the heading, and padding like "in today's world". Do not add anything new.\n\n` +
-          `Return the same JSON shape you were given.\n\n${rawText}`
-        const tightened = await callAI(provider, model, apiKey, systemPrompt, tightenPrompt, 'article', effectiveClientId)
+        const tightened = await callAI(provider, model, apiKey, systemPrompt, tightenPrompt(budget, wc0, rawText), 'article', effectiveClientId)
         const reparsed  = parseResponse(tightened)
 
         // Sanitise before measuring. parsed.content has already had its invented links and filler
@@ -1128,22 +1129,12 @@ ${lengthInstruction}${writingRulesReminder}`
           stripDangerousHtml(stripHallucinatedLinks(reparsed.content, allowedInternalUrls)))))
         const newWc = computeWordCount(cleaned)
 
-        // Shorter is not the only requirement. A revision that hit the word count by deleting the
-        // internal links or collapsing the outline would be a worse article that happens to measure
-        // correctly — and internal linking is the whole point of the silo work, so losing it
-        // silently is the most expensive way this could go wrong.
-        const countLinks    = (html: string) => (html.match(/<a\s[^>]*href=/gi) ?? []).length
-        const countHeadings = (html: string) => (html.match(/<h[23][\s>]/gi) ?? []).length
-        const linksBefore    = countLinks(parsed.content)
-        const linksAfter     = countLinks(cleaned)
-        const headingsBefore = countHeadings(parsed.content)
-        const headingsAfter  = countHeadings(cleaned)
-        // Cutting words costs some headings legitimately; losing a quarter of them means the
-        // outline was rewritten rather than tightened.
-        const keptStructure = linksAfter >= linksBefore && headingsAfter >= Math.ceil(headingsBefore * 0.75)
-
-        if (newWc >= Math.min(wordFloor, wc0) && newWc < wc0 && reparsed.title.trim() && keptStructure) {
-          tightenedFrom = wc0
+        const verdict = judgeTightened(
+          budget,
+          { words: wc0,   html: parsed.content, title: parsed.title },
+          { words: newWc, html: cleaned,        title: reparsed.title },
+        )
+        if (verdict.accept) {
           parsed.title            = reparsed.title || parsed.title
           parsed.metaDescription  = reparsed.metaDescription || parsed.metaDescription
           // seoTitle travels with the title. Taking the rewritten headline and leaving the
@@ -1152,14 +1143,11 @@ ${lengthInstruction}${writingRulesReminder}`
           parsed.seoTitle         = reparsed.seoTitle || parsed.seoTitle
           parsed.content          = cleaned
           wc0                     = newWc
-          console.log(`[generate] tightened topic ${topicId}: ${tightenedFrom} → ${wc0} words (target ${wordTarget})`)
+          console.log(`[generate] tightened topic ${topicId}: ${verdict.reason}`)
         } else {
           // Rejected: the original stands. An article slightly over its budget beats one that
           // lost its links or its shape.
-          console.warn(
-            `[generate] tighten pass rejected for topic ${topicId}: ${wc0} → ${newWc} words ` +
-            `(target ${wordTarget}), links ${linksBefore} → ${linksAfter}, headings ${headingsBefore} → ${headingsAfter}`,
-          )
+          console.warn(`[generate] tighten pass rejected for topic ${topicId}: ${verdict.reason}`)
         }
       } catch (e) {
         console.warn(`[generate] tighten pass failed for topic ${topicId}:`, e)
