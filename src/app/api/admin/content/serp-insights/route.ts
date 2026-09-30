@@ -11,6 +11,8 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { readSerpInsight, type SerpInsightRow } from '@/lib/content/serpInsights'
 
 export const dynamic = 'force-dynamic'
+// Reads its own writes — see keyword-sources/route.ts for why force-dynamic alone is not enough.
+export const fetchCache = 'force-no-store'
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {

@@ -33,6 +33,9 @@ import { addManualKeywords } from '@/lib/content/addManualKeywords'
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
 // generation buys it all again.
 export const maxDuration = 300
+// Writes then reads the pool back — see keyword-sources/route.ts.
+export const dynamic = 'force-dynamic'
+export const fetchCache = 'force-no-store'
 
 /** Matches RESEARCH_MAX_AGE_DAYS in clientResearch.ts — the window getResearchCandidates reuses. */
 const RESEARCH_REUSE_DAYS = 30

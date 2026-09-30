@@ -6,6 +6,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { getClientKeywordRankings, getRankForPost } from '@/lib/content/seoRankings'
 
+// Rank rows change under the cron — see keyword-sources/route.ts.
+export const dynamic = 'force-dynamic'
+export const fetchCache = 'force-no-store'
+
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed(req.cookies.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

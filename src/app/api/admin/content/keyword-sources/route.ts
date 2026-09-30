@@ -17,6 +17,19 @@ import { researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 
 export const dynamic = 'force-dynamic'
+/**
+ * Do not serve this route's database reads from Next's Data Cache.
+ *
+ * Next patches the global fetch in route handlers, and supabase-js has no fetch of its own, so
+ * every query here is an ordinary cacheable GET. `dynamic = 'force-dynamic'` is not enough on its
+ * own: it governs whether the route is re-run, not whether the fetches inside it come from cache,
+ * so the route re-ran faithfully and got a stale answer. That is what made a removed keyword come
+ * back ticked and survive a page reload while the database had it right all along.
+ *
+ * Declared per route rather than inside createAdminClient, so only the handlers that must read
+ * their own writes pay for it and the rest of the app keeps whatever caching it had.
+ */
+export const fetchCache = 'force-no-store'
 
 /**
  * How far back to read converting paid terms for this panel.
