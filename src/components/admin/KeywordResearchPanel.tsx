@@ -109,8 +109,13 @@ function runLabel(iso: string | null | undefined): string | null {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
+/** A set of lower-cased keywords as one comparable string. */
+const keyOf = (list: Iterable<string>) => Array.from(list).sort().join('\n')
+
+const NO_GEO: string[] = []
+
 export default function KeywordResearchPanel({
-  clientId, keywords, geoWords = [], onChanged, place, busy, onRefresh, refreshing,
+  clientId, keywords, geoWords = NO_GEO, onChanged, onDirtyChange, place, busy, onRefresh, refreshing,
   total, lastResearchAt,
 }: {
   clientId:   string
@@ -119,6 +124,8 @@ export default function KeywordResearchPanel({
   geoWords?:  string[]
   /** Called after a successful save so the caller can refetch. */
   onChanged?: () => void
+  /** Whether there are ticks that have not been saved, so a caller can warn before leaving. */
+  onDirtyChange?: (dirty: boolean) => void
   /** The market these numbers describe, when one is set. */
   place?:     string | null
   busy?:      boolean
@@ -130,19 +137,40 @@ export default function KeywordResearchPanel({
   /** When research last ran, so the list can say how old it is. */
   lastResearchAt?: string | null
 }) {
-  const [chosen, setChosen]   = useState<Set<string>>(new Set())
+  // What the server says is chosen, and which rows exist, each as one comparable key.
+  const serverChosen = useMemo(
+    () => new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase())), [keywords])
+  const inList = useMemo(() => new Set(keywords.map(k => k.keyword.toLowerCase())), [keywords])
+  const serverKey = keyOf(serverChosen)
+  const listKey   = keyOf(inList)
+
+  const [chosen, setChosen]   = useState<Set<string>>(() => new Set(serverChosen))
+  // The server state `chosen` was last reconciled with.
+  const [synced, setSynced]   = useState({ chosen: serverKey, list: listKey })
   const [expanded, setExpand] = useState<Set<string>>(new Set())
   const [saving, setSaving]   = useState(false)
-  const [msg, setMsg]         = useState<string | null>(null)
+  const [msg, setMsg]         = useState<{ text: string; error: boolean } | null>(null)
   const [filter, setFilter]   = useState('')
   /** Which origin the list is narrowed to, or 'all'. */
   const [origin, setOrigin]   = useState<string>('all')
   const [confirmRefresh, setConfirmRefresh] = useState(false)
 
-  // Server state is the starting point; a save reconciles back to it.
-  useEffect(() => {
-    setChosen(new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase())))
-  }, [keywords])
+  // Server state is the starting point, and only a real change to it moves the ticks.
+  //
+  // This used to reset `chosen` whenever the keywords array changed identity. The wizard rebuilt
+  // that array on every render and the Keywords tab refetches it on every reload, so ticks nobody
+  // had saved were wiped by a keystroke elsewhere on the page. Now only what the server changed
+  // since the last sync is applied — additions ticked, removals unticked — and anything ticked
+  // or unticked here and not yet saved is left as it was. Keys no longer in the list are dropped
+  // so the count and the save only ever describe rows that exist.
+  if (serverKey !== synced.chosen || listKey !== synced.list) {
+    const before = new Set(synced.chosen ? synced.chosen.split('\n') : [])
+    const next = new Set(Array.from(chosen).filter(k => inList.has(k)))
+    serverChosen.forEach(k => { if (!before.has(k)) next.add(k) })
+    before.forEach(k => { if (!serverChosen.has(k)) next.delete(k) })
+    setSynced({ chosen: serverKey, list: listKey })
+    setChosen(next)
+  }
 
   // Text filter first; the origin chips are counted against that result, so the numbers on the
   // chips always describe what clicking one would actually show.
@@ -184,6 +212,7 @@ export default function KeywordResearchPanel({
   }, [shown, geoWords])
 
   const toggle = useCallback((keyword: string) => {
+    setMsg(null)
     setChosen(prev => {
       const next = new Set(prev)
       const key = keyword.toLowerCase()
@@ -192,17 +221,16 @@ export default function KeywordResearchPanel({
     })
   }, [])
 
-  const dirty = useMemo(() => {
-    const was = new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase()))
-    if (was.size !== chosen.size) return true
-    for (const k of Array.from(chosen)) if (!was.has(k)) return true
-    return false
-  }, [keywords, chosen])
+  const dirty = keyOf(chosen) !== serverKey
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  // Unmounted, there is nothing left unsaved here to warn about.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
 
   async function save() {
     setSaving(true); setMsg(null)
     try {
-      const was  = new Set(keywords.filter(k => k.chosen).map(k => k.keyword.toLowerCase()))
+      const was  = serverChosen
       const add  = Array.from(chosen).filter(k => !was.has(k))
       const drop = Array.from(was).filter(k => !chosen.has(k))
       // A hand-typed keyword that is un-ticked leaves the list altogether.
@@ -240,10 +268,10 @@ export default function KeywordResearchPanel({
           throw new Error(body.error ?? `HTTP ${res.status}`)
         }
       }
-      setMsg(['Saved', remove.length ? `${remove.length} removed` : ''].filter(Boolean).join(' · '))
+      setMsg({ text: ['Saved', remove.length ? `${remove.length} removed` : ''].filter(Boolean).join(' · '), error: false })
       onChanged?.()
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Could not save')
+      setMsg({ text: e instanceof Error ? e.message : 'Could not save', error: true })
     } finally {
       setSaving(false)
     }
@@ -439,7 +467,14 @@ export default function KeywordResearchPanel({
         <button className="btn btn-primary" onClick={save} disabled={saving || busy || !dirty}>
           {saving ? 'Saving…' : 'Save selection'}
         </button>
-        {msg && <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{msg}</span>}
+        {msg && (
+          <span role="status" style={{ fontSize: '0.8125rem', color: msg.error ? 'var(--red)' : 'var(--text-muted)' }}>
+            {msg.text}
+          </span>
+        )}
+        {!msg && dirty && !saving && (
+          <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }}>Not saved yet</span>
+        )}
       </div>
     </div>
   )

@@ -291,6 +291,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
                is what a client like 5 Star Tuning gets, and it finds real keywords. */
             onRefresh={() => void refresh()}
             refreshing={busy}
+            // A forced run replaces the unchosen half of the pool, so a save racing it would
+            // write ticks against rows that are about to go. Adding by hand reloads the list too.
+            busy={busy || adding}
           />
         )}
       </div>

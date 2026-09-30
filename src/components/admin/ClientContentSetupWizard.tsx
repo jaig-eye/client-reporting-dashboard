@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import MarketLine from './MarketLine'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
-import KeywordResearchPanel from '@/components/admin/KeywordResearchPanel'
+import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -167,6 +167,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    */
   const [loadedEeat, setLoadedEeat] = useState<Record<string, unknown>>({})
   const [researchDone,   setResearchDone]   = useState(false)
+  /** Ticks on the research step that have not been saved. Leaving the step drops them. */
+  const [picksDirty,     setPicksDirty]     = useState(false)
+  /** Set by a first Continue or Back over unsaved picks; the second press leaves. */
+  const [leaveWarned,    setLeaveWarned]    = useState(false)
 
   // Saving state
   const [saving, setSaving]   = useState(false)
@@ -548,6 +552,26 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     }
   }
 
+  /**
+   * Read the stored pool back after picks are saved. Free — a database read.
+   *
+   * Keeps what only a run returns (competitors, the map pack, the counts) and replaces the rows,
+   * so the list the panel reconciles against is what the server now holds.
+   */
+  const reloadStoredResearch = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
+      if (!res.ok) return
+      const d = await res.json() as ResearchData
+      setResearch(prev => ({
+        ...(prev ?? { competitors: [], connected: d.connected }),
+        keywords:         d.keywords ?? [],
+        researchedAt:     d.researchedAt ?? prev?.researchedAt ?? null,
+        researchLocation: d.researchLocation ?? prev?.researchLocation ?? null,
+      }))
+    } catch { /* the list on screen is still what was saved */ }
+  }, [clientId])
+
   /** "Not this one." Gone from the list now, and from every read of the pool once the server agrees. */
   async function saveSettings(wizardCompleted: boolean) {
     const eeatData = {
@@ -663,8 +687,20 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     return () => window.removeEventListener('keydown', handler)
   }, [handleSkip])
 
-  function next() { setStep(s => Math.min(s + 1, TOTAL_STEPS)) }
-  function back() { setStep(s => Math.max(s - 1, 1)) }
+  const onPicksDirty = useCallback((dirty: boolean) => {
+    setPicksDirty(dirty)
+    if (!dirty) setLeaveWarned(false)
+  }, [])
+
+  /** Leaving the research step unmounts the list, and unsaved ticks go with it. Say so once. */
+  function guardLeave(): boolean {
+    if (step === 8 && picksDirty && !leaveWarned) { setLeaveWarned(true); return false }
+    setLeaveWarned(false)
+    setPicksDirty(false)
+    return true
+  }
+  function next() { if (guardLeave()) setStep(s => Math.min(s + 1, TOTAL_STEPS)) }
+  function back() { if (guardLeave()) setStep(s => Math.max(s - 1, 1)) }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -780,6 +816,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               onRerun={rerunResearch}
               rerunning={rerunning}
               hasDfs={hasDfs}
+              onPicksSaved={reloadStoredResearch}
+              onPicksDirty={onPicksDirty}
             />
           )}
           {step === 9 && (
@@ -802,7 +840,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         {step < 9 && (
           <div style={{
             padding: '1rem 1.5rem 1.25rem',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
             borderTop: '1px solid var(--border)',
           }}>
             <button
@@ -813,12 +851,19 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             >
               ← Back
             </button>
+            {leaveWarned && picksDirty && (
+              <p role="alert" style={{ margin: 0, flex: '1 1 200px', fontSize: '0.8125rem', color: 'var(--amber)', lineHeight: 1.4 }}>
+                Your ticks aren&apos;t saved. Press <strong>Save selection</strong> first, or leave without them.
+              </p>
+            )}
             <button
               onClick={next}
               className="btn btn-primary"
               style={{ fontSize: '0.875rem' }}
             >
-              {step === 7 || (step === 8 && !hasDfs) ? 'Skip →' : 'Continue →'}
+              {leaveWarned && picksDirty
+                ? 'Leave without saving →'
+                : step === 7 || (step === 8 && !hasDfs) ? 'Skip →' : 'Continue →'}
             </button>
           </div>
         )}
@@ -1603,7 +1648,7 @@ function StepContentTypes({
 
 // --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning, hasDfs }: {
+function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning, hasDfs, onPicksSaved, onPicksDirty }: {
   research:  ResearchData | null
   done:      boolean
   clientId:  string
@@ -1615,11 +1660,29 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
   rerunning: boolean
   /** Whether this client has a DataForSEO connection. Without one there is nothing to research. */
   hasDfs:    boolean
+  /** After the picks are saved, so the wizard's copy of the pool matches the server's. */
+  onPicksSaved: () => void
+  onPicksDirty: (dirty: boolean) => void
 }) {
   // Every hook first. An early return above a useState changes the hook order between renders,
   // which React refuses — and this component is rendered with hasDfs false and then true as the
   // connection check resolves, so it would have hit exactly that.
   const [confirming, setConfirming] = useState(false)
+  const place = research?.researchLocation ? research.researchLocation.split(',')[0] : null
+  // Built once per pool, not per render: the panel reconciles its ticks against this list, and
+  // a fresh array on every keystroke in the seeds box is what used to wipe them.
+  const rawKeywords = research?.keywords
+  const panelKeywords = useMemo<ResearchKeyword[]>(() => (rawKeywords ?? []).map(k => ({
+    keyword:      k.keyword,
+    volume:       k.volume ?? null,
+    difficulty:   k.difficulty ?? null,
+    intent:       k.intent ?? null,
+    source:       k.source ?? null,
+    score:        k.score ?? null,
+    local_volume: k.local_volume ?? null,
+    chosen:       k.chosen ?? false,
+  })), [rawKeywords])
+  const geoWords = useMemo(() => place ? [place] : [], [place])
 
   // Nothing to research without DataForSEO, so ask for it here instead of running a step that can
   // only come back empty. Everything else in the wizard works without it; this is the one screen
@@ -1656,7 +1719,6 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
   const failed       = !!research?.failed
   const found        = research?.discovered ?? keywords.length
   const researchedOn = research?.researchedAt ? new Date(research.researchedAt).toLocaleDateString() : null
-  const place        = research?.researchLocation ? research.researchLocation.split(',')[0] : null
 
   return (
     <div>
@@ -1738,19 +1800,12 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
           ) : (
             <KeywordResearchPanel
               clientId={clientId}
-              keywords={keywords.map(k => ({
-                keyword:      k.keyword,
-                volume:       k.volume ?? null,
-                difficulty:   k.difficulty ?? null,
-                intent:       k.intent ?? null,
-                source:       k.source ?? null,
-                score:        k.score ?? null,
-                local_volume: k.local_volume ?? null,
-                chosen:       k.chosen ?? false,
-              }))}
-              geoWords={place ? [place] : []}
+              keywords={panelKeywords}
+              geoWords={geoWords}
               place={place}
               busy={busy}
+              onChanged={onPicksSaved}
+              onDirtyChange={onPicksDirty}
             />
           )}
         </div>
