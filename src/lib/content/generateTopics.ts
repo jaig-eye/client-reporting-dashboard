@@ -9,7 +9,7 @@ import { createAdminClient }              from '@/lib/supabase/server'
 import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
-import { researchCompetitors }            from '@/lib/content/competitorResearch'
+import { researchCompetitors, sanitizeHeading } from '@/lib/content/competitorResearch'
 import type { CompetitorResearch }        from '@/lib/content/competitorResearch'
 import {
   BLOG_INTENT_ENUM,
@@ -146,6 +146,60 @@ export interface GenerateTopicsResult {
   clientName: string
   count:      number
   error?:     string
+  /**
+   * Things that made this run weaker than it should have been without stopping it — Search Console
+   * unreadable, for one. The cron surfaces these; before, they reached only the server log.
+   */
+  warnings?:  string[]
+}
+
+type GscRow = { page: string; query: string; clicks: number; impressions: number; position: number; ctr: number }
+
+/** Pages of 1,000 read before giving up. 10,000 rows covers any client's 28-day window by a margin. */
+const GSC_MAX_PAGES = 10
+
+/**
+ * The 28-day Search Console rows, most-seen first, read past PostgREST's 1,000-row cap.
+ *
+ * A single `.limit(2000)` was silently capped at 1,000 with no ordering, so a site with more
+ * query/page pairs than that had an arbitrary thousand aggregated — and this read decides which
+ * keywords the client already ranks for, i.e. what the cannibalization guard protects.
+ */
+async function readGscWindow(
+  db: ReturnType<typeof createAdminClient>,
+  clientId: string,
+  windowStart: string,
+): Promise<{ data: GscRow[] | null; error: { message: string } | null }> {
+  const rows: GscRow[] = []
+  for (let page = 0; page < GSC_MAX_PAGES; page++) {
+    const { data, error } = await db.from('gsc_metrics')
+      .select('page, query, clicks, impressions, position, ctr')
+      .eq('client_id', clientId)
+      .gte('date', windowStart)
+      .not('page', 'ilike', '%?%')
+      .not('query', 'eq', '')
+      .order('impressions', { ascending: false })
+      .order('date',  { ascending: true })
+      .order('page',  { ascending: true })
+      .order('query', { ascending: true })
+      .range(page * 1000, page * 1000 + 999)
+    if (error) return { data: null, error }
+    rows.push(...((data ?? []) as GscRow[]))
+    if ((data ?? []).length < 1000) break
+  }
+  return { data: rows, error: null }
+}
+
+/**
+ * A keyword from a search tool, made safe to quote in the topic prompt.
+ *
+ * These are strings from outside — Ahrefs, DataForSEO, rank tracking — not the operator's words. The
+ * same filter scraped competitor headings already pass through: drop anything that reads like an
+ * instruction, strip markup characters, and neutralise quotes so it cannot close the quote around it.
+ */
+function promptKeyword(kw: string): string | null {
+  const clean = sanitizeHeading(String(kw ?? ''))
+  return clean ? clean.replace(/"/g, "'").slice(0, 120) : null
 }
 
 export async function generateTopicsForClient(
@@ -189,9 +243,13 @@ export async function generateTopicsForClient(
   // free to be regenerated, and the only way to stop a topic coming back was to
   // delete it. Rejected rows are now included in the avoid-list; deletion remains the
   // way to make something eligible again.
+  // Newest first and bounded. Unordered, the read was cut at PostgREST's 1,000 rows arbitrarily,
+  // so a long-running client's avoid list could drop last week's topics and keep 2024's.
   let existingTopicsQ = db.from('content_topics')
     .select('topic, target_keyword')
     .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+    .limit(500)
   if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
 
   // No date cap — include all posts ever generated for this client so nothing is
@@ -224,13 +282,7 @@ export async function generateTopicsForClient(
       .maybeSingle(),
     existingTopicsQ,
     existingPostsQ,
-    db.from('gsc_metrics')
-      .select('page, query, clicks, impressions, position, ctr')
-      .eq('client_id', clientId)
-      .gte('date', windowStart)
-      .not('page', 'ilike', '%?%')
-      .not('query', 'eq', '')
-      .limit(2000),
+    readGscWindow(db, clientId, windowStart),
     // Third-party organic positions. Covers queries GSC drops from a 28-day window, and carries
     // volume and difficulty of its own.
     db.from('ahrefs_keywords')
@@ -264,14 +316,9 @@ export async function generateTopicsForClient(
   // again. One retry is cheap (a single indexed read) and turns most of those into nothing at all.
   if (gscRawRes.error) {
     console.warn('[generateTopics] Search Console read failed, retrying once:', gscRawRes.error.message)
-    gscRawRes = await db.from('gsc_metrics')
-      .select('page, query, clicks, impressions, position, ctr')
-      .eq('client_id', clientId)
-      .gte('date', windowStart)
-      .not('page', 'ilike', '%?%')
-      .not('query', 'eq', '')
-      .limit(2000)
+    gscRawRes = await readGscWindow(db, clientId, windowStart)
   }
+  const warnings: string[] = []
   // Failed twice: carry on without it rather than produce nothing.
   //
   // This was an abort, on the reasoning that Search Console is the largest source of
@@ -288,6 +335,7 @@ export async function generateTopicsForClient(
       ` Topic quality is reduced and the cannibalization guard is relying on Ahrefs, tracked ranks` +
       ` and the prompt instruction alone: ${gscRawRes.error.message}`,
     )
+    warnings.push(`Search Console could not be read, so these topics were chosen without it: ${gscRawRes.error.message}`)
   }
   // Secondary sources: a failure weakens the guard rather than blinding it, and both are absent
   // for most clients anyway. Say so loudly instead of stopping the run.
@@ -304,7 +352,7 @@ export async function generateTopicsForClient(
   type GscAgg = { totalClicks: number; totalImpr: number; weightedPos: number; weightedCtr: number; count: number }
   const gscMap = new Map<string, GscAgg>()
 
-  for (const r of (gscRawRes.data ?? []) as { page: string; query: string; clicks: number; impressions: number; position: number; ctr: number }[]) {
+  for (const r of gscRawRes.data ?? []) {
     const key  = `${r.page}||${r.query}`
     const impr = r.impressions ?? 0
     const ex   = gscMap.get(key)
@@ -325,7 +373,7 @@ export async function generateTopicsForClient(
   type AhrefsKw = { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
   const ahrefsMap = new Map<string, AhrefsKw>()
   for (const r of (ahrefsKwRes.data ?? []) as AhrefsKw[]) {
-    const kw = String(r.keyword ?? '').trim().toLowerCase()
+    const kw = promptKeyword(String(r.keyword ?? '').trim().toLowerCase()) ?? ''
     if (!kw || ahrefsMap.has(kw)) continue
     ahrefsMap.set(kw, { keyword: kw, position: r.position, volume: r.volume, difficulty: r.difficulty })
   }
@@ -347,19 +395,29 @@ export async function generateTopicsForClient(
   type TrackedRank = { keyword: string; position: number | null; url: string | null }
   const trackedRanks: TrackedRank[] = await (async () => {
     try {
-      const { data, error } = await db
-        .from('seo_keyword_current')
-        .select('keyword, current_position, current_url')
-        .eq('client_id', clientId)
-        .not('current_position', 'is', null)
-        .order('current_position', { ascending: true })
-        .limit(300)
-      if (error) return []
-      return ((data ?? []) as Record<string, unknown>[]).map(r => ({
-        keyword:  String(r.keyword ?? '').trim().toLowerCase(),
-        position: r.current_position == null ? null : Number(r.current_position),
-        url:      r.current_url == null ? null : String(r.current_url),
-      })).filter(r => r.keyword)
+      // Brand searches (filed navigational by research) and keywords a person dismissed stay out:
+      // research snapshots record a position for everything the site ranks for, chosen or not, and
+      // this read has no other filter — a dismissed keyword was still steering topic selection.
+      const [{ data, error }, dismissedRes] = await Promise.all([
+        db.from('seo_keyword_current')
+          .select('keyword_id, keyword, current_position, current_url')
+          .eq('client_id', clientId)
+          .not('current_position', 'is', null)
+          .or('intent.is.null,intent.neq.navigational')
+          .order('current_position', { ascending: true })
+          .limit(300),
+        db.from('seo_keywords').select('id').eq('client_id', clientId).not('dismissed_at', 'is', null).limit(1000),
+      ])
+      if (error) { console.warn('[generateTopics] tracked rankings unreadable:', error.message); return [] }
+      // Without migration 223 there is no dismissal to honour, and the rest still stands.
+      const dismissed = new Set(((dismissedRes.data ?? []) as { id: string }[]).map(r => r.id))
+      return ((data ?? []) as Record<string, unknown>[])
+        .filter(r => !dismissed.has(String(r.keyword_id)))
+        .map(r => ({
+          keyword:  promptKeyword(String(r.keyword ?? '').trim().toLowerCase()) ?? '',
+          position: r.current_position == null ? null : Number(r.current_position),
+          url:      r.current_url == null ? null : String(r.current_url),
+        })).filter(r => r.keyword)
     } catch {
       return []
     }
@@ -367,18 +425,18 @@ export async function generateTopicsForClient(
 
   // ── Researched candidates ─────────────────────────────────────────────────
   // The only source here that can propose a subject the client has never ranked for — everything
-  // else describes ground they already hold. Research runs inline when what is stored has aged
-  // past its window, and is reused otherwise; the same call also refreshes the site-wide ranking
-  // snapshot, so this is where both come from.
+  // else describes ground they already hold. Only keywords a person ticked in the Keywords tab;
+  // this never buys research (the monthly job does).
   //
   // Soft-fails to an empty list, exactly like every other DataForSEO path: without a connection
-  // or the migrations, selection behaves as it does today.
+  // or the migrations, selection behaves as it does on main.
   type PoolKeyword = { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
   const candidatePool: PoolKeyword[] = await (async () => {
     try {
-      const { candidates, refreshed } = await getResearchCandidates(clientId)
-      if (refreshed) console.log(`[generateTopics] refreshed research for client ${clientId}: ${candidates.length} candidate(s)`)
+      const { candidates } = await getResearchCandidates(clientId)
       return candidates
+        .map(c => ({ ...c, keyword: promptKeyword(c.keyword) ?? '' }))
+        .filter(c => c.keyword)
     } catch (e) {
       console.warn('[generateTopics] research unavailable:', e)
       return []
@@ -580,7 +638,9 @@ export async function generateTopicsForClient(
       if (slug.length >= 4) addAvoid(slug.replace(/-/g, ' '), null)
     } catch { /* ignore */ }
   })
-  const avoidText = avoidEntries.join('\n')
+  // Capped: the list rides in a prompt that can be sent twice per slot (the cannibalization retry),
+  // and past a few hundred entries it costs tokens without adding protection.
+  const avoidText = avoidEntries.slice(0, 600).join('\n')
 
   // ── E-E-A-T context ────────────────────────────────────────────────────────
   const eeat = clientSettings?.eeat_data as Record<string, unknown> | null
@@ -978,7 +1038,9 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
 
   const first = await requestTopics('')
   if (first.error) return { topics: [], clientName, count: 0, error: first.error }
-  let topics: TopicIdea[] = first.topics
+  // Held to what was asked for. A model asked for one topic sometimes returns three, and every
+  // extra was inserted onto the slot as a 'pending' topic nothing would ever approve.
+  let topics: TopicIdea[] = first.topics.slice(0, Math.max(1, count))
 
   if (!topics.length) {
     console.error('[generateTopics] AI returned no usable topics')
@@ -1031,7 +1093,12 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
   }
   const gscPageFor = (kw: string): string | null => pageForQuery.get(normalizeKeyword(kw))?.page ?? null
 
-  for (const r of alreadyWinning) protect(r.query,   Math.round(r.weightedPos), r.page)
+  // Every page-one query with real impressions, not the dozen the prompt displays. The display list
+  // is capped and leaves out anything already shown in another section — the CTR-gap queries at
+  // positions 1–5 among them — so protecting from it left a client's real rankings unguarded.
+  for (const r of gscRows) {
+    if (r.weightedPos >= 1 && r.weightedPos <= 10 && r.totalImpr >= 10) protect(r.query, Math.round(r.weightedPos), r.page)
+  }
   for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          gscPageFor(k.keyword))
   for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
 
@@ -1048,8 +1115,8 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     topics = res.topics
     if (res.demoted.length > 0) {
       console.warn(
-        `[generateTopics] cannibalization: ${res.demoted.length} topic(s) still colliding after the` +
-        ` retries for client ${clientId}, demoted to supporting: ${res.demoted.join('; ')}`,
+        `[generateTopics] cannibalization: ${res.demoted.length} topic(s) demoted to supporting articles` +
+        ` for client ${clientId}: ${res.demoted.join('; ')}`,
       )
     }
   }
@@ -1128,5 +1195,5 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     }
   }
 
-  return { topics: savedTopics, clientName, count: savedTopics.length }
+  return { topics: savedTopics, clientName, count: savedTopics.length, ...(warnings.length ? { warnings } : {}) }
 }

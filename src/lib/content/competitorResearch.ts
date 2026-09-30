@@ -46,7 +46,7 @@ export interface CompetitorResearch {
 // Drop headings that look like injected directives before they reach the prompt.
 const INJECTION_RE = /\b(ignore|disregard|forget)\b.*\b(previous|prior|above|instruction|prompt|system)\b|\bsystem prompt\b|\byou (must|should|are now)\b|\bact as\b|\bnew instructions?\b/i
 
-function sanitizeHeading(h: string): string | null {
+export function sanitizeHeading(h: string): string | null {
   const clean = h.replace(/[<>{}]/g, '').trim()
   if (clean.length < 3 || clean.length > 200) return null
   if (INJECTION_RE.test(clean)) return null

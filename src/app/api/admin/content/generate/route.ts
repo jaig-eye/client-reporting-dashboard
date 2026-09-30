@@ -28,6 +28,7 @@ import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES
 import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
 import { saveSerpInsightById, type SerpInsight } from '@/lib/content/serpInsights'
 import { registerKeyword } from '@/lib/content/seoRankings'
+import { readDemotion, normalizeKeyword } from '@/lib/content/cannibalization'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
@@ -725,6 +726,15 @@ async function runTopicGeneration({
       sitemapRows.filter(r => !r.is_excluded && isLinkableUrl(r.url)).map(r => r.url)
     )
 
+    // A topic the cannibalization guard demoted must link to the page it supports. That URL comes
+    // from Search Console or rank tracking, not the sitemap cache, so without this the link the
+    // prompt demands was stripped as invented — and the article went out competing instead of
+    // supporting.
+    const demotion = readDemotion(topicData.ranking_strategy, topicData.target_keyword)
+    if (topicData.page_to_support && /^https?:\/\//i.test(topicData.page_to_support)) {
+      allowedInternalUrls.add(topicData.page_to_support)
+    }
+
     const sitemapUrls: string[] = (() => {
       const urls = clientSettings?.sitemap_urls
       if (Array.isArray(urls) && urls.length > 0) return urls as string[]
@@ -1011,7 +1021,9 @@ LINKING RULES:
     const serpAlreadyTried = topicData.competitors_researched != null
     // What Google showed for the target keyword, filed on the post's keyword row once it exists.
     const serp: { insight: SerpInsight | null } = { insight: null }
-    const competitorGapSection = await gatherCompetitorGap({
+    // A supporting article for a phrase the client already ranks for exactly gets no talking points
+    // for that phrase: they would steer the writer back onto the head term it must stay off.
+    const competitorGapSection = demotion?.exact ? '' : await gatherCompetitorGap({
       db, clientId: effectiveClientId, keyword: topicData.target_keyword,
       serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
       storedResearch: topicData.competitors_researched,
@@ -1055,11 +1067,13 @@ LINKING RULES:
     const userPrompt = `Write a detailed, SEO-optimized ${contentTypeLabel} on the following topic:
 
 Title: ${topicData.topic}
-Target keyword: ${topicData.target_keyword || 'derive from topic'}
+${demotion?.exact
+  ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for. Use "${demotion.prot}" only as anchor text for the link to the page this article supports.`
+  : `Target keyword: ${topicData.target_keyword || 'derive from topic'}`}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${contentType === 'regular_page' && topicData.custom_focus ? `Page focus: ${topicData.custom_focus}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
-${topicData.ranking_strategy ? `Ranking strategy — follow this: ${topicData.ranking_strategy}` : ''}
+${demotion ? `Supporting-article brief — follow this: ${demotion.directive}` : ''}
 ${siloSection}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
 ${briefLines.length > 0 ? briefLines.join('\n') : ''}
@@ -1277,7 +1291,15 @@ ${lengthRequirement}${writingRulesReminder}`
     // Register the target keyword in the SEO datastream (content → keyword link), so
     // once DataForSEO is connected, rank checks surface on this post's card and editor.
     // Soft-fails if the seo_keywords table isn't present yet (migration 189 pending).
-    if (parsed.focusKeyword) {
+    //
+    // A supporting article that still chose the protected phrase as its focus keyword is not
+    // registered against it: that keyword's rankings belong to the page it supports, and claiming it
+    // here would file the other page's positions under this post.
+    const claimsProtected = demotion?.exact && normalizeKeyword(parsed.focusKeyword) === normalizeKeyword(demotion.prot)
+    if (claimsProtected) {
+      console.warn(`[generate] topic ${topicId}: supporting article chose the protected phrase "${demotion!.prot}" as its focus keyword`)
+    }
+    if (parsed.focusKeyword && !claimsProtected) {
       const keywordId = await registerKeyword({
         clientId:      effectiveClientId,
         keyword:       parsed.focusKeyword,
