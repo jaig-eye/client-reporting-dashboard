@@ -42,7 +42,7 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
         title="SERP snapshots" provider="DataForSEO"
         count={all.length > 0 ? filtered.length : undefined}
         desc={!loading && filtered.length > 0
-          ? 'The talking points the writer is handed: one search-results page per keyword, taken when the keyword is picked and replaced the next time it is taken.'
+          ? 'What Google returned when each post was written — the talking points its writer was actually handed.'
           : undefined}
       />
       {loading ? (
@@ -51,7 +51,7 @@ export default function SerpInsightsSection({ rows, loading, search, ownDomains 
         <p className="section-desc" style={{ margin: 0 }}>
           {search
             ? `Nothing matches "${search}".`
-            : 'Nothing captured yet. One is taken for each keyword as you pick it.'}
+            : 'Nothing captured yet. One is kept for each post as it is written.'}
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

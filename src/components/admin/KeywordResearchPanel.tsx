@@ -213,10 +213,8 @@ export default function KeywordResearchPanel({
       // candidates are different: un-ticking one means "not this time", and it stays available.
       const manual = new Set(keywords.filter(k => originOf(k) === 'manual').map(k => k.keyword.toLowerCase()))
       const remove = drop.filter(k => manual.has(k))
-      // Newly picked keywords have their SERP looked up as part of the save, so this can take a
-      // few seconds each. Say so rather than leaving a button spinning.
-      if (add.length) setMsg(`Looking up what Google shows for ${add.length}…`)
-      let captured = 0
+      // Saving is now just a write. Picking a keyword no longer buys a SERP snapshot, so there is
+      // nothing slow to apologise for and nothing looked up to report.
       for (const [list, isChosen] of [[add, true], [drop, false]] as const) {
         if (!list.length) continue
         const res = await fetch('/api/admin/content/keyword-research', {
@@ -228,8 +226,6 @@ export default function KeywordResearchPanel({
           const body = await res.json().catch(() => ({}))
           throw new Error(body.error ?? `HTTP ${res.status}`)
         }
-        const body = await res.json().catch(() => ({})) as { snapshot?: { captured?: number } }
-        captured += body.snapshot?.captured ?? 0
       }
       // Runs after the un-choose above, so a failure here leaves the row unchosen rather than
       // half-removed.
@@ -244,11 +240,7 @@ export default function KeywordResearchPanel({
           throw new Error(body.error ?? `HTTP ${res.status}`)
         }
       }
-      setMsg([
-        'Saved',
-        captured      ? `${captured} looked up` : '',
-        remove.length ? `${remove.length} removed` : '',
-      ].filter(Boolean).join(' · '))
+      setMsg(['Saved', remove.length ? `${remove.length} removed` : ''].filter(Boolean).join(' · '))
       onChanged?.()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Could not save')

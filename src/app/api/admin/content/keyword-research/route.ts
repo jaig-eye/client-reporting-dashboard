@@ -26,13 +26,21 @@ import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
-import { snapshotChosenKeywords, IN_CHUNK } from '@/lib/content/snapshotChosen'
 import { addManualKeywords } from '@/lib/content/addManualKeywords'
 
 // Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
 // kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
 // generation buys it all again.
 export const maxDuration = 300
+
+/**
+ * How many phrases go into one `in` filter.
+ *
+ * That filter rides in the URL: five hundred phrases is roughly twelve kilobytes of query string,
+ * past what proxies in front of PostgREST accept, and it fails the whole update rather than part
+ * of it.
+ */
+const IN_CHUNK = 100
 // Writes then reads the pool back — see keyword-sources/route.ts.
 export const dynamic = 'force-dynamic'
 export const fetchCache = 'force-no-store'
@@ -237,11 +245,7 @@ export async function PATCH(request: NextRequest) {
     const db = createAdminClient()
     const result = await addManualKeywords(db, clientId, (body.add as unknown[]).map(k => String(k ?? '')))
     if (result.error) return NextResponse.json({ error: result.error }, { status: 500 })
-    const snapshot = await snapshotChosenKeywords(
-      db, clientId,
-      (body.add as unknown[]).map(k => String(k ?? '').trim().toLowerCase().replace(/\s+/g, ' ')).filter(Boolean),
-    )
-    return NextResponse.json({ ok: true, ...result, snapshot })
+    return NextResponse.json({ ok: true, ...result })
   }
 
   // ── Bulk removal ──────────────────────────────────────────────────────────
@@ -312,15 +316,18 @@ export async function PATCH(request: NextRequest) {
         )
       }
     }
-    // Picking a keyword is the moment its talking points are worth reading — before a post is
-    // committed to it, not after one exists. One SERP call per keyword, once: anything that
-    // already carries a snapshot is skipped, and unchoosing buys nothing. This never fails the
-    // selection, which is already written above.
-    const snapshot = body.chosen === false
-      ? { captured: 0, skipped: 0, cost: 0 }
-      : await snapshotChosenKeywords(db, clientId, list)
-
-    return NextResponse.json({ ok: true, updated: list.length, snapshot })
+    // Picking a keyword no longer buys a SERP snapshot.
+    //
+    // It used to — one live search per keyword, up to thirty per selection — on the reasoning
+    // that the talking points are worth reading before a post is committed. They are, but nothing
+    // ever read them: writing an article fetches its own live SERP through competitiveIntel and
+    // OVERWRITES the stored one. So the pick-time purchase paid for a row that the first post
+    // against that keyword replaced, and its only reader was a display panel.
+    //
+    // The panel is unaffected. It reads seo_keywords.metadata->serp, which generation still
+    // writes — so it now shows the snapshots the writer actually used, filling in as posts are
+    // written rather than as keywords are ticked. Later, truer, and free.
+    return NextResponse.json({ ok: true, updated: list.length })
   }
 
   const keyword = String(body.keyword ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
