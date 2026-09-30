@@ -747,12 +747,14 @@ function buildStructureItem(element: string, current: number, targetMin: number,
  * Returns a formatted string that can be injected into a generation prompt
  * when an optimization brief is available for the topic/post.
  */
-export function formatBriefForPrompt(brief: OptimizationBrief): string {
+export function formatBriefForPrompt(brief: OptimizationBrief, opts: { includeWordCount?: boolean } = {}): string {
   const lines: string[] = []
 
   lines.push(`OPTIMIZATION BRIEF — follow these guidelines for "${brief.primary_keyword}":`)
 
-  if (brief.recommended_word_count_target) {
+  // Off when the caller states length itself — the article route's LENGTH requirement uses this
+  // brief's target — so the writer is not handed two different numbers.
+  if (brief.recommended_word_count_target && opts.includeWordCount !== false) {
     lines.push(`Target word count: ~${brief.recommended_word_count_target} words (min ${brief.recommended_word_count_min ?? 'n/a'}, max ${brief.recommended_word_count_max ?? 'n/a'})`)
   }
 

@@ -905,8 +905,8 @@ async function runTopicGeneration({
     // One number decides this. The brief's target wins when it has one, otherwise the client's
     // setting. "Approximately" is deliberately gone: measured against 50 posts it read as a floor,
     // and the model cleared it by 35% on average.
-    const budget = lengthBudget(brief?.word_count_target ?? targetLength)
-    const lengthRequirement = lengthInstruction(budget)
+    // A silo topic's optimization brief, read below, can replace this with its own target.
+    let budget = lengthBudget(brief?.word_count_target ?? targetLength)
 
     const briefLines: string[] = []
     if (brief) {
@@ -1005,7 +1005,13 @@ LINKING RULES:
               .maybeSingle()
         )
       if (optBrief) {
-        briefLines.push('\n' + formatBriefForPrompt(optBrief as OptimizationBrief))
+        // One length, not two. The brief carried its own "Target word count: ~2500 (min 1800, max
+        // 4000)" alongside the LENGTH requirement, so the writer got contradictory numbers, the
+        // tighten pass cut to one, and the silo audit then flagged the post short by the other.
+        // The brief's target becomes the budget and its own line is left out.
+        const optTarget = (optBrief as OptimizationBrief).recommended_word_count_target
+        if (optTarget) budget = lengthBudget(optTarget)
+        briefLines.push('\n' + formatBriefForPrompt(optBrief as OptimizationBrief, { includeWordCount: false }))
       }
     }
 
@@ -1081,7 +1087,7 @@ ${competitorGapSection}
 ${editNotesSection}
 ${intentSection}
 
-${lengthRequirement}${writingRulesReminder}`
+${lengthInstruction(budget)}${writingRulesReminder}`
 
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
