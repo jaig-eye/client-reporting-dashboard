@@ -13,35 +13,11 @@
 // downstream has to change.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react'
-import { isRegionToken } from '@/lib/content/usStates'
+import { splitPhrases } from '@/lib/content/phrases'
 
-export function splitPhrases(text: string): string[] {
-  const raw = String(text ?? '')
-  const out: string[] = []
-  let buf = '', depth = 0
-
-  // Split on separators, but not inside brackets and not before a state.
-  //
-  // "Melbourne, FL" is one place written the way everyone writes an address, and the old splitter
-  // turned it into "Melbourne" and "FL" — which then resolved to nothing, or worse, to a city of
-  // that name in another state. "Brevard County, Florida (including Cocoa, Palm Bay…)" fared worse
-  // still: fourteen chips, one of them ")".
-  for (const ch of raw) {
-    if (ch === '(' || ch === '[') depth++
-    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1)
-    if (depth === 0 && (ch === ',' || ch === '\n' || ch === ';')) { out.push(buf); buf = '' }
-    else buf += ch
-  }
-  out.push(buf)
-
-  // Re-join a fragment that is only a state onto the place it belongs to.
-  const merged: string[] = []
-  for (const part of out.map(v => v.trim()).filter(Boolean)) {
-    if (merged.length > 0 && isRegionToken(part)) merged[merged.length - 1] += `, ${part}`
-    else merged.push(part)
-  }
-  return Array.from(new Set(merged))
-}
+// Re-exported so existing imports keep working. The implementation lives in lib, because research
+// and the prompts have to split a stored list exactly the way this input wrote it.
+export { splitPhrases }
 
 export default function KeywordChipInput({
   value, onChange, placeholder, id, disabled, max = 40, onPending, suggestPlaces = false,

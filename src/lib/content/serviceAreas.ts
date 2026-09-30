@@ -4,6 +4,8 @@
 // client's market has to mean the same thing in all of them. Hanging it off generateTopics would
 // have made the article route import the topic generator to format a sentence.
 
+import { splitPhrases } from './phrases'
+
 /**
  * One context line naming where the business works, primary first.
  *
@@ -16,10 +18,8 @@
  * empty label.
  */
 export function serviceAreaLine(geographicFocus: unknown): string | null {
-  const areas = String(geographicFocus ?? '')
-    .split(/[,;\n]+/)
-    .map(v => v.trim())
-    .filter(Boolean)
+  // Read the way the chip input wrote it: "Melbourne, FL" is one area, not "Melbourne" then "FL".
+  const areas = splitPhrases(geographicFocus)
 
   if (areas.length === 0) return null
   if (areas.length === 1) return `Service area: ${areas[0]}`

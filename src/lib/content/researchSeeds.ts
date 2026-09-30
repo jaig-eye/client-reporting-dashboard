@@ -10,10 +10,13 @@
 // from the real thing the first time either changed, and a preview that is wrong is worse than
 // none, because it is the only place the operator can see what their money buys.
 
+import { splitPhrases } from './phrases'
+import { splitPlace } from './usStates'
+
 /** Services, as research reads them: trimmed, real words only, and capped. */
 export function parseServices(services: unknown): string[] {
-  return String(services ?? '')
-    .split(/[,\n;]+/).map(v => v.trim()).filter(v => v.length > 2).slice(0, 12)
+  // Split the way the chip input stored them, so "gutter guards (mesh, micro-mesh)" stays one service.
+  return splitPhrases(services).filter(v => v.length > 2).slice(0, 12)
 }
 
 /**
@@ -26,8 +29,9 @@ export function parseServices(services: unknown): string[] {
 export function geoPhrase(location: { name: string } | null, prose: string): string {
   const fromLocation = location ? location.name.split(',')[0].replace(/\s+county$/i, '').trim() : ''
   if (fromLocation) return fromLocation
-  const first = String(prose ?? '').split(/[,\n;]+/)[0] ?? ''
-  return first.split(/\s+and\s+|\s*\(|\s+including\s+/i)[0].trim()
+  const first = splitPhrases(prose)[0] ?? ''
+  // "Melbourne, FL" pins "Melbourne" on, the same head a picked location gives.
+  return splitPlace(first.split(/\s+and\s+|\s*\(|\s+including\s+/i)[0]).head.trim()
 }
 
 /**
@@ -67,8 +71,11 @@ export function locationCandidates(geographicFocus: string): string[] {
   // Service Areas is a list now, strongest first, so the first entry is the primary market and
   // needs no guessing. The prose parsing below stays for clients written as a sentence — which is
   // every client until they are next edited.
-  const asList = raw.split(',').map(v => v.trim()).filter(Boolean)
-  if (asList.length > 1 && asList.every(v => v.split(/\s+/).length <= 4)) {
+  //
+  // Split the way the chip input stored it. Cutting on every comma turned the "Springfield, MA"
+  // chip into "Springfield" and "MA", and "Springfield" alone resolves to Ohio.
+  const asList = splitPhrases(raw)
+  if (asList.length > 1 && asList.every(v => v.split(/\s+/).length <= 5)) {
     return asList.filter(v => !NON_LOCAL.test(v)).slice(0, 4)
   }
 
@@ -86,8 +93,13 @@ export function locationCandidates(geographicFocus: string): string[] {
       .trim()
     if (!cleaned || NON_LOCAL.test(cleaned)) continue
 
-    // "Brevard County, FL" searches better as "Brevard County" — the list matches on the name
-    // before the first comma.
+    // A named state goes to the lookup whole: dfsSearchLocations splits "Brevard County, FL" into
+    // name and state itself and requires the state to match. Trying the bare head as well would
+    // hand back the county or city of that name in whichever state sorts first.
+    if (splitPlace(cleaned).region) {
+      out.push(cleaned)
+      continue
+    }
     const head = cleaned.split(',')[0].trim()
     if (head.length >= 3) out.push(head)
     // Keep the fuller form too: "Los Angeles County" should beat "Los Angeles" when both exist.
