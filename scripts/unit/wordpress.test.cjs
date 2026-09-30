@@ -40,3 +40,17 @@ test('gives up after the hop limit', async () => {
     await assert.rejects(fetchWithSiteCredentials(`${s.base}/a`, { headers: { Authorization: 'Basic x' } }), /more than 3/)
   } finally { s.server.close() }
 })
+test('a 303 answer to a POST is not re-sent (the site may have processed it)', async () => {
+  const s = await site({ '/a': { status: 303, to: () => '/done' } })
+  try {
+    await assert.rejects(fetchWithSiteCredentials(`${s.base}/a`, { method: 'POST', headers: { Authorization: 'Basic x' }, body: 'post' }), /not re-sent/)
+    assert.deepEqual(s.seen.map(r => r.path), ['/a'])
+  } finally { s.server.close() }
+})
+test('a 302 answer to a GET is still followed on the same site', async () => {
+  const s = await site({ '/a': { status: 302, to: () => '/b' } })
+  try {
+    const res = await fetchWithSiteCredentials(`${s.base}/a`, { headers: { Authorization: 'Basic x' } })
+    assert.equal(res.status, 200)
+  } finally { s.server.close() }
+})

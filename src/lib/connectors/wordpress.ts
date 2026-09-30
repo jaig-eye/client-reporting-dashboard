@@ -161,6 +161,14 @@ export async function fetchWithSiteCredentials(url: string, init: RequestInit, l
 
     const location = res.headers.get('location')
     await res.body?.cancel().catch(() => {})
+    // 302 and 303 to a write can come AFTER the server has done it (post/redirect/get), so re-sending
+    // could publish twice. Only 301/307/308 say "not processed here, ask over there" for a write.
+    const method = (init.method ?? 'GET').toUpperCase()
+    if (method !== 'GET' && method !== 'HEAD' && (res.status === 302 || res.status === 303)) {
+      const msg = `${label} ${originOf(current)} answered ${method} with ${res.status} — not re-sent, because the site may already have processed it`
+      console.warn(msg)
+      throw new Error(msg)
+    }
     if (hop >= MAX_SITE_REDIRECTS) {
       const msg = `${label} ${originOf(url)} redirected more than ${MAX_SITE_REDIRECTS} times (last via ${originOf(current)}) — not followed further`
       console.warn(msg)
