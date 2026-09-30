@@ -27,6 +27,7 @@ import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { buildRewriteSystemPrompt }       from '@/lib/content/rewritePrompt'
 import { styleTables }                    from '@/lib/content/contentHtml'
 import { computeInternalLinks }           from '@/lib/content/internalLinks'
+import { readDemotion }                   from '@/lib/content/cannibalization'
 import { lengthBudget, lengthInstruction, isOverLength, tightenPrompt, judgeTightened } from '@/lib/content/lengthRules'
 
 export const maxDuration = 300
@@ -300,7 +301,7 @@ export async function POST(
       // 3. Fetch full topic data (TopicSummary only has a few fields)
       const { data: newTopic } = await db
         .from('content_topics')
-        .select('id, topic, target_keyword, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level')
+        .select('id, topic, target_keyword, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, page_to_support')
         .eq('id', newTopicId)
         .maybeSingle()
 
@@ -339,10 +340,25 @@ export async function POST(
         .limit(200)
       const allowedUrls = new Set<string>((sitemapData ?? []).map((r: { url: string }) => r.url))
 
+      // A topic the cannibalization guard demoted is a supporting article, handled exactly as the
+      // article route handles one: the page it supports may be linked even when the sitemap cache
+      // lacks it, and an exact collision is not given the protected phrase as its target.
+      const pageToSupport = (newTopic.page_to_support as string | null) ?? null
+      const demotion      = readDemotion(newTopic.ranking_strategy as string | null, newTopic.target_keyword as string | null)
+      if (pageToSupport && /^https?:\/\//i.test(pageToSupport)) allowedUrls.add(pageToSupport)
+      const keywordLine = demotion?.exact
+        ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for. Use "${demotion.prot}" only as anchor text for the link to the page this article supports.`
+        : `Target keyword: ${(newTopic.target_keyword as string | null) ?? 'not specified'}`
+      const supportLines = [
+        pageToSupport ? `Core page to support (must appear as an internal link): ${pageToSupport}` : '',
+        demotion ? `Supporting-article brief — follow this: ${demotion.directive}` : '',
+      ].filter(Boolean).join('\n')
+
       // 5. Build generation prompt from new topic data
       const breakdown = [
         (newTopic.keyword_opportunity as string | null) && `Keyword opportunity: ${newTopic.keyword_opportunity}`,
-        (newTopic.ranking_strategy    as string | null) && `Ranking strategy: ${newTopic.ranking_strategy}`,
+        // A demoted topic's directive is sent once, as the brief above, not again as "strategy".
+        !demotion && (newTopic.ranking_strategy as string | null) && `Ranking strategy: ${newTopic.ranking_strategy}`,
         (newTopic.audience_intent     as string | null) && `Audience intent: ${newTopic.audience_intent}`,
         (newTopic.why_now             as string | null) && `Why now: ${newTopic.why_now}`,
         (newTopic.competition_level   as string | null) && `Competition: ${newTopic.competition_level}`,
@@ -355,7 +371,7 @@ export async function POST(
       const userPrompt = `Write a blog post for ${agency}.
 
 Topic: ${newTopic.topic}
-Target keyword: ${(newTopic.target_keyword as string | null) ?? 'not specified'}
+${keywordLine}${supportLines ? `\n${supportLines}` : ''}
 
 Topic analysis:
 ${breakdown || (newTopic.rationale as string | null) || ''}${guidelines ? `\n\nContent guidelines:\n${guidelines}` : ''}${editDirection}

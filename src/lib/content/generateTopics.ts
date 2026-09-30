@@ -174,9 +174,9 @@ async function readGscWindow(
       .not('page', 'ilike', '%?%')
       .not('query', 'eq', '')
       .order('impressions', { ascending: false })
-      .order('date',  { ascending: true })
-      .order('page',  { ascending: true })
-      .order('query', { ascending: true })
+      // id last: the columns above are not unique (two Search Console properties for one client
+      // share them), and a tie at a page boundary would repeat or skip rows.
+      .order('id',    { ascending: true })
       .range(page * 1000, page * 1000 + 999)
     if (error) return { data: null, error }
     rows.push(...((data ?? []) as GscRow[]))
@@ -195,6 +195,19 @@ async function readGscWindow(
 function promptKeyword(kw: string): string | null {
   const clean = sanitizeHeading(String(kw ?? ''))
   return clean ? clean.replace(/"/g, "'").slice(0, 120) : null
+}
+
+/**
+ * A keyword list as it may be written into the prompt: each keyword through promptKeyword, and any it
+ * rejects left out. Applied only where a list is rendered — the cannibalization guard reads the raw
+ * lists, so a real page-one keyword that happens to read like an instruction ("what you should know
+ * before tinting") is still protected even though it is not quoted to the model.
+ */
+function promptSafe<T extends { keyword: string }>(items: T[]): T[] {
+  return items.flatMap(item => {
+    const safe = promptKeyword(item.keyword)
+    return safe ? [{ ...item, keyword: safe }] : []
+  })
 }
 
 export async function generateTopicsForClient(
@@ -367,7 +380,7 @@ export async function generateTopicsForClient(
   type AhrefsKw = { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
   const ahrefsMap = new Map<string, AhrefsKw>()
   for (const r of (ahrefsKwRes.data ?? []) as AhrefsKw[]) {
-    const kw = promptKeyword(String(r.keyword ?? '').trim().toLowerCase()) ?? ''
+    const kw = String(r.keyword ?? '').trim().toLowerCase()
     if (!kw || ahrefsMap.has(kw)) continue
     ahrefsMap.set(kw, { keyword: kw, position: r.position, volume: r.volume, difficulty: r.difficulty })
   }
@@ -408,7 +421,7 @@ export async function generateTopicsForClient(
       return ((data ?? []) as Record<string, unknown>[])
         .filter(r => !dismissed.has(String(r.keyword_id)))
         .map(r => ({
-          keyword:  promptKeyword(String(r.keyword ?? '').trim().toLowerCase()) ?? '',
+          keyword:  String(r.keyword ?? '').trim().toLowerCase(),
           position: r.current_position == null ? null : Number(r.current_position),
           url:      r.current_url == null ? null : String(r.current_url),
         })).filter(r => r.keyword)
@@ -623,18 +636,21 @@ export async function generateTopicsForClient(
     avoidSeen.add(key)
     avoidEntries.push(kw && label ? `${label} [kw: ${kw}]` : (kw || label)!)
   }
-  existingTopics.forEach(t => addAvoid(t.topic, t.target_keyword))
-  existingPosts.forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
-  // Existing blog posts on the client's site (pre-system) — prevent topic overlap
+  // Each source has its own share of the list, so none is crowded out by another: the client's
+  // pre-existing articles (80), and the newest 260 of our posts and of our topics (both read newest
+  // first). One cut across the combined list dropped the site's own articles first.
   sitemapBlogPostUrls.slice(0, 80).forEach(url => {
     try {
       const slug = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
       if (slug.length >= 4) addAvoid(slug.replace(/-/g, ' '), null)
     } catch { /* ignore */ }
   })
-  // Capped: the list rides in a prompt that can be sent twice per slot (the cannibalization retry),
-  // and past a few hundred entries it costs tokens without adding protection.
-  const avoidText = avoidEntries.slice(0, 600).join('\n')
+  existingPosts.slice(0, 260).forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
+  existingTopics.slice(0, 260).forEach(t => addAvoid(t.topic, t.target_keyword))
+  // Bounded by the per-source shares above (at most 600): the list rides in a prompt that can be sent
+  // twice per slot (the cannibalization retry), and past a few hundred entries it costs tokens
+  // without adding protection.
+  const avoidText = avoidEntries.join('\n')
 
   // ── E-E-A-T context ────────────────────────────────────────────────────────
   const eeat = clientSettings?.eeat_data as Record<string, unknown> | null
@@ -698,7 +714,7 @@ export async function generateTopicsForClient(
   const paidText = ''
 
   const ahrefsNearText = ahrefsNearMiss.length > 0
-    ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${ahrefsNearMiss.map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`
+    ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${promptSafe(ahrefsNearMiss).map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`
     : ''
 
   // The actionable band leads, because this is where a single article changes a position.
@@ -714,11 +730,11 @@ export async function generateTopicsForClient(
     : ''
 
   const rankNearText = rankNear.length > 0
-    ? `\nTRACKED AT 11–30 — the band where one article moves a keyword onto page one. Write a SUPPORT article for the question behind the keyword and link it to the page listed, which is the URL Google currently ranks:\n${rankNear.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}${kwSuffix(r.keyword)}`).join('\n')}`
+    ? `\nTRACKED AT 11–30 — the band where one article moves a keyword onto page one. Write a SUPPORT article for the question behind the keyword and link it to the page listed, which is the URL Google currently ranks:\n${promptSafe(rankNear).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}${kwSuffix(r.keyword)}`).join('\n')}`
     : ''
 
   const rankWeakText = rankWeak.length > 0
-    ? `\nTRACKED BELOW 30 — a page exists but is not competitive. A sharper, more specific angle is worth trying; do not repeat the existing page's angle:\n${rankWeak.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}`).join('\n')}`
+    ? `\nTRACKED BELOW 30 — a page exists but is not competitive. A sharper, more specific angle is worth trying; do not repeat the existing page's angle:\n${promptSafe(rankWeak).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}`).join('\n')}`
     : ''
 
   const gscCtrText = ctrIssues.length > 0
@@ -744,11 +760,11 @@ export async function generateTopicsForClient(
     : ''
 
   const ahrefsHoldingText = ahrefsHolding.length > 0
-    ? `\nALREADY ON PAGE ONE (Ahrefs) — DO NOT CANNIBALIZE. Do not propose a new primary page for any of these; at most a support article that internally links to the page already ranking:\n${ahrefsHolding.map(k => `  - "${k.keyword}" is already #${k.position}`).join('\n')}`
+    ? `\nALREADY ON PAGE ONE (Ahrefs) — DO NOT CANNIBALIZE. Do not propose a new primary page for any of these; at most a support article that internally links to the page already ranking:\n${promptSafe(ahrefsHolding).map(k => `  - "${k.keyword}" is already #${k.position}`).join('\n')}`
     : ''
 
   const rankOwnedText = rankOwned.length > 0
-    ? `\nTRACKED IN THE TOP 10 — DO NOT CANNIBALIZE. Google already ranks one of this client's pages for each of these. Never propose a new primary page for one, and never target it as a blog keyword. A SUPPORTING article is allowed only if it covers a genuinely narrower question and internally links to the exact URL below:\n${rankOwned.map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${r.url}` : ''}`).join('\n')}`
+    ? `\nTRACKED IN THE TOP 10 — DO NOT CANNIBALIZE. Google already ranks one of this client's pages for each of these. Never propose a new primary page for one, and never target it as a blog keyword. A SUPPORTING article is allowed only if it covers a genuinely narrower question and internally links to the exact URL below:\n${promptSafe(rankOwned).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${r.url}` : ''}`).join('\n')}`
     : ''
 
   // Self-cannibalization: the same query ranks 2+ of the client's own URLs.
