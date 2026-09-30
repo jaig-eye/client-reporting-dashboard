@@ -80,7 +80,7 @@ function InsightRow({ row, own }: { row: SerpInsightRow; own: Set<string> }) {
         {s.paa.length > 0 && <span className="badge badge-gray" title="Questions Google lists under “People also ask”">{s.paa.length} question{s.paa.length === 1 ? '' : 's'}</span>}
         {s.featured_snippet && <span className="badge badge-amber" title={`The answer box at the top (the “featured snippet”) quotes ${s.featured_snippet.domain}`}>Answer box</span>}
         <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-          {[row.contentPostId ? 'For a post' : 'At research', place, when].filter(Boolean).join(', ')}
+          {[row.contentPostId ? 'For a post' : 'From research', place, when].filter(Boolean).join(', ')}
         </span>
       </summary>
 
