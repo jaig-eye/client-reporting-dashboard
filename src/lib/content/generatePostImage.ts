@@ -12,6 +12,9 @@ import { IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/con
 /** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
 const OPENAI_TIMEOUT_MS = 120_000
 
+/** Less than OpenAI: the fallback can start after OpenAI has used its full two minutes. */
+const GEMINI_TIMEOUT_MS = 60_000
+
 /** AbortSignal.timeout rejects with a DOMException named TimeoutError. */
 function isTimeout(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
@@ -338,23 +341,35 @@ export async function generatePostImage(
     failures.push('No OpenAI API key — add one in Settings → AI → Image Generation')
   }
 
-  // ── Gemini Imagen 3 fallback ────────────────────────────────────────────────
+  // ── Gemini Imagen fallback ──────────────────────────────────────────────────
+  // KNOWN DEAD: Google has shut Imagen down in the Gemini API ("Imagen models are shut down. Use
+  // Nano Banana for image generation." — https://ai.google.dev/gemini-api/docs/imagen), so this
+  // call now fails and its reason is recorded after OpenAI's. The replacement (gemini-*-image via
+  // :generateContent) takes a different request and returns the image as a content part, so it is
+  // a port, not a model-id swap.
+  //
+  // The key travels in the x-goog-api-key header, not the query string: a URL is what request
+  // logs, proxies and error messages record.
   if (!imageUrl && process.env.GEMINI_API_KEY) {
     try {
       const gemRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${process.env.GEMINI_API_KEY}`,
+        'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type':   'application/json',
+            'x-goog-api-key': process.env.GEMINI_API_KEY,
+          },
           body: JSON.stringify({
             instances: [{ prompt }],
             parameters: { sampleCount: 1, aspectRatio: '16:9' },
           }),
+          signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
         }
       )
       if (gemRes.ok) {
-        const gemData = await gemRes.json() as { predictions?: { bytesBase64Encoded?: string }[] }
-        const b64 = gemData.predictions?.[0]?.bytesBase64Encoded
+        const gemData = await gemRes.json().catch(() => null) as { predictions?: { bytesBase64Encoded?: string }[] } | null
+        const b64 = gemData?.predictions?.[0]?.bytesBase64Encoded
         if (b64) {
           const buffer   = Buffer.from(b64, 'base64')
           const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
@@ -376,7 +391,9 @@ export async function generatePostImage(
         failures.push(`Gemini fallback failed (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`)
       }
     } catch (e) {
-      failures.push(`Gemini fallback failed: ${e instanceof Error ? e.message : String(e)}`)
+      failures.push(isTimeout(e)
+        ? `Gemini fallback did not answer within ${GEMINI_TIMEOUT_MS / 1000}s`
+        : `Gemini fallback could not be reached: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
