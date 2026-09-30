@@ -327,7 +327,6 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
 
   const windowStart = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10)
   const paidConversions = new Map<string, number>()
-  let brandedPaid = 0
   try {
     const { data, error } = await db
       .from('google_ads_search_terms')
@@ -342,19 +341,21 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       const k = normalize(term)
       if (!k) continue
       paidConversions.set(k, (paidConversions.get(k) ?? 0) + (Number(r.conversions) || 0))
-      // Recorded as navigational rather than dropped. That is what a brand search is, and the
-      // pool read already excludes navigational intent while the scorer already docks it 40 — so
-      // saying what the term is keeps it out of the writer's way through machinery that exists,
-      // and leaves the row readable if we ever want it back.
-      const branded = isBrandTerm(term, brands)
-      if (branded) brandedPaid++
-      add({
-        keyword: term, search_volume: null, keyword_difficulty: null, cpc: null,
-        competition: null, intent: branded ? 'navigational' : 'transactional',
-        source: 'idea', position: null, competitor_domain: null,
-      }, 'google_ads')
+      // Counted, not added.
+      //
+      // A converting paid term is the best evidence there is that a SUBJECT sells — and the worst
+      // possible article target. They are buying queries: "atv financing bad credit", "$0 down
+      // motorcycle financing near me". The page that should rank for those is the client's own
+      // financing page, and a blog post aimed at the same phrase competes with it. Canada
+      // Powersports has 420 of them, and adding them put 392 transactional queries into a list
+      // whose whole purpose is choosing what to write.
+      //
+      // So they stay out of the pool and keep their real job: paidConversions below feeds score(),
+      // where a keyword found by research that ALSO converted in paid earns up to +80. That is the
+      // signal worth having — proof that a subject makes money, applied to a keyword that is
+      // actually writable. The terms themselves remain visible under Converted in paid, which is
+      // reporting rather than a menu.
     }
-    if (brandedPaid) console.log(`[research] client ${clientId}: ${brandedPaid} paid term(s) are the client's own brand — filed navigational`)
   } catch { /* table missing or unreadable — skip this source */ }
 
   try {
@@ -666,7 +667,15 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       keyword_difficulty: c.keyword_difficulty,
       cpc:                c.cpc,
       competition:        c.competition,
-      intent:             c.intent,
+      // Brand searches are filed navigational wherever they came from.
+      //
+      // Applied here, at the one place every candidate is written, rather than per source — the
+      // check started life on the Google Ads path, and those rows no longer reach the pool at all,
+      // which would have left it doing nothing. DataForSEO is the source that needs it now: a
+      // client's own ranked keywords always include their name. The pool read excludes
+      // navigational intent and score() docks it 40, so this keeps brand terms out of the writer's
+      // way through machinery that already exists, without deleting the row.
+      intent:             isBrandTerm(c.keyword, brands) ? 'navigational' : c.intent,
       location_code:      cfg.location_code,
       language_code:      cfg.language_code,
       // The point of the pool: discovered, not yet chosen, and costing nothing to hold.

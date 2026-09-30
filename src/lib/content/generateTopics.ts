@@ -25,7 +25,6 @@ import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/datafo
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 import { serviceAreaLine } from '@/lib/content/serviceAreas'
 import { getResearchCandidates } from '@/lib/content/clientResearch'
-import { brandForms, isBrandTerm } from '@/lib/content/brandTerms'
 
 interface TopicIdea {
   topic:               string
@@ -216,7 +215,6 @@ export async function generateTopicsForClient(
     existingTopicsRes,
     existingPostsRes,
     gscRawRes,
-    paidTermsRes,
     ahrefsKwRes,
   ] = await Promise.all([
     db.from('agency_settings')
@@ -236,14 +234,6 @@ export async function generateTopicsForClient(
       .gte('date', windowStart)
       .not('page', 'ilike', '%?%')
       .not('query', 'eq', '')
-      .limit(2000),
-    // Paid search terms that produced a conversion. The strongest commercial signal available:
-    // the client paid for the click and it turned into a lead.
-    db.from('google_ads_search_terms')
-      .select('search_term, clicks, conversions, spend')
-      .eq('client_id', clientId)
-      .gte('date', windowStart)
-      .gt('conversions', 0)
       .limit(2000),
     // Third-party organic positions. Covers queries GSC drops from a 28-day window, and carries
     // volume and difficulty of its own.
@@ -282,35 +272,6 @@ export async function generateTopicsForClient(
       gscMap.set(key, { totalClicks: r.clicks ?? 0, totalImpr: impr, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0, count: 1 })
     }
   }
-
-  // ── Paid search terms that converted ───────────────────────────────────────
-  // Summed across the window per term, because the same term converts on many days.
-  type PaidTerm = { term: string; conversions: number; clicks: number; spend: number }
-  const paidMap = new Map<string, PaidTerm>()
-  for (const r of (paidTermsRes.data ?? []) as { search_term: string; clicks: number | null; conversions: number | null; spend: number | null }[]) {
-    const term = String(r.search_term ?? '').trim().toLowerCase()
-    if (!term) continue
-    const ex = paidMap.get(term) ?? { term, conversions: 0, clicks: 0, spend: 0 }
-    ex.conversions += Number(r.conversions) || 0
-    ex.clicks      += Number(r.clicks)      || 0
-    ex.spend       += Number(r.spend)       || 0
-    paidMap.set(term, ex)
-  }
-  // The client's own name is the highest-converting paid term almost everywhere, and it is the
-  // one term on this list that is worth nothing to write about: whoever searched it has already
-  // chosen the business, and the page that answers them is the home page. Handed to the model it
-  // reads as the strongest commercial signal on the page. Matched narrowly — see brandTerms.ts,
-  // where several clients are named after the service they sell.
-  const brands = brandForms(
-    (client as { name?: string | null; website?: string | null } | null)?.name,
-    (client as { website?: string | null } | null)?.website,
-    typeof clientSettings?.services === 'string' ? clientSettings.services : null,
-  )
-  const paidConverters = Array.from(paidMap.values())
-    .filter(t => t.conversions >= 1)
-    .filter(t => !isBrandTerm(t.term, brands))
-    .sort((a, b) => b.conversions - a.conversions || b.spend - a.spend)
-    .slice(0, 10)
 
   // ── Ahrefs organic positions ───────────────────────────────────────────────
   // One row per keyword — the newest date wins, since the query is ordered by date desc.
@@ -457,8 +418,9 @@ export async function generateTopicsForClient(
     if (dfsCtx) {
       // Paid converters lead: a term with a known cost per lead is the one whose volume and
       // difficulty are most worth paying to learn.
+      // Paid converters are not seeded any more: buying figures for a term nothing will target is
+      // money spent to learn nothing. See the note above paidText.
       const seeds = Array.from(new Set([
-        ...paidConverters.map(t => t.term),
         ...growthTargets.map(t => t.query),
         ...quickWins.map(t => t.query),
         ...ahrefsNearMiss.map(k => k.keyword),
@@ -619,11 +581,20 @@ export async function generateTopicsForClient(
     ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
-  // Paid converters. Framed as opportunities rather than support articles: a term that converts
-  // in paid is worth its own page unless we already rank for it, which the guardrails below catch.
-  const paidText = paidConverters.length > 0
-    ? `\nCONVERTS IN PAID SEARCH — these terms produced real leads through Google Ads, so the subject behind them has proven commercial value. They are buying queries, not article subjects: do NOT target one directly, because the page that should rank for it is the client's service page, and a blog post competing with that page costs more than it earns. Target the informational question a searcher asks on the way to it — "cheap ac repair" becomes what actually drives AC repair cost. Worth choosing when nothing above fits better, and never when a guardrail below says we already rank.${requestedIsBlog ? ' These are usually transactional ("near me", "cost", "installation") and belong to a service page, NOT a blog post. Do NOT target one verbatim as the blog keyword: extract the question a buyer asks before they are ready to call — a comparison, a how-it-works, a cost breakdown — and target that instead, linking to the service page that should own the transactional term.' : ''}\n${paidConverters.map(t => `  - "${t.term}" (${t.conversions % 1 === 0 ? t.conversions : t.conversions.toFixed(1)} conversions from ${t.clicks} paid clicks)${kwSuffix(t.term)}`).join('\n')}`
-    : ''
+  // Converting paid terms are deliberately NOT handed to the model.
+  //
+  // They used to be, under a long caveat telling it not to target them directly. That is a lot of
+  // trust to place in a paragraph: they are the highest-converting phrases the client has, and a
+  // model asked to choose article subjects will reach for them. They are buying queries that
+  // belong to a service page — "atv financing bad credit", "$0 down motorcycle financing near
+  // me" — and a post chasing the same phrase competes with the page that should own it, which is
+  // the cannibalization guarded against everywhere else in this file.
+  //
+  // What survives is the half that was always safe: a paid term that converted still boosts the
+  // score of a RESEARCHED keyword matching it (score() in clientResearch), so proven commercial
+  // value still steers the choice without the buying query itself becoming the subject. The terms
+  // stay visible on the Keywords page under Converted in paid, as reporting.
+  const paidText = ''
 
   const ahrefsNearText = ahrefsNearMiss.length > 0
     ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${ahrefsNearMiss.map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`

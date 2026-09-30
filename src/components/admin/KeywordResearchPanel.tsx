@@ -49,6 +49,17 @@ export interface ResearchKeyword {
   leads?:        number
 }
 
+/**
+ * The numeric columns, sized once and shared by the header and every row.
+ *
+ * The header and the rows used to declare their own widths — "Searches" had none at all — so a
+ * column whose values were mostly "—" collapsed to a couple of pixels under an eight-character
+ * heading, and the numbers sat nowhere near the words describing them. Fixed widths on both is the
+ * only way a flex row lines up as a table.
+ */
+const COL_LEADS = 54, COL_SEARCHES = 74, COL_DIFFICULTY = 66
+const NUM_COL: React.CSSProperties = { flexShrink: 0, textAlign: 'right', whiteSpace: 'nowrap' }
+
 /** Local volume when the market is known, national otherwise. The number the ranking is by. */
 const strengthOf = (k: ResearchKeyword) => k.local_volume ?? k.volume ?? 0
 
@@ -67,15 +78,25 @@ const difficultyTone = (d: number | null) =>
  * it, and the tooltip says how.
  */
 const ORIGINS = [
-  { key: 'manual',     chip: 'Yours',       label: 'You added these',             hint: 'Typed in by hand. In use from the moment they were added.' },
-  { key: 'idea',       chip: 'Services',    label: 'Suggested for what you sell',  hint: 'Found by research — what people search around this client’s services, plus paid terms that actually converted.' },
-  { key: 'site',       chip: 'Your site',   label: 'You already rank for these',   hint: 'Found by research — keywords this client’s own site is already showing up under.' },
-  { key: 'competitor', chip: 'Competitors', label: 'Competitors rank for these',   hint: 'Found by research — keywords rival sites are showing up under in this market.' },
-  { key: 'other',      chip: 'Other',       label: 'Other',                        hint: 'From an earlier run, before origins were recorded.' },
+  { key: 'manual',     chip: 'Added by hand', label: 'Added by hand',  hint: 'Typed in on this page. In use from the moment it was added.' },
+  { key: 'dataforseo', chip: 'DataForSEO',    label: 'DataForSEO',     hint: 'Keyword research: what people search around this client’s services, what their own site ranks for, and what competitors rank for.' },
+  { key: 'ahrefs',     chip: 'Ahrefs',        label: 'Ahrefs',         hint: 'Organic positions Ahrefs reports for this client’s own site.' },
+  { key: 'google_ads', chip: 'Google Ads',    label: 'Google Ads',     hint: 'Converting paid search terms. No longer added by research — these are rows from before that changed.' },
+  { key: 'topic',      chip: 'Topics',        label: 'From a topic',   hint: 'Attached to a topic the generator produced.' },
+  { key: 'other',      chip: 'Other',         label: 'Other',          hint: 'From an earlier run, before the source was recorded.' },
 ] as const
 
+/**
+ * Group by the platform that reported the keyword, not by what the run was looking for.
+ *
+ * It used to group on metadata.found_via — "what you sell", "your site", "competitors" — which
+ * described the SEARCH rather than the source. Two problems with that: a single bucket could hold
+ * rows from two different systems (Ahrefs and DataForSEO both report "your site"), and when a
+ * number looked wrong there was no way to tell which integration to go and check. The platform is
+ * the thing you act on.
+ */
 const originOf = (k: ResearchKeyword): string => {
-  const v = k.foundVia ?? (k.source === 'manual' ? 'manual' : null)
+  const v = k.source === 'manual' ? 'manual' : k.source
   return ORIGINS.some(o => o.key === v) ? (v as string) : 'other'
 }
 
@@ -359,9 +380,9 @@ export default function KeywordResearchPanel({
         }}>
           <span style={{ width: 13, flexShrink: 0 }} />
           <span style={{ flex: 1 }}>Keyword</span>
-          {anyLeads && <span style={{ minWidth: 46, textAlign: 'right' }} title="Leads this term produced in paid search over the last 90 days">Leads</span>}
-          {anyVolume && <span style={{ whiteSpace: 'nowrap' }}>Searches</span>}
-          {anyVolume && <span style={{ minWidth: 58, textAlign: 'right' }}>Difficulty</span>}
+          {anyLeads  && <span style={{ ...NUM_COL, width: COL_LEADS }} title="Leads this term produced in paid search over the last 90 days">Leads</span>}
+          {anyVolume && <span style={{ ...NUM_COL, width: COL_SEARCHES }}>Searches</span>}
+          {anyVolume && <span style={{ ...NUM_COL, width: COL_DIFFICULTY }}>Difficulty</span>}
         </div>
 
         {sections.length === 0 && (
@@ -463,18 +484,22 @@ function Row({ k, checked, onToggle, indented, showVolume, showLeads }: {
       {showLeads && (
         <span
           title={k.leads != null ? `${k.leads} lead${k.leads === 1 ? '' : 's'} from paid search in the last 90 days` : undefined}
-          style={{ fontSize: '0.75rem', fontWeight: k.leads != null ? 600 : 400, color: k.leads != null ? 'var(--green, #16794a)' : 'var(--text-faint)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 46, textAlign: 'right' }}
+          style={{
+            ...NUM_COL, width: COL_LEADS, fontSize: '0.75rem', fontVariantNumeric: 'tabular-nums',
+            fontWeight: k.leads != null ? 600 : 400,
+            color: k.leads != null ? 'var(--green, #16794a)' : 'var(--text-faint)',
+          }}
         >
           {k.leads == null ? '—' : k.leads}
         </span>
       )}
       {showVolume && (
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        <span style={{ ...NUM_COL, width: COL_SEARCHES, fontSize: '0.75rem', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
           {vol == null ? '—' : `${vol.toLocaleString()}/mo`}
         </span>
       )}
       {showVolume && (
-        <span style={{ fontSize: '0.75rem', color: difficultyTone(k.difficulty), fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 58, textAlign: 'right' }}>
+        <span style={{ ...NUM_COL, width: COL_DIFFICULTY, fontSize: '0.75rem', color: difficultyTone(k.difficulty), fontVariantNumeric: 'tabular-nums' }}>
           {k.difficulty == null ? '—' : k.difficulty}
         </span>
       )}
