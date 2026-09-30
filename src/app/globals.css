@@ -279,7 +279,11 @@
     transition: border-color 0.15s, box-shadow 0.15s;
   }
 
-  .input:focus {
+  /* :focus-within as well, for a box that wraps its own field — the chip input is a div.input
+     around a bare <input>, so :focus alone never drew a ring round it and keyboard focus was
+     invisible. */
+  .input:focus,
+  .input:focus-within {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-subtle);

@@ -7,26 +7,52 @@
 // scan, and it invites editing the wrong half of a phrase.
 //
 // Enter or comma commits the current text; Backspace on an empty field removes the last chip.
-// Paste is split on commas and newlines, so pasting a list still works.
+// Paste is split on commas and newlines, so pasting a list still works. With place suggestions
+// on, the field is a combobox: the arrow keys move through the list, Enter picks, Escape closes.
 //
 // The value is exchanged as the same comma-joined string the callers already store, so nothing
 // downstream has to change.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react'
 import { splitPhrases } from '@/lib/content/phrases'
+import { isRegionToken, REGION_BY_CODE } from '@/lib/content/usStates'
 
 // Re-exported so existing imports keep working. The implementation lives in lib, because research
 // and the prompts have to split a stored list exactly the way this input wrote it.
 export { splitPhrases }
 
+/**
+ * "Melbourne,Florida,United States" → "Melbourne, Florida".
+ *
+ * DataForSEO names a place with every level down to the country. The first part and the region
+ * are what the location search needs to find it again unambiguously; anything between (a county)
+ * and the country only make the chip longer.
+ *
+ * The label has to survive being read back by splitPhrases as ONE area, or picking a place would
+ * add two chips. "Washington, District of Columbia" does not (a state after a state is split), so
+ * the two-letter code is tried next ("Washington, DC"), and failing both only the place is kept.
+ */
+function placeLabel(name: string): string {
+  const parts = name.split(',').map(s => s.trim()).filter(Boolean)
+  const head  = parts[0] ?? name
+  if (parts.length < 3) return head   // a state or a country on its own
+  const region = parts[parts.length - 2]
+  const code = Object.entries(REGION_BY_CODE).find(([, full]) => full.toLowerCase() === region.toLowerCase())?.[0]
+  const candidates = [`${head}, ${region}`, ...(code ? [`${head}, ${code.toUpperCase()}`] : [])]
+  const survives = (c: string) => { const read = splitPhrases(c); return read.length === 1 && read[0] === c }
+  return candidates.find(c => isRegionToken(region) && survives(c)) ?? head
+}
+
 export default function KeywordChipInput({
-  value, onChange, placeholder, id, disabled, max = 40, onPending, suggestPlaces = false,
+  value, onChange, placeholder, id, disabled, max = 40, onPending, suggestPlaces = false, ariaLabel,
 }: {
   /** Comma-joined, as stored. */
   value:        string
   onChange:     (next: string) => void
   placeholder?: string
   id?:          string
+  /** For a field with no visible <label htmlFor> pointing at it. */
+  ariaLabel?:   string
   disabled?:    boolean
   max?:         number
   /**
@@ -54,17 +80,19 @@ export default function KeywordChipInput({
   // ── Place suggestions ─────────────────────────────────────────────────────
   const [places, setPlaces] = useState<Array<{ code: number; name: string; type: string }>>([])
   const [openList, setOpenList] = useState(false)
+  /** The suggestion the arrow keys are on, or -1. Focus stays in the text field throughout. */
+  const [active, setActive] = useState(-1)
   useEffect(() => {
     if (!suggestPlaces) return
     const q = draft.trim()
-    if (q.length < 2) { setPlaces([]); return }
+    if (q.length < 2) { setPlaces([]); setActive(-1); return }
     let cancelled = false
     // Debounced: this runs on every keystroke and the first call on a cold instance downloads the
     // whole location list before it can answer.
     const t = setTimeout(() => {
       fetch(`/api/admin/content/dfs-locations?q=${encodeURIComponent(q)}`)
         .then(r => r.ok ? r.json() : { locations: [] })
-        .then(d => { if (!cancelled) { setPlaces((d.locations ?? []).slice(0, 6)); setOpenList(true) } })
+        .then(d => { if (!cancelled) { setPlaces((d.locations ?? []).slice(0, 6)); setOpenList(true); setActive(-1) } })
         .catch(() => { if (!cancelled) setPlaces([]) })
     }, 350)
     return () => { cancelled = true; clearTimeout(t) }
@@ -80,19 +108,48 @@ export default function KeywordChipInput({
   // A real unique id so a caller's <label htmlFor> still lands on the right field.
   const autoId   = useId()
   const inputId  = id ?? `chips-${autoId}`
+  const listId   = `${inputId}-places`
+  const optionId = (i: number) => `${listId}-${i}`
+  const listOpen = suggestPlaces && openList && places.length > 0
 
+  /**
+   * Add text as chips, read back exactly the way the stored value will be read.
+   *
+   * The whole list goes through splitPhrases rather than only the new text, so what is on screen
+   * after a commit is what research and the writer will see — "Melbourne" then "FL" is one area
+   * to them, so it is one chip here — and the cap counts what is actually kept.
+   */
   const commit = (text: string) => {
     const added = splitPhrases(text)
     if (!added.length) return
-    const next = Array.from(new Set([...phrases, ...added])).slice(0, max)
+    const next = splitPhrases([...phrases, ...added].join(', ')).slice(0, max)
     onChange(next.join(', '))
     setDraft('')
     onPending?.('')
   }
 
+  const closeList = () => { setOpenList(false); setActive(-1) }
+
+  /** A picked place goes in as "City, State" — the form location search resolves unambiguously. */
+  const pickPlace = (name: string) => {
+    commit(placeLabel(name))
+    closeList()
+    inputRef.current?.focus()
+  }
+
   const removeAt = (i: number) => onChange(phrases.filter((_, n) => n !== i).join(', '))
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // The suggestion list, driven from the field the way a combobox is: arrows move, Enter picks,
+    // Escape closes. Escape stops here so it does not also close a dialog this sits in.
+    if (listOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setActive(i => (i + 1) % places.length); return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setActive(i => (i <= 0 ? places.length - 1 : i - 1)); return }
+      if (e.key === 'Escape')    { e.preventDefault(); e.stopPropagation(); closeList(); return }
+      if (e.key === 'Enter' && active >= 0) { e.preventDefault(); pickPlace(places[active].name); return }
+    } else if (suggestPlaces && e.key === 'ArrowDown' && places.length > 0) {
+      e.preventDefault(); setOpenList(true); setActive(0); return
+    }
     if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(draft); return }
     // Backspace on an empty field takes back the last one — the usual behaviour for this control.
     if (e.key === 'Backspace' && !draft && phrases.length) { e.preventDefault(); removeAt(phrases.length - 1) }
@@ -131,11 +188,12 @@ export default function KeywordChipInput({
           {!disabled && (
             <button
               type="button"
+              className="focus-ring"
               onClick={e => { e.stopPropagation(); removeAt(i) }}
               aria-label={`Remove ${p}`}
               style={{
                 border: 'none', background: 'transparent', cursor: 'pointer', lineHeight: 1,
-                fontSize: '0.95rem', color: 'var(--text-faint)', padding: '0 2px',
+                fontSize: '0.95rem', color: 'var(--text-faint)', padding: '0 2px', borderRadius: 999,
               }}
             >×</button>
           )}
@@ -150,14 +208,17 @@ export default function KeywordChipInput({
         onChange={e => { setDraft(e.target.value); onPending?.(e.target.value) }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        // Delayed so a click on a suggestion lands before the list unmounts — a plain onBlur
-        // commits the raw draft and the pick never happens.
-        onBlur={() => { setTimeout(() => setOpenList(false), 150); commit(draft) }}
+        // A pointer pick keeps focus here (the options cancel mousedown), so a blur is a real
+        // leaving: commit what was typed and close the list.
+        onBlur={() => { closeList(); commit(draft) }}
         placeholder={phrases.length ? '' : placeholder}
         autoComplete="off"
+        aria-label={ariaLabel}
         role={suggestPlaces ? 'combobox' : undefined}
-        aria-expanded={suggestPlaces ? openList && places.length > 0 : undefined}
+        aria-expanded={suggestPlaces ? listOpen : undefined}
         aria-autocomplete={suggestPlaces ? 'list' : undefined}
+        aria-controls={suggestPlaces && listOpen ? listId : undefined}
+        aria-activedescendant={listOpen && active >= 0 ? optionId(active) : undefined}
         style={{
           flex: '1 1 140px', minWidth: 120, border: 'none', outline: 'none',
           background: 'transparent', color: 'var(--text-primary)', fontSize: '0.8125rem', padding: 0,
@@ -165,39 +226,46 @@ export default function KeywordChipInput({
       />
 
       {/* Real places, named exactly as the search will find them again. */}
-      {suggestPlaces && openList && places.length > 0 && (
+      {listOpen && (
         <ul
+          id={listId}
           role="listbox"
+          aria-label="Matching places"
           style={{
             position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, margin: '4px 0 0',
             padding: 4, listStyle: 'none', maxHeight: 220, overflowY: 'auto',
-            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8,
             boxShadow: '0 4px 14px rgba(0,0,0,0.10)',
           }}
         >
-          {places.map(p => (
-            <li key={p.code} role="option" aria-selected={false}>
-              <button
-                type="button"
-                // onMouseDown, not onClick: the input's blur fires first otherwise and commits the
-                // half-typed draft instead of the place that was picked.
-                onMouseDown={e => { e.preventDefault(); commit(p.name); setDraft(''); onPending?.(''); setOpenList(false) }}
+          {places.map((p, i) => {
+            const on = i === active
+            return (
+              <li
+                key={p.code}
+                id={optionId(i)}
+                role="option"
+                aria-selected={on}
+                // Mousedown is cancelled so the field keeps focus and does not commit the half-typed
+                // draft on blur; the pick itself is a click, so it works for touch and pointer alike.
+                onMouseDown={e => e.preventDefault()}
+                onClick={e => { e.stopPropagation(); pickPlace(p.name) }}
+                onMouseEnter={() => setActive(i)}
                 style={{
-                  display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-                  border: 'none', background: 'transparent', borderRadius: 6,
-                  padding: '6px 8px', fontSize: '0.8125rem', color: 'var(--text-primary)',
+                  cursor: 'pointer', borderRadius: 6, padding: '6px 8px',
+                  fontSize: '0.8125rem', color: 'var(--text-primary)',
+                  background: on ? 'var(--bg-hover)' : 'transparent',
+                  boxShadow: on ? 'inset 2px 0 0 var(--accent)' : undefined,
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-subtle)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
               >
                 {p.name.split(',')[0]}
                 <span style={{ color: 'var(--text-faint)' }}>
                   {p.name.includes(',') ? `, ${p.name.split(',').slice(1).join(', ')}` : ''}
                   {p.type ? ` · ${p.type}` : ''}
                 </span>
-              </button>
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
