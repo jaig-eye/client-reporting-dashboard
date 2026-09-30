@@ -9,6 +9,10 @@ import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { generatePostImage } from '@/lib/content/generatePostImage'
 
+// The OpenAI call alone may take up to two minutes, then the Gemini fallback and the stock search
+// run after it. The project default could cut that off mid-upload.
+export const maxDuration = 300
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

@@ -7,7 +7,7 @@ import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirectio
 import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages, priceImageUsage, type ImageUsage } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
-import { IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+import { IMAGE_MODELS, IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 import { splitPhrases } from '@/lib/content/phrases'
 
 /** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
@@ -270,8 +270,8 @@ export async function generatePostImage(
   // than overwritten, so a fallback's failure cannot hide why the primary failed.
   const failures: string[] = []
 
-  // Which model. Every model on offer takes the same arguments (IMAGE_REQUEST), so this is a bare
-  // swap. A stored value that is no longer offered — the retired gpt-image-1 or dall-e-3 included —
+  // Which model. Every model on offer takes the same arguments (IMAGE_REQUEST) plus its own quality
+  // (IMAGE_MODELS), so this is a bare swap. A stored value that is no longer offered — the retired gpt-image-1 or dall-e-3 included —
   // resolves to the default rather than being sent to an API that no longer serves it.
   const chosenModel = await (async () => {
     try {
@@ -291,7 +291,7 @@ export async function generatePostImage(
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${effectiveKey}`,
         },
-        body: JSON.stringify({ model: chosenModel, prompt, n: 1, ...IMAGE_REQUEST }),
+        body: JSON.stringify({ model: chosenModel, prompt, n: 1, ...IMAGE_REQUEST, quality: IMAGE_MODELS[chosenModel].quality }),
         // OpenAI documents complex prompts taking "up to 2 minutes"
         // (https://developers.openai.com/api/docs/guides/image-generation#limitations). Without a
         // bound, a hung request holds the function until the platform kills it, and nothing after

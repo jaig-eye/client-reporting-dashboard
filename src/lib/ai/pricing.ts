@@ -66,18 +66,18 @@ const IMAGE_TOKEN_RATES: Record<string, ImageTokenRate> = {
 /**
  * USD per image, used ONLY when a response carries no `usage` to price exactly.
  *
- * It is the image-output cost of one 1536x1024 image at quality `medium` — the request
- * lib/content/imageModels.ts sends — per the image generation guide
+ * It is the image-output cost of one 1536x1024 image at the quality lib/content/imageModels.ts
+ * sends each model, per the image generation guide
  * (https://developers.openai.com/api/docs/guides/image-generation#cost-and-latency):
- *   gpt-image-2    1,372 output tokens x $30/1M = $0.041 (the guide's own table says $0.041)
- *   gpt-image-2.5    343 output tokens x $30/1M = $0.0103 (the guide's token calculator, which
- *                  gives Sunburst and Flare the same count)
+ *   gpt-image-2    `medium`  1,372 output tokens x $30/1M = $0.041 (the guide's table says $0.041)
+ *   gpt-image-2.5  `high`    1,372 output tokens x $30/1M = $0.041 (the guide's token calculator,
+ *                            which gives Sunburst and Flare the same count)
  * The prompt's text-input tokens (a few hundred, a fraction of a cent) are not in it, so it is a
  * slight underestimate, and it goes stale the moment the size or quality sent changes.
  */
 const IMAGE_RATES: Record<string, number> = {
-  'gpt-image-2.5-flare':    0.0103,
-  'gpt-image-2.5-sunburst': 0.0103,
+  'gpt-image-2.5-flare':    0.041,
+  'gpt-image-2.5-sunburst': 0.041,
   'gpt-image-2':            0.041,
 }
 

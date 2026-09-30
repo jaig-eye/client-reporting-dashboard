@@ -8,10 +8,16 @@
 // list that kept offering them would let someone pick a model that answers every request with an
 // error. Descriptions are OpenAI's own, from https://developers.openai.com/api/docs/models.
 
+//
+// Quality per model, because the same word buys different detail. OpenAI's token calculator gives a
+// 2.5 model 343 output tokens at `medium` for 1536x1024 — a quarter of what gpt-image-2 spends at
+// `medium` — and 1,372 at `high`, the same as gpt-image-2 `medium`. The model was switched because
+// gpt-image-1's featured images looked flat, so the 2.5 models run at `high`: about $0.041 an image,
+// still under the $0.063 gpt-image-1 cost at `medium`.
 export const IMAGE_MODELS = {
-  'gpt-image-2.5-flare':    { label: 'GPT Image 2.5 Flare — fast, everyday' },
-  'gpt-image-2.5-sunburst': { label: 'GPT Image 2.5 Sunburst — OpenAI’s most capable' },
-  'gpt-image-2':            { label: 'GPT Image 2 — the previous generation' },
+  'gpt-image-2.5-flare':    { label: 'GPT Image 2.5 Flare — fast, everyday',            quality: 'high' },
+  'gpt-image-2.5-sunburst': { label: 'GPT Image 2.5 Sunburst — OpenAI’s most capable', quality: 'high' },
+  'gpt-image-2':            { label: 'GPT Image 2 — the previous generation',          quality: 'medium' },
 } as const
 
 export type ImageModel = keyof typeof IMAGE_MODELS
@@ -28,14 +34,13 @@ export const DEFAULT_IMAGE_MODEL: ImageModel = 'gpt-image-2.5-flare'
  * The arguments every model above is asked with.
  *
  * One set, because all three accept it (https://developers.openai.com/api/reference/resources/images):
- * 1536x1024 is a standard landscape size for every GPT image model, `medium` is a quality all of
- * them take, and png is what featured images have always been stored as, so what a client's site
- * receives does not change with the model. No `response_format`: GPT image models always answer
+ * 1536x1024 is a standard landscape size for every GPT image model, and png is what featured images
+ * have always been stored as, so what a client's site receives does not change with the model.
+ * Quality is per model — see IMAGE_MODELS. No `response_format`: GPT image models always answer
  * with base64 and reject the parameter.
  */
 export const IMAGE_REQUEST = {
   size:          '1536x1024',
-  quality:       'medium',
   output_format: 'png',
 } as const
 
