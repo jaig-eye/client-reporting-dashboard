@@ -11,7 +11,7 @@ import IntegrationModal from '@/components/admin/IntegrationModal'
 import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
 import AiUsagePanel from '@/components/admin/AiUsagePanel'
 import { useTheme } from '@/components/ThemeProvider'
-import { IMAGE_MODELS, resolveImageModel } from '@/lib/content/imageModels'
+import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
@@ -110,7 +110,7 @@ const DEFAULT: Settings = {
   ai_model:                       'claude-sonnet-4-6',
   ai_api_key:                     '',
   openai_api_key:                 '',
-  image_model:                    'gpt-image-1',
+  image_model:                    DEFAULT_IMAGE_MODEL,
   notification_email:             '',
   notify_topics_created:          true,
   notify_post_generated:          true,
@@ -724,7 +724,7 @@ export default function AgencySettingsPage() {
                 onChange={e => setForm(f => ({ ...f, image_model: e.target.value }))}
               >
                 {Object.entries(IMAGE_MODELS).map(([id, m]) => (
-                  <option key={id} value={id}>{m.label}</option>
+                  <option key={id} value={id}>{m.label}{id === DEFAULT_IMAGE_MODEL ? ' (default)' : ''}</option>
                 ))}
               </select>
               <p className="section-desc" style={{ margin: '6px 0 0' }}>

@@ -7,7 +7,15 @@ import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirectio
 import { recordAiUsage } from '@/lib/ai/usage'
 import { priceImages } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
-import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+import { IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+
+/** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
+const OPENAI_TIMEOUT_MS = 120_000
+
+/** AbortSignal.timeout rejects with a DOMException named TimeoutError. */
+function isTimeout(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
+}
 
 type PostRow = {
   id:             string
@@ -246,44 +254,35 @@ export async function generatePostImage(
   let usedProvider = ''
   let lastError = ''
 
-  // Which model, and the arguments it will actually accept.
-  //
-  // The two OpenAI image models do NOT take the same parameters, so this cannot be a bare model
-  // swap: gpt-image-1 wants quality low|medium|high and a 1536x1024 landscape, while dall-e-3
-  // rejects both and wants standard|hd at 1792x1024. Sending one model the other's arguments is a
-  // 400, which would have looked like "the new model is broken" rather than "we asked wrongly".
+  // Which model. Every model on offer takes the same arguments (IMAGE_REQUEST), so this is a bare
+  // swap. A stored value that is no longer offered — the retired gpt-image-1 or dall-e-3 included —
+  // resolves to the default rather than being sent to an API that no longer serves it.
   const chosenModel = await (async () => {
     try {
       const { data, error } = await db.from('agency_settings').select('image_model').maybeSingle()
-      // Column absent (migration 227 not applied) or unreadable: the default is what shipped
-      // before this was configurable, so nothing changes.
+      // Column absent (migration 227 not applied) or unreadable: use the default.
       if (error) return DEFAULT_IMAGE_MODEL
       return resolveImageModel((data as { image_model?: unknown } | null)?.image_model)
     } catch { return DEFAULT_IMAGE_MODEL }
   })()
-  const modelArgs = IMAGE_MODELS[chosenModel]
 
   // ── OpenAI image generation ─────────────────────────────────────────────────
   if (effectiveKey) {
     try {
-      const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
+      const imageRes = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${effectiveKey}`,
         },
-        body: JSON.stringify({
-          model:   chosenModel,
-          prompt,
-          n: 1,
-          size:    modelArgs.size,
-          quality: modelArgs.quality,
-          // Only where the model needs asking — see IMAGE_MODELS. Storing the image ourselves is
-          // the point: an OpenAI-hosted URL expires within the hour.
-          ...(modelArgs.b64 ? { response_format: 'b64_json' } : {}),
-        }),
+        body: JSON.stringify({ model: chosenModel, prompt, n: 1, ...IMAGE_REQUEST }),
+        // OpenAI documents complex prompts taking "up to 2 minutes"
+        // (https://developers.openai.com/api/docs/guides/image-generation#limitations). Without a
+        // bound, a hung request holds the function until the platform kills it, and nothing after
+        // this point — the stock search it awaits, the error it would record — ever runs.
+        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       })
-      if (dalleRes.ok) {
+      if (imageRes.ok) {
         // Billed per image, not per token, so the ledger records units and prices through
         // priceImages. Only a successful generation is charged.
         await recordAiUsage({
@@ -295,28 +294,12 @@ export async function generatePostImage(
           clientId: String(post.client_id ?? '') || null,
           postId,
         })
-        const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
-        const item = data.data?.[0]
+        const data = await imageRes.json() as { data?: { b64_json?: string }[] }
+        // GPT image models only ever answer with base64; there is no URL form to fall back to.
+        const b64  = data.data?.[0]?.b64_json
 
-        // Both shapes end up in our own storage. base64 is what both models are asked for, so it
-        // is the normal path; a url is the awkward one — it is OpenAI-hosted and expires within
-        // the hour, so it has to be fetched now rather than saved as the post's image.
-        let buffer: Buffer | null = null
-        if (item?.b64_json) {
-          buffer = Buffer.from(item.b64_json, 'base64')
-        } else if (item?.url) {
-          try {
-            const fetched = await fetch(item.url)
-            if (fetched.ok) buffer = Buffer.from(await fetched.arrayBuffer())
-            else lastError = `Could not fetch the generated image (${fetched.status})`
-          } catch (e) {
-            lastError = `Could not fetch the generated image: ${e instanceof Error ? e.message : String(e)}`
-          }
-        } else {
-          lastError = `${chosenModel} returned no image`
-        }
-
-        if (buffer) {
+        if (b64) {
+          const buffer   = Buffer.from(b64, 'base64')
           const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
@@ -328,13 +311,17 @@ export async function generatePostImage(
           } else {
             lastError = `Storage upload failed: ${upErr.message}`
           }
+        } else {
+          lastError = `${chosenModel} returned no image`
         }
       } else {
-        const errData = await dalleRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `${chosenModel} error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
+        const errData = await imageRes.json().catch(() => ({})) as { error?: { message?: string } }
+        lastError = `${chosenModel} error (${imageRes.status}): ${errData?.error?.message ?? imageRes.statusText}`
       }
     } catch (e) {
-      lastError = `${chosenModel} request failed: ${e instanceof Error ? e.message : String(e)}`
+      lastError = isTimeout(e)
+        ? `${chosenModel} did not answer within ${OPENAI_TIMEOUT_MS / 1000}s`
+        : `${chosenModel} request failed: ${e instanceof Error ? e.message : String(e)}`
     }
   } else {
     lastError = 'No OpenAI API key configured — add it in Agency Settings → AI → Image Generation'
