@@ -56,14 +56,22 @@ export async function getDfsUsageSummary(range?: { from?: string; to?: string })
   const empty: DfsUsageSummary = { from, to, total: 0, total_units: 0, byOperation: [], byClient: [], daily: [] }
   try {
     const db = createAdminClient()
-    const { data, error } = await db
-      .from('dataforseo_usage')
-      .select('client_id, operation, cost, units, date')
-      .gte('date', from)
-      .lte('date', to)
-      .limit(100000)
-    if (error || !Array.isArray(data)) return empty
-    const rows = data as Array<{ client_id: string | null; operation: string; cost: number; units: number; date: string }>
+    type Row = { client_id: string | null; operation: string; cost: number; units: number; date: string }
+    // Read in pages: a single read is cut at PostgREST's 1,000-row cap whatever .limit() says, and
+    // the panel's totals then stop growing partway through the month.
+    const rows: Row[] = []
+    for (let start = 0; start < 500_000; start += 1000) {
+      const { data, error } = await db
+        .from('dataforseo_usage')
+        .select('client_id, operation, cost, units, date')
+        .gte('date', from)
+        .lte('date', to)
+        .order('id', { ascending: true })
+        .range(start, start + 999)
+      if (error || !Array.isArray(data)) return empty
+      rows.push(...(data as Row[]))
+      if (data.length < 1000) break
+    }
 
     let total = 0, totalUnits = 0
     const byOp    = new Map<string, { cost: number; units: number }>()

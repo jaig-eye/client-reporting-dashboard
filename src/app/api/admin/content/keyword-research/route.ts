@@ -11,9 +11,9 @@
 // about the market they were about to write for, and the first real research ran unattended
 // with no one to judge it.
 //
-// It is the same call either way — the pool this writes is what topic selection reads, so
-// researching here costs nothing extra downstream. getResearchCandidates() finds the fresh
-// timestamp and reuses this run rather than buying its own.
+// It is the same call either way — the pool this writes is what the Keywords tab shows and what a
+// person ticks from. The monthly job (/api/cron/keyword-research) sees the fresh timestamp and
+// leaves this client alone for 30 days.
 //
 // WHY POST
 //
@@ -22,9 +22,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { isAdminAuthed } from '@/lib/auth'
+import { isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
+import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf, hasDfsConnection } from '@/lib/content/clientResearch'
+import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { addManualKeywords } from '@/lib/content/addManualKeywords'
 
@@ -45,12 +46,17 @@ const IN_CHUNK = 100
 export const dynamic = 'force-dynamic'
 export const fetchCache = 'force-no-store'
 
-/** Matches RESEARCH_MAX_AGE_DAYS in clientResearch.ts — the window getResearchCandidates reuses. */
+/** Matches RESEARCH_MAX_AGE_DAYS in clientResearch.ts — the monthly job's window. */
 const RESEARCH_REUSE_DAYS = 30
+
+/** A forced re-run is refused within this long of the last run: each one is ~15 paid calls. */
+const FORCE_COOLDOWN_MS = 60 * 60_000
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
-  keywords:     Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null; chosen: boolean }>
+  /** POST only. False when nothing new was bought or stored; `reason` then says why. */
+  ok?:          boolean
+  keywords:    Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null; chosen: boolean }>
   competitors:  string[]
   /** Best-rated businesses in the local pack for the seed services; only on a fresh local run. */
   localPack?:   Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
@@ -69,23 +75,27 @@ interface ResearchPayload {
 async function readStored(clientId: string): Promise<ResearchPayload['keywords']> {
   const db = createAdminClient()
   try {
-    const base = () => db
+    const COLS = 'keyword, search_volume, keyword_difficulty, intent, source, metadata'
+    const base = (cols: string) => db
       .from('seo_keywords')
-      .select('keyword, search_volume, keyword_difficulty, intent, source, metadata, chosen_at')
+      .select(cols)
       .eq('client_id', clientId)
       .or('intent.is.null,intent.neq.navigational')
-    // Dismissed rows are not shown. With-filter first, then without, for a database that has
-    // not run migration 223 yet.
-    let { data, error } = await base().is('dismissed_at', null).limit(200)
-    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base().limit(200))
     // chosen_at is migration 225. Without it every keyword reads as chosen, which is exactly the
-    // pre-225 behaviour and keeps a database that has not been migrated working unchanged.
-    const hasChosen = !(error && /chosen_at/i.test(error.message))
-    if (!hasChosen) ({ data, error } = await base().limit(200))
+    // pre-225 behaviour and keeps a database that has not been migrated working unchanged. The
+    // retry must drop the column from the select too — retrying the same select failed the same way.
+    let hasChosen = true
+    let { data, error } = await base(`${COLS}, chosen_at`).is('dismissed_at', null).limit(200)
+    if (error && /chosen_at/i.test(error.message)) {
+      hasChosen = false
+      ;({ data, error } = await base(COLS).is('dismissed_at', null).limit(200))
+    }
+    // Dismissed rows are not shown. Without migration 223 there is no dismissal to filter on.
+    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? `${COLS}, chosen_at` : COLS).limit(200))
     if (error) console.warn('[keyword-research] stored read failed:', error.message)
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
-    return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    return ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
       keyword:    String(r.keyword ?? '').trim(),
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
@@ -165,10 +175,8 @@ export async function POST(request: NextRequest) {
    * Reuse before spending.
    *
    * This route calls discoverKeywords() directly, which has no freshness gate of its own — the
-   * 30-day window lives in getResearchCandidates(). Since the wizard fires this on reaching the
-   * research step rather than on a button press, every visit re-bought the full six Labs calls
-   * for a client that had been researched an hour earlier. Opening the wizard twice to check a
-   * setting cost twice.
+   * 30-day window lives in isResearchDue(), for the monthly job. Without this check every press of
+   * the wizard's research button re-bought the full run for a client researched an hour earlier.
    *
    * `force: true` is the deliberate re-run, for when the operator has changed the seeds and
    * wants the market looked at again.
@@ -179,6 +187,7 @@ export async function POST(request: NextRequest) {
     if (at && at >= cutoff) {
       const keywords = await readStored(clientId)
       return NextResponse.json({
+        ok:           true,
         keywords,
         competitors:  [],
         connected:    keywords.length > 0,
@@ -193,6 +202,39 @@ export async function POST(request: NextRequest) {
   // unknown keywords, so without clearing the pool first the operator would change the seeds,
   // pay again, and see the same list. Tracked, claimed and dismissed rows survive the reset.
   if (force) {
+    // Deliberate spending: an admin's call, not a viewer's, and not more than once an hour.
+    const gate = await requireWriteAdmin()
+    if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
+    const { at } = await researchMeta(clientId)
+    const sinceLast = at ? Date.now() - Date.parse(at) : Infinity
+    if (sinceLast < FORCE_COOLDOWN_MS) {
+      const minutes = Math.ceil((FORCE_COOLDOWN_MS - sinceLast) / 60_000)
+      return NextResponse.json(
+        { error: `This market was researched less than an hour ago. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.` },
+        { status: 429 },
+      )
+    }
+
+    // The pool is only thrown away when a new one can be bought. Resetting first and then finding
+    // the budget spent (or no connection) replaced a paid list with a thin database-only one that
+    // stayed until the month rolled over.
+    const keepReason =
+      !(await hasDfsConnection(clientId))           ? 'This client has no DataForSEO connection, so nothing new can be researched. The current list is kept.'
+      : !(await canSpendOnDfs('forced keyword research')) ? 'The monthly DataForSEO limit has been reached. The current list is kept until next month or until the limit is raised.'
+      : null
+    if (keepReason) {
+      const [keywords, meta] = await Promise.all([readStored(clientId), researchMeta(clientId)])
+      return NextResponse.json({
+        ok:           false,
+        keywords,
+        competitors:  [],
+        connected:    keywords.length > 0,
+        reason:       keepReason,
+        researchedAt: meta.at,
+        researchLocation: keywords.some(k => k.local_volume != null) ? meta.location : null,
+      } satisfies ResearchPayload)
+    }
+
     const removed = await resetResearchPool(clientId)
     console.log(`[keyword-research] forced re-run for ${clientId}: cleared ${removed} candidate(s)`)
   }
@@ -201,6 +243,9 @@ export async function POST(request: NextRequest) {
   const meta   = await researchMeta(clientId)
 
   const payload: ResearchPayload = {
+    // False when the run stored nothing it paid for (storage failed, table missing): the UI must
+    // show `reason` as a problem, not as a result.
+    ok:           result.ok,
     keywords:     await readStored(clientId),
     competitors:  result.competitors,
     localPack:    result.localPack ?? [],

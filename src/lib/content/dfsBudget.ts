@@ -46,9 +46,34 @@ export interface BudgetState {
 const CACHE_MS = 60_000
 let cache: { at: number; state: BudgetState } | null = null
 
-function firstOfMonth(): string {
+export function firstOfMonth(): string {
   const d = new Date()
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+}
+
+type Db = ReturnType<typeof createAdminClient>
+
+/**
+ * Total recorded DataForSEO spend since `sinceDate`, read in pages.
+ *
+ * The ledger is one row per call or per client-day, so a month passes 1,000 rows with a handful of
+ * clients. A single read is silently cut at PostgREST's 1,000-row cap — `.limit(20_000)` does not
+ * lift it — and the sum then undercounts until the ceiling can never trip.
+ */
+export async function sumDfsSpendSince(db: Db, sinceDate: string): Promise<{ spent: number; error: string | null }> {
+  let spent = 0
+  for (let from = 0; from < 500_000; from += 1000) {
+    const { data, error } = await db
+      .from('dataforseo_usage')
+      .select('cost')
+      .gte('date', sinceDate)
+      .order('id', { ascending: true })
+      .range(from, from + 999)
+    if (error) return { spent, error: error.message }
+    for (const r of (data ?? []) as { cost: unknown }[]) spent += Number(r.cost) || 0
+    if ((data ?? []).length < 1000) break
+  }
+  return { spent, error: null }
 }
 
 /** Month-to-date spend against the ceiling. */
@@ -56,7 +81,6 @@ export async function getDfsBudget(): Promise<BudgetState> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.state
 
   const unlimited: BudgetState = { limit: null, spent: 0, allowed: true }
-  let state: BudgetState = unlimited
   try {
     const db = createAdminClient()
 
@@ -68,47 +92,60 @@ export async function getDfsBudget(): Promise<BudgetState> {
       .limit(1)
       .maybeSingle()
     if (setErr) {
-      if (!/dataforseo_monthly_budget/i.test(setErr.message)) {
-        console.warn('[dfs-budget] cannot read the budget:', setErr.message)
+      if (/dataforseo_monthly_budget/i.test(setErr.message)) {
+        cache = { at: Date.now(), state: unlimited }
+      } else {
+        // Infrastructure, not a decision: allowed, and not cached, so the next caller asks again.
+        console.warn('[dfs-budget] cannot read the budget, allowing this call:', setErr.message)
       }
-      cache = { at: Date.now(), state: unlimited }
       return unlimited
     }
 
     const raw = (settings as { dataforseo_monthly_budget?: unknown } | null)?.dataforseo_monthly_budget
     const limit = raw == null ? null : Number(raw)
-    if (limit == null || !isFinite(limit) || limit <= 0) {
+    if (limit == null || !isFinite(limit) || limit < 0) {
       cache = { at: Date.now(), state: unlimited }
       return unlimited
     }
+    // $0 is a ceiling like any other: it means spend nothing, not "no limit".
 
-    const { data: rows, error: usageErr } = await db
-      .from('dataforseo_usage')
-      .select('cost')
-      .gte('date', firstOfMonth())
-      .limit(20_000)
-    if (usageErr) {
-      // A budget is set and the spend is unknowable. Stopping is the only honest reading.
-      console.error('[dfs-budget] budget set but usage unreadable, holding spend:', usageErr.message)
-      state = { limit, spent: NaN, allowed: false, reason: 'could not read this month’s usage' }
-      cache = { at: Date.now(), state }
-      return state
+    // One retry before holding spend: most read failures are a blip, and holding costs a whole
+    // day's rank checks when the cron is the caller.
+    let usage = await sumDfsSpendSince(db, firstOfMonth())
+    if (usage.error) usage = await sumDfsSpendSince(db, firstOfMonth())
+    if (usage.error) {
+      // A budget is set and the spend is unknowable. Stopping is the only honest reading — but it is
+      // not cached, so a recovered database is believed on the very next call.
+      console.error('[dfs-budget] budget set but usage unreadable, holding spend:', usage.error)
+      return { limit, spent: NaN, allowed: false, reason: 'could not read this month’s usage' }
     }
 
-    const spent = (rows ?? []).reduce((sum, r) => sum + (Number((r as { cost: unknown }).cost) || 0), 0)
-    state = spent >= limit
+    const spent = usage.spent
+    const state: BudgetState = spent >= limit
       ? { limit, spent, allowed: false, reason: `monthly budget reached ($${spent.toFixed(2)} of $${limit.toFixed(2)})` }
       : { limit, spent, allowed: true }
+    cache = { at: Date.now(), state }
+    return state
   } catch (e) {
     // An exception here is infrastructure, not a budget decision. The paid paths each degrade
     // safely on their own, and blocking every one of them over a thrown error would be a worse
     // failure than the one being guarded against.
     console.warn('[dfs-budget] check failed, allowing:', e instanceof Error ? e.message : e)
-    state = unlimited
+    return unlimited
   }
+}
 
-  cache = { at: Date.now(), state }
-  return state
+/**
+ * Dollars left under the ceiling this month: Infinity with no ceiling, 0 when spending is held.
+ *
+ * For a caller that spends in a batch — the rank cron — to size the batch, so the ceiling is not
+ * overshot by a whole run's worth of checks bought after a single "allowed".
+ */
+export async function remainingDfsBudget(): Promise<number> {
+  const state = await getDfsBudget()
+  if (!state.allowed) return 0
+  if (state.limit == null) return Infinity
+  return Math.max(0, state.limit - state.spent)
 }
 
 /**

@@ -919,6 +919,29 @@ export async function getResearchCandidates(clientId: string): Promise<{
 }
 
 /**
+ * Whether research could buy anything for this client: a DataForSEO connection with credentials and
+ * a domain. A read failure answers no, which only ever means "don't throw the current list away".
+ */
+export async function hasDfsConnection(clientId: string): Promise<boolean> {
+  try {
+    const db = createAdminClient()
+    const { data, error } = await db
+      .from('client_connections')
+      .select('external_id, connector:connectors!inner(type, auth)')
+      .eq('client_id', clientId)
+      .eq('connector.type', 'dataforseo')
+    if (error) { console.warn('[research] connection check failed:', error.message); return false }
+    type Row = { external_id: string | null; connector: { auth?: Record<string, unknown> } | { auth?: Record<string, unknown> }[] | null }
+    return ((data ?? []) as Row[]).some(r => {
+      const conn = Array.isArray(r.connector) ? r.connector[0] : r.connector
+      return !!(r.external_id ?? '').trim() && !!resolveDfsCreds(conn?.auth ?? {})
+    })
+  } catch {
+    return false
+  }
+}
+
+/**
  * Whether this client's research has aged past the reuse window, or never ran.
  *
  * A read failure answers "not due": re-running research on a guess costs money every time the
