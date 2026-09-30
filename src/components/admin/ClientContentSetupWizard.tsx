@@ -57,17 +57,23 @@ interface ResearchData {
   competitors:  string[]
   /** False when the client has no DataForSEO connection — the pool is then database-only. */
   connected:    boolean
+  /** From a POST: false means nothing new was stored, and `reason` says why. */
+  ok?:          boolean
   reason?:      string
+  /** New keywords this run added to the pool. */
   discovered?:  number
   cost?:        number
   researchedAt?: string | null
-  /** The request itself failed (network, 5xx) — distinct from a run that found nothing. */
-  failed?: boolean
   /** Where the pool was measured, when a research location is set. */
   researchLocation?: string | null
   /** Best-rated businesses in the map pack for the starting keywords; only on a fresh local run. */
   localPack?: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
+  /** Set here, not by the server: this came from a run in this wizard rather than a stored read. */
+  fromRun?: boolean
 }
+
+/** The result of a research run or read, and how it should read: good news, a caution, a failure. */
+interface ResearchOutcome { tone: 'success' | 'warning' | 'error'; text: string }
 
 interface Props {
   clientId:   string
@@ -166,7 +172,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
    * common_objections — all of which the settings tab maintains and the writer prompt reads.
    */
   const [loadedEeat, setLoadedEeat] = useState<Record<string, unknown>>({})
-  const [researchDone,   setResearchDone]   = useState(false)
+  /** 'loading' reads the stored pool (free); 'researching' is a paid run in flight. */
+  const [researchPhase,   setResearchPhase]   = useState<'idle' | 'loading' | 'researching'>('idle')
+  /** What the last run or read came to, said where the button is. */
+  const [researchOutcome, setResearchOutcome] = useState<ResearchOutcome | null>(null)
   /** Ticks on the research step that have not been saved. Leaving the step drops them. */
   const [picksDirty,     setPicksDirty]     = useState(false)
   /** Set by a first Continue or Back over unsaved picks; the second press leaves. */
@@ -461,17 +470,6 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   }
 
   /**
-   * Run the real research for this client.
-   *
-   * POST because it spends: this is the DataForSEO discovery topic selection would otherwise buy
-   * later, moved to where somebody is watching. What it stores is what generation reads, so the
-   * first content run reuses this rather than researching again.
-   *
-   * Brand answers and foundational keywords are saved first — the research reads services,
-   * geography and the seed terms from content_settings, so an unsaved wizard would research the
-   * wrong business.
-   */
-  /**
    * Seed the foundational keywords from the services once, when there is nothing to lose.
    *
    * The services are already used as research seeds either way — this only puts them in front of
@@ -484,84 +482,90 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // shown twice. seedsPrefilled survives as the guard that a saved value is never overwritten.
   const seedsPrefilled = useRef(false)
 
-  // Re-entrancy guard. Deliberately a ref, not `researchDone`: that is the "finished" flag the
-  // step reads to stop showing a spinner, and using one value for both made the spinner
-  // unreachable — it was set before the awaits, so the panel rendered its empty state while the
-  // request was still in flight.
-  const researchStarted = useRef(false)
-
-  useEffect(() => {
-    // On the research step itself — the screen that says this uses the DataForSEO balance —
-    // not the step before it, which used to run a paid call while telling the operator that
-    // "nothing here is saved".
-    // And not at all without DataForSEO: the step shows a connect prompt in that case, and firing
-    // a research run behind it would save settings and stamp the client as researched on the
-    // strength of a call that can only come back empty.
-    if (step !== 8 || !hasDfs || researchStarted.current) return
-    researchStarted.current = true
-    void (async () => {
-      try {
-        // Read at call time from the render that reached this step, so it saves what the
-        // operator actually entered. An earlier version wrapped this in useCallback keyed on
-        // [clientId, researchDone], which froze the first render's saveSettings and wrote the
-        // wizard's INITIAL state over the loaded profile — blanking brand answers, resetting the
-        // schedule and moving schedule_start_date to today — and then researched the settings it
-        // had just erased.
-        await saveSettings(false)
-        const res  = await fetch('/api/admin/content/keyword-research', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ client_id: clientId }),
-        })
-        const data = await res.json() as ResearchData
-        setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
-      } catch {
-        setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
-      } finally {
-        setResearchDone(true)
-      }
-    })()
-    // saveSettings and clientId are read inside the async body from this render's closure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, hasDfs])
-
-  const [rerunning, setRerunning] = useState(false)
-
   /**
-   * Look again, with the seeds as they are now. Spends — this is the deliberate re-run the
-   * automatic one is not — and rebuilds the pool rather than adding to it, so a corrected seed
-   * list produces a corrected list, not the old list plus a few extras.
+   * Research this market. Spends, so it runs only when the operator presses the button.
+   *
+   * It used to run from an effect on reaching this step, which bought DataForSEO research — and
+   * saved every answer in the wizard — because someone clicked Continue. Entering the step now
+   * shows the stored pool, a free read, and this is the one thing on the step that spends.
+   *
+   * The answers are saved first because research reads the services, the service areas and the
+   * seed terms from the saved settings; unsaved, it would research the business as it was before
+   * this wizard opened. Called from a click, so saveSettings reads what is on screen now.
+   *
+   * The first run for a client is a plain POST. Once a client has been researched it is forced,
+   * which replaces the unchosen candidates: otherwise a corrected seed list would pay again and
+   * show the old list plus a few extras.
    */
-  async function rerunResearch() {
-    if (rerunning) return
-    setRerunning(true)
+  async function researchMarket() {
+    if (researchPhase === 'researching') return
+    const hadRun = !!research?.researchedAt || (research?.keywords.length ?? 0) > 0
+    setResearchPhase('researching')
+    setResearchOutcome(null)
     try {
-      await saveSettings(false)
+      try {
+        await saveSettings()
+      } catch (e) {
+        setResearchOutcome({
+          tone: 'error',
+          text: `Couldn’t save your answers, so research didn’t run. ${e instanceof Error ? e.message : ''}`.trim(),
+        })
+        return
+      }
       const res  = await fetch('/api/admin/content/keyword-research', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ client_id: clientId, force: true }),
+        body:    JSON.stringify({ client_id: clientId, ...(hadRun ? { force: true } : {}) }),
       })
-      const data = await res.json() as ResearchData
-      setResearch(res.ok ? data : { keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
+      const data = await res.json().catch(() => ({})) as Partial<ResearchData> & { error?: string }
+      if (!res.ok) {
+        // 403: a viewer cannot re-run research. 429: it ran less than an hour ago. Both carry a
+        // sentence written for the operator.
+        setResearchOutcome({
+          tone: res.status === 429 ? 'warning' : 'error',
+          text: data.error ?? `Research didn’t run (HTTP ${res.status}).`,
+        })
+        return
+      }
+      if (data.ok === false) {
+        // Nothing new was stored — over the month's budget, no connection, a storage failure —
+        // and the pool was left as it was, so show the stored one again.
+        setResearchOutcome({ tone: 'warning', text: data.reason ?? 'Research didn’t store anything new.' })
+        await reloadStoredResearch()
+        return
+      }
+      setResearch({
+        ...data,
+        keywords:    data.keywords ?? [],
+        competitors: data.competitors ?? [],
+        connected:   data.connected ?? true,
+        fromRun:     true,
+      })
+      const n = data.discovered ?? 0
+      setResearchOutcome({
+        tone: 'success',
+        text: n > 0
+          ? `Found ${n.toLocaleString()} new keyword${n === 1 ? '' : 's'}. Tick the ones worth writing about, then save.`
+          : 'No new keywords this time. The list below is what research already holds.',
+      })
     } catch {
-      setResearch({ keywords: [], competitors: [], connected: false, reason: 'Research failed', failed: true })
+      setResearchOutcome({ tone: 'error', text: 'Research didn’t finish — the connection dropped. Try again.' })
     } finally {
-      setRerunning(false)
-      setResearchDone(true)
+      setResearchPhase('idle')
     }
   }
 
   /**
-   * Read the stored pool back after picks are saved. Free — a database read.
+   * Read the stored pool. Free — a database read, and the GET never spends.
    *
-   * Keeps what only a run returns (competitors, the map pack, the counts) and replaces the rows,
-   * so the list the panel reconciles against is what the server now holds.
+   * Used on entering the research step and after picks are saved. Keeps what only a run returns
+   * (competitors, the map pack) and replaces the rows, so the list the panel reconciles against
+   * is what the server now holds. Returns whether it could read.
    */
-  const reloadStoredResearch = useCallback(async () => {
+  const reloadStoredResearch = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
-      if (!res.ok) return
+      if (!res.ok) return false
       const d = await res.json() as ResearchData
       setResearch(prev => ({
         ...(prev ?? { competitors: [], connected: d.connected }),
@@ -569,11 +573,32 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         researchedAt:     d.researchedAt ?? prev?.researchedAt ?? null,
         researchLocation: d.researchLocation ?? prev?.researchLocation ?? null,
       }))
-    } catch { /* the list on screen is still what was saved */ }
+      return true
+    } catch {
+      return false
+    }
   }, [clientId])
 
-  /** "Not this one." Gone from the list now, and from every read of the pool once the server agrees. */
-  async function saveSettings(wizardCompleted: boolean) {
+  // Entering the research step shows what is already stored. Nothing here spends.
+  useEffect(() => {
+    if (step !== 8 || !hasDfs) return
+    let cancelled = false
+    setResearchPhase('loading')
+    void reloadStoredResearch().then(ok => {
+      if (cancelled) return
+      if (!ok) setResearchOutcome({ tone: 'error', text: 'Couldn’t load the saved keyword list. Step back and forward again to retry.' })
+      setResearchPhase(p => p === 'loading' ? 'idle' : p)
+    })
+    return () => { cancelled = true; setResearchPhase(p => p === 'loading' ? 'idle' : p) }
+  }, [step, hasDfs, reloadStoredResearch])
+
+  /**
+   * Write every answer in the wizard to the client's settings.
+   *
+   * `wizardCompleted` is sent only when given: the save before a research run leaves it as it
+   * was, so researching from a re-opened wizard does not mark a set-up client as unfinished.
+   */
+  async function saveSettings(wizardCompleted?: boolean) {
     const eeatData = {
       founded_year:           brand.founded_year,
       years_in_business:      brand.years_in_business,
@@ -619,7 +644,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         // Merged, not replaced: the wizard owns 8 keys of a 16-key column and must not delete
         // the 9 the settings tab maintains — several of which the writer prompt reads.
         eeat_data:                      { ...loadedEeat, ...eeatData },
-        wizard_completed:               wizardCompleted,
+        ...(wizardCompleted === undefined ? {} : { wizard_completed: wizardCompleted }),
         connection_id:                  detectedConnectionId ?? undefined,
         content_image_generation:       imageGen,
         content_image_prompt:           imagePrompt || null,
@@ -808,13 +833,13 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           {step === 8 && (
             <StepResearch
               research={research}
-              done={researchDone}
+              phase={researchPhase}
+              outcome={researchOutcome}
               clientId={clientId}
               servicesText={brand.services}
               seeds={foundationalKeywords}
               setSeeds={v => { seedsPrefilled.current = true; setFoundationalKeywords(v) }}
-              onRerun={rerunResearch}
-              rerunning={rerunning}
+              onResearch={() => void researchMarket()}
               hasDfs={hasDfs}
               onPicksSaved={reloadStoredResearch}
               onPicksDirty={onPicksDirty}
@@ -1648,16 +1673,18 @@ function StepContentTypes({
 
 // --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds, onRerun, rerunning, hasDfs, onPicksSaved, onPicksDirty }: {
+function StepResearch({ research, phase, outcome, clientId, servicesText, seeds, setSeeds, onResearch, hasDfs, onPicksSaved, onPicksDirty }: {
   research:  ResearchData | null
-  done:      boolean
+  /** 'loading' is the free read of the stored pool; 'researching' is a paid run. */
+  phase:     'idle' | 'loading' | 'researching'
+  outcome:   ResearchOutcome | null
   clientId:  string
   /** Step 3's Services, offered as a starting point rather than copied in silently. */
   servicesText: string
   seeds:     string
   setSeeds:  (v: string) => void
-  onRerun:   () => void
-  rerunning: boolean
+  /** Saves the answers and runs research. Spends. */
+  onResearch: () => void
   /** Whether this client has a DataForSEO connection. Without one there is nothing to research. */
   hasDfs:    boolean
   /** After the picks are saved, so the wizard's copy of the pool matches the server's. */
@@ -1710,23 +1737,22 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
     )
   }
 
-  const busy = !done || rerunning
+  const researching  = phase === 'researching'
+  const busy         = phase !== 'idle'
   const keywords     = research?.keywords ?? []
-  const shown        = keywords.slice(0, 60)
   const competitors  = research?.competitors ?? []
   const localPack    = research?.localPack ?? []
-  const reused       = !!research?.reason && /reusing/i.test(research.reason)
-  const failed       = !!research?.failed
-  const found        = research?.discovered ?? keywords.length
+  const hadRun       = !!research?.researchedAt || keywords.length > 0
   const researchedOn = research?.researchedAt ? new Date(research.researchedAt).toLocaleDateString() : null
+  const canResearch  = !!(seeds.trim() || servicesText.trim())
 
   return (
     <div>
       <StepTitle>Choose what to write around</StepTitle>
       <StepSub>
         Search terms this business could realistically win, and the sites already winning them.
-        Pick the ones worth pursuing — only those are shown to the writer. You can come back and
-        pick more at any time from the client&apos;s Analytics tab.
+        Tick the ones worth pursuing — topics are only ever chosen from keywords you tick. You can
+        change the picks at any time on the client&apos;s Keywords tab.
       </StepSub>
 
       {/* Starting keywords + look again: the two things an operator can do about a bad list */}
@@ -1749,8 +1775,8 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
             Use the services from step 3
           </button>
         )}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <div style={{ flex: 1 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}>
             <KeywordChipInput
               id="wizard-starting-keywords"
               value={seeds}
@@ -1762,30 +1788,47 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
           {confirming ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200 }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
-                Replace the {keywords.length} keyword{keywords.length === 1 ? '' : 's'} listed now?
+                Replace the unticked ideas below? Ticked keywords stay.
               </span>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button type="button" className="btn btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => setConfirming(false)}>Cancel</button>
-                <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => { setConfirming(false); onRerun() }}>Yes, look again</button>
+                <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => { setConfirming(false); onResearch() }}>Yes, look again</button>
               </div>
             </div>
           ) : (
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => (keywords.length ? setConfirming(true) : onRerun())}
-              disabled={busy || !seeds.trim()}
+              onClick={() => (hadRun ? setConfirming(true) : onResearch())}
+              disabled={busy || !canResearch}
+              title="Uses DataForSEO credit"
               style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
             >
-              {rerunning ? 'Looking…' : 'Look again'}
+              {researching ? 'Researching…' : hadRun ? 'Look again' : 'Research this market'}
             </button>
           )}
         </div>
+        {/* Said plainly, because it is the one button in the wizard that costs money. */}
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
-          Looking again replaces the ideas below with a fresh search from these terms. Anything you
-          have already chosen stays chosen.
+          {hadRun
+            ? `Last researched ${researchedOn ?? 'earlier'}, and refreshed by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the unticked ideas with a fresh search from these terms.`
+            : 'Research spends DataForSEO credit, so it runs only when you press the button. It saves your answers so far first, because it searches from them. After that it refreshes by itself once a month.'}
         </p>
       </div>
+
+      {outcome && (
+        <div
+          role={outcome.tone === 'error' ? 'alert' : 'status'}
+          style={{
+            padding: '0.625rem 0.875rem', borderRadius: 8, marginBottom: 12,
+            fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)',
+            background: `var(--${OUTCOME_TONE[outcome.tone]}-subtle)`,
+            border: `1px solid var(--${OUTCOME_TONE[outcome.tone]})`,
+          }}
+        >
+          {outcome.text}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 16 }}>
         {/* Keyword ideas — choosing is the work, so it leads and gets the full width */}
@@ -1793,11 +1836,21 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
           <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 8 }}>
             Search terms worth pursuing
           </div>
-          {!done || rerunning ? (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: 0 }}>
+          {researching && (
+            <p role="status" style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 8px' }}>
               Looking at this market — usually 20–40 seconds.
             </p>
+          )}
+          {phase === 'loading' && !research ? (
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', margin: 0 }}>Loading the saved list…</p>
+          ) : keywords.length === 0 ? (
+            !researching && (
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: 0 }}>
+                Nothing researched yet. Press <strong>Research this market</strong> to look.
+              </p>
+            )
           ) : (
+            // Stays mounted through a run, so ticks not yet saved survive it.
             <KeywordResearchPanel
               clientId={clientId}
               keywords={panelKeywords}
@@ -1816,17 +1869,17 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
             Competing sites{place ? ` in ${place}` : ''}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
-            {busy ? (
+            {researching ? (
               <StatusRow label="Finding competing sites…" status="loading" />
             ) : competitors.length === 0 && localPack.length === 0 ? (
               <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                {failed
-                  ? 'Research didn’t finish.'
-                  : !research?.connected
-                  ? 'Connect DataForSEO for this client to see who they compete with.'
-                  : reused
-                    ? `Using the research from ${researchedOn ?? 'earlier'} — competing sites are only captured on a new run.`
-                    : 'No competing sites found for these keywords. Directories and marketplaces are left out on purpose — try more specific starting keywords and look again.'}
+                {/* Competing sites come back from a run and are not stored, so a list read from
+                    storage has none to show. That is not the same as a run that found none. */}
+                {research?.fromRun
+                  ? 'No competing sites found for these keywords. Directories and marketplaces are left out on purpose — try more specific starting keywords and look again.'
+                  : hadRun
+                    ? 'Competing sites are shown straight after a run, and aren’t kept. Look again to see them.'
+                    : 'Shown once research has run.'}
               </div>
             ) : (
               <>
@@ -1875,16 +1928,15 @@ function StepResearch({ research, done, clientId, servicesText, seeds, setSeeds,
         </div>
       </div>
 
-      {done && !rerunning && research && keywords.length > 0 && (
-        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', fontSize: '0.8125rem', color: '#166534' }}>
-          Done &mdash; {found.toLocaleString()} keyword idea{found === 1 ? '' : 's'} saved{shown.length < found ? `, showing the top ${shown.length}` : ''}.
-          {research.connected
-            ? ' Topics will be chosen from these alongside Search Console, Google Ads and Ahrefs.'
-            : ' These came from Google Ads and Ahrefs data already in the dashboard; connect DataForSEO for search volumes and competing sites.'}
-        </div>
-      )}
     </div>
   )
+}
+
+/** Outcome tone → the theme colour family it is drawn in. */
+const OUTCOME_TONE: Record<ResearchOutcome['tone'], 'green' | 'amber' | 'red'> = {
+  success: 'green',
+  warning: 'amber',
+  error:   'red',
 }
 
 function StatusRow({ label, status }: { label: string; status: 'loading' | 'done' | 'error' }) {
