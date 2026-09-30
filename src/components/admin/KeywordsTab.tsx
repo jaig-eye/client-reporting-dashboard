@@ -230,11 +230,16 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
             <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
             <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
+          {/* States a fact about the CONNECTION, not a claim about the rows below it.
+              The earlier wording said "these came from converting ad terms — which is why they have
+              leads but no search volume", which was wrong in both directions: it described an empty
+              list on a client with no pool at all, and it denied the volumes on a client that had
+              DataForSEO connected when research last ran and has since been disconnected. */}
           <p style={{ margin: 0, fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)' }}>
-            <strong style={{ fontWeight: 600 }}>Google Ads data only.</strong>{' '}
+            <strong style={{ fontWeight: 600 }}>DataForSEO is not connected for this client.</strong>{' '}
             <span style={{ color: 'var(--text-muted)' }}>
-              DataForSEO is not connected for this client, so these came from converting ad terms —
-              which is why they have leads but no search volume or difficulty.
+              Research still runs from this client&apos;s own converting ad terms and any Ahrefs rows.
+              What it cannot add is search volume, difficulty, what competitors rank for, or rank tracking.
             </span>
           </p>
         </div>
