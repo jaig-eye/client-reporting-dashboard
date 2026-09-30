@@ -1817,7 +1817,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
         {/* Said plainly, because it is the one button in the wizard that costs money. */}
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
           {hadRun
-            ? `Last researched ${researchedOn ?? 'earlier'}, and refreshed by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the unticked ideas with a fresh search from these terms.`
+            ? `${researchedOn ? `Last researched ${researchedOn}. ` : ''}Research refreshes by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the unticked ideas with a fresh search from these terms.`
             : 'Research spends DataForSEO credit, so it runs only when you press the button. It saves your answers so far first, because it searches from them. After that it refreshes by itself once a month.'}
         </p>
       </div>
