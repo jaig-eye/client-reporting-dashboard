@@ -1269,11 +1269,14 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           </Field>
 
           <Field label="Service Areas" htmlFor="wiz-service-areas" drivesResearch>
+            {/* The same place suggestions as Brand DNA: picking "Melbourne, Florida" off the list
+                stores a name research is known to resolve, instead of a guess at which Melbourne. */}
             <KeywordChipInput
               id="wiz-service-areas"
               value={brand.geographic_focus}
               onChange={v => setBrand({ ...brand, geographic_focus: v })}
-              placeholder="Austin, Round Rock, Hill Country…"
+              placeholder="Start typing a city or county…"
+              suggestPlaces
             />
             <MarketLine geographicFocus={brand.geographic_focus} />
           </Field>
