@@ -177,7 +177,9 @@ export default function DataForSeoUsagePanel() {
           No DataForSEO spend recorded yet this month. Rank checks and competitor research will appear here once the connector is active.
         </p>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }} className="dfs-usage-grid">
+        // minmax(0, 1fr), not 1fr: a plain 1fr column is at least as wide as its content, so the
+        // month of daily bars pushed the card past a phone's width instead of scrolling inside it.
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 20 }} className="dfs-usage-grid">
           {/* By operation */}
           <div>
             <div style={sectionLabel}>By operation</div>
@@ -216,7 +218,9 @@ export default function DataForSeoUsagePanel() {
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 56, overflowX: 'auto' }}>
                 {s.daily.map(d => (
                   <div key={d.date} title={`${fmtDay(d.date)} · ${fmtMoney(d.cost)}`}
-                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 14 }}>
+                    // Not shrinkable: squeezed to 14px the dates ran into each other on a phone.
+                    // The row scrolls sideways instead.
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 20, flexShrink: 0 }}>
                     <div style={{ width: 10, height: `${Math.max(2, (d.cost / maxDay) * 44)}px`, background: 'var(--accent)', borderRadius: 2 }} />
                     <span style={{ fontSize: '0.55rem', color: 'var(--text-faint)' }}>{fmtDay(d.date)}</span>
                   </div>
@@ -227,7 +231,7 @@ export default function DataForSeoUsagePanel() {
         </div>
       )}
 
-      <style>{`@media (max-width: 640px) { .dfs-usage-grid { grid-template-columns: 1fr !important; } }`}</style>
+      <style>{`@media (max-width: 640px) { .dfs-usage-grid { grid-template-columns: minmax(0, 1fr) !important; } }`}</style>
     </div>
   )
 }
