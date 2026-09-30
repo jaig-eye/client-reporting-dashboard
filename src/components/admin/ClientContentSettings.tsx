@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine, Sparkle } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
-import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
+import ClientContentSettingsForm, { SettingsLoadError } from '@/components/admin/ClientContentSettingsForm'
 
 type SettingsSection = 'brand' | 'publishing' | 'schedule' | 'writing'
 
@@ -102,10 +102,21 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   }, [])
 
   // ── Load settings ──────────────────────────────────────────────────────────
+  // A failed read is not an empty client. Filling the cards from an error body gave every field
+  // its default, and any card's Save then wrote those defaults over the real settings.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   useEffect(() => {
     setLoading(true)
+    setLoadError(null)
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({})) as { error?: string }
+          throw new Error(body.error ?? `HTTP ${r.status}`)
+        }
+        return r.json()
+      })
       .then((d: Record<string, unknown>) => {
         const autoGen = (d.auto_generate as boolean) ?? false
         setForm({
@@ -139,12 +150,12 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           }).catch(() => {})
         }
       })
-      .catch(() => setLoading(false))
-  }, [clientId])
+      .catch(e => { setLoadError(e instanceof Error ? e.message : 'Could not load'); setLoading(false) })
+  }, [clientId, reloadKey])
 
   // ── Auto-default the connection when one exists but none is saved ───────────
   useEffect(() => {
-    if (loading) return
+    if (loading || loadError) return
     if (!form.connection_id && firstConnectionId) {
       set('connection_id', firstConnectionId)
       fetch('/api/admin/content/client-settings', {
@@ -236,13 +247,15 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connection_id: effectiveConn, name }),
       })
-      const d = await res.json().catch(() => ({})) as { category?: WpCategory & { existed?: boolean }; error?: string }
+      // `existed` is a sibling of `category`, not a field on it: reading it off the category meant
+      // a name WordPress already had always said "Created".
+      const d = await res.json().catch(() => ({})) as { category?: WpCategory; existed?: boolean; error?: string }
       if (!res.ok || d.error || !d.category) throw new Error(d.error ?? 'Could not create it')
       const made = d.category
       setCategories(prev => prev.some(c => c.id === made.id) ? prev : [...prev, made])
       setCategoryIds(prev => prev.includes(made.id) ? prev : [...prev, made.id])
       setNewCategory('')
-      setCategoryMsg(made.existed ? 'Already existed — selected' : 'Created and selected. Save to apply.')
+      setCategoryMsg(d.existed ? 'Already existed — selected. Save to apply.' : 'Created and selected. Save to apply.')
     } catch (e) {
       setCategoryMsg(e instanceof Error ? e.message : 'Could not create it')
     } finally {
@@ -256,6 +269,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
   if (loading) {
     return <p className="text-sm" style={{ color: 'var(--text-muted)', padding: '1rem 0' }}>Loading settings…</p>
+  }
+  if (loadError) {
+    return <SettingsLoadError message={loadError} onRetry={() => setReloadKey(k => k + 1)} />
   }
 
   const SECTIONS: { id: SettingsSection; label: string; desc: string; icon: React.ReactNode }[] = [

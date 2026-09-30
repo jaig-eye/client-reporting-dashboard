@@ -75,6 +75,28 @@ function Label({ children, hint, help }: {
   )
 }
 
+/**
+ * Shown in place of a settings form whose settings could not be read.
+ *
+ * In place of, not above: a form filled from a failed read is a blank form, and its Save would
+ * write those blanks over the real values.
+ */
+export function SettingsLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="card p-5"
+      style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--red)', background: 'var(--red-subtle)' }}
+    >
+      <p style={{ margin: 0, flex: '1 1 260px', fontSize: '0.8125rem', lineHeight: 1.5, color: 'var(--text-primary)' }}>
+        <strong style={{ fontWeight: 600 }}>Couldn&apos;t load this client&apos;s settings</strong> ({message}).{' '}
+        <span style={{ color: 'var(--text-secondary)' }}>Nothing can be saved until they load, so nothing is overwritten with blanks.</span>
+      </p>
+      <button type="button" className="btn btn-secondary" onClick={onRetry}>Retry</button>
+    </div>
+  )
+}
+
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -115,12 +137,22 @@ export default function ClientContentSettingsForm({
   const [showSiteInput, setShowSiteInput] = useState(false)
   const [siteTextInput, setSiteTextInput] = useState('')
   const [showSiteText,  setShowSiteText]  = useState(false)
-
+  // Set when the settings could not be read. The form is not shown then: filled from an error
+  // body it is a blank form, and saving a blank form wipes the client's Brand DNA.
+  const [loadError,     setLoadError]     = useState<string | null>(null)
+  const [reloadKey,     setReloadKey]     = useState(0)
 
   useEffect(() => {
     setLoading(true)
+    setLoadError(null)
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({})) as { error?: string }
+          throw new Error(body.error ?? `HTTP ${r.status}`)
+        }
+        return r.json()
+      })
       .then((d: Record<string, unknown>) => {
         setForm({
           business_background: String(d.business_background ?? ''),
@@ -137,8 +169,8 @@ export default function ClientContentSettingsForm({
         }
         setLoading(false)
       })
-      .catch(() => setLoading(false))
-  }, [clientId])
+      .catch(e => { setLoadError(e instanceof Error ? e.message : 'Could not load'); setLoading(false) })
+  }, [clientId, reloadKey])
 
   function setField<K extends keyof BrandDnaForm>(key: K, val: string) {
     setForm(p => ({ ...p, [key]: val }))
@@ -227,6 +259,9 @@ export default function ClientContentSettingsForm({
   // the Keywords tab.
 
   async function save(): Promise<boolean> {
+    // Belt and braces: the form is not rendered after a failed load, but nothing here may write
+    // what it never read.
+    if (loadError) return false
     setSaving(true); setError(''); setSaved(false)
     const res = await fetch('/api/admin/content/client-settings', {
       method: 'PUT',
@@ -247,6 +282,7 @@ export default function ClientContentSettingsForm({
 
 
   if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+  if (loadError) return <SettingsLoadError message={loadError} onRetry={() => setReloadKey(k => k + 1)} />
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: 700 }}>
