@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { researchScoreOf, localVolumeOf } from '@/lib/content/clientResearch'
+import { researchScoreOf, localVolumeOf, serviceTagger } from '@/lib/content/clientResearch'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 
 export const dynamic = 'force-dynamic'
@@ -64,6 +64,12 @@ function foundViaOf(metadata: unknown, source: unknown): string | null {
  */
 const POOL_READ = 400
 
+/** metadata.service, as research recorded it. */
+function serviceFromMetadata(metadata: unknown): string | null {
+  const v = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).service : null
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
 export interface PaidTermRow  { term: string; conversions: number; spend: number; costPerLead: number | null }
 export interface AhrefsRow    { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
 export interface ResearchRow  {
@@ -78,6 +84,12 @@ export interface ResearchRow  {
   chosen:       boolean
   /** Leads this term produced in paid search, when it is one we bought clicks on. */
   leads?:       number
+  /**
+   * The client service this keyword is about — one of the `services` the response lists, or null
+   * when it matches none (a typed-in keyword, the site's own rankings). Research records it; rows
+   * stored before it did are matched here the same way.
+   */
+  service:      string | null
 }
 
 export async function GET(req: NextRequest) {
@@ -273,6 +285,7 @@ export async function GET(req: NextRequest) {
         // in. The list groups on this, which is what tells the operator what they are looking at.
         foundVia:   foundViaOf(r.metadata, r.source),
         chosen:     hasChosen ? r.chosen_at != null : false,
+        service:    serviceFromMetadata(r.metadata),
       }))
         .filter(k => k.keyword)
         .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
@@ -336,13 +349,19 @@ export async function GET(req: NextRequest) {
 
   // Everything that does not depend on anything else, at once. `researched` is the exception: it
   // joins against the leads map that readPaidTerms fills, so it waits for that one alone.
-  const [paidTerms, ahrefs, poolTotal, hasDataForSeo, settings] = await Promise.all([
-    readPaidTerms(), readAhrefs(), readPoolTotal(), readHasDataForSeo(), readSettings(),
+  const [paidTerms, ahrefs, poolTotal, hasDataForSeo, settings, tagger] = await Promise.all([
+    readPaidTerms(), readAhrefs(), readPoolTotal(), readHasDataForSeo(), readSettings(), serviceTagger(clientId),
   ])
   const { rows: researched } = await readResearched()
 
+  // Rows stored before research recorded a service are matched now, with the same rule research
+  // uses, so the list can be read service by service for every client — not only after its next run.
+  for (const k of researched) k.service ??= tagger.serviceOf(k.keyword)
+
   return NextResponse.json({
     paidTerms, ahrefs, researched,
+    // The client's services in its own order: what the list groups by.
+    services:         tagger.services,
     researchLocation: settings.location,
     lastResearchAt:   settings.lastRun,
     poolTotal, hasDataForSeo,

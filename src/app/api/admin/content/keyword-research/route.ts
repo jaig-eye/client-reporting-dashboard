@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf, hasDfsConnection } from '@/lib/content/clientResearch'
+import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf, hasDfsConnection, serviceTagger } from '@/lib/content/clientResearch'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { addManualKeywords } from '@/lib/content/addManualKeywords'
@@ -56,7 +56,9 @@ const FORCE_COOLDOWN_MS = 60 * 60_000
 interface ResearchPayload {
   /** POST only. False when nothing new was bought or stored; `reason` then says why. */
   ok?:          boolean
-  keywords:    Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null; chosen: boolean }>
+  keywords:    Array<{ keyword: string; volume: number | null; difficulty: number | null; intent: string | null; source: string | null; score: number | null; local_volume: number | null; chosen: boolean; service: string | null }>
+  /** The client's services, in its own order: what the keywords group under. */
+  services?:    string[]
   competitors:  string[]
   /** Best-rated businesses in the local pack for the seed services; only on a fresh local run. */
   localPack?:   Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
@@ -93,6 +95,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
     // Dismissed rows are not shown. Without migration 223 there is no dismissal to filter on.
     if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? `${COLS}, chosen_at` : COLS).limit(200))
     if (error) console.warn('[keyword-research] stored read failed:', error.message)
+    const { serviceOf } = await serviceTagger(clientId)
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
     return ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
@@ -104,6 +107,7 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       score:      researchScoreOf(r.metadata),
       local_volume: localVolumeOf(r.metadata),
       chosen:     hasChosen ? r.chosen_at != null : true,
+      service:    serviceOf(String(r.keyword ?? ''), r.metadata),
     }))
       .filter(k => k.keyword)
       // Research score first — the order the pool was built to prefer — volume as tie-break.
@@ -140,9 +144,10 @@ export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('client_id')
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
-  const [keywords, meta] = await Promise.all([readStored(clientId), researchMeta(clientId)])
+  const [keywords, meta, tagger] = await Promise.all([readStored(clientId), researchMeta(clientId), serviceTagger(clientId)])
   const payload: ResearchPayload = {
     keywords,
+    services:     tagger.services,
     competitors:  [],
     // Keywords present, not "research ran": stampResearchRun fires for database-only runs too,
     // so a client with no DataForSEO connection was reported as connected here while the POST

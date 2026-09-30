@@ -40,6 +40,7 @@ import {
 } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
 import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
+import { splitPhrases } from './phrases'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
 import { deriveResearchLocation } from './deriveLocation'
@@ -1011,6 +1012,38 @@ export async function getResearchCandidates(clientId: string): Promise<{
   // window — from topic generation, once per slot, inside the cron's five-minute budget. Research
   // is now its own monthly job (/api/cron/keyword-research); topic selection only reads.
   return { candidates: await read(), refreshed: false }
+}
+
+/**
+ * A function naming the service a stored keyword is about, for the lists that show the pool.
+ *
+ * Uses the service research recorded (metadata.service) when there is one, and otherwise matches
+ * the keyword against the client's current services with the same rule research uses — so rows
+ * stored before research recorded it group the same way. Returns null for no single service.
+ */
+export async function serviceTagger(clientId: string): Promise<{
+  services: string[]
+  serviceOf: (keyword: string, metadata?: unknown) => string | null
+}> {
+  const recorded = (metadata: unknown): string | null => {
+    const v = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).service : null
+    return typeof v === 'string' && v.trim() ? v.trim() : null
+  }
+  try {
+    const db = createAdminClient()
+    const { data, error } = await db.from('content_settings')
+      .select('services, geographic_focus')
+      .eq('client_id', clientId)
+      .maybeSingle()
+    if (error) console.warn('[research] services unreadable for grouping:', error.message)
+    const row = data as { services?: unknown; geographic_focus?: unknown } | null
+    const services = parseServices(row?.services)
+    if (!services.length) return { services, serviceOf: (_k, m) => recorded(m) }
+    const matcher = buildSeedMatcher(services, splitPhrases(row?.geographic_focus).join(' '))
+    return { services, serviceOf: (k, m) => recorded(m) ?? matcher.serviceOf(k) }
+  } catch {
+    return { services: [], serviceOf: (_k, m) => recorded(m) }
+  }
 }
 
 /**
