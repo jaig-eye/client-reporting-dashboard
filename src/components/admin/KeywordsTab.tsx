@@ -34,6 +34,20 @@ import type { SiteOption } from '@/lib/content/types'
 import { AnalyticsTab } from '@/components/admin/KeywordEvidence'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 
+/**
+ * The result of the last add or research run, and how it should read.
+ *
+ * The colour used to come from a regex over the text, which painted "Nothing new to add" red and
+ * would have painted a server sentence green unless it happened to contain "could not".
+ */
+interface Notice { tone: 'success' | 'warning' | 'error' | 'neutral'; text: string }
+const NOTICE_COLOR: Record<Notice['tone'], string> = {
+  success: 'var(--green)',
+  warning: 'var(--amber)',
+  error:   'var(--red)',
+  neutral: 'var(--text-muted)',
+}
+
 interface Payload {
   researched:        ResearchKeyword[]
   researchLocation?: string | null
@@ -69,7 +83,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   const [pending, setPending] = useState('')
   const [adding,  setAdding]  = useState(false)
   const [busy,    setBusy]    = useState(false)
-  const [notice,  setNotice]  = useState<string | null>(null)
+  const [notice,  setNotice]  = useState<Notice | null>(null)
   // What Google actually returns for the keywords in use — the talking points the writer is
   // handed. Sits with the picking list, since it describes the keywords that were picked.
   const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
@@ -112,12 +126,14 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
       const body = await res.json().catch(() => ({})) as { error?: string; added?: number; rechosen?: number }
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
       const n = (body.added ?? 0) + (body.rechosen ?? 0)
-      setNotice(n ? `Added ${n}` : 'Nothing new to add')
+      setNotice(n
+        ? { tone: 'success', text: `Added ${n}, in use.` }
+        : { tone: 'neutral', text: 'Nothing new to add — those are already in use.' })
       setDraft(''); setPending('')
       setShowAdd(false)
       setReload(v => v + 1)
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Could not add those')
+      setNotice({ tone: 'error', text: e instanceof Error ? e.message : 'Could not add those' })
     } finally {
       setAdding(false)
     }
@@ -132,13 +148,27 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: clientId, force: true }),
       })
-      const body = await res.json().catch(() => ({})) as { error?: string; reason?: string; keywords?: unknown[] }
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
-      setNotice(body.keywords?.length ? `Found ${body.keywords.length}` : body.reason ?? 'Nothing new')
+      const body = await res.json().catch(() => ({})) as { error?: string; ok?: boolean; reason?: string; discovered?: number }
+      if (!res.ok) {
+        // 403 for a viewer, 429 within the hour after the last run: the server's sentence says
+        // which. The second is a wait, not a failure.
+        setNotice({ tone: res.status === 429 ? 'warning' : 'error', text: body.error ?? `Couldn’t look for new keywords (HTTP ${res.status}).` })
+        return
+      }
+      if (body.ok === false) {
+        // Nothing new was stored — over budget, no connection, a failed write — and the pool was
+        // left as it was, so there is nothing to reload. This is not success.
+        setNotice({ tone: 'warning', text: body.reason ?? 'Nothing new was stored.' })
+        return
+      }
+      const n = body.discovered ?? 0
+      setNotice(n > 0
+        ? { tone: 'success', text: `Found ${n.toLocaleString()} new keyword${n === 1 ? '' : 's'}.` }
+        : { tone: 'neutral', text: 'No new keywords this time.' })
       setReload(v => v + 1)
       onResearchRun?.()
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Could not refresh')
+      setNotice({ tone: 'error', text: e instanceof Error ? e.message : 'Could not look for new keywords' })
     } finally {
       setBusy(false)
     }
@@ -184,7 +214,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           Pick what to write about
         </h4>
         <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-          Only the ones you tick reach the writer.
+          Topics are only chosen from the ones you tick.
+          {data?.hasDataForSeo !== false && ' Research looks for new ones by itself once a month.'}
         </p>
         <button
           type="button"
@@ -225,8 +256,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           bottom of a scrolled page, which is where it used to appear and why adding a keyword
           looked like it had done nothing. */}
       {notice && (
-        <p role="status" className="text-xs" style={{ margin: '0 0 12px', color: /could not|error|http|nothing/i.test(notice) ? 'var(--red)' : 'var(--green, #16794a)' }}>
-          {notice}
+        <p role={notice.tone === 'error' ? 'alert' : 'status'} className="text-xs" style={{ margin: '0 0 12px', color: NOTICE_COLOR[notice.tone] }}>
+          {notice.text}
         </p>
       )}
 

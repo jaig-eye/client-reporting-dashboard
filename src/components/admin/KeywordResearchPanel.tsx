@@ -337,7 +337,7 @@ export default function KeywordResearchPanel({
         {runLabel(lastResearchAt) && (
           <>
             <Dot />
-            <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }} title="When research last looked for new keywords. Refresh looks again.">
+            <span style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }} title="When research last looked for new keywords. It looks again by itself once a month; Find new looks now.">
               last run {runLabel(lastResearchAt)}
             </span>
           </>
