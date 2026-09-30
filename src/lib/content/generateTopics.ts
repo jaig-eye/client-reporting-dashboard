@@ -948,9 +948,35 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       existing.url = url
     }
   }
+  /**
+   * Which page Google actually ranks for a query, from Search Console.
+   *
+   * The demotion directive is only half useful without a URL: the topic is told to support a page
+   * it cannot name, so the writer gets no internal link and the article competes with the page it
+   * was meant to strengthen. Ahrefs is the source that causes this — ahrefs_keywords stores a
+   * keyword and a position and no URL at all, so there is nothing to pass — and tracked ranks can
+   * be missing one too.
+   *
+   * Search Console can answer it. Its rows are page+query pairs, so the page with the most
+   * impressions for that query IS the page Google ranks, which is exactly what the internal link
+   * should point at. Impressions rather than clicks because a page can rank without being clicked,
+   * and this question is about ranking.
+   */
+  const pageForQuery = new Map<string, { page: string; impr: number }>()
+  for (const [key, agg] of Array.from(gscMap.entries())) {
+    const sep = key.indexOf('||')
+    if (sep < 0) continue
+    const page = key.slice(0, sep)
+    const q    = normalizeKeyword(key.slice(sep + 2))
+    if (!q || !page) continue
+    const best = pageForQuery.get(q)
+    if (!best || agg.totalImpr > best.impr) pageForQuery.set(q, { page, impr: agg.totalImpr })
+  }
+  const gscPageFor = (kw: string): string | null => pageForQuery.get(normalizeKeyword(kw))?.page ?? null
+
   for (const r of alreadyWinning) protect(r.query,   Math.round(r.weightedPos), r.page)
-  for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          null)
-  for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? null)
+  for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          gscPageFor(k.keyword))
+  for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
 
   if (protectedKeywords.size > 0) {
     const dropped: string[] = []
