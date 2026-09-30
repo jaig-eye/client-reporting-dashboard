@@ -25,13 +25,13 @@
 //
 // "Add your own" is a disclosure rather than a card, because it is the rarer of the two ways in.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
 import SerpInsightsSection from '@/components/admin/SerpInsightsSection'
 import type { SerpInsightRow } from '@/lib/content/serpInsights'
 import type { SiteOption } from '@/lib/content/types'
-import { AnalyticsTab } from '@/components/admin/KeywordEvidence'
+import { AnalyticsTab, type AhrefsRow, type EvidenceSources, type PaidTermRow } from '@/components/admin/KeywordEvidence'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 
 /**
@@ -50,6 +50,9 @@ const NOTICE_COLOR: Record<Notice['tone'], string> = {
 
 interface Payload {
   researched:        ResearchKeyword[]
+  /** Converting paid search terms and Ahrefs rows, for the evidence tables. */
+  paidTerms:         PaidTermRow[]
+  ahrefs:            AhrefsRow[]
   researchLocation?: string | null
   /** Candidates in the pool behind the ones shown. */
   poolTotal?:        number | null
@@ -59,7 +62,9 @@ interface Payload {
   hasDataForSeo?:    boolean
 }
 
-export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gscData, onResearchRun }: {
+const NO_SITES: SiteOption[] = []
+
+export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITES, gscData, onResearchRun }: {
   clientId: string
   isActive: boolean
   /** Search Console rows, for the Evidence view. */
@@ -71,9 +76,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   /** After research runs here, so the parent bumps `epoch` and everything reading the pool reloads. */
   onResearchRun?: () => void
 }) {
-  const [data,   setData]   = useState<Payload | null>(null)
-  const [error,  setError]  = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
+  const [data,    setData]    = useState<Payload | null>(null)
+  const [error,   setError]   = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [reload,  setReload]  = useState(0)
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft,   setDraft]   = useState('')
@@ -87,14 +93,19 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
   // handed. Sits with the picking list, since it describes the keywords that were picked.
   const [insights, setInsights] = useState<SerpInsightRow[] | null>(null)
 
+  // One read of keyword-sources for the whole tab. The evidence tables above the list used to
+  // fetch the same route again for themselves, on the same triggers.
   useEffect(() => {
     if (!isActive) return
     let cancelled = false
     setError(null)
+    setLoading(true)
     fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(d => { if (!cancelled) setData({
         researched:       d.researched ?? [],
+        paidTerms:        d.paidTerms ?? [],
+        ahrefs:           d.ahrefs ?? [],
         researchLocation: d.researchLocation ?? null,
         poolTotal:        d.poolTotal ?? null,
         lastResearchAt:   d.lastResearchAt ?? null,
@@ -104,12 +115,22 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
       // the "Find keywords" button, which on a failed load invited a paid run that wipes the
       // unchosen half of a pool that was there all along.
       .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load') })
+      .finally(() => { if (!cancelled) setLoading(false) })
     fetch(`/api/admin/content/serp-insights?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { insights: [] })
       .then(d => { if (!cancelled) setInsights((d as { insights?: SerpInsightRow[] }).insights ?? []) })
       .catch(() => { if (!cancelled) setInsights([]) })
-    return () => { cancelled = true }
+    return () => { cancelled = true; setLoading(false) }
   }, [clientId, isActive, epoch, reload])
+
+  // Stable identities for what the children memoize on. Built inline, each was a new array on
+  // every render, so the keyword list regrouped itself on every keystroke in the add box.
+  const evidence = useMemo<EvidenceSources | null>(
+    () => data ? { paidTerms: data.paidTerms, ahrefs: data.ahrefs } : null, [data])
+  const ownDomains = useMemo(() => sites.map(s => s.siteUrl), [sites])
+  const place    = data?.researchLocation ? data.researchLocation.split(',')[0] : null
+  const geoWords = useMemo(() => place ? [place] : [], [place])
+  const reloadSources = useCallback(() => setReload(v => v + 1), [])
 
   /** Add what is in the box to the pool, already chosen. */
   const addTyped = useCallback(async () => {
@@ -173,8 +194,6 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
     }
   }, [clientId, onResearchRun])
 
-  const place = data?.researchLocation ? data.researchLocation.split(',')[0] : null
-
   return (
     <div>
       <style>{'@keyframes ccSpin { to { transform: rotate(360deg) } }'}</style>
@@ -193,7 +212,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
         data={gscData} clientId={clientId}
         isActive={isActive} epoch={epoch}
         hasDataForSeo={data?.hasDataForSeo !== false}
-        onRefreshed={() => setReload(v => v + 1)}
+        sources={evidence}
+        sourcesLoading={loading}
+        sourcesError={error}
+        onRefreshed={reloadSources}
       />
 
       {/* What Google returns for the keywords in use — the talking points the writer gets. It
@@ -202,7 +224,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
       <div style={{ marginTop: 16 }}>
         <SerpInsightsSection
           rows={insights} loading={insights === null}
-          ownDomains={sites.map(s => s.siteUrl)}
+          ownDomains={ownDomains}
         />
       </div>
 
@@ -334,7 +356,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = [], gsc
           <KeywordResearchPanel
             clientId={clientId}
             keywords={data.researched}
-            geoWords={place ? [place] : []}
+            geoWords={geoWords}
             place={place}
             total={data.poolTotal}
             lastResearchAt={data.lastResearchAt}

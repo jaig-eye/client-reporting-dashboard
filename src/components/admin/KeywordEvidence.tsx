@@ -5,9 +5,9 @@
 // Split out of ClientContentTabPanel when Analytics folded into Keywords: the Keywords tab renders
 // these, and importing them from the panel meant a child importing its own parent. Everything here
 // was already one unit — the evidence tables, the Search Console blocks and the rankings table
-// share one fetch and one search box.
+// share one search box. The evidence rows come from the Keywords tab's read of keyword-sources.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { GscData, GscRow } from '@/components/admin/ClientContentTabPanel'
 
@@ -26,16 +26,17 @@ function fmtPos(n: number | null | undefined): string {
   if (n == null) return '—'
   return n.toFixed(1)
 }
+// Theme variables, not hex: the light greens and yellows these used to be stayed light in dark mode.
 function posColor(pos: number | null): string {
   if (!pos) return 'var(--text-muted)'
-  if (pos <= 3)  return '#16a34a'
-  if (pos <= 10) return '#d97706'
-  return '#9ca3af'
+  if (pos <= 3)  return 'var(--green)'
+  if (pos <= 10) return 'var(--amber)'
+  return 'var(--text-faint)'
 }
 function posBg(pos: number | null): string {
   if (!pos) return 'var(--bg-muted)'
-  if (pos <= 3)  return '#dcfce7'
-  if (pos <= 10) return '#fef3c7'
+  if (pos <= 3)  return 'var(--green-subtle)'
+  if (pos <= 10) return 'var(--amber-subtle)'
   return 'var(--bg-muted)'
 }
 function truncatePage(url: string, max = 44): string {
@@ -122,11 +123,12 @@ function GscSection({
   )
 }
 
-// The other three sources topic selection reads (/api/admin/content/keyword-sources).
-interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
-interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
-interface ResearchRow { keyword: string; volume: number | null; difficulty: number | null; intent: string | null; score?: number | null; local_volume?: number | null; chosen?: boolean }
-interface SourcesPayload { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[]; researched: ResearchRow[]; researchLocation?: string | null }
+// The other sources topic selection reads, from /api/admin/content/keyword-sources. The Keywords
+// tab fetches that route once and hands these two lists down; this component used to fetch the
+// same route again for itself.
+export interface PaidTermRow { term: string; conversions: number; spend: number; costPerLead: number | null }
+export interface AhrefsRow   { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+export interface EvidenceSources { paidTerms: PaidTermRow[]; ahrefs: AhrefsRow[] }
 
 /** One column of a source table. `align` defaults to right, because most of these are numbers. */
 interface SourceColumn<T> {
@@ -223,24 +225,31 @@ interface KeywordRankRow {
   movement?:          string
 }
 
-export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = true, onRefreshed }: {
+export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = true, sources, sourcesLoading = false, sourcesError = null, onRefreshed }: {
   data: GscData; clientId: string; isActive: boolean; epoch: number
   /** Rankings is the one section that is purely DataForSEO, so it says so when there is none. */
   hasDataForSeo?: boolean
-  /** Refresh re-reads the whole page, including the parts this component does not own. */
+  /** Converting ad terms and Ahrefs rows, from the Keywords tab's one read of keyword-sources. */
+  sources: EvidenceSources | null
+  /** That read is in flight — so Reload can say "updated" only once it has landed. */
+  sourcesLoading?: boolean
+  sourcesError?: string | null
+  /** Reload re-reads the whole page, including the parts this component does not own. */
   onRefreshed?: () => void
 }) {
   const router           = useRouter()
   const [search, setSearch]       = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [ranks, setRanks]           = useState<KeywordRankRow[] | null>(null)
-  const [sources, setSources]       = useState<SourcesPayload | null>(null)
-  const [refreshNote, setRefreshNote] = useState<string | null>(null)
+  const [refreshNote, setRefreshNote] = useState<{ text: string; error: boolean } | null>(null)
+  // The server-rendered Search Console rows come back through router.refresh(); inside a
+  // transition, isPending says when they actually have.
+  const [gscPending, startGscRefresh] = useTransition()
 
   // Research ran elsewhere (epoch moved): forget what was loaded so the loading state shows
   // while the effects below fetch again. Runs once on mount as well, where clearing
   // already-empty state changes nothing.
-  useEffect(() => { setRanks(null); setSources(null) }, [epoch])
+  useEffect(() => { setRanks(null) }, [epoch])
 
   // Every table is fetched each time this tab is shown, and again on epoch or Refresh. A tab
   // that fetched once and then trusted itself showed a list from before a "Look again" run
@@ -258,51 +267,43 @@ export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = 
     return () => { cancelled = true }
   }, [loadTick, clientId])
 
-  // The other three sources, loaded the same way. Separate from the ranks call so a slow or
-  // missing one never blocks the other.
-  useEffect(() => {
-    if (!loadTick) return
-    let cancelled = false
-    const empty: SourcesPayload = { paidTerms: [], ahrefs: [], researched: [] }
-    fetch(`/api/admin/content/keyword-sources?client_id=${clientId}`)
-      .then(r => r.ok ? r.json() : empty)
-      .then(d => { if (!cancelled) setSources({ ...empty, ...(d as Partial<SourcesPayload>) }) })
-      .catch(() => { if (!cancelled) setSources(empty) })
-    return () => { cancelled = true }
-  }, [loadTick, clientId])
-
   /**
    * Re-read everything on the page from our own database. Nothing external, nothing billable.
    *
    * This used to POST /api/admin/sync, pulling Search Console live and waiting on Google before
    * it would show you anything — a heavy, slow, surprising thing to sit behind a button labelled
    * "Refresh" next to a filter box. Syncing is a scheduled job; this is the button that shows you
-   * what the last sync brought in.
+   * what the last sync brought in, and it is labelled Reload for that reason.
    */
-  async function handleRefresh() {
+  function handleRefresh() {
     setRefreshing(true)
     setRefreshNote(null)
-    // Both lazy loaders are guarded on `!== null`, so once this tab has fetched, it never asks
-    // again on its own — and router.refresh() below does not clear component state. Research
-    // run from the setup wizard (a modal over this page) therefore stayed invisible here until a
-    // hard reload, which read as "research did nothing". Clearing them lets the effects refetch.
+    // router.refresh() does not clear component state, so the rankings are cleared here for the
+    // effect above to fetch again.
     setRanks(null)
-    setSources(null)
     setLoadTick(t => t + 1)
-    try {
-      // Search Console rows are rendered from the server component, so the page itself has to be
-      // re-rendered for them to change; the two client-side tables refetch from the state cleared
-      // above. onRefreshed lets the Keywords page reload the pool in the same click.
-      onRefreshed?.()
-      router.refresh()
-      setRefreshNote('Updated just now')
-    } catch {
-      setRefreshNote('Couldn’t refresh — try again in a minute')
-    } finally {
-      setRefreshing(false)
-      setTimeout(() => setRefreshNote(null), 8000)
-    }
+    // The keyword sources belong to the Keywords tab, which reloads them in the same click.
+    onRefreshed?.()
+    // Search Console rows are rendered by the server component, so the page itself re-renders.
+    startGscRefresh(() => router.refresh())
   }
+
+  // "Updated" is said when everything has actually come back — the rankings, the sources the
+  // Keywords tab reloads, and the server-rendered Search Console rows — not the moment the button
+  // is pressed, which is when it used to appear.
+  useEffect(() => {
+    if (!refreshing || ranks === null || sourcesLoading || gscPending) return
+    setRefreshing(false)
+    setRefreshNote(sourcesError
+      ? { text: `Couldn’t reload everything (${sourcesError})`, error: true }
+      : { text: 'Updated just now', error: false })
+  }, [refreshing, ranks, sourcesLoading, sourcesError, gscPending])
+
+  useEffect(() => {
+    if (!refreshNote) return
+    const t = setTimeout(() => setRefreshNote(null), 8000)
+    return () => clearTimeout(t)
+  }, [refreshNote])
 
   const isEmpty = data.quickWins.length === 0 && data.growth.length === 0
     && data.lowCtr.length === 0 && data.highVolume.length === 0
@@ -321,11 +322,12 @@ export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = 
           a nowrap label now, so the button is one line at any width. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         {refreshNote && (
-          <span role="status" style={{ marginRight: 'auto', fontSize: '0.75rem', color: /couldn/i.test(refreshNote) ? 'var(--red)' : 'var(--text-faint)' }}>
-            {refreshNote}
+          <span role="status" style={{ marginRight: 'auto', fontSize: '0.75rem', color: refreshNote.error ? 'var(--red)' : 'var(--text-faint)' }}>
+            {refreshNote.text}
           </span>
         )}
         <button
+          type="button"
           className="btn btn-secondary"
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
@@ -333,14 +335,14 @@ export function AnalyticsTab({ data, clientId, isActive, epoch, hasDataForSeo = 
           }}
           onClick={handleRefresh}
           disabled={refreshing}
-          title="Pull the latest Search Console data and reload every table on this tab"
+          title="Re-read every table on this tab from the last sync. Doesn’t contact Google or spend anything."
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden
             style={refreshing ? { animation: 'ccSpin 0.9s linear infinite' } : undefined}>
             <path d="M21 12a9 9 0 1 1-3-6.7" />
             <polyline points="21 3 21 9 15 9" />
           </svg>
-          {refreshing ? 'Syncing…' : 'Refresh'}
+          {refreshing ? 'Reloading…' : 'Reload'}
         </button>
         <input
           type="text"
@@ -496,7 +498,7 @@ function KeywordRankTable({ ranks, loading, hasDataForSeo = true }: {
                 {r.movement === 'dropped'
                   ? <span style={{ color: 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }} title={r.previous_position != null ? `was #${r.previous_position}` : undefined}>dropped</span>
                   : r.movement === 'entered'
-                  ? <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
+                  ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.75rem' }}>new</span>
                   : <RankDelta delta={r.position_delta} />}
               </td>
               <td style={{ textAlign: 'right' }}>{fmtImpr(r.search_volume)}</td>
@@ -516,7 +518,7 @@ function RankDelta({ delta }: { delta: number | null }) {
   if (delta == null || delta === 0) return <span style={{ color: 'var(--text-faint)' }}>—</span>
   const improved = delta > 0
   return (
-    <span style={{ color: improved ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: '0.75rem' }}>
+    <span style={{ color: improved ? 'var(--green)' : 'var(--red)', fontWeight: 600, fontSize: '0.75rem' }}>
       {improved ? '▲' : '▼'} {Math.abs(delta)}
     </span>
   )

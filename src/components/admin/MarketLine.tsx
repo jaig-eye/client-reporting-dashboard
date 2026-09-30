@@ -19,7 +19,8 @@ type State =
   | { kind: 'none' }                       // no local market described
   | { kind: 'checking'; guess: string }
   | { kind: 'found'; name: string }
-  | { kind: 'unresolved'; guess: string }
+  | { kind: 'unresolved'; guess: string }  // the lookup answered, and knows no such place
+  | { kind: 'unchecked'; guess: string }   // the lookup could not answer at all
 
 export default function MarketLine({ geographicFocus }: { geographicFocus: string }) {
   const guess = locationCandidates(geographicFocus ?? '')[0] ?? null
@@ -30,18 +31,21 @@ export default function MarketLine({ geographicFocus }: { geographicFocus: strin
     let cancelled = false
     setState({ kind: 'checking', guess })
     // Debounced: this runs while someone is still typing service areas.
+    // Unreachable is not the same as unresolvable. A failed request, a non-2xx, or an answer that
+    // carries an error (no DataForSEO credentials, say — the route then returns an empty list
+    // WITH an error) all mean the place was never looked up. Only an answer with no error and no
+    // match means the text names no place; reading the others that way told the operator that
+    // searches would be nationwide when nothing had been checked.
     const t = setTimeout(() => {
       fetch(`/api/admin/content/dfs-locations?q=${encodeURIComponent(guess)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then((d: { locations?: Array<{ name?: string }> } | null) => {
+        .then(async r => {
+          const d = await r.json().catch(() => null) as { locations?: Array<{ name?: string }>; error?: string } | null
           if (cancelled) return
-          const hit = d?.locations?.[0]?.name
+          if (!r.ok || !d || d.error) { setState({ kind: 'unchecked', guess }); return }
+          const hit = d.locations?.[0]?.name
           setState(hit ? { kind: 'found', name: hit.split(',')[0] } : { kind: 'unresolved', guess })
         })
-        .catch(() => {
-          // Unreachable is not the same as unresolvable — do not accuse the operator's text.
-          if (!cancelled) setState({ kind: 'found', name: guess })
-        })
+        .catch(() => { if (!cancelled) setState({ kind: 'unchecked', guess }) })
     }, 500)
     return () => { cancelled = true; clearTimeout(t) }
   }, [guess])
@@ -53,8 +57,16 @@ export default function MarketLine({ geographicFocus }: { geographicFocus: strin
   }
   if (state.kind === 'unresolved') {
     return (
-      <p style={{ ...base, color: 'var(--amber, #a3541a)' }}>
+      <p style={{ ...base, color: 'var(--amber)' }}>
         Couldn&apos;t find &ldquo;{state.guess}&rdquo; — searches will be nationwide. Try a city or county name first.
+      </p>
+    )
+  }
+  if (state.kind === 'unchecked') {
+    return (
+      <p style={{ ...base, color: 'var(--text-faint)' }}>
+        Measured in <strong style={{ color: 'var(--text-muted)' }}>{state.guess}</strong>, the first
+        area listed — the place couldn&apos;t be checked just now.
       </p>
     )
   }
