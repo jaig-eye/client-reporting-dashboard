@@ -184,6 +184,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
     () => data ? { paidTerms: data.paidTerms, ahrefs: data.ahrefs } : null, [data])
   const inUse = useMemo(
     () => new Set((data?.researched ?? []).filter(k => k.chosen).map(k => k.keyword.toLowerCase())), [data])
+  // Rank-tracked keywords never appear in the list you tick from, so an evidence row for one says
+  // "Tracked" rather than offering an Add whose result could not be seen.
+  const tracked = useMemo(() => new Set((ranks ?? []).map(r => r.keyword.toLowerCase())), [ranks])
   const ownDomains = useMemo(() => sites.map(s => s.siteUrl), [sites])
   const place    = data?.researchLocation ? data.researchLocation.split(',')[0] : null
   const geoWords = useMemo(() => place ? [place] : [], [place])
@@ -513,6 +516,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
         ownDomains={ownDomains}
         hasDataForSeo={hasDfs}
         inUse={inUse}
+        tracked={tracked}
         adds={rowAdds}
         onAdd={data ? (t => void addFromEvidence(t)) : undefined}
       />

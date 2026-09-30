@@ -307,15 +307,24 @@ export type AddState = 'adding' | 'error'
  * Once it is in use the button gives way to a quiet "In use", so a row never offers to add what is
  * already there.
  */
-export function AddTerm({ term, inUse, state, onAdd, error }: {
+export function AddTerm({ term, inUse, tracked = false, state, onAdd, error }: {
   term:   string
   inUse:  boolean
+  /**
+   * Already rank-tracked: a post targets it, or the site ranks for it. The list you tick from only
+   * holds keywords nothing has been written for, so adding one of these would change nothing you
+   * could see — the row says why instead of offering a button that seems to do nothing.
+   */
+  tracked?: boolean
   state?: AddState
   error?: string
   onAdd?: (term: string) => void
 }) {
   if (inUse) {
     return <span className="kw-inuse" title="Already one of the keywords we write about"><CheckIcon /> In use</span>
+  }
+  if (tracked) {
+    return <span className="kw-tracked" title="Already tracked in Google: a post targets it, or the site already ranks for it">Tracked</span>
   }
   if (!onAdd) return null
   return (

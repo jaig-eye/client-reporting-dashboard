@@ -76,7 +76,7 @@ type SectionKey = 'gsc' | 'ranks' | 'ahrefs' | 'serp' | 'paid'
 
 export default function KeywordEvidence({
   gsc, sources, sourcesLoading, sourcesError, ranks, insights, ownDomains, hasDataForSeo,
-  inUse, adds, onAdd,
+  inUse, tracked, adds, onAdd,
 }: {
   gsc:            GscData
   sources:        EvidenceSources | null
@@ -88,6 +88,8 @@ export default function KeywordEvidence({
   hasDataForSeo:  boolean
   /** Lower-cased keywords already ticked, so a row says "In use" instead of offering Add. */
   inUse:          Set<string>
+  /** Lower-cased keywords already rank-tracked, which the list you tick from does not hold. */
+  tracked:        Set<string>
   adds:           AddProgress
   onAdd?:         (term: string) => void
 }) {
@@ -100,7 +102,7 @@ export default function KeywordEvidence({
   const addFor = (term: string) => {
     const p = adds.get(term.toLowerCase())
     return (
-      <AddTerm term={term} inUse={inUse.has(term.toLowerCase())} state={p?.state} error={p?.error} onAdd={onAdd} />
+      <AddTerm term={term} inUse={inUse.has(term.toLowerCase())} tracked={tracked.has(term.toLowerCase())} state={p?.state} error={p?.error} onAdd={onAdd} />
     )
   }
 

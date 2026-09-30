@@ -1027,6 +1027,7 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .kw-add { gap: 4px; }
 .kw-add--error { color: var(--red); border-color: var(--red); }
 .kw-inuse { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--green); white-space: nowrap; }
+.kw-tracked { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; cursor: help; }
 .kw-change-up { color: var(--green); font-weight: 600; font-size: 0.75rem; }
 .kw-change-down { color: var(--red); font-weight: 600; font-size: 0.75rem; }
 .kw-show-more { align-self: flex-start; }
