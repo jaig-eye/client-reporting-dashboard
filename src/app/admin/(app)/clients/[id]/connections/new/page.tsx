@@ -39,12 +39,32 @@ export default async function NewClientConnectionPage({
   const def     = getConnectorDef(connector.type)
   const adapter = getConnectorAdapter(connector.type)
 
-  const auth   = (connector.auth   ?? {}) as Record<string, unknown>
+  let auth     = (connector.auth   ?? {}) as Record<string, unknown>
   const config = (connector.config ?? {}) as Record<string, unknown>
 
   // Try live discovery first — always fresh, no stale cache
   let discoveredAccounts: { external_id: string; external_name: string | null }[] = []
   let discoveryError: string | null = null
+
+  // Refresh the access token before asking, exactly as /api/admin/connectors/[id]/discover
+  // does. Google access tokens last about an hour; without this, opening the picker a day
+  // after the connector was authorised sent an expired token, the API answered 401, and the
+  // adapter returned an empty list — which this page then silently replaced with the cache.
+  // A property added since the last manual refresh was therefore invisible here, with nothing
+  // on screen saying the list was stale.
+  if (adapter?.refreshAuth) {
+    try {
+      const refreshed = await adapter.refreshAuth(auth)
+      if (refreshed) {
+        auth = refreshed as Record<string, unknown>
+        await db.from('connectors').update({ auth }).eq('id', connectorId)
+      }
+    } catch (e) {
+      // Carry on with the stored token: it may still be valid, and discovery reports its own
+      // failure below. Only note it so the banner can say the list may be stale.
+      discoveryError = `token refresh failed (${e instanceof Error ? e.message : String(e)})`
+    }
+  }
 
   async function loadCachedAccounts() {
     const cached = await db.from('connector_accounts')
@@ -58,6 +78,9 @@ export default async function NewClientConnectionPage({
     try {
       const live = await adapter.discoverAccounts(auth, config)
       if (live.length > 0) {
+        // Live answered. Whatever happened to the token refresh, the list in front of the user
+        // is current, so no staleness warning.
+        discoveryError = null
         discoveredAccounts = live.map(a => ({ external_id: a.external_id, external_name: a.external_name ?? null }))
         // Update cache in background (don't await)
         void Promise.resolve(

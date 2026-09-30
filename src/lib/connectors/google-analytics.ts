@@ -302,7 +302,18 @@ export const googleAnalyticsConnector: ConnectorAdapter = {
       if (!res.ok) {
         const text = await res.text()
         console.error(`[google-analytics] accountSummaries error ${res.status}:`, text)
-        break
+        // Throw rather than break. Breaking returned the properties gathered so far — an empty
+        // list when the very first page failed — and callers cannot tell "this account owns no
+        // properties" from "we were not allowed to ask". The connection picker took the empty
+        // list as fact and quietly showed its cache instead, so a newly added property looked
+        // like it had never been discovered. Every caller already handles a throw: the picker
+        // falls back to cache AND says the list may be stale, the discover route returns the
+        // message, and the OAuth callback treats discovery as non-fatal.
+        throw new Error(
+          res.status === 401 || res.status === 403
+            ? `Google Analytics refused the account list (${res.status}). The connector may need re-authorising.`
+            : `Google Analytics account list failed (${res.status}).`,
+        )
       }
 
       const data = await res.json() as {
