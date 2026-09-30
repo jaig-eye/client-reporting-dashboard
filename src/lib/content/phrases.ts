@@ -8,13 +8,13 @@
 //
 // No React and no server imports: the chip input, the prompts and research all read through here.
 
-import { isRegionToken } from './usStates'
+import { isRegionToken, expandRegion } from './usStates'
 
 /** What trails a place name when it comes from a location list: "Melbourne, Florida, United States". */
 const COUNTRY_TOKEN = /^(united states( of america)?|u\.?s\.?a?\.?)$/i
 
 /** "Washington, DC" — DC follows a state name, so the state-after-state rule below must not split it. */
-const DISTRICT_TOKEN = /^d\.?c\.?$/i
+const DISTRICT_TOKEN = /^(d\.?c\.?|district of columbia)$/i
 
 /**
  * Split a comma/newline/semicolon list into phrases.
@@ -50,7 +50,10 @@ export function splitPhrases(text: unknown): string[] {
     // "FL (based in Cocoa, FL)" is still a state: an aside in brackets does not change what it is.
     const bare = part.replace(/\s*[([].*$/, '').trim()
     if (prev !== undefined && COUNTRY_TOKEN.test(bare)) continue
-    if (prev !== undefined && !lastHasRegion && isRegionToken(bare) && (!isRegionToken(prev) || DISTRICT_TOKEN.test(bare))) {
+    // A state after a place joins it. A state after a state is its own area — except DC, and a city
+    // named for its own state: "New York, NY" and "New York, New York" are the city.
+    const sameStateCity = prev !== undefined && isRegionToken(prev) && expandRegion(prev) === expandRegion(bare)
+    if (prev !== undefined && !lastHasRegion && isRegionToken(bare) && (!isRegionToken(prev) || DISTRICT_TOKEN.test(bare) || sameStateCity)) {
       merged[merged.length - 1] = `${prev}, ${part}`
       lastHasRegion = true
       continue
