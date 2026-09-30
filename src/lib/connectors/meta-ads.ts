@@ -78,6 +78,40 @@ export async function exchangeMetaCode(
   }
 }
 
+/**
+ * Ask Meta when a stored token expires, for a token saved without its date.
+ *
+ * Tokens connected before exchangeMetaCode returned token_expires_at carry no date, so the daily
+ * health check could never warn about them — the 60-day expiry that took seventeen clients down on
+ * 25 September would have gone unannounced again. debug_token answers with `expires_at` in unix
+ * seconds (0 for a token that never expires) and `is_valid`, authenticated with the app's own
+ * credentials, so no reconnect is needed to learn it.
+ *
+ * Returns null when Meta cannot be asked (no app credentials, network failure, unreadable answer).
+ * Never throws, and never logs the token.
+ */
+export async function metaTokenExpiry(
+  token: string,
+): Promise<{ valid: boolean; expiresAt: string | null } | null> {
+  const appId = process.env.META_APP_ID
+  const appSecret = process.env.META_APP_SECRET
+  if (!token || !appId || !appSecret) return null
+  try {
+    const params = new URLSearchParams({ input_token: token, access_token: `${appId}|${appSecret}` })
+    const res = await fetch(`${BASE_URL}/debug_token?${params}`, { signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) return null
+    const body = (await res.json()) as { data?: { is_valid?: unknown; expires_at?: unknown } }
+    if (!body.data) return null
+    const secs = Number(body.data.expires_at)
+    return {
+      valid:     body.data.is_valid === true,
+      expiresAt: Number.isFinite(secs) && secs > 0 ? new Date(secs * 1000).toISOString() : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API helpers
 // ─────────────────────────────────────────────────────────────────────────────

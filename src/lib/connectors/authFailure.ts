@@ -46,7 +46,16 @@ export const CREDENTIAL_DEAD_PATTERNS = [
   'unauthorized_client',
   'UNAUTHENTICATED',                 // Google gRPC
   'token has expired',
-  'code\\D{0,4}190',                 // Meta's expired-session code
+  'code\\D{0,4}190\\b',              // Meta's expired-session code (190, not 1900)
+  // A 401 in our own error strings for the connectors whose keys do not refresh. Dropping the old
+  // bare "401" silenced these entirely: a revoked Ahrefs key or BigCommerce token would have failed
+  // every sync with nobody told. None appears in ninety days of errors, so they add no noise.
+  'Ahrefs API error 401',
+  'BigCommerce(?: Orders)? API(?: error)? 401',
+  // GHL's 401 is the agency key or a location's access. Its two noisy 401s — "Location is not
+  // active" and "Command timed out" — are vetoed by the transient list below, so what is left is a
+  // real authentication failure.
+  'GHL API error 401',
 ]
 
 /**

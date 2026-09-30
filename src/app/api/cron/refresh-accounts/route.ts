@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isDeadCredentialError } from '@/lib/connectors/authFailure'
+import { metaTokenExpiry } from '@/lib/connectors/meta-ads'
 import { getConnectorAdapter }       from '@/lib/connectors/registry'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -20,15 +21,6 @@ export const maxDuration = 120
 
 /** Warn this many days before a stored token expires. */
 const TOKEN_WARN_DAYS = 10
-
-/**
- * Connector types whose auth failures are not worth waking anyone for.
- *
- * A cancelled client leaves their GHL connection behind — still 'active' on our side, gone on
- * theirs — so it fails authentication every morning forever and nobody is going to reconnect it.
- * The failures are still recorded in sync_jobs and still visible on the connections page.
- */
-const ALERT_EXEMPT_TYPES = new Set(['ghl'])
 
 /**
  * Connector types whose accounts are worth re-discovering daily.
@@ -146,15 +138,41 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
   // A revoked refresh token is not missed by going quiet here: it fails with invalid_grant and
   // the auth-failure scan below reports it the day it happens.
   try {
-    const { data: conns, error } = await db.from('connectors').select('type, auth')
-    if (error) console.warn('[refresh-accounts] connector read failed:', error.message)
+    const { data: conns, error } = await db.from('connectors').select('id, type, auth')
+    // A check that could not run must say so. Logging alone left the alert empty, which reads
+    // exactly like "nothing is wrong".
+    if (error) {
+      console.warn('[refresh-accounts] connector read failed:', error.message)
+      problems.push(`Health check: could not read connector credentials (${error.message}) — expiry dates were not checked today`)
+    }
     const horizon = new Date(Date.now() + TOKEN_WARN_DAYS * 86_400_000).toISOString()
     const now     = new Date().toISOString()
-    for (const c of (conns ?? []) as { type: string; auth: Record<string, unknown> | null }[]) {
+    for (const c of (conns ?? []) as { id: string; type: string; auth: Record<string, unknown> | null }[]) {
       // Self-renewing. Its access-token expiry says nothing about whether the credential works.
       const refresh = c.auth?.refresh_token
       if (typeof refresh === 'string' && refresh) continue
-      const exp = c.auth?.token_expires_at
+      let exp = c.auth?.token_expires_at
+
+      // A Meta user token saved without its expiry — everything connected before the OAuth
+      // callback began storing it. Ask Meta once, keep the answer, and warn from it like any other.
+      // A System User token never expires and is left alone.
+      const metaToken = c.auth?.access_token
+      if (c.type === 'meta_ads' && (typeof exp !== 'string' || !exp)
+          && typeof metaToken === 'string' && metaToken && !c.auth?.system_user_token) {
+        const info = await metaTokenExpiry(metaToken)
+        if (info && !info.valid) {
+          problems.push(`${c.type}: Meta reports this token is no longer valid — reconnect in Agency Settings`)
+          continue
+        }
+        if (info?.expiresAt) {
+          exp = info.expiresAt
+          const { error: saveErr } = await db.from('connectors')
+            .update({ auth: { ...c.auth, token_expires_at: info.expiresAt } })
+            .eq('id', c.id)
+          if (saveErr) console.warn('[refresh-accounts] could not store the Meta token expiry:', saveErr.message)
+        }
+      }
+
       if (typeof exp !== 'string' || !exp) continue
       if (exp > horizon) continue
       const days = Math.round((Date.parse(exp) - Date.now()) / 86_400_000)
@@ -164,6 +182,7 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
     }
   } catch (e) {
     console.warn('[refresh-accounts] token expiry check failed:', e)
+    problems.push('Health check: the token expiry check failed to run today — see the refresh-accounts log')
   }
 
   // ── Already failing ───────────────────────────────────────────────────────
@@ -177,7 +196,10 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
       .eq('status', 'error')
       .gte('started_at', since)
       .limit(500)
-    if (failErr) console.warn('[refresh-accounts] sync failure read failed:', failErr.message)
+    if (failErr) {
+      console.warn('[refresh-accounts] sync failure read failed:', failErr.message)
+      problems.push(`Health check: could not read yesterday's sync results (${failErr.message}) — authentication failures were not checked today`)
+    }
 
     const authFailures = new Map<string, number>()
     for (const row of (failures ?? []) as { error_message: string | null; client_connections: unknown }[]) {
@@ -185,8 +207,10 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
       if (!isDeadCredentialError(row.error_message)) continue
       const cc   = row.client_connections as { connectors?: { type?: string } | { type?: string }[] } | null
       const conn = Array.isArray(cc?.connectors) ? cc?.connectors[0] : cc?.connectors
+      // No connector type is exempt. GHL's cancelled-client noise ("Location is not active") is
+      // vetoed as transient inside isDeadCredentialError, so exempting the whole type only hid a
+      // real failure — the agency key going, across every GHL client at once.
       const type = conn?.type ?? 'unknown'
-      if (ALERT_EXEMPT_TYPES.has(type)) continue
       authFailures.set(type, (authFailures.get(type) ?? 0) + 1)
     }
     for (const [type, count] of Array.from(authFailures)) {
@@ -194,6 +218,7 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
     }
   } catch (e) {
     console.warn('[refresh-accounts] auth failure scan failed:', e)
+    problems.push('Health check: the authentication-failure scan failed to run today — see the refresh-accounts log')
   }
 
   if (problems.length === 0) return { problems: 0 }
