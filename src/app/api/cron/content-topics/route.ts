@@ -449,6 +449,12 @@ export async function GET(request: NextRequest) {
 
       try {
         const result = await generateTopicsForClient(db, client_id, needed, slot, { suppressEmail: true, siloId: autoSiloId })
+        // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
+        // saw a refused run. A client could produce nothing every two hours forever and the only
+        // trace was the absence of topics. Say why.
+        if (result.error) {
+          console.error(`[content-topics cron] Topic generation refused for client ${client_id} slot ${slot}: ${result.error}`)
+        }
         if (result.topics.length > 0) {
           const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
           entry.items.push(...result.topics)

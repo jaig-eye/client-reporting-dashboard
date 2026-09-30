@@ -214,7 +214,7 @@ export async function generateTopicsForClient(
     clientSettingsRes,
     existingTopicsRes,
     existingPostsRes,
-    gscRawRes,
+    gscRawRes0,
     ahrefsKwRes,
   ] = await Promise.all([
     db.from('agency_settings')
@@ -259,11 +259,28 @@ export async function generateTopicsForClient(
   //
   // A client with no Search Console connection is a different case and still proceeds: that query
   // succeeds and returns no rows.
+  // The one result that may be replaced below, so it gets its own binding rather than making
+  // every sibling mutable.
+  let gscRawRes = gscRawRes0
+
+  // Asked once more before giving up. Most failures here are a blip — a dropped connection, a
+  // momentary timeout — and the alternative is waiting two hours for the next cron pass to try
+  // again. One retry is cheap (a single indexed read) and turns most of those into nothing at all.
   if (gscRawRes.error) {
-    console.error('[generateTopics] Search Console read failed:', gscRawRes.error.message)
+    console.warn('[generateTopics] Search Console read failed, retrying once:', gscRawRes.error.message)
+    gscRawRes = await db.from('gsc_metrics')
+      .select('page, query, clicks, impressions, position, ctr')
+      .eq('client_id', clientId)
+      .gte('date', windowStart)
+      .not('page', 'ilike', '%?%')
+      .not('query', 'eq', '')
+      .limit(2000)
+  }
+  if (gscRawRes.error) {
+    console.error('[generateTopics] Search Console read failed twice, not generating:', gscRawRes.error.message)
     return {
       topics: [], clientName: '', count: 0,
-      error: 'Could not read this client’s Search Console data, so there is no way to tell which pages a new topic would compete with. Nothing was generated — try again shortly.',
+      error: 'Could not read this client’s Search Console data, so there is no way to tell which pages a new topic would compete with. Nothing was generated — the next scheduled run will try again.',
     }
   }
   // Secondary sources: a failure weakens the guard rather than blinding it, and both are absent
