@@ -27,6 +27,13 @@ export async function GET(req: NextRequest) {
 
   // Run the live balance probe (up to 8s) and the usage aggregation concurrently, so the
   // panel renders after max(balance, summary) rather than their sum.
+  // ?balance_only=1: just the live account balance, for the Usage page, which reads the summary
+  // itself on the server.
+  if (req.nextUrl.searchParams.get('balance_only') === '1') {
+    const balance = creds ? await dfsAccountBalance(creds).catch(() => null) : null
+    return NextResponse.json({ configured: !!creds, balance, currency: 'USD' })
+  }
+
   const [balance, summary] = await Promise.all([
     creds ? dfsAccountBalance(creds).catch(() => null) : Promise.resolve(null),
     getDfsUsageSummary({ from, to }),
