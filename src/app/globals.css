@@ -1250,3 +1250,68 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
   .pt-overlay { padding: 8px; align-items: flex-end; }
   .pt-modal { max-height: 94vh; }
 }
+
+/* ── Content page: Clients overview ──────────────────────────────────────── */
+.cco { container-type: inline-size; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cco-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.cco-summary { margin: 0; font-size: 0.875rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.cco-summary strong { color: var(--text-primary); font-weight: 600; }
+.cco-summary strong.cco-bad { color: var(--red); }
+.cco-dot { margin: 0 7px; color: var(--text-faint); }
+.cco-filter { display: inline-flex; align-items: center; gap: 7px; font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer; user-select: none; }
+.cco-filter input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
+.cco-filter--off { color: var(--text-faint); cursor: default; }
+.cco-filter--off input { cursor: default; }
+
+/* The table scrolls inside its card; the page never does. */
+.cco-card { min-width: 0; overflow: hidden; }
+.cco-scroll { overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.cco-table th, .cco-table td { vertical-align: top; }
+.cco-table thead th { white-space: nowrap; }
+.cco-table td { white-space: nowrap; }
+.cco-table td.cco-wide, .cco-table td.cco-issues { white-space: normal; }
+.cco-table td.cco-wide { min-width: 190px; max-width: 240px; }
+.cco-table td.cco-issues { min-width: 200px; max-width: 290px; }
+.cco-num { text-align: right; font-variant-numeric: tabular-nums; }
+.cco-table th.cco-num .kw-explained { justify-content: flex-end; }
+
+/* Client column: stays put while the rest scrolls under it. Opaque, so nothing shows through. */
+.cco-table .cco-client {
+  position: sticky; left: 0; z-index: 2; min-width: 170px; max-width: 220px;
+  background: var(--bg-surface); box-shadow: inset -1px 0 0 var(--border-subtle);
+}
+.cco-table tbody th.cco-client {
+  padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-subtle); text-align: left;
+  font-size: 0.8125rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-primary); white-space: normal;
+}
+.cco-table tbody tr:last-child th.cco-client { border-bottom: none; }
+.cco-table tbody tr:hover th.cco-client { background: var(--bg-subtle); }
+.cco-table tbody tr.cco-row--issue th.cco-client { box-shadow: inset 3px 0 0 var(--red), inset -1px 0 0 var(--border-subtle); }
+.cco-client-name { display: block; color: var(--text-primary); text-decoration: none; overflow-wrap: anywhere; }
+.cco-client-name:hover { text-decoration: underline; }
+.cco-client-name:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: 3px; }
+.cco-client-issues { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 600; color: var(--red); }
+
+.cco-main { display: block; color: var(--text-primary); }
+.cco-sub { display: block; margin-top: 2px; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
+.cco-sub .badge { margin-left: 2px; vertical-align: 1px; }
+.cco-inline { display: flex; align-items: center; gap: 4px; }
+.cco-site { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cco-none { color: var(--text-faint); }
+.cco-unknown { color: var(--text-faint); cursor: help; }
+.cco-warn { color: var(--amber); font-weight: 500; }
+.cco-bad { color: var(--red); font-weight: 600; }
+
+.cco-flags { display: flex; flex-wrap: wrap; gap: 4px; }
+.cco-flag {
+  display: inline-flex; align-items: center; gap: 5px; padding: 1px 4px 1px 8px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 500; line-height: 1.5; white-space: nowrap; border: 1px solid transparent;
+}
+.cco-flag--issue { background: var(--red-subtle); color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+.cco-flag--info { background: var(--bg-subtle); color: var(--text-secondary); border-color: var(--border); }
+.cco-flag .kw-help { width: 14px; height: 14px; }
+
+@container (max-width: 640px) {
+  .cco-bar { align-items: flex-start; flex-direction: column; }
+  .cco-table .cco-client { min-width: 128px; max-width: 150px; }
+}

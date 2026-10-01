@@ -15,6 +15,7 @@ import SiloManager from '@/components/admin/SiloManager'
 import PipelineCard, {
   type Topic, type Post, type RowItem, fmtDate,
 } from '@/components/admin/PipelineCard'
+import { cadenceLabel } from '@/lib/content/cadence'
 
 interface Props {
   clientId:        string
@@ -27,39 +28,7 @@ interface Props {
   onOpenSettings?: () => void
 }
 
-const FREQ_LABEL: Record<string, string> = {
-  daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks',
-  monthly: 'Monthly', monthly_first: 'Monthly (1st)', monthly_mid: 'Monthly (15th)', monthly_end: 'Monthly (28th)',
-}
-
 function today(): string { return new Date().toISOString().slice(0, 10) }
-
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
-  return n + (s[(v - 20) % 10] || s[v] || s[0])
-}
-
-/** "Weekly on Mondays", "Monthly on the 15th" — the schedule in Content settings, in words. */
-function cadenceLabel(cs: Record<string, unknown>): string {
-  const freq = (cs.schedule_frequency as string | null) ?? 'weekly'
-  const day  = DAY_NAMES[(cs.schedule_day_of_week as number | null) ?? 1] ?? 'Monday'
-  const perDate = Math.min(10, Math.max(1, Number(cs.posts_per_run ?? 1) || 1))
-  const start = cs.schedule_start_date as string | null
-  const monthlyDay = (cs.monthly_publish_day as number | null)
-    ?? (start ? new Date(start + 'T00:00:00Z').getUTCDate() : null)
-  const base =
-    freq === 'daily'         ? 'Every day'
-    : freq === 'weekly'      ? `Weekly on ${day}s`
-    : freq === 'biweekly'    ? `Every two weeks on ${day}s`
-    : freq === 'monthly_first' ? 'Monthly on the 1st'
-    : freq === 'monthly_mid'   ? 'Monthly on the 15th'
-    : freq === 'monthly_end'   ? 'Monthly on the 28th'
-    : freq === 'monthly'       ? (monthlyDay ? `Monthly on the ${ordinal(monthlyDay)}` : 'Monthly')
-    : (FREQ_LABEL[freq] ?? freq)
-  return perDate > 1 ? `${base}, ${perDate} posts each date` : base
-}
 
 /** What starting or regenerating the plan would do: the dates, the posts, and which dates were cleared. */
 type PlanPreview = { dates: string[]; posts: number; cleared: string[] }

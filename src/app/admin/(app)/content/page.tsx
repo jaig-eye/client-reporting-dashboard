@@ -1,6 +1,6 @@
 // Content Tool — /admin/content
-// Global calendar view, the agency-wide Priority topics overview, and global settings. Per-client
-// workflows live on the client tab.
+// Global calendar view, the agency-wide Clients and Priority topics overviews, and global settings.
+// Per-client workflows live on the client tab.
 
 import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
@@ -13,6 +13,8 @@ import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
 import PriorityTopicsOverview, { type OverviewClient } from '@/components/admin/PriorityTopicsOverview'
 import { nextOpenSlot }         from '@/lib/content/scheduleSlots'
 import { openLinkCount }        from '@/components/admin/priorityTopics'
+import ContentClientsOverview  from '@/components/admin/ContentClientsOverview'
+import { getClientsOverview }  from '@/lib/content/clientsOverviewData'
 
 export const dynamic = 'force-dynamic'
 
@@ -140,8 +142,15 @@ export default async function ContentPage({
     ? await priorityOverview(db, silos, allClientsMap)
     : []
 
+  // Clients: every client's content setup in one table — read only when that view is open.
+  const clientsOverview = activeView === 'overview'
+    ? await getClientsOverview(db, allClientsMap)
+    : null
+
   // The view's id stays "silos" so existing links keep working; its name follows the Pipeline's.
+  // Clients leads the switcher, but Review stays the landing view.
   const views = [
+    { id: 'overview', label: 'Clients' },
     { id: 'review',   label: 'Review' },
     { id: 'calendar', label: 'Calendar' },
     { id: 'silos',    label: 'Priority topics' },
@@ -163,14 +172,16 @@ export default async function ContentPage({
         <div style={{ flex: 1 }} />
 
         {/* View switcher */}
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3 }}>
+        {/* Four views: labels stay on one line, and on a phone the row scrolls rather than wraps. */}
+        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3, maxWidth: '100%', overflowX: 'auto' }}>
           {views.map(v => (
             <a
               key={v.id}
               href={`?view=${v.id}`}
               style={{
                 display:        'inline-block',
-                padding:        '5px 14px',
+                padding:        '5px 12px',
+                whiteSpace:     'nowrap',
                 borderRadius:   6,
                 fontSize:       '0.8125rem',
                 fontWeight:     activeView === v.id ? 600 : 400,
@@ -184,6 +195,10 @@ export default async function ContentPage({
           ))}
         </div>
       </div>
+
+      {activeView === 'overview' && clientsOverview && (
+        <ContentClientsOverview rows={clientsOverview.rows} error={clientsOverview.error} />
+      )}
 
       {activeView === 'review' && reviewData && (
         <MonthlyReviewSession
