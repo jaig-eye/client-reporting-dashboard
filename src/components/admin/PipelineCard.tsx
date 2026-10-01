@@ -7,6 +7,7 @@
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import ClientImage from '@/components/admin/ClientImage'
+import PriorityTag from '@/components/admin/PriorityTag'
 import type { SeoScore } from '@/lib/content/types'
 
 // ── Shared pipeline types (imported by ClientPipeline) ──────────────────────────
@@ -61,6 +62,9 @@ export interface Post {
   seo_score:           SeoScore | null
   keyword_rank?:       { current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null
   generated_at:        string
+  /** Which set of priority topics this post was written for, and on which keyword. */
+  silo?:               { id: string; name: string } | null
+  silo_keyword?:       { id: string; keyword: string } | null
 }
 
 export type RowItem =
@@ -201,6 +205,10 @@ export default function PipelineCard(props: Props) {
     const topic = item.kind === 'topic' ? item.data : null
     const ds = getPostDisplayStatus(post)
     const onSite = post.status === 'draft_saved' || post.status === 'published'
+    // Where it came from: the post's own record, else the topic it was written from. This card
+    // used to show nothing, so "Priority" vanished the moment the article existed.
+    const fromSet     = post.silo ?? topic?.silo ?? null
+    const fromKeyword = post.silo_keyword ?? topic?.silo_keyword ?? null
     return (
       <div style={cardShell}>
         <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
@@ -235,6 +243,11 @@ export default function PipelineCard(props: Props) {
               </span>
             ) : null}
           </div>
+          {fromSet && (
+            <div style={{ marginTop: 4 }}>
+              <PriorityTag setName={fromSet.name} keyword={fromKeyword?.keyword} size="sm" />
+            </div>
+          )}
           {onSite && <LiveLinks post={post} />}
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
@@ -284,11 +297,8 @@ export default function PipelineCard(props: Props) {
               reaches the queue. Named the way the Pipeline's Priority topics section names it, in
               theme colours — the violet hex this used stayed the same in dark mode. */}
           {t.silo && (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <span className="badge badge-blue" title="Comes from a set of priority topics">
-                Priority · {t.silo.name}
-              </span>
-              {t.silo_keyword && <span>for &ldquo;{t.silo_keyword.keyword}&rdquo;</span>}
+            <div style={{ marginTop: 4 }}>
+              <PriorityTag setName={t.silo.name} keyword={t.silo_keyword?.keyword} size="sm" />
             </div>
           )}
         </div>

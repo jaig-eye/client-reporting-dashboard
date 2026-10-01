@@ -1171,6 +1171,19 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .pt-adv-body { display: flex; flex-direction: column; gap: 16px; }
 .pt-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
+/* ── "Priority · set" provenance tag on topic and post cards ─────────────── */
+.pt-tag { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 100%; font-size: 0.72rem; line-height: 1.4; }
+.pt-tag-chip {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 1px 7px 1px 6px; border-radius: 999px;
+  background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.pt-tag-flag { flex-shrink: 0; color: var(--accent); }
+.pt-tag-label { font-weight: 600; color: var(--text-primary); }
+.pt-tag-sep { color: var(--text-faint); }
+.pt-tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-tag-kw { color: var(--text-muted); overflow-wrap: anywhere; }
+.pt-tag--sm { font-size: 0.6875rem; }
+
 @container (max-width: 520px) {
   .pt-section { padding: 14px; }
   .pt-set { padding: 12px; }
