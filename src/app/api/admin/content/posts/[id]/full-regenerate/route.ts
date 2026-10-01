@@ -147,7 +147,7 @@ export async function POST(
 
   const { data: post } = await db
     .from('content_posts')
-    .select('id, client_id, topic_id, target_publish_date, status, content_type, silo_id, wp_post_id, bc_post_id, admin_approved_at')
+    .select('id, client_id, topic_id, target_publish_date, status, content_type, silo_id, silo_keyword_id, wp_post_id, bc_post_id, admin_approved_at')
     .eq('id', postId)
     .maybeSingle()
 
@@ -250,9 +250,23 @@ export async function POST(
 
   // Hoisted so the catch block can reverse topic state changes made in step 2
   let newTopicId: string | undefined
+  // The set keyword this post was written for, when it came from a priority set. A regenerate
+  // rewrites the same keyword at a fresh angle: asking the set for a topic would claim its NEXT
+  // keyword instead, so the post changed subject while the original stayed marked written, and
+  // the set's last post could not be regenerated at all ("every keyword has been used").
+  let setKeyword: { id: string; keyword: string } | null = null
 
   waitUntil((async () => {
     try {
+      if (post.silo_keyword_id) {
+        const { data: kw } = await db
+          .from('content_silo_keywords')
+          .select('id, keyword')
+          .eq('id', String(post.silo_keyword_id))
+          .maybeSingle()
+        setKeyword = (kw as { id: string; keyword: string } | null) ?? null
+      }
+
       // 1. Generate a fresh topic — generateTopicsForClient builds its own avoid list
       //    from existing topics, so it naturally avoids the current topic.
       //
@@ -269,11 +283,14 @@ export async function POST(
         {
           suppressEmail: true,
           contentType:   (post.content_type as string | undefined) ?? undefined,
-          ...(post.silo_id ? { siloId: String(post.silo_id) } : {}),
+          // A set post keeps its keyword (see setKeyword); any other set topic still asks the set.
+          ...(post.silo_id && !setKeyword ? { siloId: String(post.silo_id) } : {}),
           // Must reach topic SELECTION, not just the content prompt — for a full
           // regenerate the subject is decided here, so a direction applied later
           // would arrive after the topic was already picked.
-          ...(body.steer_keyword?.trim() ? { steerKeyword: body.steer_keyword.trim() } : {}),
+          ...(body.steer_keyword?.trim()
+            ? { steerKeyword: body.steer_keyword.trim() }
+            : setKeyword ? { steerKeyword: setKeyword.keyword } : {}),
         }
       )
 
@@ -282,6 +299,16 @@ export async function POST(
       }
 
       newTopicId = topicResult.topics[0].id
+
+      // The new topic carries the set and keyword over, and the keyword now points at it.
+      if (setKeyword) {
+        await db.from('content_topics')
+          .update({ silo_id: post.silo_id, silo_keyword_id: setKeyword.id })
+          .eq('id', newTopicId)
+        await db.from('content_silo_keywords')
+          .update({ target_topic_id: newTopicId })
+          .eq('id', setKeyword.id)
+      }
 
       // 2. Immediately claim the new topic and retire the old one — do this BEFORE the AI call
       //    so that no cron run can pick up either topic during the (potentially long) generation window.
@@ -551,6 +578,9 @@ ${lengthInstruction(budget)}`
         // Reverse topic state changes made in step 2
         if (newTopicId) {
           await db.from('content_topics').update({ post_id: null, status: 'rejected' }).eq('id', newTopicId)
+        }
+        if (setKeyword && post.topic_id) {
+          await db.from('content_silo_keywords').update({ target_topic_id: post.topic_id }).eq('id', setKeyword.id)
         }
         if (post.topic_id) {
           await db.from('content_topics')
