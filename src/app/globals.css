@@ -1039,3 +1039,151 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .kw-skeleton { display: flex; flex-direction: column; }
 .kw-skeleton-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
 .kw-skeleton-row:last-child { border-bottom: none; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Priority topics (client Content → Pipeline). Every class starts pt- so nothing else is restyled;
+   outside @layer for the same reason as the kw- block above. Tints mix from --accent, never
+   --accent-subtle, which stays light in dark mode.
+───────────────────────────────────────────────────────────────────────────── */
+
+.pt-section { container-type: inline-size; padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.pt-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.pt-section-title { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
+.pt-section-count {
+  display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 999px; text-align: center;
+  font-size: 0.72rem; font-weight: 600; line-height: 1.5; font-variant-numeric: tabular-nums;
+  color: var(--text-muted); background: var(--bg-subtle); border: 1px solid var(--border);
+}
+.pt-section-lede { margin: 3px 0 0; max-width: 64ch; font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
+.pt-empty { margin: 0; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 10px; font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
+.pt-loading { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.pt-alert {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 8px;
+  background: var(--red-subtle); border: 1px solid var(--red);
+}
+.pt-alert p { margin: 0; flex: 1 1 220px; font-size: 0.8125rem; color: var(--text-primary); }
+.pt-sets { display: flex; flex-direction: column; gap: 10px; }
+
+/* ── One set ─────────────────────────────────────────────────────────────── */
+.pt-set {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-surface);
+}
+.pt-set--next { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: inset 3px 0 0 var(--accent); }
+.pt-set--done { background: var(--bg-subtle); }
+.pt-set-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.pt-set-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.pt-set-name { margin: 0; font-size: 0.875rem; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.pt-set-actions { display: flex; gap: 2px; flex-shrink: 0; margin: -4px -6px 0 0; }
+.pt-set-actions .btn { min-height: 28px; padding: 0.2rem 0.55rem; font-size: 0.78rem; }
+.pt-archive:hover:not(:disabled) { color: var(--red); }
+
+.pt-progress-row { display: flex; align-items: center; gap: 10px; }
+.pt-progress { flex: 1; display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: var(--bg-muted); }
+.pt-progress-done { background: var(--green); transition: width 0.3s ease; }
+.pt-progress-picked { background: color-mix(in srgb, var(--accent) 65%, transparent); transition: width 0.3s ease; }
+.pt-progress-text { flex-shrink: 0; font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.pt-progress-text strong { color: var(--text-primary); font-weight: 600; }
+
+.pt-when { margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); max-width: 78ch; }
+.pt-when strong { font-weight: 600; color: var(--text-primary); }
+.pt-when--warn { color: var(--amber); }
+.pt-when--warn strong { color: inherit; }
+.pt-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pt-pick-note { font-size: 0.75rem; color: var(--text-muted); }
+.pt-notice { margin: 0; font-size: 0.8125rem; line-height: 1.45; }
+.pt-notice--success { color: var(--green); }
+.pt-notice--warning { color: var(--amber); }
+.pt-notice--error   { color: var(--red); }
+.pt-notice--neutral { color: var(--text-muted); }
+.pt-notes { margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); max-width: 78ch; }
+.pt-notes span { font-weight: 600; color: var(--text-muted); margin-right: 2px; }
+.pt-hub { margin: 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); }
+.pt-hub a { color: var(--blue); text-decoration: none; }
+.pt-hub a:hover { text-decoration: underline; }
+
+.pt-kws { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-subtle); }
+.pt-kw { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.pt-kw-icon { flex-shrink: 0; margin-top: 2px; }
+.pt-kw-icon--done { color: var(--green); }
+.pt-kw-icon--picked { color: var(--accent); }
+.pt-kw-icon--waiting { color: var(--text-faint); }
+.pt-kw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pt-kw-text { font-size: 0.8125rem; color: var(--text-primary); overflow-wrap: anywhere; }
+.pt-kw--written .pt-kw-text, .pt-kw--live .pt-kw-text { color: var(--text-secondary); }
+.pt-kw-detail { font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); overflow-wrap: anywhere; }
+.pt-kw-state { font-weight: 600; }
+.pt-kw--written .pt-kw-state, .pt-kw--live .pt-kw-state { color: var(--green); }
+.pt-kw--picked .pt-kw-state { color: var(--accent); }
+.pt-kw-date { color: var(--text-muted); }
+.pt-kw-link { color: var(--blue); text-decoration: none; }
+.pt-kw-link:hover { text-decoration: underline; }
+.pt-kw-remove { margin-top: -1px; }
+.pt-kw-skeleton { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+
+.pt-add { display: flex; align-items: flex-start; gap: 8px; }
+.pt-add-input { flex: 1; min-height: 36px; resize: vertical; }
+.pt-add .btn { flex-shrink: 0; min-height: 36px; }
+
+.pt-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex-shrink: 0;
+  border: none; border-radius: 6px; background: transparent; cursor: pointer;
+  font-size: 1.05rem; line-height: 1; color: var(--text-muted);
+}
+.pt-icon-btn:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text-primary); }
+.pt-linkbtn { border: none; background: transparent; padding: 0; cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--accent); }
+.pt-showall { align-self: flex-start; font-size: 0.78rem; }
+.pt-disclosure {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 2px 4px; margin-left: -4px;
+  border: none; border-radius: 6px; background: transparent; cursor: pointer;
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+}
+.pt-disclosure:hover { color: var(--text-primary); }
+.pt-caret { transition: transform 0.15s ease; color: var(--text-muted); }
+.pt-disclosure[aria-expanded="true"] .pt-caret { transform: rotate(90deg); }
+.pt-icon-btn:focus-visible, .pt-linkbtn:focus-visible, .pt-disclosure:focus-visible {
+  outline: none; box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--accent);
+}
+
+/* ── Add / edit modal ────────────────────────────────────────────────────── */
+.pt-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(17, 24, 39, 0.45); backdrop-filter: blur(2px);
+}
+.pt-modal { width: 100%; max-width: 520px; max-height: min(92vh, 860px); display: flex; flex-direction: column; overflow: hidden; background: var(--bg-elevated); }
+.pt-modal--small { max-width: 420px; }
+.pt-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
+.pt-modal-title { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); overflow-wrap: anywhere; }
+.pt-modal-lede { margin: 4px 0 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
+.pt-modal-body { padding: 16px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.pt-modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 12px 20px; border-top: 1px solid var(--border); }
+.pt-modal-error { margin: 0 auto 0 0; flex: 1 1 200px; font-size: 0.8125rem; color: var(--red); }
+.pt-field { display: flex; flex-direction: column; gap: 5px; }
+.pt-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.pt-optional { margin-left: 4px; font-weight: 400; color: var(--text-muted); }
+.pt-help { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
+.pt-help--above { margin-top: -2px; }
+.pt-help--warn { color: var(--amber); }
+.pt-count { text-align: right; font-variant-numeric: tabular-nums; }
+.pt-count strong { color: var(--text-primary); font-weight: 600; }
+.pt-textarea { font-family: inherit; line-height: 1.55; resize: vertical; }
+.pt-advanced { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.pt-adv-note { font-weight: 400; color: var(--text-muted); }
+.pt-adv-body { display: flex; flex-direction: column; gap: 16px; }
+.pt-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pt-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.pt-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+
+@container (max-width: 520px) {
+  .pt-section { padding: 14px; }
+  .pt-set { padding: 12px; }
+  .pt-progress-row { flex-wrap: wrap; }
+  .pt-progress { flex-basis: 100%; }
+  .pt-add { flex-direction: column; align-items: stretch; }
+  .pt-add .btn { align-self: flex-end; }
+}
+@media (max-width: 520px) {
+  .pt-two { grid-template-columns: 1fr; }
+  .pt-overlay { padding: 8px; align-items: flex-end; }
+  .pt-modal { max-height: 94vh; }
+}
