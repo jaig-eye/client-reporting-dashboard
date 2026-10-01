@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import MarketLine from './MarketLine'
+import { cadenceLabel } from '@/lib/content/cadence'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
@@ -36,6 +37,12 @@ interface Schedule {
   dayOfWeek: number
   publishTime: string
   autoGenerate: boolean
+  /** Posts on each publish date. */
+  postsPerRun: number
+  /** How many publish dates the planner keeps topics for (cadence cycles). */
+  weeksAhead: number
+  /** The first publish date the schedule counts from (yyyy-mm-dd); empty = keep or stamp today. */
+  startDate: string
 }
 
 interface KeywordResult {
@@ -89,10 +96,18 @@ const TOTAL_STEPS = 9
 const SEED_MAX = 25
 
 const FREQ_OPTIONS = [
-  { id: 'daily',    label: 'Daily',       sub: '1 post/day' },
-  { id: 'weekly',   label: 'Weekly',      sub: '1 post/week' },
+  { id: 'daily',    label: 'Daily',       sub: 'A post every day' },
+  { id: 'weekly',   label: 'Weekly',      sub: 'Once a week' },
   { id: 'biweekly', label: 'Bi-Weekly',   sub: 'Every 2 weeks' },
   { id: 'monthly',  label: 'Monthly',     sub: 'Once a month' },
+]
+
+/** The monthly variants Content settings offers. The Monthly button covers all of them. */
+const MONTHLY_DAYS = [
+  { id: 'monthly',       label: 'Same day each month as the start date' },
+  { id: 'monthly_first', label: '1st of the month' },
+  { id: 'monthly_mid',   label: '15th of the month' },
+  { id: 'monthly_end',   label: '28th of the month' },
 ]
 
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
@@ -131,7 +146,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // Step 5 state
   const [schedule, setSchedule] = useState<Schedule>({
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
-    autoGenerate: true,
+    autoGenerate: true, postsPerRun: 1, weeksAhead: 4, startDate: '',
   })
   // The client's already-saved schedule_start_date, if any. Completing the wizard must
   // NOT move it: for a rolling-monthly client that date IS the publish-day anchor, so
@@ -262,6 +277,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             publish_time?: string | null
             auto_generate?: boolean | null
             schedule_start_date?: string | null
+            posts_per_run?: number | null
             business_background?: string | null
             services?: string | null
             target_audience?: string | null
@@ -340,12 +356,16 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           // an already-configured client and clicking through silently downgraded a
           // monthly client to weekly. Combined with the start-date reset below, a
           // re-run could move a client's whole publish series to a different day.
-          if (cs.schedule_frequency || cs.schedule_day_of_week != null || cs.publish_time) {
+          if (cs.schedule_frequency || cs.schedule_day_of_week != null || cs.publish_time
+            || cs.posts_per_run != null || cs.weeks_ahead != null || cs.schedule_start_date) {
             setSchedule(prev => ({
               frequency:    cs.schedule_frequency   ?? prev.frequency,
               dayOfWeek:    cs.schedule_day_of_week ?? prev.dayOfWeek,
               publishTime:  cs.publish_time         ?? prev.publishTime,
               autoGenerate: cs.auto_generate ?? prev.autoGenerate,
+              postsPerRun:  cs.posts_per_run        ?? prev.postsPerRun,
+              weeksAhead:   cs.weeks_ahead          ?? prev.weeksAhead,
+              startDate:    cs.schedule_start_date  ?? prev.startDate,
             }))
           }
           // Remember the existing anchor so completing the wizard does not move it.
@@ -634,8 +654,11 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         sitemap_url:          sitemapUrl || undefined,
         schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
-        // Keep the existing anchor on a re-run; only stamp today on first setup.
-        schedule_start_date:  existingStartDate ?? new Date().toISOString().slice(0, 10),
+        posts_per_run:        Math.min(10, Math.max(1, Math.round(schedule.postsPerRun) || 1)),
+        weeks_ahead:          Math.min(24, Math.max(1, Math.round(schedule.weeksAhead) || 4)),
+        // What the step shows (the saved anchor, pre-filled); on first setup with nothing chosen,
+        // today. A re-run never moves the anchor unless someone changes the date.
+        schedule_start_date:  schedule.startDate || existingStartDate || new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
         auto_generate:   schedule.autoGenerate,
         // Sent WITH auto_generate, or the single tick in this wizard becomes one-way: the
@@ -1521,6 +1544,7 @@ function StepSchedule({
   imagePrompt: string; setImagePrompt: (v: string) => void
 }) {
   const needsDay = ['weekly', 'biweekly'].includes(schedule.frequency)
+  const isMonthly = schedule.frequency.startsWith('monthly')
 
   return (
     <div>
@@ -1532,17 +1556,20 @@ function StepSchedule({
           <button
             key={opt.id}
             type="button"
-            onClick={() => setSchedule({ ...schedule, frequency: opt.id })}
+            // Monthly keeps whichever monthly day was already set (1st, 15th…), rather than
+            // resetting it, and is shown selected for all of them.
+            onClick={() => setSchedule({ ...schedule, frequency: opt.id === 'monthly' && isMonthly ? schedule.frequency : opt.id })}
+            aria-pressed={opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id}
             style={{
               padding: '1rem',
               borderRadius: 10,
-              border: `2px solid ${schedule.frequency === opt.id ? 'var(--blue)' : 'var(--border)'}`,
-              background: schedule.frequency === opt.id ? 'var(--blue-subtle)' : 'var(--bg-surface)',
+              border: `2px solid ${(opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue)' : 'var(--border)'}`,
+              background: (opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue-subtle)' : 'var(--bg-surface)',
               cursor: 'pointer',
               textAlign: 'left',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: schedule.frequency === opt.id ? 'var(--blue)' : 'var(--text-primary)' }}>{opt.label}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: (opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue)' : 'var(--text-primary)' }}>{opt.label}</div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 2 }}>{opt.sub}</div>
           </button>
         ))}
@@ -1556,6 +1583,41 @@ function StepSchedule({
             </select>
           </Field>
         )}
+        {isMonthly && (
+          <Field label="Day of the Month" htmlFor="wiz-month-day">
+            <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} style={inputStyle}>
+              {MONTHLY_DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Posts Each Publish Date" htmlFor="wiz-posts-per-run">
+          <input
+            id="wiz-posts-per-run" type="number" min={1} max={10}
+            value={schedule.postsPerRun || ''}
+            onChange={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(0, Number(e.target.value) || 0)) })}
+            onBlur={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(1, Number(e.target.value) || 1)) })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Weeks Ahead" htmlFor="wiz-weeks-ahead">
+          <input
+            id="wiz-weeks-ahead" type="number" min={1} max={24}
+            title="How many publish dates the planner keeps topics ready for"
+            value={schedule.weeksAhead || ''}
+            onChange={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
+            onBlur={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(1, Number(e.target.value) || 4)) })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Start Date" htmlFor="wiz-start-date">
+          <input
+            id="wiz-start-date" type="date"
+            title="The first publish date the schedule counts from"
+            value={schedule.startDate}
+            onChange={e => setSchedule({ ...schedule, startDate: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
         <Field label="Publish Time" htmlFor="wiz-publish-time">
           <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
         </Field>
@@ -2009,10 +2071,14 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
   onSave: () => void
   onSaveAndGenerate: () => void
 }) {
-  const freqLabel = FREQ_OPTIONS.find(f => f.id === schedule.frequency)?.label ?? schedule.frequency
+  const freqLabel = cadenceLabel({
+    schedule_frequency: schedule.frequency, schedule_day_of_week: schedule.dayOfWeek,
+    posts_per_run: schedule.postsPerRun, schedule_start_date: schedule.startDate || null,
+  })
 
   const summaryRows = [
-    { label: 'Frequency',     value: freqLabel },
+    { label: 'Schedule',      value: freqLabel },
+    { label: 'Weeks ahead',   value: String(schedule.weeksAhead) },
     { label: 'Publish time',  value: schedule.publishTime },
     { label: 'Sitemap pages', value: pagesCount > 0 ? String(pagesCount) : '—' },
   ]
