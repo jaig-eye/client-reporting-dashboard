@@ -303,7 +303,9 @@ export default async function ConnectionsPage({
           initialDepth={dfsDepth}
           initialDevices={dfsDevices}
         />
-        {/* DataForSEO usage + spend (only once credentials exist) */}
+        {/* Spend, and the monthly limit that governs it. It has to be somewhere reachable: with it
+            unmounted, the budget research and rank checks stop at could not be set or seen from
+            anywhere in the app. Only with usable credentials, which is when anything can spend. */}
         {dfsHasCreds && <DataForSeoUsagePanel />}
         {/* ── Search API (SerpAPI — competitor research) ────────────────────── */}
         <SearchApiAgencyCard

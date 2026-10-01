@@ -47,9 +47,9 @@ const WP_TIMEOUT_MS = 15_000
  * BROWSER_BOT_UA matters: sites behind Cloudflare or Wordfence are allow-listed
  * on it, and the four lifecycle functions below originally hand-rolled their
  * fetch without it — so update/delete/unpublish 403'd on exactly the sites where
- * publishing worked.
+ * publishing worked. Exported so the Rank Math writer sends the same thing.
  */
-function wpHeaders(
+export function wpHeaders(
   auth: { username: string; app_password: string },
   json = false,
 ): Record<string, string> {
@@ -60,6 +60,142 @@ function wpHeaders(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Which site is this? — one comparison for every place that asks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A site's host, for deciding whether two addresses are the same site: lower-case, any port kept,
+ * scheme and a leading "www." ignored. null when there is no usable host.
+ *
+ * Some client sites are stored with http:// and serve https://, and some with and some without
+ * www., so neither difference can mean "another site".
+ */
+export function wpSiteHost(url: string | null | undefined): string | null {
+  const raw = String(url ?? '').trim()
+  if (!raw) return null
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return u.host.toLowerCase().replace(/^www\./, '') || null
+  } catch {
+    return null
+  }
+}
+
+/** True when both addresses are the same site by wpSiteHost. Never true for an unusable address. */
+export function isSameWpSite(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ha = wpSiteHost(a)
+  return !!ha && ha === wpSiteHost(b)
+}
+
+/**
+ * WordPress's link for content with no public permalink yet: '?p=N' for a post, '?page_id=N' for
+ * a page. A site left on plain permalinks serves the same shape as its permanent URL, so callers
+ * treat it as a placeholder only while the status is not 'publish'.
+ */
+export function isWpPlaceholderLink(url: string | null | undefined): boolean {
+  return !!url && /[?&](?:p|page_id)=\d+/.test(url)
+}
+
+/**
+ * Is a link WordPress returned fit to store as the post's published_url? It must be an absolute
+ * http(s) URL on the site the post lives on (scheme and a leading www. ignored).
+ *
+ * published_url is rendered as "View live" and injected into other articles as an internal link,
+ * so a relative path, a javascript: URL, or a link to some other host would be carried straight
+ * into client content. WordPress builds the link from its own home_url, so on a healthy site this
+ * always holds; when it does not, storing nothing is the safe answer.
+ */
+export function isLinkOnSite(link: string | null | undefined, siteUrl: string | null | undefined): boolean {
+  return !!link && /^https?:\/\//i.test(link) && isSameWpSite(link, siteUrl)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credentialed requests and redirects
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+/**
+ * Where a redirect may take a request that carries a site's credentials: the same site, and never
+ * from https down to http. Returns the absolute target, or null when it must not be followed.
+ */
+export function sameSiteRedirectTarget(from: string, location: string): string | null {
+  let a: URL, b: URL
+  try { a = new URL(from); b = new URL(location, from) } catch { return null }
+  if (b.protocol !== 'http:' && b.protocol !== 'https:') return null
+  // An https → http hop would put the application password on the wire in the clear.
+  if (a.protocol === 'https:' && b.protocol === 'http:') return null
+  if (!isSameWpSite(a.toString(), b.toString())) return null
+  return b.toString()
+}
+
+/** Origin only, for logs — a Location header can carry anything, userinfo included. */
+function originOf(url: string, base?: string): string {
+  try { return new URL(url, base).origin } catch { return '(unparseable URL)' }
+}
+
+/**
+ * fetch() for every request that carries a site's credentials — the Authorization header, or the
+ * XML-RPC body with the application password in it.
+ *
+ * fetch follows redirects by default, and that is wrong here twice over. It sends a 307/308's body
+ * on to wherever the Location points, which for XML-RPC is the password itself, to any host. And it
+ * turns a POST answered with 301/302 into a GET, so a publish or an update against a site that
+ * redirects comes back 200 having written nothing — a GET of the posts list reads as success.
+ *
+ * So redirects are handled here: up to MAX_SITE_REDIRECTS are followed, every hop staying on the
+ * site the request started on (http → https and adding or dropping www. are the ordinary cases —
+ * together they are two hops), re-sending the identical request. Anything else fails closed with a
+ * log line naming both origins. A redirect answer means the server did not process the request, so
+ * re-sending it cannot write twice.
+ *
+ * `init.signal` covers every hop, so a caller's timeout bounds the whole exchange.
+ */
+export async function fetchWithSiteCredentials(url: string, init: RequestInit, label = '[wordpress]'): Promise<Response> {
+  let current = url
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current, { ...init, redirect: 'manual' })
+    if (!REDIRECT_STATUSES.has(res.status)) return res
+
+    const location = res.headers.get('location')
+    await res.body?.cancel().catch(() => {})
+    // 302 and 303 to a write can come AFTER the server has done it (post/redirect/get), so re-sending
+    // could publish twice. Only 301/307/308 say "not processed here, ask over there" for a write.
+    const method = (init.method ?? 'GET').toUpperCase()
+    if (method !== 'GET' && method !== 'HEAD' && (res.status === 302 || res.status === 303)) {
+      const msg = `${label} ${originOf(current)} answered ${method} with ${res.status} — not re-sent, because the site may already have processed it`
+      console.warn(msg)
+      throw new Error(msg)
+    }
+    if (hop >= MAX_SITE_REDIRECTS) {
+      const msg = `${label} ${originOf(url)} redirected more than ${MAX_SITE_REDIRECTS} times (last via ${originOf(current)}) — not followed further`
+      console.warn(msg)
+      throw new Error(msg)
+    }
+    // Checked against the hop it came from (no https → http) AND the site the request started on,
+    // so a chain cannot walk the credentials off the site one "same host" step at a time.
+    const next = location ? sameSiteRedirectTarget(current, location) : null
+    if (!next || !isSameWpSite(url, next)) {
+      const msg =
+        `${label} ${originOf(current)} answered ${res.status} with a redirect to ` +
+        `${location ? originOf(location, current) : '(no Location header)'} — not followed, because this ` +
+        `request carries the site's credentials and they only go to the site they belong to`
+      console.warn(msg)
+      throw new Error(msg)
+    }
+    current = next
+  }
+}
+
+/**
+ * Same-site hops followed before giving up. All fifteen live client sites answered their REST API
+ * with no redirect at all when checked (2026-09-30); three leaves room for a site moving to https
+ * and to www. without an unbounded chain.
+ */
+const MAX_SITE_REDIRECTS = 3
+
 async function wpGet(
   siteUrl: string,
   path: string,
@@ -69,7 +205,7 @@ async function wpGet(
   const url = new URL(wpApiUrl(siteUrl, path))
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithSiteCredentials(url.toString(), {
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
       'Content-Type': 'application/json',
@@ -89,7 +225,7 @@ async function wpPost(
   auth: { username: string; app_password: string },
   body: Record<string, unknown>
 ): Promise<unknown> {
-  const res = await fetch(wpApiUrl(siteUrl, path), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, path), {
     method: 'POST',
     headers: {
       Authorization:  authHeader(auth.username, auth.app_password),
@@ -121,6 +257,84 @@ export interface WpPostPayload {
   slug?: string
   author?: number
   meta?: Record<string, string>
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+}
+
+/**
+ * Decode the HTML entities WordPress's sanitizers produce — the named five plus nbsp, and numeric
+ * references in either base. Anything else is left as written, so an unknown name never turns
+ * into a wrong character.
+ */
+export function decodeHtmlEntities(v: string): string {
+  return v.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, ref: string) => {
+    if (ref[0] === '#') {
+      const code = ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole
+  })
+}
+
+/**
+ * Reads back the SEO meta WordPress stored, and says which keys did not stick.
+ *
+ * WordPress accepts a `meta` object and silently ignores any key not registered with
+ * `show_in_rest`, answering 200 either way — so a push can look completely successful and set
+ * nothing. This asks the question directly: fetch the post as the editor sees it and compare.
+ *
+ * Rank Math never registers its keys with `show_in_rest`, so on most sites REST can neither store
+ * nor show them: such a key comes back `readable: false`, and its absence proves nothing about
+ * whether Rank Math's own endpoint stored it. Only a readable key that differs is a real miss.
+ *
+ * Best-effort by design. A site that refuses `context=edit`, or any network failure, returns null
+ * (nothing could be read) rather than failing a publish that already worked.
+ *
+ * `timeoutMs` lets the caller fit the read into whatever time its own request has left; it never
+ * exceeds the usual WordPress timeout.
+ */
+export async function verifyPostMeta(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+  expected: Record<string, string>,
+  // Service-area pages carry the same Rank Math fields and live on a different REST route.
+  postType: 'posts' | 'pages' = 'posts',
+  timeoutMs: number = WP_TIMEOUT_MS,
+): Promise<{ key: string; sent: string; stored: string; readable: boolean }[] | null> {
+  try {
+    // An unresponsive client site must not hang the approve request AFTER the post is live.
+    const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, WP_TIMEOUT_MS))),
+    })
+    if (!res.ok) return null
+    const data  = await res.json() as { meta?: Record<string, unknown> }
+    const meta  = data.meta
+    // No meta object at all means the site doesn't expose it — nothing could be read.
+    if (!meta || typeof meta !== 'object') return null
+    const wrong: { key: string; sent: string; stored: string; readable: boolean }[] = []
+    // WordPress sanitizes on the way in — sanitize_text_field collapses whitespace, and Rank Math
+    // stores its title and description through wp_filter_nohtml_kses, which turns '&' into
+    // '&amp;' — so "Brake & Rotor Repair" comes back legitimately different. Comparing raw would
+    // report that as "not stored", and a report that cries wolf is worse than no report. Both
+    // sides are decoded, so it does not matter which one carries the entity.
+    const comparable = (v: string) => decodeHtmlEntities(v).replace(/\s+/g, ' ').trim()
+    for (const [key, sent] of Object.entries(expected)) {
+      // A key we deliberately sent empty is not expected to come back.
+      if (!sent) continue
+      // A key absent from the response was never registered; a key present but different was
+      // registered and then overwritten. Both are worth seeing, and the value says which.
+      const readable = Object.prototype.hasOwnProperty.call(meta, key)
+      const stored = meta[key] == null ? '' : String(meta[key])
+      if (comparable(stored) !== comparable(sent)) wrong.push({ key, sent, stored, readable })
+    }
+    return wrong
+  } catch {
+    return null
+  }
 }
 
 export interface WpPublishedPost {
@@ -218,7 +432,7 @@ export async function updatePage(
     meta?:    Record<string, string>
   }
 ): Promise<WpPublishedPost> {
-  const res = await fetch(wpApiUrl(siteUrl, `/pages/${pageId}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/pages/${pageId}`), {
     method: 'POST',
     headers: {
       Authorization: authHeader(auth.username, auth.app_password),
@@ -263,7 +477,7 @@ export async function updatePost(
     meta?:           Record<string, string>
   },
 ): Promise<WpPublishedPost> {
-  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/posts/${postId}`), {
     method:  'POST',
     headers: wpHeaders(auth, true),
     body:    JSON.stringify(patch),
@@ -283,13 +497,23 @@ export async function updatePost(
   }
 }
 
-/** Read one post — used by the published_url backfill. */
+/**
+ * Read one post or page back — used by the published_url backfill.
+ *
+ * `kind` matters: a service-area row stores a WordPress PAGE id, and /wp/v2/posts/{pageId}
+ * answers 404 for it. Reconcile read every row through /posts and took that 404 as proof the
+ * content had been deleted, writing wp_status 'deleted' over live pages.
+ *
+ * null is ANY 404, which is not proof of deletion — see readPostState, which reconcile uses.
+ */
 export async function fetchPost(
   siteUrl: string,
   auth: { username: string; app_password: string },
   postId: number,
+  kind: 'post' | 'page' = 'post',
 ): Promise<{ id: number; link: string; status: string } | null> {
-  const res = await fetch(wpApiUrl(siteUrl, `/posts/${postId}?context=edit`), {
+  const base = kind === 'page' ? 'pages' : 'posts'
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
     headers: wpHeaders(auth),
     signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
   })
@@ -300,6 +524,77 @@ export async function fetchPost(
   }
   const data = (await res.json()) as Record<string, unknown>
   return { id: Number(data.id), link: String(data.link || ''), status: String(data.status || '') }
+}
+
+/**
+ * What WordPress says about one post or page, in the three answers reconcile needs to tell apart.
+ *
+ *   found      — WordPress returned the post object.
+ *   gone       — WordPress itself says the id does not exist, AND its REST API demonstrably works.
+ *   unreadable — anything else. Not evidence of anything; the caller leaves the row alone.
+ *
+ * fetchPost's null means "any 404", and a 404 is far weaker evidence than it looks. A lapsed
+ * domain parked with a registrar 404s every path. A security plugin can 404 /wp-json. A site on
+ * plain permalinks has no /wp-json route at all. Reconcile took each of those as "deleted from
+ * WordPress" and wrote it permanently, and rows marked deleted are never read again — so a live
+ * article dropped out of the dashboard for good.
+ *
+ * So 'gone' needs both halves of the proof: the 404 carries WordPress's own rest_post_invalid_id
+ * (the posts controller serves pages too, and uses the same code for them), and the collection
+ * route on the same site, asked with the same credentials, answers 200 with a list.
+ */
+export type WpPostState =
+  | { outcome: 'found'; id: number; link: string; status: string }
+  | { outcome: 'gone' }
+  | { outcome: 'unreadable'; reason: string }
+
+export async function readPostState(
+  siteUrl: string,
+  auth: { username: string; app_password: string },
+  postId: number,
+  kind: 'post' | 'page' = 'post',
+): Promise<WpPostState> {
+  const base = kind === 'page' ? 'pages' : 'posts'
+  const unreadable = (reason: string): WpPostState => ({ outcome: 'unreadable', reason })
+
+  let res: Response
+  try {
+    res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}/${postId}?context=edit`), {
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
+    })
+  } catch (e) {
+    return unreadable(String(e instanceof Error ? e.message : e).slice(0, 200))
+  }
+
+  const text = await res.text().catch(() => '')
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { /* not JSON — decided below */ }
+  const obj = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
+
+  if (res.ok) {
+    // A parked page or a plugin's HTML answers 200 too; only a post object counts as found.
+    if (!obj || obj.id == null || typeof obj.status !== 'string') return unreadable(`HTTP ${res.status} without a ${kind} object`)
+    return { outcome: 'found', id: Number(obj.id), link: String(obj.link || ''), status: obj.status }
+  }
+
+  const code = obj && typeof obj.code === 'string' ? obj.code : ''
+  if (res.status !== 404 || code !== 'rest_post_invalid_id') {
+    return unreadable(`HTTP ${res.status}${code ? ` ${code}` : ' (not a WordPress REST error)'}`)
+  }
+
+  // WordPress says the id is invalid. Prove the API answering is really this site's, working.
+  try {
+    const probe = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${base}?per_page=1&_fields=id`), {
+      headers: wpHeaders(auth),
+      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
+    })
+    const list = probe.ok ? await probe.json().catch(() => null) : null
+    if (!Array.isArray(list)) return unreadable(`404 rest_post_invalid_id, but /${base} answered ${probe.status} without a list`)
+  } catch (e) {
+    return unreadable(`404 rest_post_invalid_id, but /${base} could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`)
+  }
+  return { outcome: 'gone' }
 }
 
 /**
@@ -458,7 +753,7 @@ export async function uploadMediaToWordPress(
   if (meta?.altText) formData.append('alt_text', meta.altText)
   if (meta?.title)   formData.append('title', meta.title)
 
-  const res = await fetch(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
+  const res = await fetchWithSiteCredentials(`${siteUrl.replace(/\/+$/, '')}/wp-json/wp/v2/media`, {
     method:  'POST',
     headers: { Authorization: authHeader(auth.username, auth.app_password), 'User-Agent': BROWSER_BOT_UA },
     body:    formData,
@@ -544,7 +839,7 @@ export async function deleteWpContent(
   force = false,
 ): Promise<{ deleted: boolean; alreadyGone: boolean }> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
-  const res = await fetch(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `${path}?force=${force ? 'true' : 'false'}`), {
     method:  'DELETE',
     headers: wpHeaders(auth),
     signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
@@ -579,7 +874,7 @@ export async function setWpContentStatus(
   status: 'draft' | 'publish' | 'private',
 ): Promise<void> {
   const path = kind === 'page' ? `/pages/${id}` : `/posts/${id}`
-  const res = await fetch(wpApiUrl(siteUrl, path), {
+  const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, path), {
     method:  'POST',
     headers: wpHeaders(auth, true),
     body:    JSON.stringify({ status }),
@@ -652,7 +947,7 @@ export async function searchMedia(
   const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
   let res: Response
   try {
-    res = await fetch(url.toString(), {
+    res = await fetchWithSiteCredentials(url.toString(), {
       headers: {
         Authorization:  authHeader(auth.username, auth.app_password),
         'Content-Type': 'application/json',
@@ -718,7 +1013,7 @@ export async function getMediaItem(
   const timer = setTimeout(() => controller.abort(), WP_TIMEOUT_MS)
   let res: Response
   try {
-    res = await fetch(
+    res = await fetchWithSiteCredentials(
       `${wpApiUrl(siteUrl, `/media/${mediaId}`)}?_fields=id,title,source_url,media_details,alt_text,mime_type,date`,
       {
         headers: {

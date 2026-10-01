@@ -15,6 +15,7 @@ import SiloManager from '@/components/admin/SiloManager'
 import PipelineCard, {
   type Topic, type Post, type RowItem, fmtDate,
 } from '@/components/admin/PipelineCard'
+import { cadenceLabel } from '@/lib/content/cadence'
 
 interface Props {
   clientId:        string
@@ -23,24 +24,29 @@ interface Props {
   aiConfigured:    boolean
   isActive?:       boolean
   contentSettings?: Record<string, unknown> | null
-}
-
-const FREQ_LABEL: Record<string, string> = {
-  daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks',
-  monthly: 'Monthly', monthly_first: 'Monthly (1st)', monthly_mid: 'Monthly (15th)', monthly_end: 'Monthly (28th)',
+  /** Switch the Content tab to Settings, where the schedule a running plan follows is edited. */
+  onOpenSettings?: () => void
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10) }
 
-export default function ClientPipeline({ clientId, clientName, sites, aiConfigured, isActive = true, contentSettings }: Props) {
+/** What starting or regenerating the plan would do: the dates, the posts, and which dates were cleared. */
+type PlanPreview = { dates: string[]; posts: number; cleared: string[] }
+
+/** "Mon, Oct 5" */
+function fmtShort(iso: string): string {
+  return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+export default function ClientPipeline({ clientId, clientName, sites, aiConfigured, isActive = true, contentSettings, onOpenSettings }: Props) {
   const clientSites = sites.filter(s => s.clientId === clientId)
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
   const cs = contentSettings ?? {}
   const connectionId     = (cs.connection_id as string | null) ?? firstConnectionId
-  const scheduleFrequency = (cs.schedule_frequency as string | null) ?? null
-  const settingsWeeksAhead = (cs.weeks_ahead as number | null) ?? 6
-  const settingsStartDate  = (cs.schedule_start_date as string | null) ?? today()
+  const autoGenerate       = cs.auto_generate === true
+  const cadence            = cadenceLabel(cs)
+  const publishes          = `Publishes ${cadence.charAt(0).toLowerCase()}${cadence.slice(1)}`
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [topics,      setTopics]      = useState<Topic[]>([])
@@ -61,9 +67,17 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   const [calendarModalOpen, setCalendarModalOpen] = useState(false)
-  const [modalStartDate,    setModalStartDate]    = useState(settingsStartDate)
-  const [modalWeeks,        setModalWeeks]        = useState(settingsWeeksAhead)
+  // The dates starting the plan would fill, asked of the server (dry run) when the modal opens.
+  const [plan,              setPlan]              = useState<PlanPreview | null>(null)
+  const [planMode,          setPlanMode]          = useState<'start' | 'regenerate'>('start')
+  // For a client with nothing live: whether it had a plan whose dates were cleared, so the card
+  // offers to regenerate it rather than start one. Null until checked.
+  const [idlePreview,       setIdlePreview]       = useState<PlanPreview | null>(null)
+  const [idleChecked,       setIdleChecked]       = useState(false)
+  const [planError,         setPlanError]         = useState<string | null>(null)
   const [generating,        setGenerating]        = useState(false)
+  // A plan picking topics in the background, read from the server so it survives a refresh.
+  const [planRunning,       setPlanRunning]       = useState<{ started_at: string; dates: string[] } | null>(null)
   const [showNewPost,       setShowNewPost]       = useState(false)
 
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -96,6 +110,27 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   }, [clientId])
 
   useEffect(() => { loadPipeline() }, [loadPipeline])
+
+  const checkPlanRunning = useCallback(() => {
+    fetch(`/api/admin/content/calendar/generate?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { running: null })
+      .then((d: { running?: { started_at: string; dates: string[] } | null }) => setPlanRunning(d.running ?? null))
+      .catch(() => { /* keep what is shown; the next check corrects it */ })
+  }, [clientId])
+  useEffect(() => { checkPlanRunning() }, [checkPlanRunning])
+
+  // While a plan runs, reload every 15s so topics appear as each batch lands, and once more when
+  // it finishes. Not while the toast's own poll (started by this tab) is doing the same.
+  const planWasRunning = useRef(false)
+  useEffect(() => {
+    if (!planRunning) {
+      if (planWasRunning.current) { planWasRunning.current = false; loadPipeline() }
+      return
+    }
+    planWasRunning.current = true
+    const t = setInterval(() => { checkPlanRunning(); if (!pollRef.current) loadPipeline() }, 15_000)
+    return () => clearInterval(t)
+  }, [planRunning, checkPlanRunning, loadPipeline])
 
   // If the editor opened before the topic→post link loaded, refresh once.
   useEffect(() => {
@@ -224,19 +259,53 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     finally { setPurgeLoading(p => ({ ...p, [id]: false })) }
   }
 
+  // Always asked as a regenerate: for a new client there is nothing cleared, so it is the same as
+  // starting; for one whose posts were cleared it is what fills those dates again.
+  const fetchPlanPreview = useCallback(async (): Promise<PlanPreview | { error: string }> => {
+    const res = await fetch('/api/admin/content/calendar/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, dry_run: true, regenerate: true }),
+    }).catch(() => null)
+    const data = (res ? await res.json().catch(() => ({})) : {}) as { dates?: string[]; slots?: string[]; cleared?: string[]; error?: string }
+    if (!res?.ok) return { error: data.error ?? 'Couldn’t work out the dates. Try again.' }
+    return { dates: data.dates ?? [], posts: (data.slots ?? []).length, cleared: data.cleared ?? [] }
+  }, [clientId])
+
+  async function openPlan(mode: 'start' | 'regenerate') {
+    setPlanMode(mode); setCalendarModalOpen(true); setPlan(null); setPlanError(null)
+    const r = await fetchPlanPreview()
+    if ('error' in r) setPlanError(r.error)
+    else setPlan(r)
+  }
+
+  // The schedule in Content settings decides the dates: its start date, cadence and how far ahead.
+  // Sending none of them here is deliberate — the modal used to take a start date and a week
+  // count, which let a plan be started on dates the cron would never keep up.
   async function generateCalendar(e: React.FormEvent) {
     e.preventDefault()
     setGenerating(true)
-    const res = await fetch('/api/admin/content/calendar/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks }),
-    })
-    const data = await res.json()
-    setGenerating(false)
+    // A dropped connection or a non-JSON error page (a gateway timeout) must not leave the button
+    // stuck on "Generating topics…": every way out of here clears it.
+    let res: Response
+    let data: { queued?: boolean; slots?: string[]; reason?: string; error?: string }
+    try {
+      res = await fetch('/api/admin/content/calendar/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, regenerate: true }),
+      })
+      data = await res.json().catch(() => ({}))
+    } catch {
+      showToast('Couldn’t reach the server, so no topics were picked. Try again.', 'error')
+      return
+    } finally {
+      setGenerating(false)
+    }
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
-        showToast(`Topics are generating — they'll appear here automatically`, 'info')
+        checkPlanRunning()
+        const n = (data.slots ?? []).length
+        showToast(n ? `Generating ${n} topic${n === 1 ? '' : 's'}. They appear in the calendar as each one is ready.` : 'Generating topics. They appear in the calendar as each one is ready.', 'info')
         const prevCount = topicsRef.current.length
         let polls = 0
         if (pollRef.current) clearInterval(pollRef.current)
@@ -245,11 +314,16 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           loadPipeline()
           if (topicsRef.current.length > prevCount || polls >= 12) {
             clearInterval(pollRef.current!); pollRef.current = null
-            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topics generated`, 'success')
+            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topic${topicsRef.current.length - prevCount === 1 ? '' : 's'} added to the calendar`, 'success')
           }
         }, 15_000)
-      } else { showToast(data.reason ?? `${data.count ?? 0} topics generated across ${data.slots?.length ?? modalWeeks} publish dates`); loadPipeline() }
-    } else showToast(data.error || 'Generation failed', 'error')
+      } else {
+        // Not queued means nothing was generated — the route only answers this way when every
+        // slot already has a topic or was deliberately emptied, and it always says which. The old
+        // "N topics generated" fallback here could never show, and nothing changed to reload.
+        showToast(data.reason ?? 'Nothing to generate — every date already has a topic.', 'info')
+      }
+    } else showToast(data.error || `Couldn’t pick topics (HTTP ${res.status}).`, 'error')
   }
 
   const statusCounts = useMemo(() => computeStatusCounts(topics, posts), [topics, posts])
@@ -260,7 +334,21 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     const seenPostIds = new Set<string>()
     const allItems: RowItem[] = []
 
+    // A post claimed by more than one topic belongs to the topic the post itself names, else the
+    // newest claimant; the others were superseded and are not shown. A full regenerate used to
+    // retire only the topic the post recorded — most posts record none — so the old topic kept
+    // pointing at the rewritten post and the post rendered twice on its date.
+    const ownerOf = new Map<string, Topic>()
+    for (const t of topics) {
+      const pid = t.post?.id
+      if (!pid) continue
+      const cur = ownerOf.get(pid)
+      const named = posts.find(p => p.id === pid)?.topic_id
+      if (!cur || named === t.id || (named !== cur.id && (t.created_at ?? '') > (cur.created_at ?? ''))) ownerOf.set(pid, t)
+    }
+
     topics.forEach(t => {
+      if (t.post?.id && ownerOf.get(t.post.id) !== t) return
       // Three links, strongest first. The keyword+date guess USED to be the only fallback,
       // and it is guaranteed to break on exactly the rows people look at most: a full
       // regenerate picks a new topic and a new target_keyword, so the topic and its post stop
@@ -330,8 +418,38 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     return { topicIdToPost, allItems, groups, publishedItems, recentKeys, archivedKeys, rejectedCount, archivedCount, filterGroupItems }
   }, [topics, posts, showRejected])
 
-  const freqSummary = scheduleFrequency ? `${FREQ_LABEL[scheduleFrequency] ?? scheduleFrequency} · 1 topic/slot` : '1 topic/slot'
-  const willCreate  = Math.min(modalWeeks, 50)
+  // A plan is under way once the client has any topic or post that wasn't turned down. From then
+  // on the cron keeps its dates filled from Content settings, so the card says it is running
+  // rather than offering to start it again — a second "plan" only re-asked for dates that were
+  // already taken, from a start date that no longer meant anything.
+  //
+  // Rejected posts don't count, any more than rejected topics do: discarding a draft leaves the
+  // post in the list with status 'rejected' (it is not archived), and counting it kept a client
+  // whose every post was turned down reading "Running" instead of offering to regenerate.
+  const livePosts = useMemo(() => posts.filter(p => p.status !== 'rejected'), [posts])
+  const planStarted = topics.some(t => t.status !== 'rejected') || livePosts.length > 0
+  const plannedThrough = useMemo(() => {
+    const from = today()
+    const dates = [
+      ...topics.filter(t => t.status !== 'rejected').map(t => t.target_publish_date),
+      ...livePosts.map(p => p.target_publish_date),
+    ].map(d => (d ?? '').slice(0, 10)).filter(d => d && d >= from).sort()
+    return dates.length ? dates[dates.length - 1] : null
+  }, [topics, livePosts])
+
+  // Nothing live: find out whether this client had a plan whose posts were cleared (deleted, or
+  // all rejected), which the card words as regenerating rather than starting.
+  useEffect(() => {
+    if (!aiConfigured || dataLoading || planStarted) return
+    let cancelled = false
+    fetchPlanPreview().then(r => {
+      if (cancelled) return
+      if (!('error' in r)) setIdlePreview(r)
+      setIdleChecked(true)
+    })
+    return () => { cancelled = true }
+  }, [aiConfigured, dataLoading, planStarted, fetchPlanPreview])
+  const hadPlan = topics.length > 0 || posts.length > 0 || (idlePreview?.cleared.length ?? 0) > 0
 
   // Shared card-props builder for a RowItem
   const cardProps = (item: RowItem) => {
@@ -364,17 +482,62 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+      {/* Every sub-tab names itself in the same shape: title, then one line. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Pipeline
+        </h3>
+        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          Topics on their way to being written, and posts waiting on you.
+        </p>
+      </div>
+
       {/* ── AI Content Plan + New Post controls ────────────────────────────── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        {aiConfigured ? (
-          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>AI Content Plan</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Generate 1 topic per {(FREQ_LABEL[scheduleFrequency ?? 'weekly'] ?? 'weekly').toLowerCase()} slot for your next {settingsWeeksAhead} publish date{settingsWeeksAhead > 1 ? 's' : ''}
+        {aiConfigured && dataLoading ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
+        ) : aiConfigured && planStarted ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: `3px solid ${autoGenerate ? 'var(--green)' : 'var(--amber)'}`, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>Content plan</span>
+                <span className={`badge ${autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem' }}>{autoGenerate ? 'Running' : 'Paused'}</span>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {publishes}.{' '}
+                {autoGenerate ? (
+                  plannedThrough
+                    ? <>Topics are picked through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong>. The next ones are picked automatically as dates get closer.</>
+                    : <>The next topics are picked automatically as dates get closer.</>
+                ) : (
+                  <>Automatic planning is off, so no new topics are being picked{plannedThrough && <>. Topics are picked through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
+                )}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => setCalendarModalOpen(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Generate Plan</button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => openPlan('regenerate')} disabled={!!planRunning} style={{ whiteSpace: 'nowrap' }}>Regenerate plan</button>
+              {onOpenSettings && (
+                <button className="btn btn-secondary btn-sm" onClick={onOpenSettings} style={{ whiteSpace: 'nowrap' }}>Change in Content settings</button>
+              )}
+            </div>
+          </div>
+        ) : aiConfigured && !idleChecked && topics.length === 0 ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
+        ) : aiConfigured ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--blue)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
+                {hadPlan ? 'Regenerate the content plan' : 'Start the content plan'}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {hadPlan
+                  ? <>{publishes}. Its planned topics were cleared. Regenerating picks new topics for the upcoming publish dates{autoGenerate ? '; after that, new topics are picked automatically' : ''}.</>
+                  : <>{publishes}. Starting picks a topic for each upcoming publish date{autoGenerate ? '; after that, new topics are picked automatically' : ''}.</>}
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} disabled={!!planRunning} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {hadPlan ? 'Regenerate plan' : 'Start plan'}
+            </button>
           </div>
         ) : (
           <div style={{ flex: 1, padding: '10px 14px', fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
@@ -383,6 +546,18 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         )}
         <button className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>+ New Post</button>
       </div>
+
+      {/* ── A plan picking topics in the background ───────────────────────── */}
+      {planRunning && (
+        <div className="plan-running" role="status">
+          <span className="plan-running-dot" aria-hidden />
+          <span>
+            <strong>Picking topics{planRunning.dates.length > 0 ? ` for ${planRunning.dates.length} date${planRunning.dates.length === 1 ? '' : 's'}` : ''}</strong>
+            {planRunning.dates.length > 0 && <> ({planRunning.dates.slice(0, 6).map(fmtShort).join(', ')}{planRunning.dates.length > 6 ? ', …' : ''})</>}
+            . Started {Math.max(0, Math.round((Date.now() - Date.parse(planRunning.started_at)) / 60_000)) || 'under a'} min ago. They appear in the calendar as each batch is ready, usually within a few minutes.
+          </span>
+        </div>
+      )}
 
       {/* ── Publish-to sites ───────────────────────────────────────────────── */}
       {clientSites.length > 0 && (
@@ -396,6 +571,14 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           ))}
         </div>
       )}
+
+      {/* ── Priority topics ───────────────────────────────────────────────── */}
+      {/* Above the calendar and open, rather than collapsed at the bottom: these take the next
+          publish dates ahead of everything else, so they are what to see first. Short when empty. */}
+      <SiloManager
+        clientId={clientId}
+        onGenerated={loadPipeline}
+      />
 
       {/* ── Content Calendar (cards) ───────────────────────────────────────── */}
       <div className="card p-6">
@@ -413,7 +596,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         {dataLoading ? (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
         ) : model.allItems.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>No topics yet — click &quot;Generate Plan&quot; to create your first content calendar.</p>
+          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>No topics yet. Start the plan above to fill the first publish dates.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {model.recentKeys.map(dateKey => {
@@ -506,44 +689,58 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         )}
       </div>
 
-      {/* ── Topic Silos (collapsible) ──────────────────────────────────────── */}
-      <details className="card" style={{ overflow: 'hidden' }}>
-        <summary className="p-5 cursor-pointer font-semibold text-sm" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>▸ Topic Silos</summary>
-        <div className="p-5 pt-0" style={{ borderTop: '1px solid var(--border)' }}>
-          <SiloManager
-            clientId={clientId}
-            onGenerated={loadPipeline}
-            platform={clientSites.some(s => s.connectorType === 'bigcommerce') ? 'bigcommerce' : 'wordpress'}
-          />
-        </div>
-      </details>
-
       {/* ── Generate-Plan modal ────────────────────────────────────────────── */}
       {calendarModalOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }} onClick={() => setCalendarModalOpen(false)}>
           <div style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
-              <span className="font-semibold text-sm">Generate SEO Content Calendar</span>
-              <button type="button" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
+              <span className="font-semibold text-sm">{planMode === 'regenerate' ? 'Regenerate the content plan' : 'Start the content plan'}</span>
+              <button type="button" aria-label="Close" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
             </div>
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Start Date</label>
-                  <input className="input" type="date" style={{ width: '100%' }} value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} required />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Weeks Ahead</label>
-                  <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
-                </div>
-                <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
-                  <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}><strong>Using:</strong> {freqSummary}</p>
-                  <p className="text-xs" style={{ color: 'var(--blue)' }}><strong>Will create:</strong> {willCreate} topic{willCreate !== 1 ? 's' : ''}</p>
-                </div>
-              </div>
+              <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {planMode === 'regenerate'
+                  ? <>New topics are chosen automatically for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
+                  : <>Topics for these dates are chosen automatically, from Search Console, rankings and your ticked keywords. You can edit or reject any of them in the calendar.</>}
+              </p>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
+                <dt style={{ color: 'var(--text-muted)' }}>Schedule</dt>
+                <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
+                <dt style={{ color: 'var(--text-muted)' }}>Topics for</dt>
+                <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
+                  {planError
+                    ? <>{planError}{' '}<button type="button" onClick={() => void openPlan(planMode)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Try again</button></>
+                    : !plan
+                      ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
+                      : plan.dates.length === 0
+                        ? (planMode === 'regenerate'
+                          ? 'Every upcoming date already has a topic. Delete the ones you don’t want, then regenerate.'
+                          : 'Every upcoming date already has a topic.')
+                        : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
+                </dd>
+                <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
+                <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                  {autoGenerate
+                    ? 'New topics are picked automatically as later dates get closer.'
+                    : 'Automatic planning is off, so later dates won’t get topics on their own.'}
+                </dd>
+              </dl>
+              {onOpenSettings && (
+                <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  The schedule and start date come from{' '}
+                  <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>.
+                  {' '}Change them there first if they aren&apos;t right.
+                </p>
+              )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={generating}>{generating ? 'Generating…' : 'Generate →'}</button>
+                <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
+                  {generating
+                    ? 'Generating topics…'
+                    : plan && plan.posts > 0
+                      ? `Generate ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
+                      : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
+                </button>
               </div>
             </form>
           </div>

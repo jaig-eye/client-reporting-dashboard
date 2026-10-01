@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
   const clientId    = searchParams.get('client_id')
   const status      = searchParams.get('status')       // optional filter
   const contentType = searchParams.get('content_type') // optional: 'blog' | 'service_area'
+  const siloId      = searchParams.get('silo_id')      // optional: one silo's topics
 
   if (!clientId) {
     return NextResponse.json({ error: 'client_id required' }, { status: 400 })
@@ -30,6 +31,10 @@ export async function GET(request: NextRequest) {
 
   if (status) {
     query = query.eq('status', status) as typeof query
+  }
+
+  if (siloId) {
+    query = query.eq('silo_id', siloId) as typeof query
   }
 
   if (contentType) {

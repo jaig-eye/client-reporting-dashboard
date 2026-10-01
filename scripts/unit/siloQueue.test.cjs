@@ -1,0 +1,70 @@
+const test = require('node:test'); const assert = require('node:assert/strict')
+const path = require('path')
+const Q = require(path.join(process.env.WT, 'src/lib/content/siloQueue.ts'))
+
+test('typed keywords: one line, no quotes, de-duplicated in order', () => {
+  assert.deepEqual(
+    Q.cleanQueueKeywords(['  Commercial  landscaping ', 'commercial landscaping', 'HOA "mowing"\nschedule', '', null, 'a' + String.fromCharCode(92) + 'b']),
+    ['Commercial landscaping', 'HOA mowing schedule', 'a b'],
+  )
+  assert.equal(Q.cleanQueueKeyword('x'.repeat(300)).length, 200)
+})
+
+test('notes keep their line breaks and lose control characters', () => {
+  assert.equal(Q.cleanSiloNotes('Aim at HOA managers.\r\nMention plans.\u0007'), 'Aim at HOA managers. \nMention plans.')
+  assert.equal(Q.cleanSiloNotes('   '), null)
+  assert.equal(Q.cleanSiloNotes('y'.repeat(2000)).length, 1000)
+})
+
+const kw = (keyword, i) => ({ id: `k${i}`, keyword, keyword_type: 'supporting', intent: null, sort_order: i, used_at: null })
+
+test('queue prompt says what to do when fewer keywords are left than topics wanted', () => {
+  const short = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('hoa landscaping contracts', 0)], '', 3)
+  assert.match(short, /needs 3 topics and only 1 keyword is left/)
+  assert.match(short, /the other 2 must stay on the subject of "Commercial landscaping"/)
+  const exact = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('a', 0), kw('b', 1)], '', 2)
+  assert.doesNotMatch(exact, /needs \d+ topics/)
+})
+
+test('queue prompt: a main page is named and supported; without one each article stands alone', () => {
+  const hub = Q.buildKeywordQueueBlock('Lighting', null, [kw('a', 0)], '', 1, { url: 'https://x.com/lighting/', title: 'Landscape lighting' })
+  assert.ok(hub.includes('support the main page "Landscape lighting" (https://x.com/lighting/)'))
+  const flat = Q.buildKeywordQueueBlock('Lighting', null, [kw('a', 0)], '', 1)
+  assert.ok(flat.includes('stands on its own'))
+  assert.ok(!flat.includes('main page "'))
+})
+
+// A stand-in for the claim writes: every compare-and-swap wins, and the pairs are recorded.
+function claimDb() {
+  const claims = []
+  return {
+    claims,
+    from(table) {
+      let patch = null, id = null
+      const chain = {
+        update: (p) => { patch = p; return chain },
+        eq: (col, v) => { if (col === 'id') id = v; return chain },
+        is: () => chain,
+        select: async () => { if (table === 'content_silo_keywords') claims.push({ keywordId: id, topicId: patch.target_topic_id }); return { data: [{ id }], error: null } },
+        then: (res) => res({ error: null }),
+      }
+      return chain
+    },
+  }
+}
+
+test('reworded queue topics are claimed in queue order, demoted or not', async () => {
+  const C = require(path.join(process.env.WT, 'src/lib/content/cannibalization.ts'))
+  const prot = new Map([['roof repair', { position: 3, url: 'https://x.com/roof-repair/' }]])
+  // Both keywords reworded by the model (blog-intent rule 2); the first now contains a ranking phrase.
+  const topics = [
+    { id: 't1', target_keyword: 'how much does roof repair cost' },
+    { id: 't2', target_keyword: 'how often should gutters be cleaned' },
+  ]
+  const r = await C.resolveCannibalization({ topics, protectedKeywords: prot, requestTopics: async () => ({ topics: [] }), maxRounds: 0 })
+  const db = claimDb()
+  await Q.claimKeywordsForTopics(db, [kw('roof repair cost', 0), kw('gutter cleaning schedule', 1)], r.topics)
+  assert.deepEqual(db.claims.sort((a, b) => a.keywordId.localeCompare(b.keywordId)), [
+    { keywordId: 'k0', topicId: 't1' }, { keywordId: 'k1', topicId: 't2' },
+  ])
+})

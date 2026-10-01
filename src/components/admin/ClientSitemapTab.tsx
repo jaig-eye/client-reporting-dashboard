@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Star, MinusCircle, MapPin } from '@phosphor-icons/react'
+import SitemapPaste from '@/components/admin/SitemapPaste'
+import { Star, MinusCircle, MapPin, GearSix } from '@phosphor-icons/react'
 
 type SitemapPage = {
   url:           string
@@ -52,6 +53,8 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [sitemapUrls,   setSitemapUrls]   = useState<string[]>([])
   const [manualLinks,   setManualLinks]   = useState<ManualLink[]>([])
   const [excludeProducts, setExcludeProducts] = useState(false)
+  // Configuration is set once and then sits above the page list forever. Folded by default.
+  const [configOpen,    setConfigOpen]    = useState(false)
   const [configSaving,  setConfigSaving]  = useState(false)
   const [configSaved,   setConfigSaved]   = useState(false)
   const [configError,   setConfigError]   = useState('')
@@ -253,23 +256,43 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
+      {/* Every sub-tab names itself in the same shape: title, then one line. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>Sitemap</h3>
+        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          The pages the writer can link to.
+        </p>
+      </div>
+
       {/* ── Sitemaps & Internal Links ─────────────────────────────────────── */}
       <div className="card p-6 space-y-4">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <h3 className="section-title" style={{ marginBottom: 2 }}>Sitemaps &amp; Internal Links</h3>
-            <p className="section-desc" style={{ margin: 0 }}>Sitemaps give the AI page context for internal linking. Always-include links are injected into every generated post.</p>
+            {/* Folded away, the state still has to be readable — otherwise the gear hides whether
+                anything is set at all. */}
+            <p className="section-desc" style={{ margin: 0 }}>
+              {sitemapUrls.filter(Boolean).length || 0} sitemap{sitemapUrls.filter(Boolean).length === 1 ? '' : 's'}
+              {' · '}{manualLinks.length} always-include link{manualLinks.length === 1 ? '' : 's'}
+              {excludeProducts ? ' · product pages skipped' : ''}
+            </p>
           </div>
           <button
             type="button"
-            onClick={saveConfig}
-            disabled={configSaving}
-            className="btn btn-primary"
-            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem', flexShrink: 0 }}
+            onClick={() => setConfigOpen(v => !v)}
+            aria-expanded={configOpen}
+            aria-label={configOpen ? 'Hide sitemap settings' : 'Sitemap settings'}
+            title={configOpen ? 'Hide settings' : 'Settings'}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.7rem', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            {configSaving ? 'Saving…' : configSaved ? 'Saved ✓' : 'Save'}
+            <GearSix size={15} weight="duotone" />
+            {configOpen ? 'Hide' : 'Settings'}
           </button>
         </div>
+
+        {configOpen && (
+        <>
 
         {configError && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', margin: 0 }}>{configError}</p>}
 
@@ -322,6 +345,23 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
             <button type="button" onClick={addManualLink} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Link</button>
           </div>
         </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 4 }}>
+          <button
+            type="button"
+            onClick={saveConfig}
+            disabled={configSaving}
+            className="btn btn-primary"
+            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
+          >
+            {configSaving ? 'Saving…' : configSaved ? 'Saved ✓' : 'Save'}
+          </button>
+          <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
+            Sitemaps give the writer page context for internal linking.
+          </span>
+        </div>
+        </>
+        )}
       </div>
 
       {/* ── Sitemap Pages ───────────────────────────────────────────────────── */}
@@ -360,6 +400,19 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 12 }}>{error}</p>
       )}
+
+      <div style={{ marginBottom: 12 }}>
+        <SitemapPaste
+          clientId={clientId}
+          onImported={(list, n) => {
+            const data = list as SitemapPage[]
+            setPages(data)
+            snapshotOrder(data)
+            setNotes(n)
+            setError('')
+          }}
+        />
+      </div>
 
       {notes && (
         <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 12 }}>{notes}</p>

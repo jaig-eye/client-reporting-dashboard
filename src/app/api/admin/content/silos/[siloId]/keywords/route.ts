@@ -1,10 +1,12 @@
 // GET  /api/admin/content/silos/[siloId]/keywords — list keywords for a silo
-// POST /api/admin/content/silos/[siloId]/keywords — create keyword
+// POST /api/admin/content/silos/[siloId]/keywords — add one keyword ({ keyword, ... }) or many
+//   ({ keywords: string[] }), appended to the end of the queue
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { cleanQueueKeyword, cleanQueueKeywords } from '@/lib/content/siloQueue'
 
 export async function GET(
   request: NextRequest,
@@ -38,7 +40,7 @@ export async function GET(
       ? db.from('content_posts').select('id, title, status, published_url, target_publish_date').in('id', postIds)
       : Promise.resolve({ data: [] }),
     topicIds.length
-      ? db.from('content_topics').select('id, topic, status').in('id', topicIds)
+      ? db.from('content_topics').select('id, topic, status, target_publish_date').in('id', topicIds)
       : Promise.resolve({ data: [] }),
   ])
 
@@ -64,8 +66,11 @@ export async function POST(
 
   const { siloId } = params
   const body = await request.json() as {
-    client_id:               string
-    keyword:                 string
+    /** Ignored: the silo decides the client. Accepted so older callers keep working. */
+    client_id?:              string
+    keyword?:                string
+    /** Many at once, in order, one keyword each. */
+    keywords?:               unknown[]
     keyword_type?:           string
     intent?:                 string | null
     monthly_searches_low?:   number | null
@@ -78,19 +83,65 @@ export async function POST(
     page_category?:          string | null
   }
 
-  if (!body.client_id || !body.keyword?.trim())
-    return NextResponse.json({ error: 'Missing client_id or keyword' }, { status: 400 })
+  const db = createAdminClient()
+
+  // The silo decides the client. Taking client_id from the body could file a keyword under a
+  // client other than the silo's, where no generation run would ever look for it.
+  const { data: silo, error: siloErr } = await db
+    .from('content_silos')
+    .select('client_id')
+    .eq('id', siloId)
+    .maybeSingle()
+  if (siloErr) return NextResponse.json({ error: siloErr.message }, { status: 500 })
+  if (!silo) return NextResponse.json({ error: 'Silo not found' }, { status: 404 })
+  const clientId = (silo as { client_id: string }).client_id
+
+  // What the silo already holds: to skip repeats, and to append after the last keyword. Every
+  // added keyword used to get sort_order 0, which sorted it AHEAD of a queue seeded 0, 1, 2… — a
+  // keyword added later was written before the ones waiting longest.
+  const { data: existing, error: exErr } = await db
+    .from('content_silo_keywords')
+    .select('keyword, sort_order')
+    .eq('silo_id', siloId)
+  if (exErr) return NextResponse.json({ error: exErr.message }, { status: 500 })
+  const held = (existing ?? []) as { keyword: string; sort_order: number | null }[]
+  const have = new Set(held.map(k => cleanQueueKeyword(k.keyword).toLowerCase()))
+  const nextOrder = held.reduce((m, k) => Math.max(m, k.sort_order ?? 0), -1) + 1
+
+  if (Array.isArray(body.keywords)) {
+    const list  = cleanQueueKeywords(body.keywords).slice(0, 200)
+    const fresh = list.filter(k => !have.has(k.toLowerCase()))
+    if (fresh.length === 0) return NextResponse.json({ added: 0, skipped: list.length, keywords: [] })
+    const { data, error } = await db
+      .from('content_silo_keywords')
+      .insert(fresh.map((keyword, i) => ({
+        client_id:    clientId,
+        silo_id:      siloId,
+        keyword,
+        keyword_type: 'supporting',
+        sort_order:   nextOrder + i,
+        selected:     true,
+      })))
+      .select()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ added: fresh.length, skipped: list.length - fresh.length, keywords: data ?? [] }, { status: 201 })
+  }
+
+  const keyword = cleanQueueKeyword(body.keyword)
+  if (!keyword) return NextResponse.json({ error: 'Missing keyword' }, { status: 400 })
+  if (have.has(keyword.toLowerCase()))
+    return NextResponse.json({ error: `"${keyword}" is already in this silo` }, { status: 409 })
 
   const validTypes = ['top_level', 'secondary_top_level', 'supporting']
   const kwType = validTypes.includes(body.keyword_type ?? '') ? body.keyword_type : 'supporting'
 
-  const db = createAdminClient()
   const { data, error } = await db
     .from('content_silo_keywords')
     .insert({
-      client_id:               body.client_id,
+      client_id:               clientId,
       silo_id:                 siloId,
-      keyword:                 body.keyword.trim(),
+      keyword,
+      sort_order:              nextOrder,
       keyword_type:            kwType,
       intent:                  body.intent                  ?? null,
       monthly_searches_low:    body.monthly_searches_low    ?? null,

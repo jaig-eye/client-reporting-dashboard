@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                   from '@/lib/activity'
 import { parseBody }                     from '@/lib/apiError'
@@ -23,15 +24,42 @@ export async function GET(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
   const db = createAdminClient()
-  const [{ data }, { data: clientRow }] = await Promise.all([
-    db.from('content_settings')
-      .select('business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author, vertical, exclude_product_sitemaps')
-      .eq('client_id', clientId)
-      .maybeSingle(),
+
+  // Columns every deployment has.
+  const BASE_COLS = 'business_background, services, target_audience, geographic_focus, brand_voice, sitemap_url, sitemap_urls, manual_link_urls, phone_number, post_structure, auto_generate, schedule_frequency, schedule_day_of_week, target_length, posts_per_run, connection_id, default_author_id, default_category_ids, monthly_publish_day, weeks_ahead, cta_list, schedule_start_date, eeat_data, publish_time, wp_publish_mode, topic_guidelines, auto_approve_topics, auto_push_posts, wizard_completed, content_image_generation, content_image_prompt, generate_service_pages, generate_regular_pages, service_page_topic_guidelines, regular_page_topic_guidelines, service_page_auto_generate, regular_page_auto_generate, blog_url_prefix, bc_author, vertical, exclude_product_sitemaps'
+  // Added by migration 222. PostgREST rejects the WHOLE select when one column is missing, so
+  // naming it unconditionally took the entire settings payload down on any deployment where 222
+  // had not run — and every settings screen then rendered its defaults: cadence back to "use
+  // global default", start date blank, automation toggles off, sitemap unconfigured. The data was
+  // never touched; the page simply could not read it. Ask for it, and ask again without it.
+  // research_location is migration 224 — same treatment.
+  const OPTIONAL_COLS = ['foundational_keywords', 'research_location']
+
+  const readSettings = async () => {
+    const optional = [...OPTIONAL_COLS]
+    for (;;) {
+      const res = await db.from('content_settings')
+        .select([BASE_COLS, ...optional].join(', '))
+        .eq('client_id', clientId)
+        .maybeSingle()
+      if (!res.error) return res
+      const missing = optional.find(col => new RegExp(col, 'i').test(res.error.message))
+      if (!missing) return res
+      console.warn(`[client-settings] ${missing} missing (apply migration ${missing === 'research_location' ? 224 : 222}) — reading without it`)
+      optional.splice(optional.indexOf(missing), 1)
+    }
+  }
+
+  const [{ data, error }, { data: clientRow }] = await Promise.all([
+    readSettings(),
     db.from('clients').select('phone').eq('id', clientId).maybeSingle(),
   ])
+  // An error is not "no settings yet". Answering {} loaded the form blank, and the next Save wrote
+  // those blanks over the client's real Brand DNA. A missing row is still {} (maybeSingle → null).
+  if (error) return NextResponse.json({ error: `Could not read content settings: ${error.message}` }, { status: 500 })
 
-  const result: Record<string, unknown> = { ...(data ?? {}) }
+  // The select string is built at runtime now, so supabase-js cannot type the row.
+  const result: Record<string, unknown> = { ...((data ?? {}) as Record<string, unknown>) }
   if ((result.phone_number == null || result.phone_number === '') && clientRow?.phone) {
     result.phone_number = clientRow.phone
   }
@@ -43,7 +71,7 @@ const CONTENT_FIELDS = [
   'business_background', 'services', 'target_audience', 'geographic_focus',
   'brand_voice', 'sitemap_url', 'sitemap_urls', 'manual_link_urls', 'phone_number',
   'post_structure', 'auto_generate', 'schedule_frequency',
-  'schedule_day_of_week', 'target_length', 'connection_id', 'default_author_id',
+  'schedule_day_of_week', 'target_length', 'posts_per_run', 'connection_id', 'default_author_id',
   'monthly_publish_day', 'weeks_ahead', 'cta_list',
   'schedule_start_date', 'eeat_data', 'publish_time', 'wp_publish_mode',
   'topic_guidelines', 'auto_approve_topics', 'auto_push_posts', 'wizard_completed',
@@ -56,6 +84,8 @@ const CONTENT_FIELDS = [
   'bc_author',
   'vertical',
   'exclude_product_sitemaps',
+  'foundational_keywords',
+  'research_location',
 ] as const
 
 export async function PUT(request: NextRequest) {
@@ -76,8 +106,18 @@ export async function PUT(request: NextRequest) {
   for (const f of CONTENT_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(body, f)) {
       // Array fields must remain arrays; everything else coerces null
-      if (f === 'sitemap_urls' || f === 'manual_link_urls') {
+      if (f === 'foundational_keywords') {
+        // Strings only, trimmed, bounded — the same 40 the chip input allows. Research reads at
+        // most 25 of them, but an unbounded array of any shape was stored as sent.
+        row[f] = Array.isArray(body[f])
+          ? (body[f] as unknown[]).filter((v): v is string => typeof v === 'string')
+              .map(v => v.trim()).filter(v => v.length >= 2 && v.length <= 120).slice(0, 40)
+          : []
+      } else if (f === 'sitemap_urls' || f === 'manual_link_urls') {
         row[f] = Array.isArray(body[f]) ? body[f] : []
+      } else if (f === 'research_location') {
+        // A geo target or nothing — never an arbitrary object.
+        row[f] = readResearchLocation(body[f])
       } else {
         row[f] = body[f] ?? null
       }
@@ -85,11 +125,51 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
-  const { error } = await db
+
+  // A moved research location changes what a live rank check measures, so each tracked keyword's
+  // next read must be a fresh baseline rather than a "movement" across two markets. Compared
+  // before the write; applied only if the write kept the column.
+  let locationMoved = false
+  if ('research_location' in row) {
+    try {
+      const { data: cur } = await db.from('content_settings').select('research_location').eq('client_id', String(client_id)).maybeSingle()
+      const was = readResearchLocation((cur as { research_location?: unknown } | null)?.research_location)?.code ?? null
+      const now = (row.research_location as { code?: number } | null)?.code ?? null
+      locationMoved = was !== now
+    } catch { /* column absent — nothing moves */ }
+  }
+
+  let { error } = await db
     .from('content_settings')
     .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false })
 
+  // Same shape as the read: without migration 222 the whole upsert fails, so a wizard that sent
+  // seed keywords would have saved NOTHING — schedule, brand answers and all. Drop the field the
+  // database does not know about and save the rest.
+  // PostgREST names ONE unknown column per response, so this repeats until the error stops naming
+  // one of ours. A single pass per column answered 500 when both 222 and 224 were missing — and
+  // saved nothing. Bounded: every pass deletes a key.
+  const OPTIONAL = ['foundational_keywords', 'research_location'] as const
+  while (error) {
+    const message = error.message
+    const col = OPTIONAL.find(c => c in row && new RegExp(c, 'i').test(message))
+    if (!col) break
+    console.warn(`[client-settings] ${col} missing (apply migration ${col === 'research_location' ? 224 : 222}) — saving without it`)
+    delete row[col]
+    ;({ error } = await db
+      .from('content_settings')
+      .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false }))
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  if (locationMoved && 'research_location' in row) {
+    const { error: resetErr } = await db.from('seo_keywords')
+      .update({ last_checked_at: null })
+      .eq('client_id', String(client_id))
+      .eq('is_tracked', true)
+    if (resetErr) console.warn('[client-settings] could not reset rank baselines after a location change:', resetErr.message)
+  }
 
   // Keep clients.phone in sync with content_settings.phone_number
   if (Object.prototype.hasOwnProperty.call(body, 'phone_number')) {

@@ -27,7 +27,17 @@ function isHallucinatedExtension(href: string, allowedUrls: Set<string>): boolea
 }
 
 export function stripHallucinatedLinks(html: string, allowedUrls: Set<string>): string {
-  if (allowedUrls.size === 0) return html
+  // Nothing to verify against (no sitemap cached, no manual or silo links) means every page link
+  // in the article was invented. Returning the HTML untouched let them all through — for exactly
+  // the client whose links could least be checked — while every other client had unverifiable
+  // external links removed. Now the same rule holds: the anchor text stays, the link goes.
+  if (allowedUrls.size === 0) {
+    return html.replace(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs: string, text: string) => {
+      const m = attrs.match(/href\s*=\s*["']([^"']*)["']/i)
+      if (!m || /^(mailto:|tel:|#)/.test(m[1].trim())) return match
+      return text
+    })
+  }
   const normalised = new Set(Array.from(allowedUrls).map(norm))
   // Derive known internal hostnames from the allowed set so we can distinguish
   // absolute internal links from genuine external links.

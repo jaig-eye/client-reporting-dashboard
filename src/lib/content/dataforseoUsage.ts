@@ -1,14 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DataForSEO usage ledger — record + summarize spend.
 //
-// recordDfsUsage() writes one row (per client / operation / cron run) into
-// dataforseo_usage; getDfsUsageSummary() aggregates for the agency spend panel.
+// recordDfsUsage() writes one row into dataforseo_usage — per client per cron run for rank
+// checks, per paid call for keyword research (so a run killed part-way still reaches the ledger),
+// per call for SERP intel. getDfsUsageSummary() aggregates for the agency spend panel.
 // Both SOFT-FAIL (migration 191 may be unapplied) so nothing depends on them.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/server'
 
-export type DfsOperation = 'rank_check' | 'serp_research' | 'serp_intel' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
+// 'serp_snapshot_on_select' is gone: picking a keyword no longer buys a SERP (see the PATCH in
+// keyword-research/route.ts). The spend panel keeps its label so any older ledger rows still read.
+export type DfsOperation = 'rank_check' | 'keyword_discovery' | 'serp_research' | 'serp_intel' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
 
 export async function recordDfsUsage(params: {
   operation: DfsOperation
@@ -52,14 +55,22 @@ export async function getDfsUsageSummary(range?: { from?: string; to?: string })
   const empty: DfsUsageSummary = { from, to, total: 0, total_units: 0, byOperation: [], byClient: [], daily: [] }
   try {
     const db = createAdminClient()
-    const { data, error } = await db
-      .from('dataforseo_usage')
-      .select('client_id, operation, cost, units, date')
-      .gte('date', from)
-      .lte('date', to)
-      .limit(100000)
-    if (error || !Array.isArray(data)) return empty
-    const rows = data as Array<{ client_id: string | null; operation: string; cost: number; units: number; date: string }>
+    type Row = { client_id: string | null; operation: string; cost: number; units: number; date: string }
+    // Read in pages: a single read is cut at PostgREST's 1,000-row cap whatever .limit() says, and
+    // the panel's totals then stop growing partway through the month.
+    const rows: Row[] = []
+    for (let start = 0; start < 500_000; start += 1000) {
+      const { data, error } = await db
+        .from('dataforseo_usage')
+        .select('client_id, operation, cost, units, date')
+        .gte('date', from)
+        .lte('date', to)
+        .order('id', { ascending: true })
+        .range(start, start + 999)
+      if (error || !Array.isArray(data)) return empty
+      rows.push(...(data as Row[]))
+      if (data.length < 1000) break
+    }
 
     let total = 0, totalUnits = 0
     const byOp    = new Map<string, { cost: number; units: number }>()

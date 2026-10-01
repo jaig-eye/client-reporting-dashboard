@@ -27,7 +27,7 @@
 | `MAILGUN_SMTP_USER` | yes | SMTP username | `lib/email.ts` |
 | `MAILGUN_SMTP_PASS` | yes | SMTP password | `lib/email.ts` |
 | `MAILGUN_FROM` | no | From address; falls back to `MAILGUN_SMTP_USER` | `lib/email.ts` |
-| `GEMINI_API_KEY` | no | Gemini API key for image generation fallback | `lib/content/generatePostImage.ts` |
+| `GEMINI_API_KEY` | no | Gemini API key for the Imagen image fallback, sent as the `x-goog-api-key` header. Google has shut Imagen down, so the fallback currently always fails until it is ported to `gemini-*-image` via `:generateContent` | `lib/content/generatePostImage.ts` |
 | `OPENAI_API_KEY` | no | OpenAI API key (also stored in `agency_settings.openai_api_key`/`ai_api_key`) | Content generation, image generation |
 | `VERCEL_URL` | auto | Set by Vercel; used internally for URL construction | Next.js runtime |
 | `NODE_ENV` | auto | `production` or `development`; affects cookie security flags | `lib/auth.ts` |
@@ -49,7 +49,7 @@ Additional keys stored in the database (not env vars) and loaded at runtime:
 Key columns: `id` (UUID PK), `name`, `email` (nullable unique), `slug` (unique), `logo_url`, `dashboard_token` (UUID, unique — client portal access key), `default_conversion_value`, `ad_fuel_cut` (DECIMAL, overrides agency default), `lead_action`, `lead_action_fallback`, `purchase_action`, `purchase_action_fallback`, `benchmark_roas/ctr/cpc/conv_rate/cpm/cpl` (all nullable), `show_benchmarks`, `hidden_metrics`, `enabled_benchmarks`, `metric_layout_override` (JSONB), `layout_type`, `bill_day` (1–31), `historic_bill_day` (1–31), `monthly_budget`, `discord_channel_id`, `local_dominator_url`, `stripe_customer_id`, `ad_fuel_alert_threshold`, `last_fuel_alert_at`, `last_fuel_alert_balance`, `ad_fuel_alert_muted`, `auto_pause_ads`, `auto_resume_ads`, `campaigns_paused_at`, `bc_daily_report`, `last_runway_alert_at`, `last_runway_alert_days`, `created_at`, `updated_at`.
 
 **`agency_settings`** (single row)
-Key columns: `agency_name`, `agency_logo_url`, `favicon_url`, `crm_name`, `benchmark_*` (6 fields), `default_date_range_days`, `default_conversion_value`, `ad_fuel_cut`, `ad_fuel_cutoff_date`, `default_lead_action`, `default_lead_action_fallback`, `default_purchase_action`, `default_purchase_action_fallback`, `cron_enabled`, `app_version`, `ads_sync_frequency`, `ads_sync_hour_utc`, `sync_frequency`, `sync_hour_utc`, `sync_day_of_week`, `chart_color_spend/prior_spend/conversions/prior_conversions`, `ai_provider`, `ai_model`, `ai_api_key`, `openai_api_key`, `metric_layouts` (JSONB), `hidden_connector_types` (TEXT[]), `discord_bot_token`, `stripe_api_key`, `stripe_webhook_secret`, `serp_api_key`, `serp_api_provider`, `brand_primary`, `notify_metric_alerts`, `metric_alert_threshold`, `daily_alert_threshold`, `daily_alert_metrics` (JSONB), `weekly_alert_metrics` (JSONB), `notify_connector_errors`, `notify_topic_ready`, `notify_post_uploaded`, `master_writing_prompt`, `service_area_master_prompt`, `super_admin_otp_hash`, `super_admin_otp_expires_at`, `image_generation_enabled`.
+Key columns: `agency_name`, `agency_logo_url`, `favicon_url`, `crm_name`, `benchmark_*` (6 fields), `default_date_range_days`, `default_conversion_value`, `ad_fuel_cut`, `ad_fuel_cutoff_date`, `default_lead_action`, `default_lead_action_fallback`, `default_purchase_action`, `default_purchase_action_fallback`, `cron_enabled`, `app_version`, `ads_sync_frequency`, `ads_sync_hour_utc`, `sync_frequency`, `sync_hour_utc`, `sync_day_of_week`, `chart_color_spend/prior_spend/conversions/prior_conversions`, `ai_provider`, `ai_model`, `ai_api_key`, `openai_api_key`, `image_model` (migration 227; OpenAI image model — NULL or unknown means `DEFAULT_IMAGE_MODEL` in `lib/content/imageModels.ts`, currently `gpt-image-2.5-flare`), `metric_layouts` (JSONB), `hidden_connector_types` (TEXT[]), `discord_bot_token`, `stripe_api_key`, `stripe_webhook_secret`, `serp_api_key`, `serp_api_provider`, `brand_primary`, `notify_metric_alerts`, `metric_alert_threshold`, `daily_alert_threshold`, `daily_alert_metrics` (JSONB), `weekly_alert_metrics` (JSONB), `notify_connector_errors`, `notify_topic_ready`, `notify_post_uploaded`, `master_writing_prompt`, `service_area_master_prompt`, `super_admin_otp_hash`, `super_admin_otp_expires_at`, `image_generation_enabled`.
 
 **`users`**
 Columns: `id`, `name`, `email` (unique), `username` (unique on `LOWER(username)`), `password_hash`, `role` (admin|viewer), `is_active`, `last_login_at`, `avatar_url`, `theme` (light|dark|auto), `accent_color`, `created_at`, `updated_at`.
@@ -199,13 +199,15 @@ Columns: `id`, `client_id` (FK), `source` (google_ads|meta_ads), `campaign_id`, 
 ### Content Tables
 
 **`content_settings`** (one row per client, or client_id IS NULL for global)
-Key columns: `client_id`, `background`, `services`, `target_audience`, `geographic_focus`, `brand_voice`, `phone_number`, `cta_list`, `sitemap_urls` (TEXT[]), `manual_link_urls` (TEXT[]), `eeat_data` (JSONB — 15 fields), `auto_generate`, `auto_approve_topics`, `auto_push_posts`, `schedule_frequency`, `schedule_day_of_week`, `monthly_publish_day`, `topics_per_run`, `posts_per_run`, `weeks_ahead`, `target_length`, `publish_time`, `wp_publish_mode` (scheduled_draft|draft_only), `topic_guidelines`, `wizard_completed`, `post_structure`, `notification_email`.
+Key columns: `client_id`, `background`, `services`, `target_audience`, `geographic_focus`, `brand_voice`, `phone_number`, `cta_list`, `sitemap_urls` (TEXT[]), `manual_link_urls` (TEXT[]), `eeat_data` (JSONB — 15 fields), `auto_generate`, `auto_approve_topics`, `auto_push_posts`, `schedule_frequency`, `schedule_day_of_week`, `monthly_publish_day`, `topics_per_run`, `posts_per_run`, `weeks_ahead`, `target_length`, `publish_time`, `wp_publish_mode` (scheduled_draft|draft_only), `topic_guidelines`, `wizard_completed`, `post_structure`, `notification_email`, `foundational_keywords` (TEXT[] — "Starting keywords", migration 222), `last_keyword_research_at` (222), `research_location` (JSONB `{ code, name, type }` — the Google geo target research and live rank checks are measured in; null = country-level; migration 224).
+
+**`seo_keywords`** (migration 189) — the keyword registry: researched candidates, tracked post keywords. `metadata` (JSONB) carries `research_score`, `found_via`, `local_volume` (Google Ads volume in the research location), and `serp` (what Google showed for the search — PAA, related searches, AI Overview sources, featured snippet, local pack, top organic — written by `saveSerpInsight()` at post generation and by research for starting keywords). `dismissed_at` (223) hides a candidate from selection.
 
 **`content_topics`**
 Key columns: `id`, `client_id` (FK), `content_type` (blog|service_area), `status` (pending|approved|rejected|generating|generated|scheduled), `topic`, `target_keyword`, `search_intent`, `secondary_keywords`, `keyword_opportunity`, `ranking_strategy`, `audience_intent`, `why_now`, `competition_level`, `cluster_group`, `seo_brief` (JSONB — 28 fields), `competitors_researched` (JSONB), `edit_notes`, `target_publish_date`, `auto_approved_at`, `generation_error`, `city`, `state_abbr`, `service_name`, `created_at`, `updated_at`.
 
 **`content_posts`**
-Key columns: `id`, `client_id` (FK), `topic_id` (FK nullable), `content_type` (blog|service_area), `status` (pending|for_review|draft_saved|published|rejected), `title`, `seo_title`, `content` (HTML), `excerpt`, `meta_description`, `slug`, `target_keyword`, `suggested_tags`, `seo_score` (JSONB — 17 fields), `featured_image_url`, `featured_image_prompt`, `featured_image_source`, `image_generation_error`, `wp_post_id`, `wp_status`, `wp_site_url`, `bc_post_id`, `bc_store_hash`, `published_url`, `target_publish_date`, `auto_pushed_at`, `auto_push_error`, `generated_by` (scheduled|manual|topic), `topic_rationale`, `city`, `state_abbr`, `service_name`, `service_page_url`, `created_at`, `updated_at`.
+Key columns: `id`, `client_id` (FK), `topic_id` (FK nullable), `content_type` (blog|service_area), `status` (pending|for_review|draft_saved|published|rejected), `title`, `seo_title`, `content` (HTML), `excerpt`, `meta_description`, `slug`, `target_keyword`, `suggested_tags`, `seo_score` (JSONB — 17 fields), `featured_image_url`, `featured_image_prompt`, `featured_image_source`, `image_generation_error` (why the last image generation produced no image; cleared when one is attached), `wp_post_id`, `wp_status`, `wp_site_url`, `bc_post_id`, `bc_store_hash`, `published_url`, `target_publish_date`, `auto_pushed_at`, `auto_push_error`, `generated_by` (scheduled|manual|topic), `topic_rationale`, `city`, `state_abbr`, `service_name`, `service_page_url`, `created_at`, `updated_at`.
 
 **`content_sitemap_pages`**
 Unique key: `(client_id, url)`.
@@ -237,7 +239,7 @@ Columns: `id`, `client_id` (FK unique), `connection_id` (FK nullable), `slug_str
 
 ## Cron Jobs
 
-All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth (except `cleanup-rejected-topics` which uses `x-cron-secret` header or `?secret=` param).
+All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth.
 
 | Route | Schedule | What it does |
 |---|---|---|
@@ -247,9 +249,11 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 | `/api/cron/ad-fuel-budget-alerts` | Daily 9 AM UTC | Forward-looking budget/runway alerts. Projects whether client will exhaust budget or balance before next billing date. Three path variants based on whether client has `bill_day` and `monthly_budget`. Uses AI (Haiku/gpt-4o-mini) for message text, falls back to template. Writes `admin_alerts`. |
 | `/api/cron/auto-pause-ads` | 15 min past every hour | Pauses Google/Meta campaigns when Ad Fuel balance goes negative. Resumes when balance becomes positive and `auto_resume_ads = true`. Reads paused campaign IDs from last `ad_pause_log` row for targeted resume. Sends Discord alert on pause/resume. |
 | `/api/cron/metric-alerts` | Daily 8 AM UTC | Two-phase alert: (1) day-over-day red alerts (default 50% threshold, spend ≥ $5); (2) 7v7 notable changes (default 25%, spend ≥ $10). Deduplicates by client+metric+platform+date. Sends email digest. Auto-dismisses stale daily alerts after 48h. |
-| `/api/cron/cleanup-rejected-topics` | Mondays 9 AM UTC | Deletes `content_topics` rows where `status = 'rejected'` and `created_at < 7 days ago`. |
-| `/api/cron/content-topics` | Daily 7 AM and 2 PM UTC (maxDuration 300s) | Full content pipeline: reset stuck generating topics; per-client topic generation; auto-approve dated/dateless topics; SEO brief generation; post generation; auto-push posts to WP/BC; BigCommerce spot-check alerts; service area page loop; batch email/Discord notifications. |
-| `/api/admin/content/schedule` | Daily 6 AM UTC | (Separate from `content-topics`) Handles scheduled content delivery — the content calendar job. |
+| `/api/cron/content-topics` | Every 2 hours (`0 */2 * * *`, maxDuration 300s) | Full content pipeline: reset stuck generating topics and posts; per-client topic generation (reads only the keywords a person ticked — never buys research); auto-approve dated/dateless topics; SEO brief generation; post generation; auto-push posts to WP/BC; BigCommerce spot-check alerts; service area page loop; batch email/Discord notifications. |
+| `/api/cron/keyword-research` | Daily 4:30 AM UTC | Monthly keyword research: up to three clients with content automation on and an active DataForSEO connection whose research is 30+ days old, stalest first, behind the monthly DataForSEO ceiling. Each paid call is recorded as it returns; no paid call starts after 210s, so a run is on the ledger even if cut short. A failed run retries the next day. The only scheduled path that buys research. |
+| `/api/cron/dataforseo-rankings` | Daily 5 AM UTC | Live rank checks for published posts' keywords (skips the first 14 days; tapers with age; stops paying at two years). Catches up on missed checks, skips keywords already read today, and sizes the run to the money left under the monthly ceiling. |
+| `/api/cron/wp-reconcile` | Every 6 hours at :30 (`30 */6 * * *`, maxDuration 300s) | Reads each unsettled post back from WordPress and records what WordPress actually did (`wp_status`, `published_url`) — the flip from 'future' to 'publish', a permalink that arrived later, a post deleted on the site. GETs only. A post is marked `deleted` only on `rest_post_invalid_id` from a site whose posts collection answers; credentials are used only on the post's own host; no new call after 240s; a host that is unreadable 3 times in a row is skipped for the run; writes are conditional on `last_pushed_at` and `wp_post_id` being unchanged since the read. A link is stored only for a published post; a published post still on a `?p=` placeholder is rechecked for 30 days. When a post in a priority set with a main page first gets its real permalink, its link tasks are recorded here (once per post). Response: `checked, updated, missedSchedule, unreadable, noCredential, skippedBrokenSite, deferred, changedSinceRead, linkTasksRecorded`. |
+| `/api/admin/content/schedule` | Daily 6 AM UTC | (Separate from `content-topics`) Handles scheduled content delivery — the content calendar job. **Does not run:** Vercel crons send GET and the route exports only POST, so every call gets 405. Pre-existing; left alone because switching on a job that has not run in months needs its own review. |
 | `/api/cron/refresh-accounts` | Daily 4 AM UTC | Refreshes Google Ads OAuth tokens and re-runs `discoverAccounts` for all Google Ads connectors (upserts `connector_accounts`). Then the connector health check: warns about credentials that cannot renew themselves expiring within 10 days (a Meta token saved without its expiry is looked up once through `debug_token` and the date stored), and about connections whose syncs failed authentication in the last 24h, per `lib/connectors/authFailure.ts` — dead-credential signatures vetoed by transient ones. One in-app `admin_alerts` row plus Discord (`sync_connector_error`). A check that cannot read its data says so in the alert. |
 | `/api/cron/bc-daily-sales` | Daily 9 AM UTC | Sends BigCommerce yesterday + MTD revenue/order summary to Discord for clients with `bc_daily_report = true`. Computes date ranges in store's local timezone using `Intl.DateTimeFormat`. |
 
@@ -377,17 +381,29 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 - `GET PUT /api/admin/content/global-settings` — global content settings
 - `GET PUT /api/admin/content/client-settings` — per-client content/brand settings
 - `POST /api/admin/content/generate-brand-dna` — AI brand analysis from URL
-- `POST /api/admin/content/sitemap-parse` — crawl and parse a sitemap URL
+- `POST /api/admin/content/sitemap-parse` — crawl and parse a sitemap URL. Body `{ xml }` instead reads pasted sitemap XML or a list of URLs (for sites that block our servers) and adds to the cache without pruning
 - `GET PATCH /api/admin/content/sitemap-pages` — list / toggle sitemap page flags
 - `POST /api/admin/content/topics/generate` — batch topic generation
 - `DELETE /api/admin/content/topics/bulk-delete` — bulk delete topics
 - `PATCH /api/admin/content/topics/[id]` — update topic status/date
 - `DELETE /api/admin/content/topics/[id]` — delete single topic
 - `POST /api/admin/content/topics/[id]/brief` — generate SEO brief for topic
-- `POST /api/admin/content/posts/[id]/approve` — push post to WP/BC
+- `POST /api/admin/content/posts/[id]/approve` — push post to WP/BC (409 while the post is `generating`). `published_url` is stored only as an absolute http(s) link on the post's own site; `?p=`/`?page_id=` links count only once the post is published. Every credentialed WordPress, XML-RPC and Rank Math call goes through `fetchWithSiteCredentials` (same-site redirects only, at most three)
+- `POST /api/admin/content/posts/[id]/full-regenerate` — new topic and new article for the post's date slot, written under the same length rules as a new article (`lib/content/lengthRules`, one tighten pass); 409-guarded on `generating` by approve and publish-bigcommerce
 - `POST /api/admin/content/regenerate` — AI re-edit a post
 - `POST /api/admin/content/posts/[id]/generate-image` — AI image generation
 - `POST /api/admin/content/posts/[id]/upload-image` — manual image upload
+- `GET POST PATCH /api/admin/content/keyword-research` — read the researched keyword pool (free) / run research (spends DataForSEO; write admins only; reuses research under 30 days old; `force: true` clears and re-runs, keeping the pool when nothing new can be bought; any run is refused within an hour of the client's last research spend; the response's `ok` is false when nothing was stored) / choose, dismiss, restore or add keywords (write admins only)
+- `POST /api/admin/content/calendar/generate` — pick topics for open publish dates. Without `start_date` (every caller) it plans the cron's own window: today out to the client's lead window, on its cadence (biweekly follows the fortnight from `schedule_start_date`). Active priority sets take the first dates, never more than their waiting keywords. `dry_run` returns `{ slots, dates, cleared, from_sets }` and writes nothing; `regenerate` also fills dates a person cleared (deleted, or holding only rejected topics). While a run is going, `content_settings.plan_generation` holds `{ started_at, dates }` (migration 229); `GET ?client_id=` returns it so the Pipeline shows the run after a refresh
+- `GET PUT /api/admin/dataforseo-usage` — month-to-date DataForSEO spend / set the monthly ceiling (write admins; 501 until migration 226). Without the column the ceiling is the $100 default; unreadable settings or ledger hold spending
+- `GET /api/admin/content/keyword-sources` — the sources the Analytics tab shows: paid converters, Ahrefs positions, researched pool (+ `researchLocation`)
+- `GET /api/admin/content/serp-insights` — stored "what Google shows" per keyword (`seo_keywords.metadata.serp`); read-only
+- `GET /api/admin/content/dfs-locations?q=` — Google geo targets matching `q`, for the research-location picker; free, agency credentials, cached in-process
+- `GET POST PATCH /api/admin/content/silos` — priority topic sets (`content_silos`; called "Priority topics" in the UI). GET returns the client's sets oldest first, with keyword counts and `schedule` (`nextOpenSlot`: the next open publish date and the day the cron picks it). POST takes `name`, `keywords[]`, optional `description` (the notes, given to topic selection and the writer) and `hub_page_url`/`hub_page_title` (the main page)
+- `GET POST /api/admin/content/silos/[siloId]/keywords` — a set's keywords with the topic and post each produced / add keywords (`keywords[]`, appended to the end, repeats skipped). `DELETE …/keywords/[keywordId]` only for a keyword still waiting (409 once it has produced a topic or post)
+- `PATCH /api/admin/content/silos/[siloId]/link-tasks` — mark one "add this link" task done or undone (`{ url, added_at, kind?, done }`)
+
+**How a set behaves.** An active blog set with keywords waiting takes the client's next open publish dates ahead of the usual topic picks, one keyword per post, oldest set first (`/api/cron/content-topics` and "Pick topics now"). It never takes more of a date than it has keywords waiting, and it is done when they are used. A keyword is ticked off automatically when its topic is created and handed back if the topic or post is rejected. A keyword that collides with a page the client ranks for is written as a supporting article, not swapped. A set with a main page angles its topics to support it and the writer links each article to the main page and the set's earlier live posts; nothing edits live pages — each post that goes live records the links to add by hand (on the main page and in the previous post) in `content_silos.pending_links` (`lib/content/siloLinkTasks`), and the team ticks them off. Without a main page, each post stands alone.
 
 ### Stripe
 - `POST /api/admin/stripe/sync` — pull Stripe invoice history for a client
@@ -422,14 +438,14 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth 
 | Stripe API v2026-04-22.dahlia | Ad Fuel billing sync, ACH detection | Secret key from `agency_settings` |
 | Mailgun (SMTP) | Transactional email | SMTP credentials in env vars |
 | Discord REST API v10 | Ad Fuel balance alerts, content notifications | Bot token from `agency_settings` |
-| OpenAI API | Content generation, image generation (DALL-E / gpt-image-1) | Key from `agency_settings.ai_api_key` or `openai_api_key` |
+| OpenAI API | Content generation, image generation (`gpt-image-2.5-flare` by default; `gpt-image-2.5-sunburst` or `gpt-image-2` per `agency_settings.image_model`) | Key from `agency_settings.ai_api_key` or `openai_api_key` |
 | Anthropic API | Content generation (Claude Haiku/Sonnet) | Key from `agency_settings.ai_api_key` |
 | SerpAPI / Google Search | Competitor research for content topics | Key from `agency_settings.serp_api_key` |
 | Ahrefs API | SEO domain authority, keywords, pages | API key stored in connector auth |
 | GoHighLevel API | CRM data (contacts, calls, forms, opportunities) | API key stored in connector auth |
 | WordPress REST API (wp/v2) | Content publishing, tag management, media upload | username + app_password in connector auth |
 | BigCommerce API v2 | Order revenue (daily cron), page publishing | store_hash + access_token in connector auth |
-| Gemini API | Fallback image generation | `GEMINI_API_KEY` env var |
+| Gemini API | Fallback image generation (Imagen — shut down by Google; currently always fails) | `GEMINI_API_KEY` env var |
 
 ---
 

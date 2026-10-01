@@ -22,6 +22,34 @@ export interface SiloQueueKeyword {
   used_at:      string | null
 }
 
+/**
+ * A keyword as typed, made safe to quote in a prompt: one line, no quotes or backslashes, at most
+ * 200 characters. Empty when nothing is left.
+ */
+export function cleanQueueKeyword(raw: unknown): string {
+  return String(raw ?? '').replace(/[\r\n"\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+/** Typed keywords, cleaned and de-duplicated case-insensitively, in the order given. */
+export function cleanQueueKeywords(raw: unknown[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of raw) {
+    const k = cleanQueueKeyword(r)
+    if (!k || seen.has(k.toLowerCase())) continue
+    seen.add(k.toLowerCase())
+    out.push(k)
+  }
+  return out
+}
+
+/** Notes for the writer: control characters other than line breaks removed, at most 1,000 characters. */
+export function cleanSiloNotes(raw: unknown): string | null {
+  // eslint-disable-next-line no-control-regex
+  const s = String(raw ?? '').replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, ' ').trim().slice(0, 1000)
+  return s || null
+}
+
 /** Normalise for matching an AI-returned keyword back to a queue row. */
 function norm(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
@@ -202,6 +230,94 @@ export async function attachPostToKeyword(
 }
 
 /**
+ * A pinned keyword as a queue entry, so a rewrite on the same keyword is prompted exactly as the
+ * keyword was the first time (see buildKeywordQueueBlock). Never stored or claimed.
+ */
+export function pinnedKeywordEntry(keyword: string): SiloQueueKeyword {
+  return { id: 'pinned', keyword: cleanQueueKeyword(keyword), keyword_type: 'supporting', intent: null, sort_order: 0, used_at: null }
+}
+
+/** What a rewrite on the same keyword adds to the keyword block: same subject, a different angle. */
+export function pinnedKeywordNote(keyword: string): string {
+  const k = cleanQueueKeyword(keyword)
+  return `\n\nTHIS REPLACES AN ARTICLE ALREADY WRITTEN FOR "${k}". Keep "${k}" as the target_keyword`
+    + ` (or the informational rewrite rule 2 allows) and choose a fresh angle on it — a different`
+    + ` question, reader or stage than an obvious first article on it would take.`
+}
+
+/** A priority set with keywords still to be written, and how many. */
+export interface WaitingSet {
+  id:      string
+  waiting: number
+}
+
+/**
+ * The client's active blog sets that still have keywords waiting, oldest first: the order the topic
+ * cron hands publish dates out in, and the order a generated plan must use to agree with it.
+ *
+ * Counted per set rather than read as rows, so a set with more than PostgREST's 1,000 waiting
+ * keywords cannot be cut short and read as finished. `error` is set when a read failed; callers
+ * then plan without sets — the usual selection, which is what happened before sets existed.
+ */
+export async function waitingSets(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: SupabaseClient<any>,
+  clientId: string,
+): Promise<{ sets: WaitingSet[]; error: string | null }> {
+  // Oldest first. priority is no longer set anywhere, and a legacy value would reorder sets in a
+  // way nobody can see.
+  const { data, error } = await db
+    .from('content_silos')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .eq('content_type', 'blog')
+    .order('created_at', { ascending: true })
+  if (error) return { sets: [], error: error.message }
+  const ids = ((data ?? []) as { id: string }[]).map(s => s.id)
+  if (ids.length === 0) return { sets: [], error: null }
+
+  const counts = await Promise.all(ids.map(id => db
+    .from('content_silo_keywords')
+    .select('id', { count: 'exact', head: true })
+    .eq('silo_id', id)
+    .eq('selected', true)
+    .is('used_at', null)))
+  const failed = counts.find(c => c.error)
+  if (failed?.error) return { sets: [], error: failed.error.message }
+  return {
+    sets:  ids.map((id, i) => ({ id, waiting: counts[i].count ?? 0 })).filter(s => s.waiting > 0),
+    error: null,
+  }
+}
+
+/**
+ * Which publish slots each set takes: the oldest set the first slots, one per keyword waiting,
+ * then the next set, and the rest go to the usual selection (siloId null).
+ *
+ * `slots` holds one entry per post wanted, in date order, so a date wanting two posts appears twice
+ * and a set with one keyword left takes one of them — the same split the topic cron makes date by
+ * date. A set never takes more slots than it has keywords waiting, and a set that runs out partway
+ * through a date leaves the rest of that date to the usual selection, as the cron does; the next
+ * set starts on the next date.
+ */
+export function splitSlotsBySets(slots: string[], sets: WaitingSet[]): { slot: string; siloId: string | null }[] {
+  const out: { slot: string; siloId: string | null }[] = []
+  let si = 0
+  let left = sets[0]?.waiting ?? 0
+  let ranOutOn: string | null = null
+  for (const slot of slots) {
+    if (slot === ranOutOn) { out.push({ slot, siloId: null }); continue }
+    while (si < sets.length && left <= 0) { si++; left = sets[si]?.waiting ?? 0 }
+    if (si >= sets.length) { out.push({ slot, siloId: null }); continue }
+    out.push({ slot, siloId: sets[si].id })
+    left--
+    if (left === 0) ranOutOn = slot
+  }
+  return out
+}
+
+/**
  * Prompt block for a hub-less silo.
  *
  * The hub-and-spoke block assumes a pillar page to funnel authority to. With no
@@ -213,7 +329,10 @@ export function buildKeywordQueueBlock(
   description: string | null,
   keywords: SiloQueueKeyword[],
   alreadyCovered: string,
-  injectInternalLinks: boolean,
+  /** Topics the run asks for. When it is more than the keywords left, the rest stay on subject. */
+  count: number = keywords.length,
+  /** The set's main page, when it has one. Without it each article stands alone. */
+  hub: { url: string; title: string } | null = null,
 ): string {
   // 'transactional', 'navigational' and 'local' are valid values of the intent
   // column (migration 165) but naming them here tells a BLOG topic generator to
@@ -230,16 +349,20 @@ export function buildKeywordQueueBlock(
   return `
 KEYWORD SET — "${siloName}"${description ? `\nContext: ${description}` : ''}
 
-This is a flat keyword set, NOT a hub-and-spoke silo. There is no pillar page.
-Do not reference, link to, or invent a hub page.
+${hub
+  ? `These articles support the main page "${hub.title}" (${hub.url}). Angle each one as a
+supporting article that answers a question a reader of that page has; every article will
+link to it.`
+  : `Each article stands on its own: there is no main page. Do not reference, link to, or
+invent one.`}
 
 Write ONE topic for each keyword below, in this order, reusing the keyword
 verbatim as that topic's target_keyword:
 ${list}
-${alreadyCovered ? `\nAlready covered in this set (do NOT duplicate these intents):\n${alreadyCovered}` : ''}
+${count > keywords.length ? `\nThis run needs ${count} topics and only ${keywords.length} keyword${keywords.length === 1 ? ' is' : 's are'} left. Write those first, in order; the other ${count - keywords.length} must stay on the subject of "${siloName}" without repeating them.\n` : ''}${alreadyCovered ? `\nAlready covered in this set (do NOT duplicate these intents):\n${alreadyCovered}` : ''}
 
 RULES:
-1. Exactly one topic per keyword listed, in the order given.
+1. Exactly one topic per keyword listed, in the order given, before any other topic.
 2. Use each keyword EXACTLY as written for target_keyword — UNLESS it would break
    the blog-intent rules stated above. Those rules win: a blog target_keyword must
    be a question or an informational noun phrase, never a bare geo+service term
@@ -247,8 +370,5 @@ RULES:
    queued keyword is one of those, keep it as the SUBJECT of the article and write
    an informational target_keyword for it instead — the queue still matches the
    topic by position, so nothing is lost.
-3. Angle each topic so no two compete for the same search intent.
-4. ${injectInternalLinks
-    ? 'Where it genuinely helps the reader, cross-link to the other articles in this set.'
-    : 'Do NOT add internal links between these articles — linking is disabled for this set.'}`
+3. Angle each topic so no two compete for the same search intent${hub ? ', or with the main page itself' : ''}.`
 }

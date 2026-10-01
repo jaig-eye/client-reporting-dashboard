@@ -7,6 +7,7 @@
 import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import ClientImage from '@/components/admin/ClientImage'
+import PriorityTag from '@/components/admin/PriorityTag'
 import type { SeoScore } from '@/lib/content/types'
 
 // ── Shared pipeline types (imported by ClientPipeline) ──────────────────────────
@@ -33,6 +34,7 @@ export interface Topic {
   cluster_group?:        string | null
   generation_error?:     string | null
   post?:                 { id: string; title: string | null; status: string; published_url: string | null } | null
+  created_at?:           string
   /** Silo provenance — which set this topic came out of, and on which keyword. */
   silo?:                 { id: string; name: string; hub_page_url: string | null } | null
   silo_keyword?:         { id: string; keyword: string } | null
@@ -61,6 +63,9 @@ export interface Post {
   seo_score:           SeoScore | null
   keyword_rank?:       { current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null
   generated_at:        string
+  /** Which set of priority topics this post was written for, and on which keyword. */
+  silo?:               { id: string; name: string } | null
+  silo_keyword?:       { id: string; keyword: string } | null
 }
 
 export type RowItem =
@@ -201,6 +206,10 @@ export default function PipelineCard(props: Props) {
     const topic = item.kind === 'topic' ? item.data : null
     const ds = getPostDisplayStatus(post)
     const onSite = post.status === 'draft_saved' || post.status === 'published'
+    // Where it came from: the post's own record, else the topic it was written from. This card
+    // used to show nothing, so "Priority" vanished the moment the article existed.
+    const fromSet     = post.silo ?? topic?.silo ?? null
+    const fromKeyword = post.silo_keyword ?? topic?.silo_keyword ?? null
     return (
       <div style={cardShell}>
         <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
@@ -235,6 +244,11 @@ export default function PipelineCard(props: Props) {
               </span>
             ) : null}
           </div>
+          {fromSet && (
+            <div style={{ marginTop: 4 }}>
+              <PriorityTag setName={fromSet.name} keyword={fromKeyword?.keyword} size="sm" />
+            </div>
+          )}
           {onSite && <LiveLinks post={post} />}
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
@@ -279,19 +293,13 @@ export default function PipelineCard(props: Props) {
               {t.cluster_group && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '0 5px', borderRadius: 3 }}>{t.cluster_group}</span>}
             </div>
           )}
-          {/* Where this topic came from: which keyword set, and the exact term it
-              consumed. Without this, a silo-driven topic is indistinguishable from
-              an ad-hoc one once it reaches the queue. */}
+          {/* Where this topic came from: which set of priority topics, and the exact keyword it
+              used. Without this, a priority topic is indistinguishable from an ad-hoc one once it
+              reaches the queue. Named the way the Pipeline's Priority topics section names it, in
+              theme colours — the violet hex this used stayed the same in dark mode. */}
           {t.silo && (
-            <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-              <span style={{
-                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
-                border: '1px solid rgba(139,92,246,0.28)',
-                padding: '0 5px', borderRadius: 3, fontWeight: 600,
-              }}>
-                silo: {t.silo.name}
-              </span>
-              {t.silo_keyword && <span>from &ldquo;{t.silo_keyword.keyword}&rdquo;</span>}
+            <div style={{ marginTop: 4 }}>
+              <PriorityTag setName={t.silo.name} keyword={t.silo_keyword?.keyword} size="sm" />
             </div>
           )}
         </div>

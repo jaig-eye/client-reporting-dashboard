@@ -1,6 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import SitemapPaste from '@/components/admin/SitemapPaste'
+import MarketLine from './MarketLine'
+import { cadenceLabel } from '@/lib/content/cadence'
+import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
+import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
+import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,44 +38,90 @@ interface Schedule {
   dayOfWeek: number
   publishTime: string
   autoGenerate: boolean
+  /** Posts on each publish date. */
+  postsPerRun: number
+  /** How many publish dates the planner keeps topics for (cadence cycles). */
+  weeksAhead: number
+  /** The first publish date the schedule counts from (yyyy-mm-dd); empty = keep or stamp today. */
+  startDate: string
 }
 
 interface KeywordResult {
-  keyword: string
-  relatedSearches: string[]
+  keyword:    string
+  volume:     number | null
+  /** Google Ads volume in the research location, when the run was local. */
+  local_volume?: number | null
+  difficulty: number | null
+  intent:     string | null
+  source?:    string | null
+  /** How research ranked it, when the run recorded a score. */
+  score?:     number | null
+  /** Whether a person has picked this one for the writer. Absent on an unmigrated database. */
+  chosen?:    boolean
 }
 
 interface ResearchData {
-  keywords: KeywordResult[]
-  competitors: string[]
-  hasSerpApi: boolean
-  seeds: string[]
+  keywords:     KeywordResult[]
+  competitors:  string[]
+  /** False when the client has no DataForSEO connection — the pool is then database-only. */
+  connected:    boolean
+  /** From a POST: false means nothing new was stored, and `reason` says why. */
+  ok?:          boolean
+  reason?:      string
+  /** New keywords this run added to the pool. */
+  discovered?:  number
+  cost?:        number
+  researchedAt?: string | null
+  /** Where the pool was measured, when a research location is set. */
+  researchLocation?: string | null
+  /** Best-rated businesses in the map pack for the starting keywords; only on a fresh local run. */
+  localPack?: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
+  /** Set here, not by the server: this came from a run in this wizard rather than a stored read. */
+  fromRun?: boolean
 }
+
+/** The result of a research run or read, and how it should read: good news, a caution, a failure. */
+interface ResearchOutcome { tone: 'success' | 'warning' | 'error'; text: string }
 
 interface Props {
   clientId:   string
   clientName: string
   onComplete: () => void
+  /** The client's content plan is already under way: the last step saves, and starts nothing. */
+  planActive?: boolean
 }
 
 const TOTAL_STEPS = 9
 
+/** Most starting keywords research is given. The chip input stops at the same number. */
+const SEED_MAX = 25
+
 const FREQ_OPTIONS = [
-  { id: 'daily',    label: 'Daily',       sub: '1 post/day' },
-  { id: 'weekly',   label: 'Weekly',      sub: '1 post/week' },
+  { id: 'daily',    label: 'Daily',       sub: 'A post every day' },
+  { id: 'weekly',   label: 'Weekly',      sub: 'Once a week' },
   { id: 'biweekly', label: 'Bi-Weekly',   sub: 'Every 2 weeks' },
   { id: 'monthly',  label: 'Monthly',     sub: 'Once a month' },
+]
+
+/** The monthly variants Content settings offers. The Monthly button covers all of them. */
+const MONTHLY_DAYS = [
+  { id: 'monthly',       label: 'Same day each month as the start date' },
+  { id: 'monthly_first', label: '1st of the month' },
+  { id: 'monthly_mid',   label: '15th of the month' },
+  { id: 'monthly_end',   label: '28th of the month' },
 ]
 
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
 // ─── Wizard ───────────────────────────────────────────────────────────────────
 
-export default function ClientContentSetupWizard({ clientId, clientName, onComplete }: Props) {
+export default function ClientContentSetupWizard({ clientId, clientName, onComplete, planActive = false }: Props) {
   const [step, setStep] = useState(1)
 
   // Step 1 state
   const [hasGsc, setHasGsc] = useState<boolean | null>(null)
+  /** Whether DataForSEO is connected — the research step is the only one that needs it. */
+  const [hasDfs, setHasDfs] = useState(false)
   const [wpUrl,  setWpUrl]  = useState('')
 
   // Step 2 state
@@ -95,12 +147,14 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // Step 5 state
   const [schedule, setSchedule] = useState<Schedule>({
     frequency: 'weekly', dayOfWeek: 1, publishTime: '09:00',
-    autoGenerate: true,
+    autoGenerate: true, postsPerRun: 1, weeksAhead: 4, startDate: '',
   })
   // The client's already-saved schedule_start_date, if any. Completing the wizard must
   // NOT move it: for a rolling-monthly client that date IS the publish-day anchor, so
   // overwriting it with today silently shifts every future publish date.
   const [existingStartDate, setExistingStartDate] = useState<string | null>(null)
+  // The client's saved settings could not be read; saving is refused so defaults never overwrite them.
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [imageGen,    setImageGen]    = useState(false)
   const [imagePrompt, setImagePrompt] = useState('')
 
@@ -123,7 +177,32 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
   // Step 7 state
   const [research,       setResearch]       = useState<ResearchData | null>(null)
-  const [researchDone,   setResearchDone]   = useState(false)
+  /**
+   * Terms the operator knows the business should be found for, before any data exists.
+   *
+   * Seeds for research and nothing more: they widen what DataForSEO is asked about, then the
+   * results are ranked on volume, difficulty and proven paid conversions like everything else.
+   * A term typed here does not become a commissioned article — that is what makes it safe to
+   * guess in this box.
+   */
+  const [foundationalKeywords, setFoundationalKeywords] = useState('')
+  /**
+   * The eeat_data column exactly as loaded.
+   *
+   * The wizard edits 8 of its 16 keys, but the save writes the whole JSONB column. Without the
+   * original underneath, re-running the wizard deleted insurance, awards, team_experience,
+   * brands_used, financing_options, warranties, case_studies, before_after_proof and
+   * common_objections — all of which the settings tab maintains and the writer prompt reads.
+   */
+  const [loadedEeat, setLoadedEeat] = useState<Record<string, unknown>>({})
+  /** 'loading' reads the stored pool (free); 'researching' is a paid run in flight. */
+  const [researchPhase,   setResearchPhase]   = useState<'idle' | 'loading' | 'researching'>('idle')
+  /** What the last run or read came to, said where the button is. */
+  const [researchOutcome, setResearchOutcome] = useState<ResearchOutcome | null>(null)
+  /** Ticks on the research step that have not been saved. Leaving the step drops them. */
+  const [picksDirty,     setPicksDirty]     = useState(false)
+  /** Set by a first Continue or Back over unsaved picks; the second press leaves. */
+  const [leaveWarned,    setLeaveWarned]    = useState(false)
 
   // Saving state
   const [saving, setSaving]   = useState(false)
@@ -132,6 +211,21 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // ── Load initial data on mount ─────────────────────────────────────────────
   useEffect(() => {
     async function loadInit() {
+      // Pages already imported for this client are shown, not hidden behind "Fetch Pages". The
+      // step used to start empty on every visit, so a client whose sitemap had been imported
+      // last week looked like it had never been — and fetching again was the only way to see the
+      // ticks that were already saved.
+      try {
+        const res = await fetch(`/api/admin/content/sitemap-pages?client_id=${clientId}`)
+        if (res.ok) {
+          const list = await res.json() as Array<{ url: string; title: string | null; isPriority: boolean; isExcluded: boolean }>
+          if (Array.isArray(list) && list.length > 0) {
+            setPages(list.map(p => ({ url: p.url, title: p.title ?? null, isPriority: !!p.isPriority, isExcluded: !!p.isExcluded })))
+            setSitemapMsg(`${list.length} page${list.length === 1 ? '' : 's'} already imported. Fetch again to pick up new ones.`)
+          }
+        }
+      } catch { /* the step still works from scratch */ }
+
       // Multi-source URL detection: WP → BC → GSC priority order (B1)
       let connectionDetectedUrl = ''
       try {
@@ -162,6 +256,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             setDetectedConnectionId(detectedId)
           }
           setHasGsc(conns.some(c => c.type === 'google_search_console'))
+          setHasDfs(conns.some(c => c.type === 'dataforseo'))
         } else {
           setHasGsc(false)
         }
@@ -183,37 +278,117 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             publish_time?: string | null
             auto_generate?: boolean | null
             schedule_start_date?: string | null
+            posts_per_run?: number | null
+            business_background?: string | null
+            services?: string | null
+            target_audience?: string | null
+            geographic_focus?: string | null
+            brand_voice?: string | null
+            phone_number?: string | null
+            eeat_data?: Record<string, unknown> | null
+            weeks_ahead?: number | null
+            foundational_keywords?: string[] | null
+            research_location?: unknown
+            content_image_generation?: boolean | null
+            content_image_prompt?: string | null
           }
           if (cs.generate_service_pages) setEnableServicePages(true)
           if (cs.generate_regular_pages) setEnableRegularPages(true)
+          // Read back, because the save below always writes them. Unhydrated, reaching the
+          // research step silently switched AI featured images off and blanked the prompt for
+          // any client who had set them on the settings tab.
+          if (typeof cs.content_image_generation === 'boolean') setImageGen(cs.content_image_generation)
+          if (cs.content_image_prompt) setImagePrompt(cs.content_image_prompt)
+          // Re-runs must show what was entered before, or the save at the end writes an empty
+          // array over seeds someone chose.
+          if (Array.isArray(cs.foundational_keywords) && cs.foundational_keywords.length > 0) {
+            setFoundationalKeywords(cs.foundational_keywords.join(', '))
+          }
+
+          // Hydrate BRAND DNA. Without this the fields render empty on a re-run and the save at
+          // the end writes those empties over a profile someone already curated. Every value is
+          // kept only when the saved one is non-empty, so a half-filled record can still be
+          // completed by the AI analysis rather than being blocked by it.
+          const eeat = (cs.eeat_data ?? {}) as Record<string, unknown>
+          // Held so the save can merge onto it instead of replacing the column.
+          setLoadedEeat(eeat)
+          const str  = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null)
+          const savedBrand = {
+            business_background: str(cs.business_background),
+            services:            str(cs.services),
+            target_audience:     str(cs.target_audience),
+            geographic_focus:    str(cs.geographic_focus),
+            brand_voice:         str(cs.brand_voice),
+            phone_number:        str(cs.phone_number),
+            founded_year:        str(eeat.founded_year),
+            years_in_business:   str(eeat.years_in_business),
+            owner_details:       str(eeat.owner_details),
+            licenses:            str(eeat.licenses),
+            guarantees:          str(eeat.guarantees),
+            review_count:        str(eeat.review_count),
+          }
+          const hasSavedBrand = Object.values(savedBrand).some(v => v !== null)
+          if (hasSavedBrand) {
+            setBrand(prev => ({
+              ...prev,
+              business_background: savedBrand.business_background ?? prev.business_background,
+              services:            savedBrand.services            ?? prev.services,
+              target_audience:     savedBrand.target_audience     ?? prev.target_audience,
+              geographic_focus:    savedBrand.geographic_focus    ?? prev.geographic_focus,
+              brand_voice:         savedBrand.brand_voice         ?? prev.brand_voice,
+              phone_number:        savedBrand.phone_number        ?? prev.phone_number,
+              founded_year:        savedBrand.founded_year        ?? prev.founded_year,
+              years_in_business:   savedBrand.years_in_business   ?? prev.years_in_business,
+              owner_details:       savedBrand.owner_details       ?? prev.owner_details,
+              licenses:            savedBrand.licenses            ?? prev.licenses,
+              guarantees:          savedBrand.guarantees          ?? prev.guarantees,
+              review_count:        savedBrand.review_count        ?? prev.review_count,
+              emergency_availability: typeof eeat.emergency_availability === 'boolean'
+                ? eeat.emergency_availability
+                : prev.emergency_availability,
+            }))
+            // The profile exists, so the wizard should not insist on a fresh scan before
+            // letting someone move on.
+            setBrandLoaded(true)
+          }
 
           // Hydrate the SCHEDULE too. Step 5's state was initialised to a hardcoded
           // weekly/Monday and never read the saved values, so re-opening the wizard on
           // an already-configured client and clicking through silently downgraded a
           // monthly client to weekly. Combined with the start-date reset below, a
           // re-run could move a client's whole publish series to a different day.
-          if (cs.schedule_frequency || cs.schedule_day_of_week != null || cs.publish_time) {
+          if (cs.schedule_frequency || cs.schedule_day_of_week != null || cs.publish_time
+            || cs.posts_per_run != null || cs.weeks_ahead != null || cs.schedule_start_date) {
             setSchedule(prev => ({
               frequency:    cs.schedule_frequency   ?? prev.frequency,
               dayOfWeek:    cs.schedule_day_of_week ?? prev.dayOfWeek,
               publishTime:  cs.publish_time         ?? prev.publishTime,
               autoGenerate: cs.auto_generate ?? prev.autoGenerate,
+              postsPerRun:  cs.posts_per_run        ?? prev.postsPerRun,
+              weeksAhead:   cs.weeks_ahead          ?? prev.weeksAhead,
+              startDate:    cs.schedule_start_date  ?? prev.startDate,
             }))
           }
           // Remember the existing anchor so completing the wizard does not move it.
           if (cs.schedule_start_date) setExistingStartDate(cs.schedule_start_date)
           if (cs.service_page_topic_guidelines) setSpGuidelinesWiz(cs.service_page_topic_guidelines)
           if (cs.regular_page_topic_guidelines) setRpGuidelinesWiz(cs.regular_page_topic_guidelines)
-          // Fall back to previously-saved sitemap URL when connections didn't provide a site URL
-          if (cs.sitemap_url && !connectionDetectedUrl) {
+          // A SAVED sitemap URL always wins over the /sitemap_index.xml guess made from a
+          // detected connection. It used to apply only when no connection was found, so a client
+          // whose real sitemap is /wp-sitemap.xml or /sitemap.xml had it silently replaced with
+          // the guess on every re-run — and the save at the end wrote the guess back.
+          if (cs.sitemap_url) {
             setSitemapUrl(cs.sitemap_url)
             // Derive site URL from saved sitemap — strip any sitemap-like filename
             // (covers /sitemap_index.xml, /wp-sitemap.xml, /post-sitemap.xml, etc.)
             const derivedSite = cs.sitemap_url.replace(/\/[^/]*sitemap[^/]*\.xml$/i, '').replace(/\/$/, '')
-            if (derivedSite) setAnalyzeUrl(derivedSite)
+            // Only when a live connection did not already give us a better site URL.
+            if (derivedSite && !connectionDetectedUrl) setAnalyzeUrl(derivedSite)
           }
+        } else {
+          setSettingsLoadFailed(true)
         }
-      } catch { /* ignore */ }
+      } catch { setSettingsLoadFailed(true) }
     }
     loadInit()
   }, [clientId])
@@ -324,28 +499,133 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     }
   }
 
-  const loadResearch = useCallback(async () => {
-    if (researchDone) return
+  // The starting keywords are deliberately not pre-filled from Services: the research step offers
+  // "Use the services from step 3" as a button, so the default is one click away and the two
+  // fields stop looking like one field shown twice.
+
+  /**
+   * Research this market. Spends, so it runs only when the operator presses the button.
+   *
+   * It used to run from an effect on reaching this step, which bought DataForSEO research — and
+   * saved every answer in the wizard — because someone clicked Continue. Entering the step now
+   * shows the stored pool, a free read, and this is the one thing on the step that spends.
+   *
+   * The answers are saved first because research reads the services, the service areas and the
+   * seed terms from the saved settings; unsaved, it would research the business as it was before
+   * this wizard opened. Called from a click, so saveSettings reads what is on screen now.
+   *
+   * The first run for a client is a plain POST. Once a client has been researched it is forced,
+   * which replaces the unchosen candidates: otherwise a corrected seed list would pay again and
+   * show the old list plus a few extras.
+   */
+  async function researchMarket() {
+    if (researchPhase === 'researching') return
+    const hadRun = !!research?.researchedAt || (research?.keywords.length ?? 0) > 0
+    setResearchPhase('researching')
+    setResearchOutcome(null)
     try {
-      // Pass in-memory brand data so the API can use it even if not yet saved to DB
-      const params = new URLSearchParams({ client_id: clientId })
-      if (brand.services)        params.set('services', brand.services)
-      if (brand.geographic_focus) params.set('geo',     brand.geographic_focus)
-      const res  = await fetch(`/api/admin/content/keyword-research?${params.toString()}`)
-      const data = await res.json() as ResearchData
-      setResearch(data)
+      try {
+        await saveSettings()
+      } catch (e) {
+        setResearchOutcome({
+          tone: 'error',
+          text: `Couldn’t save your answers, so research didn’t run. ${e instanceof Error ? e.message : ''}`.trim(),
+        })
+        return
+      }
+      const res  = await fetch('/api/admin/content/keyword-research', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, ...(hadRun ? { force: true } : {}) }),
+      })
+      const data = await res.json().catch(() => ({})) as Partial<ResearchData> & { error?: string }
+      if (!res.ok) {
+        // 403: a viewer cannot re-run research. 429: it ran less than an hour ago. Both carry a
+        // sentence written for the operator.
+        setResearchOutcome({
+          tone: res.status === 429 ? 'warning' : 'error',
+          text: data.error ?? `Research didn’t run (HTTP ${res.status}).`,
+        })
+        return
+      }
+      if (data.ok === false) {
+        // Nothing new was stored — over the month's budget, no connection, a storage failure —
+        // and the pool was left as it was, so show the stored one again.
+        setResearchOutcome({ tone: 'warning', text: data.reason ?? 'Research didn’t store anything new.' })
+        await reloadStoredResearch()
+        return
+      }
+      setResearch({
+        ...data,
+        keywords:    data.keywords ?? [],
+        competitors: data.competitors ?? [],
+        connected:   data.connected ?? true,
+        fromRun:     true,
+      })
+      const n = data.discovered ?? 0
+      setResearchOutcome({
+        tone: 'success',
+        text: n > 0
+          ? `Found ${n.toLocaleString()} new keyword${n === 1 ? '' : 's'}. Tick the ones worth writing about, then save.`
+          : 'No new keywords this time. The list below is what research already holds.',
+      })
     } catch {
-      setResearch({ keywords: [], competitors: [], hasSerpApi: false, seeds: [] })
+      setResearchOutcome({ tone: 'error', text: 'Research didn’t finish — the connection dropped. Try again.' })
     } finally {
-      setResearchDone(true)
+      setResearchPhase('idle')
     }
-  }, [clientId, researchDone, brand.services, brand.geographic_focus])
+  }
 
+  /**
+   * Read the stored pool. Free — a database read, and the GET never spends.
+   *
+   * Used on entering the research step and after picks are saved. Keeps what only a run returns
+   * (competitors, the map pack) and replaces the rows, so the list the panel reconciles against
+   * is what the server now holds. Returns whether it could read.
+   */
+  const reloadStoredResearch = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/content/keyword-research?client_id=${clientId}`)
+      if (!res.ok) return false
+      const d = await res.json() as ResearchData
+      setResearch(prev => ({
+        ...(prev ?? { competitors: [], connected: d.connected }),
+        keywords:         d.keywords ?? [],
+        researchedAt:     d.researchedAt ?? prev?.researchedAt ?? null,
+        researchLocation: d.researchLocation ?? prev?.researchLocation ?? null,
+      }))
+      return true
+    } catch {
+      return false
+    }
+  }, [clientId])
+
+  // Entering the research step shows what is already stored. Nothing here spends.
   useEffect(() => {
-    if (step === 7) loadResearch()
-  }, [step, loadResearch])
+    if (step !== 8 || !hasDfs) return
+    let cancelled = false
+    setResearchPhase('loading')
+    void reloadStoredResearch().then(ok => {
+      if (cancelled) return
+      if (!ok) setResearchOutcome({ tone: 'error', text: 'Couldn’t load the saved keyword list. Step back and forward again to retry.' })
+      setResearchPhase(p => p === 'loading' ? 'idle' : p)
+    })
+    return () => { cancelled = true; setResearchPhase(p => p === 'loading' ? 'idle' : p) }
+  }, [step, hasDfs, reloadStoredResearch])
 
-  async function saveSettings(wizardCompleted: boolean) {
+  /**
+   * Write every answer in the wizard to the client's settings.
+   *
+   * `wizardCompleted` is sent only when given: the save before a research run leaves it as it
+   * was, so researching from a re-opened wizard does not mark a set-up client as unfinished.
+   */
+  async function saveSettings(wizardCompleted?: boolean) {
+    // Every field below is written. If the client's saved settings never loaded, the form holds
+    // defaults — blank Brand DNA, a weekly Monday schedule, no seeds — and saving would write those
+    // over the real ones. Refuse instead; every caller shows this message.
+    if (settingsLoadFailed) {
+      throw new Error('This client’s saved settings couldn’t be loaded, so saving now would overwrite them with blanks. Close the wizard and open it again.')
+    }
     const eeatData = {
       founded_year:           brand.founded_year,
       years_in_business:      brand.years_in_business,
@@ -368,20 +648,33 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         geographic_focus:     brand.geographic_focus,
         brand_voice:          brand.brand_voice,
         phone_number:         brand.phone_number,
+        // Seeds for research, not a content plan — see migration 222. Split the way the chip
+        // input wrote them: a plain comma split turned "gutter guards (mesh, micro-mesh)" into
+        // two broken seeds. Capped at what the chip input accepts, so nothing shown is dropped.
+        foundational_keywords: splitPhrases(foundationalKeywords).slice(0, SEED_MAX),
         sitemap_url:          sitemapUrl || undefined,
         schedule_frequency:   schedule.frequency,
         schedule_day_of_week: schedule.dayOfWeek,
-        // Keep the existing anchor on a re-run; only stamp today on first setup.
-        schedule_start_date:  existingStartDate ?? new Date().toISOString().slice(0, 10),
+        posts_per_run:        Math.min(10, Math.max(1, Math.round(schedule.postsPerRun) || 1)),
+        weeks_ahead:          Math.min(24, Math.max(1, Math.round(schedule.weeksAhead) || 4)),
+        // What the step shows (the saved anchor, pre-filled); on first setup with nothing chosen,
+        // today. A re-run never moves the anchor unless someone changes the date.
+        schedule_start_date:  schedule.startDate || existingStartDate || new Date().toISOString().slice(0, 10),
         publish_time:         schedule.publishTime,
-        topics_per_run:  1,
         auto_generate:   schedule.autoGenerate,
+        // Sent WITH auto_generate, or the single tick in this wizard becomes one-way: the
+        // content-topics cron treats a lagging sub-flag as a legacy row and heals it to true,
+        // so unticking the box here never actually turned auto-approve or auto-push back off.
+        auto_approve_topics: schedule.autoGenerate,
+        auto_push_posts:     schedule.autoGenerate,
         generate_service_pages:         enableServicePages,
         service_page_topic_guidelines:  spGuidelinesWiz || null,
         generate_regular_pages:         enableRegularPages,
         regular_page_topic_guidelines:  rpGuidelinesWiz || null,
-        eeat_data:                      eeatData,
-        wizard_completed:               wizardCompleted,
+        // Merged, not replaced: the wizard owns 8 keys of a 16-key column and must not delete
+        // the 9 the settings tab maintains — several of which the writer prompt reads.
+        eeat_data:                      { ...loadedEeat, ...eeatData },
+        ...(wizardCompleted === undefined ? {} : { wizard_completed: wizardCompleted }),
         connection_id:                  detectedConnectionId ?? undefined,
         content_image_generation:       imageGen,
         content_image_prompt:           imagePrompt || null,
@@ -399,8 +692,8 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     try {
       await saveSettings(true)
       onComplete()
-    } catch {
-      setSaveMsg('Save failed — please try again.')
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : 'Save failed — please try again.')
     } finally {
       setSaving(false)
     }
@@ -415,10 +708,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
       const res = await fetch('/api/admin/content/calendar/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id:  clientId,
-          start_date: new Date().toISOString().slice(0, 10),
-        }),
+        // No start_date. saveSettings above deliberately keeps existingStartDate so a re-run
+        // does not move a client's publish anchor — and calendar/generate gives an explicit
+        // start_date precedence over the saved one, so passing today undid that immediately and
+        // re-anchored the whole series off-cadence. regenerate: a client whose earlier posts were
+        // cleared gets those dates filled too, instead of a silent "nothing to generate".
+        body: JSON.stringify({ client_id: clientId, regenerate: true }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string }
@@ -448,8 +743,20 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
     return () => window.removeEventListener('keydown', handler)
   }, [handleSkip])
 
-  function next() { setStep(s => Math.min(s + 1, TOTAL_STEPS)) }
-  function back() { setStep(s => Math.max(s - 1, 1)) }
+  const onPicksDirty = useCallback((dirty: boolean) => {
+    setPicksDirty(dirty)
+    if (!dirty) setLeaveWarned(false)
+  }, [])
+
+  /** Leaving the research step unmounts the list, and unsaved ticks go with it. Say so once. */
+  function guardLeave(): boolean {
+    if (step === 8 && picksDirty && !leaveWarned) { setLeaveWarned(true); return false }
+    setLeaveWarned(false)
+    setPicksDirty(false)
+    return true
+  }
+  function next() { if (guardLeave()) setStep(s => Math.min(s + 1, TOTAL_STEPS)) }
+  function back() { if (guardLeave()) setStep(s => Math.max(s - 1, 1)) }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -487,6 +794,12 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           </button>
         </div>
 
+        {settingsLoadFailed && (
+          <div role="alert" style={{ margin: '1rem 1.5rem 0', padding: '0.625rem 0.875rem', borderRadius: 8, border: '1px solid var(--red)', background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem' }}>
+            This client’s saved settings couldn’t be loaded. You can look through the steps, but nothing will be saved — close the wizard and open it again.
+          </div>
+        )}
+
         {/* Step body */}
         <div style={{ padding: '1.5rem', flex: 1 }}>
           {step === 1 && <StepWelcome clientName={clientName} hasGsc={hasGsc} wpUrl={wpUrl} />}
@@ -522,9 +835,11 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
           {step === 4 && <StepEeat brand={brand} setBrand={setBrand} />}
           {step === 5 && (
             <StepSitemap
+              clientId={clientId}
               sitemapUrl={sitemapUrl}
               setSitemapUrl={setSitemapUrl}
               onFetch={handleFetchPages}
+              onPasted={list => { setPages(list); setSitemapMsg(`Imported ${list.length} page${list.length !== 1 ? 's' : ''}`) }}
               fetching={fetchingPages}
               fetchMsg={sitemapMsg}
               pages={pages}
@@ -553,7 +868,22 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               setRpGuidelines={setRpGuidelinesWiz}
             />
           )}
-          {step === 8 && <StepResearch research={research} done={researchDone} />}
+          {step === 8 && (
+            <StepResearch
+              research={research}
+              phase={researchPhase}
+              outcome={researchOutcome}
+              clientId={clientId}
+              servicesText={brand.services}
+              seeds={foundationalKeywords}
+              setSeeds={setFoundationalKeywords}
+              onResearch={() => void researchMarket()}
+              hasDfs={hasDfs}
+              onPicksSaved={reloadStoredResearch}
+              onPicksDirty={onPicksDirty}
+              picksDirty={picksDirty}
+            />
+          )}
           {step === 9 && (
             <StepReady
               clientName={clientName}
@@ -561,9 +891,10 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               schedule={schedule}
               pagesCount={pages.length}
               hasGsc={hasGsc ?? false}
-              hasSerpApi={research?.hasSerpApi ?? false}
+              hasResearch={(research?.keywords.length ?? 0) > 0}
               saving={saving}
               saveMsg={saveMsg}
+              planActive={planActive}
               onSave={handleSave}
               onSaveAndGenerate={handleSaveAndGenerate}
             />
@@ -574,7 +905,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         {step < 9 && (
           <div style={{
             padding: '1rem 1.5rem 1.25rem',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
             borderTop: '1px solid var(--border)',
           }}>
             <button
@@ -585,12 +916,19 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
             >
               ← Back
             </button>
+            {leaveWarned && picksDirty && (
+              <p role="alert" style={{ margin: 0, flex: '1 1 200px', fontSize: '0.8125rem', color: 'var(--amber)', lineHeight: 1.4 }}>
+                Your ticks aren&apos;t saved. Press <strong>Save selection</strong> first, or leave without them.
+              </p>
+            )}
             <button
               onClick={next}
               className="btn btn-primary"
               style={{ fontSize: '0.875rem' }}
             >
-              {step === 7 ? 'Skip →' : 'Continue →'}
+              {leaveWarned && picksDirty
+                ? 'Leave without saving →'
+                : step === 7 || (step === 8 && !hasDfs) ? 'Skip →' : 'Continue →'}
             </button>
           </div>
         )}
@@ -639,11 +977,30 @@ function StepSub({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, children, drivesResearch }: {
+  label: string
+  /** The id of the control this labels. Without it the label names nothing for a screen reader. */
+  htmlFor: string
+  children: React.ReactNode
+  /** Marks a field the research reads, as opposed to one that only shapes the writing. */
+  drivesResearch?: boolean
+}) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+      <label htmlFor={htmlFor} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
         {label}
+        {drivesResearch && (
+          <span
+            title="Read by keyword research: changing this changes what we find."
+            style={{
+              fontSize: '0.5625rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+              padding: '1px 6px', borderRadius: 999,
+              background: 'var(--blue-subtle)', color: 'var(--blue)',
+            }}
+          >
+            research
+          </span>
+        )}
       </label>
       {children}
     </div>
@@ -684,18 +1041,18 @@ function StepWelcome({ clientName, hasGsc, wpUrl }: { clientName: string; hasGsc
       </div>
 
       {hasGsc === false && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#fef3c7', border: '1px solid #fde68a', marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#92400e', marginBottom: 3 }}>Google Search Console not connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#92400e', lineHeight: 1.5 }}>
-            Topic suggestions will be less precise without real keyword data. Connect GSC in Data Connections for best results.
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--amber-subtle)', border: '1px solid var(--amber)', marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 3 }}>Google Search Console not connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Topic suggestions will be less precise without real keyword data. Connect Search Console on the client&apos;s Integrations tab for best results.
           </div>
         </div>
       )}
 
       {wpUrl && (
-        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#166534', marginBottom: 2 }}>WordPress connected</div>
-          <div style={{ fontSize: '0.75rem', color: '#166534' }}>{wpUrl}</div>
+        <div style={{ padding: '0.875rem 1rem', borderRadius: 8, background: 'var(--green-subtle)', border: '1px solid var(--green)', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 2 }}>WordPress connected</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{wpUrl}</div>
         </div>
       )}
     </div>
@@ -736,13 +1093,13 @@ function StepWpConnect({
         <div style={{
           padding: '1.25rem 1.5rem',
           borderRadius: 12,
-          border: '2px solid #86efac',
-          background: '#f0fdf4',
+          border: '2px solid var(--green)',
+          background: 'var(--green-subtle)',
           display: 'flex', alignItems: 'center', gap: 16,
           animation: 'wp-slide-in 0.35s ease',
         }}>
           <div style={{
-            width: 44, height: 44, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+            width: 44, height: 44, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -750,8 +1107,8 @@ function StepWpConnect({
             </svg>
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>Connected</div>
-            <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{wpUrl}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>Connected</div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>{wpUrl}</div>
           </div>
         </div>
         <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -778,13 +1135,13 @@ function StepWpConnect({
           <div style={{
             padding: '1.5rem',
             borderRadius: 12,
-            border: '2px solid #86efac',
-            background: '#f0fdf4',
+            border: '2px solid var(--green)',
+            background: 'var(--green-subtle)',
             display: 'flex', alignItems: 'center', gap: 16,
             animation: 'wp-check-in 0.4s cubic-bezier(0.34,1.56,0.64,1)',
           }}>
             <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
+              width: 48, height: 48, borderRadius: '50%', background: 'var(--green)', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -801,8 +1158,8 @@ function StepWpConnect({
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#166534' }}>WordPress connected!</div>
-              <div style={{ fontSize: '0.8125rem', color: '#166534', opacity: 0.8, marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
+              <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>WordPress connected!</div>
+              <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>{siteUrlInput.trim().replace(/\/$/, '')}</div>
             </div>
           </div>
           <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -811,8 +1168,9 @@ function StepWpConnect({
         </>
       ) : (
         <>
-          <Field label="WordPress Site URL">
+          <Field label="WordPress Site URL" htmlFor="wiz-wp-url">
             <input
+              id="wiz-wp-url"
               type="url"
               value={siteUrlInput}
               onChange={e => setSiteUrlInput(e.target.value)}
@@ -820,8 +1178,9 @@ function StepWpConnect({
               style={inputStyle}
             />
           </Field>
-          <Field label="WordPress Username">
+          <Field label="WordPress Username" htmlFor="wiz-wp-user">
             <input
+              id="wiz-wp-user"
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
@@ -830,8 +1189,9 @@ function StepWpConnect({
               autoComplete="username"
             />
           </Field>
-          <Field label="Application Password">
+          <Field label="Application Password" htmlFor="wiz-wp-password">
             <input
+              id="wiz-wp-password"
               type="password"
               value={appPassword}
               onChange={e => setAppPassword(e.target.value)}
@@ -846,7 +1206,7 @@ function StepWpConnect({
           </p>
 
           {connectMsg && (
-            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: '#fee2e2', color: '#dc2626', fontSize: '0.8125rem', marginBottom: 16 }}>
+            <div style={{ padding: '0.625rem 0.875rem', borderRadius: 6, background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem', marginBottom: 16 }}>
               {connectMsg}
             </div>
           )}
@@ -895,6 +1255,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           type="url"
           value={analyzeUrl}
           onChange={e => setAnalyzeUrl(e.target.value)}
+          aria-label="Website URL to analyze"
           placeholder="https://example.com"
           style={{ ...inputStyle, flex: 1 }}
         />
@@ -916,20 +1277,44 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
 
       {(brandLoaded || brand.business_background) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <Field label="Business Background">
-            <textarea value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
+            {RESEARCH_FIELDS_NOTE}
+          </p>
+          <Field label="Business Background" htmlFor="wiz-business-background">
+            <textarea id="wiz-business-background" value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
           </Field>
-          <Field label="Services">
-            <input type="text" value={brand.services} onChange={e => setBrand({ ...brand, services: e.target.value })} style={inputStyle} placeholder="Plumbing, HVAC, Electrical" />
+          <Field label="What they sell" htmlFor="wiz-services" drivesResearch>
+            <KeywordChipInput
+              id="wiz-services"
+              value={brand.services}
+              onChange={v => setBrand({ ...brand, services: v })}
+              placeholder="Plumbing, HVAC, Electrical"
+            />
+            <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.5 }}>
+              {SERVICES_HELP}
+            </p>
           </Field>
-          <Field label="Target Audience">
-            <input type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
+          <Field label="Target Audience" htmlFor="wiz-target-audience">
+            <input id="wiz-target-audience" type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
           </Field>
-          <Field label="Geographic Focus">
-            <input type="text" value={brand.geographic_focus} onChange={e => setBrand({ ...brand, geographic_focus: e.target.value })} style={inputStyle} placeholder="Austin, TX" />
+
+          <Field label="Service Areas" htmlFor="wiz-service-areas" drivesResearch>
+            {/* The same place suggestions as Brand DNA: picking "Melbourne, Florida" off the list
+                stores a name research is known to resolve, instead of a guess at which Melbourne. */}
+            <KeywordChipInput
+              id="wiz-service-areas"
+              value={brand.geographic_focus}
+              onChange={v => setBrand({ ...brand, geographic_focus: v })}
+              placeholder="Start typing a city or county…"
+              suggestPlaces
+            />
+            <MarketLine geographicFocus={brand.geographic_focus} />
           </Field>
-          <Field label="Brand Voice">
-            <input type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
+          {/* Research Location used to sit here. It was a second place to name the market the
+              first service area already names, and in production not one client had ever set it.
+              The market is derived from the first service area and shown under it. */}
+          <Field label="Brand Voice" htmlFor="wiz-brand-voice">
+            <input id="wiz-brand-voice" type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
           </Field>
         </div>
       )}
@@ -952,23 +1337,23 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
       <StepSub>These help the AI write with real authority. E-E-A-T signals significantly improve content quality and rankings for local businesses.</StepSub>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        <Field label="Year Founded">
-          <input type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
+        <Field label="Year Founded" htmlFor="wiz-founded-year">
+          <input id="wiz-founded-year" type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
         </Field>
-        <Field label="Phone Number">
-          <input type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />
+        <Field label="Phone Number" htmlFor="wiz-phone">
+          <input id="wiz-phone" type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />
         </Field>
-        <Field label="Number of Reviews">
-          <input type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} style={inputStyle} placeholder="200+ Google reviews" />
+        <Field label="Number of Reviews" htmlFor="wiz-reviews">
+          <input id="wiz-reviews" type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} style={inputStyle} placeholder="200+ Google reviews" />
         </Field>
-        <Field label="Owner / Operator Name">
-          <input type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} style={inputStyle} placeholder="John Smith" />
+        <Field label="Owner / Operator Name" htmlFor="wiz-owner">
+          <input id="wiz-owner" type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} style={inputStyle} placeholder="John Smith" />
         </Field>
-        <Field label="Licenses / Certifications">
-          <input type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} style={inputStyle} placeholder="Licensed, Bonded, Insured" />
+        <Field label="Licenses / Certifications" htmlFor="wiz-licenses">
+          <input id="wiz-licenses" type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} style={inputStyle} placeholder="Licensed, Bonded, Insured" />
         </Field>
-        <Field label="Guarantees / Warranties">
-          <input type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} style={inputStyle} placeholder="100% satisfaction guarantee" />
+        <Field label="Guarantees / Warranties" htmlFor="wiz-guarantees">
+          <input id="wiz-guarantees" type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} style={inputStyle} placeholder="100% satisfaction guarantee" />
         </Field>
       </div>
 
@@ -990,23 +1375,78 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
 
 // ─── Step 4: Sitemap ──────────────────────────────────────────────────────────
 
-function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, pages, setPages }: {
+function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, onPasted, fetching, fetchMsg, pages, setPages }: {
+  clientId: string
   sitemapUrl: string
   setSitemapUrl: (v: string) => void
   onFetch: () => void
+  onPasted: (pages: SitemapPage[]) => void
   fetching: boolean
   fetchMsg: string
   pages: SitemapPage[]
   setPages: (p: SitemapPage[]) => void
 }) {
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+
+  /**
+   * Persist a flag change.
+   *
+   * These toggles used to set React state and nothing else. sitemap-parse stores the URLs but
+   * deliberately leaves is_priority / is_excluded alone so a re-parse cannot wipe them, and the
+   * wizard never wrote them either — so every page came out of onboarding unflagged. The
+   * exclusions never reached the client's sitemap tab, and, more quietly, no page was ever
+   * marked priority, which is what the generator's "link to at least 2 priority pages"
+   * instruction reads. Same endpoint the sitemap tab uses, so both surfaces now agree.
+   *
+   * Written per toggle rather than batched on step change: the wizard can be closed at any
+   * step, and a flag the user set should survive that.
+   */
+  async function persist(body: Record<string, unknown>) {
+    try {
+      const res = await fetch('/api/admin/content/sitemap-pages', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ client_id: clientId, ...body }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(data.error ?? `Save failed (${res.status})`)
+      }
+      setSaveErr(null)
+    } catch (e) {
+      // Keep the optimistic state on screen but say it did not stick, rather than silently
+      // showing a checkbox that means nothing.
+      setSaveErr(e instanceof Error ? e.message : 'Could not save that change')
+    }
+  }
+
   function togglePriority(idx: number) {
-    setPages(pages.map((p, i) => i === idx ? { ...p, isPriority: !p.isPriority } : p))
+    const next = !pages[idx].isPriority
+    setPages(pages.map((p, i) => i === idx ? { ...p, isPriority: next } : p))
+    void persist({ url: pages[idx].url, is_priority: next })
   }
   function toggleExclude(idx: number) {
-    setPages(pages.map((p, i) => i === idx ? { ...p, isExcluded: !p.isExcluded } : p))
+    const next = !pages[idx].isExcluded
+    setPages(pages.map((p, i) => i === idx ? { ...p, isExcluded: next } : p))
+    void persist({ url: pages[idx].url, is_excluded: next })
   }
   function markServicePages() {
-    setPages(pages.map(p => ({ ...p, isPriority: p.url.includes('/service') || p.isPriority })))
+    // Only the pages this actually changes are sent; the endpoint's bulk path takes the list.
+    const isService = (url: string) => url.includes('/service')
+    const serviceUrls = pages.filter(p => isService(p.url)).map(p => p.url)
+    const newlyPriority = pages.filter(p => isService(p.url) && !p.isPriority).map(p => p.url)
+    setPages(pages.map(p => ({ ...p, isPriority: isService(p.url) || p.isPriority })))
+    // The button is a classification as much as a ranking. is_service_page is what the sitemap
+    // tab reads and what marks these as commercial pages rather than articles, and it is written
+    // for EVERY service URL — scoping it to the ones whose priority changed meant a page already
+    // marked priority never got classified. Sequential, so the two writes cannot race on the
+    // error banner.
+    if (serviceUrls.length) {
+      void (async () => {
+        if (newlyPriority.length) await persist({ urls: newlyPriority, is_priority: true })
+        await persist({ urls: serviceUrls, is_service_page: true })
+      })()
+    }
   }
 
   return (
@@ -1019,6 +1459,7 @@ function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, p
           type="url"
           value={sitemapUrl}
           onChange={e => setSitemapUrl(e.target.value)}
+          aria-label="Sitemap URL"
           placeholder="https://example.com/sitemap.xml"
           style={{ ...inputStyle, flex: 1 }}
         />
@@ -1035,6 +1476,16 @@ function StepSitemap({ sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, p
       {fetchMsg && (
         <p style={{ fontSize: '0.8125rem', color: fetchMsg.includes('ailed') ? 'var(--red)' : 'var(--text-muted)', marginBottom: 10 }}>
           {fetchMsg}
+        </p>
+      )}
+
+      <div style={{ marginBottom: 12 }}>
+        <SitemapPaste clientId={clientId} onImported={list => onPasted(list as SitemapPage[])} />
+      </div>
+
+      {saveErr && (
+        <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 10 }}>
+          {saveErr} — the ticks below may not have been saved.
         </p>
       )}
 
@@ -1100,28 +1551,32 @@ function StepSchedule({
   imagePrompt: string; setImagePrompt: (v: string) => void
 }) {
   const needsDay = ['weekly', 'biweekly'].includes(schedule.frequency)
+  const isMonthly = schedule.frequency.startsWith('monthly')
 
   return (
     <div>
       <StepTitle>Publishing schedule</StepTitle>
-      <StepSub>How often should this client&apos;s posts be published? You can change this later in the Schedule tab.</StepSub>
+      <StepSub>How often should this client&apos;s posts be published? You can change this later under Settings → Schedule on the Content tab.</StepSub>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
         {FREQ_OPTIONS.map(opt => (
           <button
             key={opt.id}
             type="button"
-            onClick={() => setSchedule({ ...schedule, frequency: opt.id })}
+            // Monthly keeps whichever monthly day was already set (1st, 15th…), rather than
+            // resetting it, and is shown selected for all of them.
+            onClick={() => setSchedule({ ...schedule, frequency: opt.id === 'monthly' && isMonthly ? schedule.frequency : opt.id })}
+            aria-pressed={opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id}
             style={{
               padding: '1rem',
               borderRadius: 10,
-              border: `2px solid ${schedule.frequency === opt.id ? 'var(--blue)' : 'var(--border)'}`,
-              background: schedule.frequency === opt.id ? '#eff6ff' : 'var(--bg-surface)',
+              border: `2px solid ${(opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue)' : 'var(--border)'}`,
+              background: (opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue-subtle)' : 'var(--bg-surface)',
               cursor: 'pointer',
               textAlign: 'left',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: schedule.frequency === opt.id ? 'var(--blue)' : 'var(--text-primary)' }}>{opt.label}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: (opt.id === 'monthly' ? isMonthly : schedule.frequency === opt.id) ? 'var(--blue)' : 'var(--text-primary)' }}>{opt.label}</div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 2 }}>{opt.sub}</div>
           </button>
         ))}
@@ -1129,14 +1584,49 @@ function StepSchedule({
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
         {needsDay && (
-          <Field label="Day of Week">
-            <select value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
+          <Field label="Day of Week" htmlFor="wiz-day-of-week">
+            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
               {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
             </select>
           </Field>
         )}
-        <Field label="Publish Time">
-          <input type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
+        {isMonthly && (
+          <Field label="Day of the Month" htmlFor="wiz-month-day">
+            <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} style={inputStyle}>
+              {MONTHLY_DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Posts Each Publish Date" htmlFor="wiz-posts-per-run">
+          <input
+            id="wiz-posts-per-run" type="number" min={1} max={10}
+            value={schedule.postsPerRun || ''}
+            onChange={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(0, Number(e.target.value) || 0)) })}
+            onBlur={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(1, Number(e.target.value) || 1)) })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Weeks Ahead" htmlFor="wiz-weeks-ahead">
+          <input
+            id="wiz-weeks-ahead" type="number" min={1} max={24}
+            title="How many publish dates the planner keeps topics ready for"
+            value={schedule.weeksAhead || ''}
+            onChange={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
+            onBlur={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(1, Number(e.target.value) || 4)) })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Start Date" htmlFor="wiz-start-date">
+          <input
+            id="wiz-start-date" type="date"
+            title="The first publish date the schedule counts from"
+            value={schedule.startDate}
+            onChange={e => setSchedule({ ...schedule, startDate: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Publish Time" htmlFor="wiz-publish-time">
+          <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
         </Field>
       </div>
 
@@ -1163,7 +1653,7 @@ function StepSchedule({
           />
           <div>
             <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>Generate AI featured image</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Uses DALL-E to create a featured image for each post</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Uses the OpenAI image model chosen in Settings to create a featured image for each post</div>
           </div>
         </label>
 
@@ -1172,6 +1662,7 @@ function StepSchedule({
             type="text"
             value={imagePrompt}
             onChange={e => setImagePrompt(e.target.value)}
+            aria-label="Featured image style"
             placeholder="e.g. Outdoor lifestyle photo, warm tones, no text overlays"
             style={inputStyle}
           />
@@ -1194,12 +1685,21 @@ function StepContentTypes({
 }) {
   return (
     <div>
-      <StepTitle>Additional Content Types</StepTitle>
+      <StepTitle>
+        Additional Content Types
+        <span className="badge badge-amber" style={{ marginLeft: 10, verticalAlign: 'middle', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', borderRadius: 999 }}>
+          Coming soon
+        </span>
+      </StepTitle>
       <StepSub>
-        Optionally enable AI-generated Service Pages and Regular Pages alongside your blog posts.
-        You can also configure these later from the Content Schedule tab.
+        AI-generated Service Pages and Regular Pages alongside blog posts. Not switched on yet —
+        the options below are shown so you can see what is planned, and nothing here is saved.
+        Pages can still be generated on demand from the Pipeline tab today.
       </StepSub>
 
+      {/* Disabled until the automation behind these exists: the content-topics cron reads the
+          two flags and deliberately discards them, so a tick here has never driven anything. */}
+      <div aria-disabled="true" style={{ opacity: 0.45, pointerEvents: 'none', userSelect: 'none' }}>
       {/* Service Pages */}
       <div className="card p-4" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
@@ -1258,94 +1758,306 @@ function StepContentTypes({
         )}
       </div>
 
+      </div>
+
       <p style={{ marginTop: 16, fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-        You can skip this step — additional content types can be enabled at any time from the Content Schedule tab.
+        Press Skip to move on. This step saves nothing yet.
       </p>
     </div>
   )
 }
 
-// ─── Step 7: Research ─────────────────────────────────────────────────────────
+// --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, done }: { research: ResearchData | null; done: boolean }) {
+function StepResearch({ research, phase, outcome, clientId, servicesText, seeds, setSeeds, onResearch, hasDfs, onPicksSaved, onPicksDirty, picksDirty }: {
+  research:  ResearchData | null
+  /** 'loading' is the free read of the stored pool; 'researching' is a paid run. */
+  phase:     'idle' | 'loading' | 'researching'
+  outcome:   ResearchOutcome | null
+  clientId:  string
+  /** Step 3's Services, offered as a starting point rather than copied in silently. */
+  servicesText: string
+  seeds:     string
+  setSeeds:  (v: string) => void
+  /** Saves the answers and runs research. Spends. */
+  onResearch: () => void
+  /** Whether this client has a DataForSEO connection. Without one there is nothing to research. */
+  hasDfs:    boolean
+  /** After the picks are saved, so the wizard's copy of the pool matches the server's. */
+  onPicksSaved: () => void
+  onPicksDirty: (dirty: boolean) => void
+  /**
+   * Ticks in the list that are not saved. Looking again waits for them: a run replaces every
+   * keyword not saved as ticked, and the unsaved ticks would go with those rows.
+   */
+  picksDirty: boolean
+}) {
+  // Every hook first. An early return above a useState changes the hook order between renders,
+  // which React refuses — and this component is rendered with hasDfs false and then true as the
+  // connection check resolves, so it would have hit exactly that.
+  const [confirming, setConfirming] = useState(false)
+  // Unsaved picks close the "look again" confirmation, so saving them can't reopen it unasked.
+  useEffect(() => { if (picksDirty) setConfirming(false) }, [picksDirty])
+  const place = research?.researchLocation ? research.researchLocation.split(',')[0] : null
+  // Built once per pool, not per render: the panel reconciles its ticks against this list, and
+  // a fresh array on every keystroke in the seeds box is what used to wipe them.
+  const rawKeywords = research?.keywords
+  const panelKeywords = useMemo<ResearchKeyword[]>(() => (rawKeywords ?? []).map(k => ({
+    keyword:      k.keyword,
+    volume:       k.volume ?? null,
+    difficulty:   k.difficulty ?? null,
+    intent:       k.intent ?? null,
+    source:       k.source ?? null,
+    score:        k.score ?? null,
+    local_volume: k.local_volume ?? null,
+    chosen:       k.chosen ?? false,
+  })), [rawKeywords])
+  const geoWords = useMemo(() => place ? [place] : [], [place])
+
+  // Nothing to research without DataForSEO, so ask for it here instead of running a step that can
+  // only come back empty. Everything else in the wizard works without it; this is the one screen
+  // that does not, and it is better to say so than to show an empty list and let the operator
+  // wonder which of the previous eight answers was wrong.
+  if (!hasDfs) {
+    return (
+      <div>
+        <StepTitle>Connect DataForSEO to research keywords</StepTitle>
+        <StepSub>
+          Keyword research needs DataForSEO — it is what finds what people search for, what this
+          client already ranks for, and what competitors rank for. Connect it on the client&apos;s
+          Integrations tab and come back, or skip: everything else here is already set up, and you
+          can add your own keywords by hand on the Keywords tab at any time.
+        </StepSub>
+        <a
+          // The Integrations tab's id is `sources`; ?tab=integrations matched nothing and landed
+          // on Overview.
+          href={`/admin/clients/${clientId}?tab=sources`}
+          target="_blank" rel="noopener noreferrer"
+          className="btn btn-secondary"
+          style={{ display: 'inline-block', fontSize: '0.875rem', marginTop: 4 }}
+        >
+          Open Integrations →
+        </a>
+      </div>
+    )
+  }
+
+  const researching  = phase === 'researching'
+  const busy         = phase !== 'idle'
+  const keywords     = research?.keywords ?? []
+  const competitors  = research?.competitors ?? []
+  const localPack    = research?.localPack ?? []
+  const hadRun       = !!research?.researchedAt || keywords.length > 0
+  const researchedOn = research?.researchedAt ? new Date(research.researchedAt).toLocaleDateString() : null
+  const canResearch  = !!(seeds.trim() || servicesText.trim())
+
   return (
     <div>
-      <StepTitle>Researching your market</StepTitle>
-      <StepSub>We&apos;re looking up keyword opportunities and competitor content for this client. This runs in the background.</StepSub>
+      <StepTitle>Choose what to write around</StepTitle>
+      <StepSub>
+        Search terms this business could realistically win, and the sites already winning them.
+        Tick the ones worth pursuing: of these, topics use only the ones you tick, alongside what
+        Search Console and rankings show. You can change the picks at any time on the
+        client&apos;s Keywords tab.
+      </StepSub>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        {/* Keywords panel */}
+      {/* Starting keywords + look again: the two things an operator can do about a bad list */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: 12, background: 'var(--bg-subtle)' }}>
+        <label htmlFor="wizard-starting-keywords" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+          Search from
+        </label>
+        <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 6px', lineHeight: 1.5 }}>
+          {SERVICES_HELP}
+          {servicesText.trim() && !seeds.trim() ? ' Start from the services you entered, or type your own.' : ''}
+        </p>
+        {servicesText.trim() && !seeds.trim() && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', marginBottom: 8 }}
+            onClick={() => setSeeds(splitPhrases(servicesText).slice(0, SEED_MAX).join(', '))}
+            disabled={busy}
+          >
+            Use the services from step 3
+          </button>
+        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+            <KeywordChipInput
+              id="wizard-starting-keywords"
+              value={seeds}
+              onChange={setSeeds}
+              disabled={busy}
+              max={SEED_MAX}
+              placeholder="permanent outdoor lighting, landscape lighting installation…"
+            />
+          </div>
+          {confirming && !picksDirty ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200 }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
+                Replace the unticked ideas below? Saved ticks stay.
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => setConfirming(false)}>Cancel</button>
+                <button type="button" className="btn btn-primary" style={{ fontSize: '0.75rem' }} onClick={() => { setConfirming(false); onResearch() }}>Yes, look again</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => (hadRun ? setConfirming(true) : onResearch())}
+              disabled={busy || !canResearch || picksDirty}
+              aria-describedby={picksDirty ? 'wizard-research-hold' : undefined}
+              title="Uses DataForSEO credit"
+              style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
+            >
+              {researching ? 'Researching…' : hadRun ? 'Look again' : 'Research this market'}
+            </button>
+          )}
+        </div>
+        {picksDirty && !busy && (
+          <p id="wizard-research-hold" style={{ fontSize: '0.75rem', color: 'var(--amber)', margin: '6px 0 0', lineHeight: 1.5 }}>
+            Save your picks first — looking again replaces every keyword that isn&apos;t saved as ticked.
+          </p>
+        )}
+        {/* Said plainly, because it is the one button in the wizard that costs money. */}
+        <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
+          {hadRun
+            ? `${researchedOn ? `Last researched ${researchedOn}. ` : ''}Research refreshes by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the ideas not saved as ticked with a fresh search from these terms.`
+            : 'Research spends DataForSEO credit, so it runs only when you press the button. It saves your answers so far first, because it searches from them. After that it refreshes by itself once a month.'}
+        </p>
+      </div>
+
+      {outcome && (
+        <div
+          role={outcome.tone === 'error' ? 'alert' : 'status'}
+          style={{
+            padding: '0.625rem 0.875rem', borderRadius: 8, marginBottom: 12,
+            fontSize: '0.8125rem', lineHeight: 1.45, color: 'var(--text-primary)',
+            background: `var(--${OUTCOME_TONE[outcome.tone]}-subtle)`,
+            border: `1px solid var(--${OUTCOME_TONE[outcome.tone]})`,
+          }}
+        >
+          {outcome.text}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 16 }}>
+        {/* Keyword ideas — choosing is the work, so it leads and gets the full width */}
+        <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '0.85rem 1rem' }}>
+          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: 8 }}>
+            Search terms worth pursuing
+          </div>
+          {researching && (
+            <p role="status" style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 8px' }}>
+              Looking at this market — usually 20–40 seconds.
+            </p>
+          )}
+          {phase === 'loading' && !research ? (
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', margin: 0 }}>Loading the saved list…</p>
+          ) : keywords.length === 0 ? (
+            !researching && (
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: 0 }}>
+                Nothing researched yet. Press <strong>Research this market</strong> to look.
+              </p>
+            )
+          ) : (
+            // Stays mounted through a run, so ticks not yet saved survive it.
+            <KeywordResearchPanel
+              clientId={clientId}
+              keywords={panelKeywords}
+              geoWords={geoWords}
+              place={place}
+              busy={busy}
+              // The stored-pool read returns the strongest 60 and no total; say so, not "60 found".
+              cap={60}
+              onChanged={onPicksSaved}
+              onDirtyChange={onPicksDirty}
+            />
+          )}
+        </div>
+
+        {/* Competing sites */}
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-            Keyword Research
+            Competing sites{place ? ` in ${place}` : ''}
           </div>
           <div style={{ padding: '0.875rem 1rem' }}>
-            {!done ? (
-              <StatusRow label="Searching keywords…" status="loading" />
-            ) : !research?.hasSerpApi ? (
-              <div style={{ fontSize: '0.75rem', color: '#92400e', background: '#fef3c7', padding: '0.625rem', borderRadius: 6, lineHeight: 1.5 }}>
-                Add a SerpAPI key in Agency Settings for richer keyword research.
+            {researching ? (
+              <LoadingRow label="Finding competing sites…" />
+            ) : competitors.length === 0 && localPack.length === 0 ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                {/* Competing sites come back from a run and are not stored, so a list read from
+                    storage has none to show. That is not the same as a run that found none. */}
+                {research?.fromRun
+                  ? 'No competing sites found for these keywords. Directories and marketplaces are left out on purpose — try more specific starting keywords and look again.'
+                  : hadRun
+                    ? 'Competing sites are shown straight after a run, and aren’t kept. Look again to see them.'
+                    : 'Shown once research has run.'}
               </div>
-            ) : research.keywords.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>No keyword data found.</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {research.keywords.map((kw, i) => (
-                  <div key={i}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>{kw.keyword}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {kw.relatedSearches.slice(0, 4).map((q, j) => (
-                        <span key={j} style={{ fontSize: '0.6875rem', padding: '1px 6px', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8' }}>{q}</span>
+              <>
+                {competitors.length > 0 && (
+                  <>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                      {place
+                        ? `Who a searcher in ${place} sees for the starting keywords — search results and the map pack, strongest first.`
+                        : 'Sites ranking for the starting keywords, strongest first.'}
+                      {' '}The top three&apos;s own keywords join the list.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {competitors.map((c, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />
+                          <a href={`https://${c}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace', textDecoration: 'none' }}>{c}</a>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {localPack.length > 0 && (
+                  <div style={{ marginTop: competitors.length ? 12 : 0 }}>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                      Top rated in the map pack
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {localPack.map((p, i) => (
+                        <div key={i} style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                          {p.domain
+                            ? <a href={`https://${p.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-primary)', textDecoration: 'none' }}>{p.title}</a>
+                            : <span>{p.title}</span>}
+                          {p.rating != null && (
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>
+                              ★ {p.rating.toFixed(1)}{p.votes != null ? ` (${p.votes.toLocaleString()})` : ''}
+                            </span>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Competitors panel */}
-        <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-          <div style={{ padding: '0.75rem 1rem', background: 'var(--bg-subtle)', fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
-            Competitor Analysis
-          </div>
-          <div style={{ padding: '0.875rem 1rem' }}>
-            {!done ? (
-              <StatusRow label="Finding competitors…" status="loading" />
-            ) : (research?.competitors ?? []).length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-                {research?.hasSerpApi ? 'No competitors found for these keywords.' : 'Connect SerpAPI to enable competitor analysis.'}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {research!.competitors.map((c, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{c}</span>
-                  </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         </div>
       </div>
 
-      {done && (
-        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: '#f0fdf4', border: '1px solid #86efac', fontSize: '0.8125rem', color: '#166534' }}>
-          Research complete. This data will improve topic relevance when generating.
-        </div>
-      )}
     </div>
   )
 }
 
-function StatusRow({ label, status }: { label: string; status: 'loading' | 'done' | 'error' }) {
+/** Outcome tone → the theme colour family it is drawn in. */
+const OUTCOME_TONE: Record<ResearchOutcome['tone'], 'green' | 'amber' | 'red'> = {
+  success: 'green',
+  warning: 'amber',
+  error:   'red',
+}
+
+function LoadingRow({ label }: { label: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-      {status === 'loading' && <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>}
-      {status === 'done'    && <span style={{ color: '#16a34a' }}>✓</span>}
-      {status === 'error'   && <span style={{ color: '#dc2626' }}>✗</span>}
+    <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+      <span aria-hidden style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
       {label}
     </div>
   )
@@ -1353,37 +2065,62 @@ function StatusRow({ label, status }: { label: string; status: 'loading' | 'done
 
 // ─── Step 8: Ready ────────────────────────────────────────────────────────────
 
-function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi, saving, saveMsg, onSave, onSaveAndGenerate }: {
+function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearch, saving, saveMsg, planActive, onSave, onSaveAndGenerate }: {
   clientName: string
+  planActive: boolean
   brand: BrandDna
   schedule: Schedule
   pagesCount: number
   hasGsc: boolean
-  hasSerpApi: boolean
+  hasResearch: boolean
   saving: boolean
   saveMsg: string
   onSave: () => void
   onSaveAndGenerate: () => void
 }) {
-  const freqLabel = FREQ_OPTIONS.find(f => f.id === schedule.frequency)?.label ?? schedule.frequency
+  const freqLabel = cadenceLabel({
+    schedule_frequency: schedule.frequency, schedule_day_of_week: schedule.dayOfWeek,
+    posts_per_run: schedule.postsPerRun, schedule_start_date: schedule.startDate || null,
+  })
 
   const summaryRows = [
-    { label: 'Frequency',     value: freqLabel },
+    { label: 'Schedule',      value: freqLabel },
+    { label: 'Weeks ahead',   value: String(schedule.weeksAhead) },
     { label: 'Publish time',  value: schedule.publishTime },
     { label: 'Sitemap pages', value: pagesCount > 0 ? String(pagesCount) : '—' },
   ]
 
   const statusChecks = [
-    { label: 'Brand DNA',     ok: !!brand.business_background },
-    { label: 'GSC Connected', ok: hasGsc },
-    { label: 'SerpAPI',       ok: hasSerpApi },
+    { label: 'Business profile',      ok: !!brand.business_background },
+    { label: 'Google Search Console', ok: hasGsc },
+    { label: 'Keyword research', ok: hasResearch },
     { label: 'Sitemap',       ok: pagesCount > 0 },
   ]
 
   return (
     <div>
       <StepTitle>Setup complete!</StepTitle>
-      <StepSub>{clientName} is ready for AI content generation.</StepSub>
+      <StepSub>
+        {/* "Running" only when it is: a paused plan said "already running" above a Paused badge. */}
+        {planActive
+          ? `${clientName}'s content plan is already ${schedule.autoGenerate ? 'running' : 'set up, and paused'}. Saving updates the settings it follows.`
+          : `${clientName} is ready for AI content generation.`}
+      </StepSub>
+
+      {/* A running plan is not started again from here — that only re-asked for dates the plan
+          already fills. Say what saving does to it instead. */}
+      {planActive && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '0.75rem 0.875rem', marginBottom: 16, border: '1px solid var(--border)', borderLeft: `3px solid ${schedule.autoGenerate ? 'var(--green)' : 'var(--amber)'}`, borderRadius: 8, background: 'var(--bg-subtle)' }}>
+          <span className={`badge ${schedule.autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem', flexShrink: 0, marginTop: 1 }}>
+            {schedule.autoGenerate ? 'Running' : 'Paused'}
+          </span>
+          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            {schedule.autoGenerate
+              ? 'Dates already planned stay as they are. New dates follow these settings as they come up.'
+              : 'Automatic planning is off, so no new dates fill in on their own. Dates already planned stay as they are.'}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
@@ -1399,11 +2136,11 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
         </div>
 
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
-          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Data Sources</div>
+          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>What we have for this client</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {statusChecks.map(c => (
               <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>
-                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? '#dcfce7' : '#f3f4f6', color: c.ok ? '#16a34a' : '#9ca3af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
+                <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? 'var(--green-subtle)' : 'var(--bg-subtle)', color: c.ok ? 'var(--green)' : 'var(--text-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
                   {c.ok ? '✓' : '—'}
                 </span>
                 <span style={{ color: c.ok ? 'var(--text-primary)' : 'var(--text-faint)' }}>{c.label}</span>
@@ -1421,19 +2158,21 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasSerpApi
         <button
           onClick={onSave}
           disabled={saving}
-          className="btn btn-secondary"
+          className={planActive ? 'btn btn-primary' : 'btn btn-secondary'}
           style={{ fontSize: '0.875rem', flex: 1 }}
         >
           {saving ? 'Saving…' : 'Save Setup'}
         </button>
-        <button
-          onClick={onSaveAndGenerate}
-          disabled={saving}
-          className="btn btn-primary"
-          style={{ fontSize: '0.875rem', flex: 2 }}
-        >
-          {saving ? 'Saving…' : 'Save & Generate First Topics'}
-        </button>
+        {!planActive && (
+          <button
+            onClick={onSaveAndGenerate}
+            disabled={saving}
+            className="btn btn-primary"
+            style={{ fontSize: '0.875rem', flex: 2 }}
+          >
+            {saving ? 'Saving…' : 'Save & Generate First Topics'}
+          </button>
+        )}
       </div>
     </div>
   )

@@ -23,7 +23,9 @@ export default function DataForSeoAgencyCard({
   const [connectorId, setConnectorId] = useState<string | undefined>(initialConnectorId)
   const [login,       setLogin]       = useState('')
   const [password,    setPassword]    = useState('')
-  const [depth,       setDepth]       = useState(initialDepth ?? 100)
+  // Kept, not edited: saved back unchanged so removing the field does not silently rewrite a
+  // client's stored depth to a default.
+  const depth = initialDepth ?? 100
   const [devices,     setDevices]     = useState<SeoDevice[]>(initialDevices?.length ? initialDevices : ['desktop', 'mobile'])
   const [isConnected, setIsConnected] = useState(!!connected)
   const [justSaved,   setJustSaved]   = useState(false)
@@ -92,7 +94,7 @@ export default function DataForSeoAgencyCard({
               <li>Paste them below, then attach each client&apos;s domain from their Integrations tab to start rank tracking.</li>
             </ol>
             <p style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-              Cost scales with rank-tracking depth and device coverage — set the defaults below (override per client on their connection).
+              Checking both devices doubles the daily rank-tracking cost. Set a monthly limit in the DataForSEO Usage &amp; Spend panel just below this card on the Integrations page — it appears once these credentials are saved. When the month&apos;s spend reaches it, research and rank checks stop until the next month.
             </p>
           </div>
         }
@@ -108,13 +110,13 @@ export default function DataForSeoAgencyCard({
           <input type="password" className="input" value={password} onChange={e => setPassword(e.target.value)}
             placeholder={hasCreds ? '•••••• (leave blank to keep)' : 'DataForSEO API password'} autoComplete="off" style={{ width: '100%' }} />
         </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-            Default rank depth <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— 20 = page 1–2 (cheapest), 100 = full</span>
-          </label>
-          <input type="number" min={10} max={100} step={10} className="input" value={depth}
-            onChange={e => setDepth(Number(e.target.value))} style={{ width: 120 }} />
-        </div>
+        {/* "How deep we look" is gone. It was a number you could set that changed nothing: the
+            rankings cron reads Math.min(30, rank_depth) for routine checks and forces 100 for a
+            keyword's first one, so any value from 30 up was identical and only a value below 30
+            — which nobody wants — did anything at all. The two constants in the cron decide this,
+            and they are chosen to keep the cost down; a box implying otherwise was a lie in the
+            shape of a control. The stored value is left untouched so nothing changes for clients
+            that already have one. */}
         <div>
           <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Default devices</label>
           <div style={{ display: 'flex', gap: 14 }}>
@@ -126,7 +128,7 @@ export default function DataForSeoAgencyCard({
             ))}
           </div>
           <p style={{ fontSize: '0.68rem', color: 'var(--text-faint)', margin: '4px 0 0' }}>
-            Each device is a separate daily SERP check. Depth and devices are per-client-overridable.
+            Checking both desktop and mobile doubles the daily cost. You can change either setting for an individual client on their Integrations tab.
           </p>
         </div>
       </IntegrationModal>

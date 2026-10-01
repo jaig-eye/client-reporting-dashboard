@@ -1,5 +1,5 @@
 // GET /api/cron/content-topics
-// Daily cron (7 AM + 7 PM UTC) that drives automated content scheduling.
+// Cron (every two hours, vercel.json) that drives automated content scheduling.
 //
 // Topic generation timing is automatic based on frequency × weeks_ahead:
 //   weekly  + weeks_ahead=1 → topics generated 7 days before publish
@@ -22,107 +22,8 @@ import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getCycleDays(frequency: string): number {
-  switch (frequency) {
-    case 'monthly': case 'monthly_first': case 'monthly_mid': case 'monthly_end': return 28
-    case 'biweekly': return 14
-    case 'weekly':   return 7
-    default:         return 1
-  }
-}
-
-function daysInMonth(year: number, month: number): number {
-  // getUTCDate, not getDate. Date.UTC builds the instant for midnight UTC on the
-  // month's last day; reading it back with the LOCAL getDate() returns the previous
-  // day in any negative-UTC-offset zone, so this reported 30 for a 31-day month when
-  // run outside UTC. Harmless on Vercel (UTC) and at day 25, but it silently
-  // mis-clamped day-29/30/31 schedules in local development and testing.
-  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
-}
-
-/**
- * The day-of-month a rolling-monthly schedule publishes on.
- *
- * This MUST be stable across runs. It used to be `now.getUTCDate()` — today's date —
- * and because this cron runs every day, every run anchored a brand-new monthly
- * series on a different day: run on the 25th and you get the 25th of each month,
- * run on the 26th and you get the 26th as well, and so on. After a week of runs a
- * "monthly" client had seven consecutive publish dates, repeating every month —
- * a week-long burst once a month instead of one post a month.
- *
- * Preference order: the explicitly configured monthly_publish_day, then the day
- * component of the schedule's start date (what the Start date field in the UI
- * means), and only then today — which is now merely a last resort for a client
- * with neither configured, rather than the normal path.
- */
-function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: string | null, now: Date): number {
-  if (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31) return monthlyPublishDay
-  if (startDate) {
-    const d = new Date(startDate + 'T00:00:00Z')
-    if (!Number.isNaN(d.getTime())) return d.getUTCDate()
-  }
-  // Last resort, and it is the ORIGINAL BUG: with no anchor the day-of-month is
-  // whatever today happens to be, and because this cron runs every two hours, each
-  // new calendar day starts a fresh monthly series — producing a run of consecutive
-  // publish dates that repeats every month. Nothing can be done about it here without
-  // an anchor, but it must not fail silently the way it did before: this is the one
-  // configuration that still reproduces the burst, so say so loudly enough to find
-  // in the logs. Fix by setting content_settings.monthly_publish_day (or a
-  // schedule_start_date) for the client.
-  console.warn(
-    `[content-topics cron] MONTHLY CLIENT HAS NO ANCHOR — neither monthly_publish_day nor ` +
-    `schedule_start_date is set, so the publish day falls back to today (${now.getUTCDate()}) ` +
-    `and WILL drift on every calendar day, recreating the burst. Set monthly_publish_day.`,
-  )
-  return now.getUTCDate()
-}
-
-function computeFutureSlots(
-  frequency: string,
-  dayOfWeek: number,
-  weeksLookahead: number,
-  monthlyPublishDay: number | null = null,
-  scheduleStartDate: string | null = null,
-): string[] {
-  const now  = new Date()
-  const end  = new Date(now.getTime() + weeksLookahead * 7 * 86_400_000)
-  const slots: string[] = []
-
-  if (frequency === 'daily') {
-    let cur = new Date(now.getTime() + 86_400_000)
-    while (cur <= end) { slots.push(cur.toISOString().slice(0, 10)); cur = new Date(cur.getTime() + 86_400_000) }
-    return slots
-  }
-
-  if (frequency === 'weekly' || frequency === 'biweekly') {
-    const interval = frequency === 'biweekly' ? 14 : 7
-    let cur = new Date(now)
-    const daysUntil = (dayOfWeek - cur.getUTCDay() + 7) % 7 || 7
-    cur = new Date(cur.getTime() + daysUntil * 86_400_000)
-    while (cur <= end) { slots.push(cur.toISOString().slice(0, 10)); cur = new Date(cur.getTime() + interval * 86_400_000) }
-    return slots
-  }
-
-  if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
-    const targetDay = frequency === 'monthly_first' ? 1
-                    : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 28
-                    : rollingMonthlyDay(monthlyPublishDay, scheduleStartDate, now)
-    let y = now.getUTCFullYear(), m = now.getUTCMonth()
-    while (true) {
-      const candidate = new Date(Date.UTC(y, m, Math.min(targetDay, daysInMonth(y, m))))
-      if (candidate > end) break
-      if (candidate > now) slots.push(candidate.toISOString().slice(0, 10))
-      m++; if (m > 11) { m = 0; y++ }
-    }
-    return slots
-  }
-
-  return []
-}
+import { getCycleDays, computeFutureSlots, leadWindowDays, windowSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
+import { waitingSets } from '@/lib/content/siloQueue'
 
 // ── Cron handler ──────────────────────────────────────────────────────────────
 
@@ -180,7 +81,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date')
+    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date, posts_per_run')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -263,6 +164,7 @@ export async function GET(request: NextRequest) {
       generate_regular_pages = false,
       monthly_publish_day   = null,
       schedule_start_date   = null,
+      posts_per_run         = 1,
     } = row as {
       client_id:              string
       schedule_frequency:     string | null
@@ -274,7 +176,12 @@ export async function GET(request: NextRequest) {
       generate_regular_pages: boolean
       monthly_publish_day:    number | null
       schedule_start_date:    string | null
+      posts_per_run:          number | null
     }
+
+    // How many posts this client's cadence window should hold. Clamped to the column's own
+    // CHECK range so a bad value can't make the cron generate an unbounded run.
+    const postsPerRun = Math.min(10, Math.max(1, Number(posts_per_run ?? 1) || 1))
 
     // Legacy self-heal, server side.
     //
@@ -313,70 +220,34 @@ export async function GET(request: NextRequest) {
     const frequency = (schedule_frequency as string | null) ?? globalFreq
     const dayOfWeek = (schedule_day_of_week as number | null) ?? globalDay
 
-    const cycle      = getCycleDays(frequency)
-    const leadWindow = cycle * Math.max(weeks_ahead, 1)
-    const weeksToScan = Math.ceil(leadWindow / 7) + 1
-
-    const slots = computeFutureSlots(frequency, dayOfWeek, weeksToScan, monthly_publish_day, schedule_start_date).filter(slot => {
-      const ms = new Date(slot + 'T00:00:00Z').getTime() - Date.now()
-      const d  = Math.round(ms / 86_400_000)
-      return d > 0 && d <= leadWindow
+    // The dates inside the client's lead window — the same definition calendar/generate plans from.
+    const leadWindow = leadWindowDays(frequency, weeks_ahead)
+    const slots = windowSlots({
+      frequency, dayOfWeek, weeksAhead: weeks_ahead,
+      monthlyPublishDay: monthly_publish_day, scheduleStartDate: schedule_start_date,
     })
 
-    // ── Silo auto-selection: pick least-covered active silo, filtered by active content types ──
-    let autoSiloId: string | undefined
-    let autoSiloTargetExists: boolean | undefined
-    let autoSiloTargetKeyword: string | undefined
-    {
-      // service_page and regular_page are now generated on-demand via the
-      // Page Generation Wizard — they no longer participate in automated silo discovery.
-      // The post-generation loop still processes any wizard-queued approved topics of those types.
-      void generate_service_pages  // suppress unused-var lint without removing the destructure
-      void generate_regular_pages
-      const activeContentTypes: string[] = ['blog']
-
-      const { data: activeSilos } = await db
-        .from('content_silos')
-        .select('id, content_type, target_exists, target_keyword, priority')
-        .eq('client_id', client_id)
-        .eq('status', 'active')
-        .in('content_type', activeContentTypes)
-        .order('priority', { ascending: true })
-
-      if (activeSilos && activeSilos.length > 0) {
-        type SiloCandidate = { id: string; content_type: string; target_exists: boolean; target_keyword: string | null; priority: number }
-        const siloList = activeSilos as SiloCandidate[]
-        const siloIds  = siloList.map(s => s.id)
-
-        const { data: clusterPosts } = await db
-          .from('content_posts')
-          .select('silo_id')
-          .in('silo_id', siloIds)
-          .in('status', ['for_review', 'approved', 'draft_saved', 'published', 'pending'])
-
-        const counts = new Map<string, number>(siloIds.map(id => [id, 0]))
-        for (const p of (clusterPosts ?? []) as { silo_id: string }[]) {
-          counts.set(p.silo_id, (counts.get(p.silo_id) ?? 0) + 1)
-        }
-
-        // Sort by priority ASC, then post count ASC (least-covered within same priority tier)
-        const ranked = [...siloList].sort((a, b) => {
-          const priDiff = a.priority - b.priority
-          if (priDiff !== 0) return priDiff
-          return (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0)
-        })
-
-        const chosen = ranked[0]
-        if (chosen) {
-          autoSiloId            = chosen.id
-          autoSiloTargetExists  = chosen.target_exists
-          autoSiloTargetKeyword = chosen.target_keyword ?? undefined
-          console.log(`[content-topics cron] auto-selected silo ${autoSiloId} (${chosen.content_type}, priority=${chosen.priority}, posts=${counts.get(autoSiloId) ?? 0}) for ${client_id}`)
-          if (!chosen.target_exists && chosen.target_keyword) {
-            console.log(`[content-topics cron] silo ${autoSiloId} hub not yet created — target_keyword: "${chosen.target_keyword}"`)
-          }
-        }
+    // ── Priority set: the oldest active set with keywords waiting takes the date ──
+    // A person adds a set (a silo) to have those keywords written next, so an active set takes
+    // each new date until its keywords are used, oldest set first. Picked per date rather than
+    // once per run, so a set that runs out mid-run hands the next date back to the usual selection.
+    //
+    // A set with no keywords waiting is skipped, with or without a main page. Picking one made
+    // generation refuse ("every keyword in its queue has been used"), and every date for the
+    // client stayed empty for as long as the set stayed active.
+    //
+    // service_page and regular_page are generated on demand by the Page Generation Wizard and
+    // take no part here. The post-generation loop still processes approved topics of those types.
+    void generate_service_pages  // suppress unused-var lint without removing the destructure
+    void generate_regular_pages
+    const pickSilo = async (): Promise<{ id: string; waiting: number } | null> => {
+      // Shared with calendar/generate, so a generated plan splits dates between sets as this does.
+      const { sets, error } = await waitingSets(db, client_id)
+      if (error) {
+        console.warn(`[content-topics cron] silo read failed for ${client_id}, using the usual selection:`, error)
+        return null
       }
+      return sets[0] ?? null
     }
 
     // ── Slots a human deliberately emptied — never refill them ───────────────
@@ -421,37 +292,62 @@ export async function GET(request: NextRequest) {
       // regenerate-what-you-removed loop as deletion. Rejection is a full stop for
       // the slot; the subject also stays in the avoid-list (see generateTopics.ts)
       // so it is never suggested again anywhere.
-      const { data: existing } = await db
+      const { count: onSlot, error: onSlotErr } = await db
         .from('content_topics')
-        .select('id')
+        .select('id', { count: 'exact', head: true })
         .eq('client_id', client_id)
         .eq('target_publish_date', slot)
-        .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
-        .limit(1)
+        .in('status', SLOT_STATUSES)
 
-      if (existing && existing.length > 0) continue
+      // A failed count reads as an empty slot, which would generate a full quota of topics on top
+      // of whatever is already there. Skipping the slot is the safe direction: a missed window
+      // costs one late post, a double-filled one costs duplicate articles nobody asked for.
+      if (onSlotErr) {
+        console.warn(`[cron/content-topics] slot count failed for ${client_id} on ${slot}, skipping:`, onSlotErr.message)
+        continue
+      }
+      // A rejected topic still counts against the quota, for the same reason the old check listed
+      // 'rejected': the slot has been dealt with, and refilling it is the regenerate-what-you-removed
+      // loop this cron already learned not to do. A deleted topic is gone from the table; its date
+      // is held by the suppression checked above instead.
+      const needed = postsPerRun - (onSlot ?? 0)
+      if (needed <= 0) continue
 
       try {
-        const result = await generateTopicsForClient(db, client_id, 1, slot, { suppressEmail: true, siloId: autoSiloId })
-        if (result.topics.length > 0) {
-          const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
-          entry.items.push(...result.topics)
-          topicAccum.set(client_id, entry)
-          topicsGenerated.push(`${client_id}:${slot}`)
-
-          // Flip target_exists=true if we just generated hub topic for this silo
-          if (autoSiloId && autoSiloTargetExists === false && autoSiloTargetKeyword) {
-            const hubTopic = result.topics.find(t =>
-              t.target_keyword?.toLowerCase().includes(autoSiloTargetKeyword!.toLowerCase()) ||
-              autoSiloTargetKeyword!.toLowerCase().includes((t.target_keyword ?? '').toLowerCase())
-            )
-            if (hubTopic) {
-              await db.from('content_silos').update({ target_exists: true }).eq('id', autoSiloId)
-              console.log(`[content-topics cron] flipped target_exists=true for silo ${autoSiloId} (hub topic: "${hubTopic.topic}")`)
-              autoSiloTargetExists = true
-            } else {
-              console.warn(`[content-topics cron] silo ${autoSiloId} hub not found in generated topics — target_exists not flipped`)
-            }
+        // A set never takes more of a date than it has keywords waiting; the rest of the date's
+        // quota comes from the usual selection, so a set's last keyword cannot be stretched into
+        // topics nobody asked for.
+        const silo = await pickSilo()
+        const batches: { count: number; siloId?: string }[] = !silo
+          ? [{ count: needed }]
+          : silo.waiting >= needed
+            ? [{ count: needed, siloId: silo.id }]
+            : [{ count: silo.waiting, siloId: silo.id }, { count: needed - silo.waiting }]
+        if (silo) console.log(`[content-topics cron] slot ${slot} for ${client_id} comes from silo ${silo.id}`)
+        for (const batch of batches) {
+          let result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true, siloId: batch.siloId })
+          // A set that cannot produce its topic must not hold the date. Its keyword stays waiting,
+          // so the next run would pick the same set and fail the same way, and the client's dates
+          // stayed empty for as long as the set was active. The usual selection fills this date now;
+          // the set gets the next one.
+          if (batch.siloId && (result.error || result.topics.length === 0)) {
+            console.warn(`[content-topics cron] silo ${batch.siloId} produced nothing for ${client_id} slot ${slot} (${result.error ?? 'no topics'}) — using the usual selection for this date`)
+            result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true })
+          }
+          // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
+          // saw a refused run. A client could produce nothing every two hours forever and the only
+          // trace was the absence of topics. Say why.
+          if (result.error) {
+            console.error(`[content-topics cron] Topic generation refused for client ${client_id} slot ${slot}: ${result.error}`)
+          }
+          for (const w of result.warnings ?? []) {
+            console.warn(`[content-topics cron] client ${client_id} slot ${slot}: ${w}`)
+          }
+          if (result.topics.length > 0) {
+            const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
+            entry.items.push(...result.topics)
+            topicAccum.set(client_id, entry)
+            topicsGenerated.push(`${client_id}:${slot}`)
           }
         }
       } catch (e) {
@@ -475,27 +371,71 @@ export async function GET(request: NextRequest) {
         .lte('target_publish_date', approveThreshold.toISOString().slice(0, 10))
         .not('target_publish_date', 'is', null)
 
-      // Group by date, pick best 1 per group (one topic → one post per slot)
       type PendingTopic = { id: string; target_publish_date: string | null; search_volume: number | null; keyword_difficulty: number | null }
-      const grouped = new Map<string, PendingTopic[]>()
-      for (const t of (pendingTopics ?? []) as PendingTopic[]) {
-        const key = t.target_publish_date ?? 'none'
-        grouped.set(key, [...(grouped.get(key) ?? []), t])
-      }
-      const toApprove: string[] = []
-      for (const [, group] of Array.from(grouped)) {
-        const picked = (group as PendingTopic[])
-          .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
-            || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
-          .slice(0, 1)
-        toApprove.push(...picked.map((t: PendingTopic) => t.id))
-      }
+      // Only the dates pending topics sit on can collide, so only those are counted. Bounded by
+      // date alone, a long-running client's history filled PostgREST's 1,000-row cap and the count
+      // for the dates that mattered could be the part cut off — reading as "this slot is free".
+      const pendingDates = Array.from(new Set(((pendingTopics ?? []) as PendingTopic[])
+        .map(t => t.target_publish_date).filter((d): d is string => !!d)))
 
-      if (toApprove.length) {
-        await db.from('content_topics')
-          .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
-          .in('id', toApprove)
-        console.log(`[content-topics cron] auto-approved ${toApprove.length} topics (${grouped.size} date groups) for ${client_id}`)
+      // What already holds each slot. Without this the cap counts only pending topics, so a date
+      // that already has an approved topic gets postsPerRun MORE approved on top of it.
+      const { data: alreadyApproved, error: approvedErr } = pendingDates.length === 0
+        ? { data: [], error: null }
+        : await db
+          .from('content_topics')
+          .select('target_publish_date')
+          .eq('client_id', client_id)
+          // Every status that becomes a post on the date: a second approval on top of a published
+          // or approved topic puts two posts on the date.
+          //
+          // NOT 'rejected'. A rejected topic will never be written, so it takes no post's place.
+          // Generation still treats it as filling the date (so the cron never refills a date a
+          // person turned down), and the only way a pending topic lands beside one is a person
+          // asking for it: "Regenerate plan" filling a rejected-only date, or a topic added by
+          // hand. Counting it here left that topic pending forever, and the date with no post.
+          .in('status', ['approved', 'generating', 'generated', 'scheduled', 'published'])
+          .in('target_publish_date', pendingDates)
+      // A failed read here reads as "every slot is empty", which approves a full quota on top of
+      // whatever already holds the date — duplicate posts on a client's site, unattended. So the
+      // dated approval round is skipped. Only that round: this used to `continue`, which also
+      // skipped the client's briefs, post generation and the auto-push retry queue below.
+      if (approvedErr) {
+        console.error(`[cron/content-topics] slot occupancy unreadable for ${client_id}, skipping this approval round:`, approvedErr.message)
+      } else {
+        const approvedByDate = new Map<string, number>()
+        for (const t of (alreadyApproved ?? []) as { target_publish_date: string | null }[]) {
+          const k = t.target_publish_date ?? 'none'
+          approvedByDate.set(k, (approvedByDate.get(k) ?? 0) + 1)
+        }
+
+        // Group by date, pick up to postsPerRun per group, minus whatever already holds the slot
+        const grouped = new Map<string, PendingTopic[]>()
+        for (const t of (pendingTopics ?? []) as PendingTopic[]) {
+          const key = t.target_publish_date ?? 'none'
+          grouped.set(key, [...(grouped.get(key) ?? []), t])
+        }
+        const toApprove: string[] = []
+        for (const [key, group] of Array.from(grouped)) {
+          const picked = (group as PendingTopic[])
+            .sort((a: PendingTopic, b: PendingTopic) => (b.search_volume ?? 0) - (a.search_volume ?? 0)
+              || (a.keyword_difficulty ?? 99) - (b.keyword_difficulty ?? 99))
+            // postsPerRun, not 1. Generation already produces postsPerRun topics per slot and the
+            // comment above says each group is "capped at posts_per_run" — but approval took one,
+            // so a client set to 2 got 2 topics and 1 post, with the loser stuck 'pending' forever
+            // while still occupying the slot. The setting looked applied and changed nothing.
+            // Minus what already holds this slot. The group only contains 'pending' topics, so
+            // taking postsPerRun of them on a date that already has approved ones over-fills it.
+            .slice(0, Math.max(0, postsPerRun - (approvedByDate.get(key) ?? 0)))
+          toApprove.push(...picked.map((t: PendingTopic) => t.id))
+        }
+
+        if (toApprove.length) {
+          await db.from('content_topics')
+            .update({ status: 'approved', auto_approved_at: new Date().toISOString() })
+            .in('id', toApprove)
+          console.log(`[content-topics cron] auto-approved ${toApprove.length} topics (${grouped.size} date groups) for ${client_id}`)
+        }
       }
 
       // Also approve dateless topics pending >3 days (1 per run)
@@ -740,7 +680,7 @@ export async function GET(request: NextRequest) {
           })
           if (approveRes.ok) {
             await db.from('content_posts')
-              .update({ auto_pushed_at: new Date().toISOString() })
+              .update({ auto_pushed_at: new Date().toISOString(), auto_push_error: null })
               .eq('id', post.id)
             pushResults.push({ title: post.title, ok: true })
           } else {
@@ -1239,7 +1179,7 @@ export async function GET(request: NextRequest) {
             })
             if (approveRes.ok) {
               await db.from('content_posts')
-                .update({ auto_pushed_at: new Date().toISOString() })
+                .update({ auto_pushed_at: new Date().toISOString(), auto_push_error: null })
                 .eq('id', post.id)
               saPushResults.push({ title: post.title, ok: true })
               saPushed.push(post.id)

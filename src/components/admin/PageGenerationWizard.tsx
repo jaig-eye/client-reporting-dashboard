@@ -92,11 +92,9 @@ export default function PageGenerationWizard({
   onSuccess,
 }: PageGenerationWizardProps) {
   const typeLabel = contentType === 'service_page' ? 'Service Pages' : 'Regular Pages'
-  const defaultPrefix = contentType === 'service_page' ? '/services' : ''
 
   // Step 1 — Pages
   const [rawPages,    setRawPages]    = useState('')
-  const [slugPrefix,  setSlugPrefix]  = useState(defaultPrefix)
 
   // Step 2 — Timing
   const [delivery,       setDelivery]       = useState<'immediate' | 'spaced'>('immediate')
@@ -274,18 +272,19 @@ export default function PageGenerationWizard({
       </div>
 
       <div>
-        <label style={s.label}>Slug Prefix</label>
-        <p style={s.hint}>
-          The URL path prefix these pages will live under on your site.
-        </p>
-        <input
-          className="input"
-          type="text"
-          placeholder="/services"
-          value={slugPrefix}
-          onChange={e => setSlugPrefix(e.target.value)}
-          style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem' }}
-        />
+        {/*
+          The slug prefix input was removed rather than fixed.
+
+          It was display-only: both previews rendered `{prefix}/{slug}` and the form submitted the
+          bare slug, so a page previewed at /services/drain-cleaning published at /drain-cleaning.
+          Sending the joined path does not work either — uniqueSlug() rewrites every character
+          outside [a-z0-9-], so "services/drain-cleaning" becomes "services-drain-cleaning", which
+          is neither what was previewed nor what shipped before.
+
+          Making it real means teaching the slug pipeline about paths, and that is a bigger change
+          than this branch should carry. Until then the previews show the slug that is actually
+          published, and the control that promised otherwise is gone.
+        */}
         {pages.length > 0 && (
           <div style={s.previewRow}>
             <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.7rem' }}>PAGE</span>
@@ -294,7 +293,7 @@ export default function PageGenerationWizard({
               <div key={i} style={{ display: 'contents' }}>
                 <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
                 <span style={{ color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                  {slugPrefix.replace(/\/+$/, '')}/{p.slug}
+                  /{p.slug}
                 </span>
               </div>
             ))}
@@ -385,7 +384,6 @@ export default function PageGenerationWizard({
         <p style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>Ready to generate</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
           <span><strong style={{ color: 'var(--text-primary)' }}>{pages.length}</strong> {typeLabel.toLowerCase()} to generate</span>
-          <span>Slug prefix: <code style={{ fontSize: '0.8rem', background: 'var(--bg-subtle)', padding: '1px 5px', borderRadius: 4 }}>{slugPrefix || '/'}</code></span>
           <span>Delivery: <strong style={{ color: 'var(--text-primary)' }}>
             {delivery === 'immediate'
               ? 'Generate all now'
@@ -412,7 +410,7 @@ export default function PageGenerationWizard({
               <span style={{ flex: 1, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
               <span style={{ color: 'var(--text-faint)', fontFamily: 'monospace', fontSize: '0.75rem', flexShrink: 0 }}>
                 {delivery === 'spaced' && dates[i] ? `${fmtDate(dates[i]!)} · ` : ''}
-                {slugPrefix.replace(/\/+$/, '')}/{p.slug}
+                /{p.slug}
               </span>
             </div>
           ))}

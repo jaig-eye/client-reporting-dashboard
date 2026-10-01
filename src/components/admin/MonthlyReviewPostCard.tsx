@@ -4,6 +4,7 @@ import { ArrowClockwise, ArrowRight, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import ClientImage from '@/components/admin/ClientImage'
+import PriorityTag from '@/components/admin/PriorityTag'
 import type { QualityReport } from '@/lib/content/qualityGate'
 
 
@@ -196,19 +197,12 @@ export default function MonthlyReviewPostCard({
               </span>
             )}
           </div>
-          {/* Silo provenance — which keyword set this came out of, and the term
-              it consumed. Otherwise a silo-driven post is indistinguishable from
-              an ad-hoc one by the time it reaches review. */}
+          {/* Provenance — a post someone asked for through Priority topics, and the keyword it
+              was written for. Otherwise it is indistinguishable from an automatic pick by the
+              time it reaches review. */}
           {post.silo && (
-            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <span style={{
-                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
-                border: '1px solid rgba(139,92,246,0.28)',
-                padding: '0 5px', borderRadius: 3, fontWeight: 600,
-              }}>
-                silo: {post.silo.name}
-              </span>
-              {post.silo_keyword && <span>from &ldquo;{post.silo_keyword.keyword}&rdquo;</span>}
+            <div style={{ marginTop: 4 }}>
+              <PriorityTag setName={post.silo.name} keyword={post.silo_keyword?.keyword} />
             </div>
           )}
           {/* Live-post links — shown once the post is on-site */}

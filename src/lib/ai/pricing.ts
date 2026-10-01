@@ -42,15 +42,49 @@ const TOKEN_RATES: Record<string, TokenRate> = {
   'gpt-4o-mini':        { input:  0.15, output:  0.60 },
 }
 
-/** Flat USD per generated image, for models that bill per image rather than per token. */
+/** USD per 1M tokens for an image model, by what the tokens carry. */
+export interface ImageTokenRate {
+  textInput:   number
+  imageInput:  number
+  imageOutput: number
+}
+
+/**
+ * GPT image models bill per token, split by modality — not per image.
+ *
+ * From https://developers.openai.com/api/docs/pricing ("Image generation models", standard tier),
+ * entered 2026-09-30. Cached-input rates are left out: OpenAI states they apply only to the
+ * Responses API image tool, never to /v1/images requests, which is the only way we call these.
+ * These models have no text-output rate on that page, because they produce none.
+ */
+const IMAGE_TOKEN_RATES: Record<string, ImageTokenRate> = {
+  'gpt-image-2.5-flare':    { textInput: 5.00, imageInput: 8.00, imageOutput: 30.00 },
+  'gpt-image-2.5-sunburst': { textInput: 5.00, imageInput: 8.00, imageOutput: 30.00 },
+  'gpt-image-2':            { textInput: 5.00, imageInput: 8.00, imageOutput: 30.00 },
+}
+
+/**
+ * USD per image, used ONLY when a response carries no `usage` to price exactly.
+ *
+ * It is the image-output cost of one 1536x1024 image at the quality lib/content/imageModels.ts
+ * sends each model, per the image generation guide
+ * (https://developers.openai.com/api/docs/guides/image-generation#cost-and-latency):
+ *   gpt-image-2    `medium`  1,372 output tokens x $30/1M = $0.041 (the guide's table says $0.041)
+ *   gpt-image-2.5  `high`    1,372 output tokens x $30/1M = $0.041 (the guide's token calculator,
+ *                            which gives Sunburst and Flare the same count)
+ * The prompt's text-input tokens (a few hundred, a fraction of a cent) are not in it, so it is a
+ * slight underestimate, and it goes stale the moment the size or quality sent changes.
+ */
 const IMAGE_RATES: Record<string, number> = {
-  'dall-e-3':    0.040,
-  'gpt-image-1': 0.040,
+  'gpt-image-2.5-flare':    0.041,
+  'gpt-image-2.5-sunburst': 0.041,
+  'gpt-image-2':            0.041,
 }
 
 function resolve<T>(table: Record<string, T>, model: string): T | null {
   const key = model.trim().toLowerCase()
-  if (table[key]) return table[key]
+  // Own keys only: `table['constructor']` is Object's, and would be "priced" as a rate.
+  if (Object.prototype.hasOwnProperty.call(table, key)) return table[key]
   // Longest-prefix match so dated snapshots inherit their family's rate.
   const prefix = Object.keys(table)
     .filter(k => key.startsWith(k))
@@ -69,17 +103,63 @@ export function priceTokens(model: string, inputTokens: number, outputTokens: nu
   return Number(cost.toFixed(6))
 }
 
-/** Cost of N generated images, or null when the model has no entry. */
+/**
+ * Per-image ESTIMATE of N generated images, or null when the model has no entry.
+ * Only for a response without `usage` — priceImageUsage is the real figure.
+ */
 export function priceImages(model: string, count: number): number | null {
   const rate = resolve(IMAGE_RATES, model)
   if (rate == null) return null
   return Number((rate * count).toFixed(6))
 }
 
-/** Every model we can price, for the settings panel's "rates in use" disclosure. */
+/** The `usage` object an Images API response carries. Every field optional: none is guaranteed. */
+export interface ImageUsage {
+  input_tokens?:          number
+  output_tokens?:         number
+  input_tokens_details?:  { text_tokens?: number; image_tokens?: number } | null
+  output_tokens_details?: { text_tokens?: number; image_tokens?: number } | null
+}
+
+const count = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
+
+/**
+ * Cost of one Images API call from the token counts OpenAI reported, or null when the model has
+ * no entry or the usage carries no counts to price.
+ *
+ * Input is split into text and image tokens where the response says how; a generation has no
+ * input image, so input with no breakdown is priced as text. Output with no breakdown is priced as
+ * image tokens, which is all these models produce.
+ */
+export function priceImageUsage(model: string, usage: ImageUsage | null | undefined): number | null {
+  const rate = resolve(IMAGE_TOKEN_RATES, model)
+  if (!rate || !usage) return null
+
+  const input  = count(usage.input_tokens)
+  const output = count(usage.output_tokens)
+  if (input == null && output == null) return null
+
+  const imageIn  = count(usage.input_tokens_details?.image_tokens) ?? 0
+  const textIn   = count(usage.input_tokens_details?.text_tokens) ?? Math.max(0, (input ?? 0) - imageIn)
+  const imageOut = count(usage.output_tokens_details?.image_tokens) ?? (output ?? 0)
+
+  const cost = (textIn   / 1_000_000) * rate.textInput
+             + (imageIn  / 1_000_000) * rate.imageInput
+             + (imageOut / 1_000_000) * rate.imageOutput
+  return Number(cost.toFixed(6))
+}
+
+/**
+ * Every model we can price, for the settings panel's "rates in use" disclosure. Image models
+ * report their text-input rate as `input`, their image-output rate as `output`, and the per-image
+ * fallback estimate as `perImage`.
+ */
 export function knownRates(): { model: string; input?: number; output?: number; perImage?: number }[] {
   return [
     ...Object.entries(TOKEN_RATES).map(([model, r]) => ({ model, input: r.input, output: r.output })),
-    ...Object.entries(IMAGE_RATES).map(([model, perImage]) => ({ model, perImage })),
+    ...Object.entries(IMAGE_TOKEN_RATES).map(([model, r]) => ({
+      model, input: r.textInput, output: r.imageOutput, perImage: IMAGE_RATES[model],
+    })),
   ]
 }

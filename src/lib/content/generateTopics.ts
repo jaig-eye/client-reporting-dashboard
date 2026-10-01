@@ -2,14 +2,17 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
-import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
+import {
+  fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, pinnedKeywordEntry, pinnedKeywordNote,
+  type SiloQueueKeyword,
+} from '@/lib/content/siloQueue'
 import { completeText } from '@/lib/ai/client'
 import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
+import { BROWSER_BOT_UA } from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
-import { researchCompetitors }            from '@/lib/content/competitorResearch'
+import { researchCompetitors, sanitizeHeading } from '@/lib/content/competitorResearch'
 import type { CompetitorResearch }        from '@/lib/content/competitorResearch'
 import {
   BLOG_INTENT_ENUM,
@@ -23,6 +26,11 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { getClientDfsContext } from '@/lib/content/competitiveIntel'
 import { dfsKeywordOverview, type DfsKeywordData } from '@/lib/connectors/dataforseo'
 import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
+import { serviceAreaLine } from '@/lib/content/serviceAreas'
+import { getResearchCandidates } from '@/lib/content/clientResearch'
+// One normalizer for both sides of the guard: the protected set is keyed with it here, and the
+// collision check reads with it there. Two copies could drift and quietly stop matching.
+import { resolveCannibalization, normalizeKeyword } from '@/lib/content/cannibalization'
 
 interface TopicIdea {
   topic:               string
@@ -35,7 +43,17 @@ interface TopicIdea {
   why_now:             string
   competition_level:   string
   cluster_group?:      string
+  /**
+   * The client's own URL this article must link to, set by the cannibalization guard when it
+   * demotes a topic to a supporting article.
+   *
+   * Not something the model returns. The guard's directive goes in ranking_strategy, which the
+   * article prompt does not read — page_to_support is the field it does read, and it is what
+   * turns "this should support the ranking page" into an internal link in the finished post.
+   */
+  page_to_support?:    string | null
 }
+
 
 function extractSitemapLocs(xml: string): string[] {
   return Array.from(xml.matchAll(/<loc>\s*(https?:\/\/[^\s<]+)\s*<\/loc>/gi)).map(m => m[1].trim())
@@ -96,11 +114,6 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
   }
 }
 
-async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
-  const { pages, blogPosts } = await fetchSitemapData(sitemapUrl)
-  return [...pages, ...blogPosts]
-}
-
 function scoreUrlRelevance(url: string, keywords: string[]): number {
   const path = url.toLowerCase().replace(/[-_/]/g, ' ')
   return keywords.reduce((score, kw) => {
@@ -126,6 +139,73 @@ export interface GenerateTopicsResult {
   clientName: string
   count:      number
   error?:     string
+  /**
+   * Things that made this run weaker than it should have been without stopping it — Search Console
+   * unreadable, for one. The cron surfaces these; before, they reached only the server log.
+   */
+  warnings?:  string[]
+}
+
+type GscRow = { page: string; query: string; clicks: number; impressions: number; position: number; ctr: number }
+
+/** Pages of 1,000 read before giving up. 10,000 rows covers any client's 28-day window by a margin. */
+const GSC_MAX_PAGES = 10
+
+/**
+ * The 28-day Search Console rows, most-seen first, read past PostgREST's 1,000-row cap.
+ *
+ * A single `.limit(2000)` was silently capped at 1,000 with no ordering, so a site with more
+ * query/page pairs than that had an arbitrary thousand aggregated — and this read decides which
+ * keywords the client already ranks for, i.e. what the cannibalization guard protects.
+ */
+async function readGscWindow(
+  db: ReturnType<typeof createAdminClient>,
+  clientId: string,
+  windowStart: string,
+): Promise<{ data: GscRow[] | null; error: { message: string } | null }> {
+  const rows: GscRow[] = []
+  for (let page = 0; page < GSC_MAX_PAGES; page++) {
+    const { data, error } = await db.from('gsc_metrics')
+      .select('page, query, clicks, impressions, position, ctr')
+      .eq('client_id', clientId)
+      .gte('date', windowStart)
+      .not('page', 'ilike', '%?%')
+      .not('query', 'eq', '')
+      .order('impressions', { ascending: false })
+      // id last: the columns above are not unique (two Search Console properties for one client
+      // share them), and a tie at a page boundary would repeat or skip rows.
+      .order('id',    { ascending: true })
+      .range(page * 1000, page * 1000 + 999)
+    if (error) return { data: null, error }
+    rows.push(...((data ?? []) as GscRow[]))
+    if ((data ?? []).length < 1000) break
+  }
+  return { data: rows, error: null }
+}
+
+/**
+ * A keyword from a search tool, made safe to quote in the topic prompt.
+ *
+ * These are strings from outside — Ahrefs, DataForSEO, rank tracking — not the operator's words. The
+ * same filter scraped competitor headings already pass through: drop anything that reads like an
+ * instruction, strip markup characters, and neutralise quotes so it cannot close the quote around it.
+ */
+function promptKeyword(kw: string): string | null {
+  const clean = sanitizeHeading(String(kw ?? ''))
+  return clean ? clean.replace(/"/g, "'").slice(0, 120) : null
+}
+
+/**
+ * A keyword list as it may be written into the prompt: each keyword through promptKeyword, and any it
+ * rejects left out. Applied only where a list is rendered — the cannibalization guard reads the raw
+ * lists, so a real page-one keyword that happens to read like an instruction ("what you should know
+ * before tinting") is still protected even though it is not quoted to the model.
+ */
+function promptSafe<T extends { keyword: string }>(items: T[]): T[] {
+  return items.flatMap(item => {
+    const safe = promptKeyword(item.keyword)
+    return safe ? [{ ...item, keyword: safe }] : []
+  })
 }
 
 export async function generateTopicsForClient(
@@ -147,9 +227,20 @@ export async function generateTopicsForClient(
      * keyword already covered will not be resurrected.
      */
     steerKeyword?: string
+    /**
+     * Rewrite a set post on its own keyword — a full regenerate of a post a priority set produced.
+     *
+     * The topic targets this keyword (or the informational rewrite the queue rules allow) at a
+     * fresh angle. Nothing is taken from the set's queue: the caller relinks the keyword itself.
+     * The post and topic being replaced, and anything else already written for this keyword, are
+     * left out of the avoid list — otherwise the list names the very keyword the topic must keep
+     * and tells the model to stay off it. A collision with a ranking page is demoted, never swapped.
+     */
+    pinned?: { keyword: string; replacesPostId?: string | null; replacesTopicId?: string | null }
   },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+  const pinned = opts?.pinned?.keyword?.trim() ? opts.pinned : undefined
 
   // Build avoid-list queries scoped to the same content_type when one is provided.
   // Blog generation avoids blog posts/topics only; SA generation avoids SA only —
@@ -169,10 +260,15 @@ export async function generateTopicsForClient(
   // free to be regenerated, and the only way to stop a topic coming back was to
   // delete it. Rejected rows are now included in the avoid-list; deletion remains the
   // way to make something eligible again.
+  // Newest first and bounded. Unordered, the read was cut at PostgREST's 1,000 rows arbitrarily,
+  // so a long-running client's avoid list could drop last week's topics and keep 2024's.
   let existingTopicsQ = db.from('content_topics')
     .select('topic, target_keyword')
     .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+    .limit(500)
   if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
+  if (pinned?.replacesTopicId) existingTopicsQ = existingTopicsQ.neq('id', pinned.replacesTopicId)
 
   // No date cap — include all posts ever generated for this client so nothing is
   // recycled. Rejected posts are included for the same reason as rejected topics;
@@ -183,6 +279,7 @@ export async function generateTopicsForClient(
     .order('generated_at', { ascending: false })
     .limit(500)
   if (opts?.contentType) existingPostsQ = existingPostsQ.eq('content_type', opts.contentType)
+  if (pinned?.replacesPostId) existingPostsQ = existingPostsQ.neq('id', pinned.replacesPostId)
 
   const [
     settingsRes,
@@ -190,7 +287,8 @@ export async function generateTopicsForClient(
     clientSettingsRes,
     existingTopicsRes,
     existingPostsRes,
-    gscRawRes,
+    gscRawRes0,
+    ahrefsKwRes,
   ] = await Promise.all([
     db.from('agency_settings')
       .select('ai_provider, ai_model, ai_api_key, agency_name, notification_email, notify_topics_created, notify_topic_ready, serp_api_key, notification_config')
@@ -202,18 +300,66 @@ export async function generateTopicsForClient(
       .maybeSingle(),
     existingTopicsQ,
     existingPostsQ,
-    db.from('gsc_metrics')
-      .select('page, query, clicks, impressions, position, ctr')
+    readGscWindow(db, clientId, windowStart),
+    // Third-party organic positions. Covers queries GSC drops from a 28-day window, and carries
+    // volume and difficulty of its own.
+    db.from('ahrefs_keywords')
+      .select('keyword, position, volume, difficulty')
       .eq('client_id', clientId)
-      .gte('date', windowStart)
-      .not('page', 'ilike', '%?%')
-      .not('query', 'eq', '')
-      .limit(2000),
+      .order('date', { ascending: false })
+      .limit(500),
   ])
 
   if (!settingsRes.data?.ai_api_key) {
     return { topics: [], clientName: '', count: 0, error: 'AI not configured. Add an API key in Agency Settings.' }
   }
+
+  // A failed read is not an empty client.
+  //
+  // PostgREST reports failure in the payload, so `(gscRawRes.data ?? [])` turns a broken query
+  // into "this client ranks for nothing" — and nothing downstream can tell the difference. That
+  // is not merely thin input: Search Console is the largest source of protectedKeywords, so a
+  // failure here silently DISARMS the cannibalization guard and the run cheerfully proposes
+  // topics competing with pages the client already ranks for. Better to stop before the AI call,
+  // which also saves buying topics we would not trust.
+  //
+  // A client with no Search Console connection is a different case and still proceeds: that query
+  // succeeds and returns no rows.
+  // The one result that may be replaced below, so it gets its own binding rather than making
+  // every sibling mutable.
+  let gscRawRes = gscRawRes0
+
+  // Asked once more before giving up. Most failures here are a blip — a dropped connection, a
+  // momentary timeout — and the alternative is waiting two hours for the next cron pass to try
+  // again. One retry is cheap (a single indexed read) and turns most of those into nothing at all.
+  if (gscRawRes.error) {
+    console.warn('[generateTopics] Search Console read failed, retrying once:', gscRawRes.error.message)
+    gscRawRes = await readGscWindow(db, clientId, windowStart)
+  }
+  const warnings: string[] = []
+  // Failed twice: carry on without it rather than produce nothing.
+  //
+  // This was an abort, on the reasoning that Search Console is the largest source of
+  // protectedKeywords and a failed read leaves the enforced guard weaker than it looks. True, but
+  // it made a transient database error the one new way this branch could stop a post that main
+  // would have published — and the pipeline is meant to run itself. The prompt still carries the
+  // instruction not to cannibalize, Ahrefs and tracked ranks still feed the enforced guard where
+  // a client has them, and the next cron pass reads Search Console again two hours later.
+  //
+  // Loud, because a run that quietly produced weaker topics is exactly what nobody notices.
+  if (gscRawRes.error) {
+    console.error(
+      `[generateTopics] Search Console read failed twice for client ${clientId} — generating without it.` +
+      ` Topic quality is reduced and the cannibalization guard is relying on Ahrefs, tracked ranks` +
+      ` and the prompt instruction alone: ${gscRawRes.error.message}`,
+    )
+    warnings.push(`Search Console could not be read, so these topics were chosen without it: ${gscRawRes.error.message}`)
+  }
+  // Secondary sources: a failure weakens the guard rather than blinding it, and both are absent
+  // for most clients anyway. Say so loudly instead of stopping the run.
+  if (ahrefsKwRes.error)     console.warn('[generateTopics] Ahrefs read failed — cannibalization guard is working without it:', ahrefsKwRes.error.message)
+  if (existingPostsRes.error) console.warn('[generateTopics] existing posts read failed — duplicate topics are likelier this run:', existingPostsRes.error.message)
+  if (existingTopicsRes.error) console.warn('[generateTopics] existing topics read failed — duplicate topics are likelier this run:', existingTopicsRes.error.message)
 
   const settings       = settingsRes.data
   const client         = clientRes.data
@@ -224,7 +370,7 @@ export async function generateTopicsForClient(
   type GscAgg = { totalClicks: number; totalImpr: number; weightedPos: number; weightedCtr: number; count: number }
   const gscMap = new Map<string, GscAgg>()
 
-  for (const r of (gscRawRes.data ?? []) as { page: string; query: string; clicks: number; impressions: number; position: number; ctr: number }[]) {
+  for (const r of gscRawRes.data ?? []) {
     const key  = `${r.page}||${r.query}`
     const impr = r.impressions ?? 0
     const ex   = gscMap.get(key)
@@ -239,6 +385,85 @@ export async function generateTopicsForClient(
       gscMap.set(key, { totalClicks: r.clicks ?? 0, totalImpr: impr, weightedPos: r.position ?? 0, weightedCtr: r.ctr ?? 0, count: 1 })
     }
   }
+
+  // ── Ahrefs organic positions ───────────────────────────────────────────────
+  // One row per keyword — the newest date wins, since the query is ordered by date desc.
+  type AhrefsKw = { keyword: string; position: number | null; volume: number | null; difficulty: number | null }
+  const ahrefsMap = new Map<string, AhrefsKw>()
+  for (const r of (ahrefsKwRes.data ?? []) as AhrefsKw[]) {
+    const kw = String(r.keyword ?? '').trim().toLowerCase()
+    if (!kw || ahrefsMap.has(kw)) continue
+    ahrefsMap.set(kw, { keyword: kw, position: r.position, volume: r.volume, difficulty: r.difficulty })
+  }
+  // Positions 11–30 are the actionable band: close enough that an article moves them, far enough
+  // that we are not competing with a page of our own already on page one.
+  const ahrefsNearMiss = Array.from(ahrefsMap.values())
+    .filter(k => k.position != null && k.position > 10 && k.position <= 30)
+    .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
+    .slice(0, 12)
+  // Anything the client already holds on page one, from a source GSC may not surface this window.
+  const ahrefsHolding = Array.from(ahrefsMap.values())
+    .filter(k => k.position != null && k.position <= 10)
+    .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+    .slice(0, 12)
+
+  // ── Tracked rankings ───────────────────────────────────────────────────────
+  // Read separately rather than in the Promise.all above: the tables only exist from migration
+  // 190, and a missing relation must cost this section alone, not every other source with it.
+  type TrackedRank = { keyword: string; position: number | null; url: string | null }
+  const trackedRanks: TrackedRank[] = await (async () => {
+    try {
+      // Brand searches (filed navigational by research) and keywords a person dismissed stay out:
+      // research snapshots record a position for everything the site ranks for, chosen or not, and
+      // this read has no other filter — a dismissed keyword was still steering topic selection.
+      const [{ data, error }, dismissedRes] = await Promise.all([
+        db.from('seo_keyword_current')
+          .select('keyword_id, keyword, current_position, current_url')
+          .eq('client_id', clientId)
+          .not('current_position', 'is', null)
+          .or('intent.is.null,intent.neq.navigational')
+          .order('current_position', { ascending: true })
+          .limit(300),
+        db.from('seo_keywords').select('id').eq('client_id', clientId).not('dismissed_at', 'is', null).limit(1000),
+      ])
+      if (error) { console.warn('[generateTopics] tracked rankings unreadable:', error.message); return [] }
+      // Without migration 223 there is no dismissal to honour, and the rest still stands.
+      const dismissed = new Set(((dismissedRes.data ?? []) as { id: string }[]).map(r => r.id))
+      return ((data ?? []) as Record<string, unknown>[])
+        .filter(r => !dismissed.has(String(r.keyword_id)))
+        .map(r => ({
+          keyword:  String(r.keyword ?? '').trim().toLowerCase(),
+          position: r.current_position == null ? null : Number(r.current_position),
+          url:      r.current_url == null ? null : String(r.current_url),
+        })).filter(r => r.keyword)
+    } catch {
+      return []
+    }
+  })()
+
+  // ── Researched candidates ─────────────────────────────────────────────────
+  // The only source here that can propose a subject the client has never ranked for — everything
+  // else describes ground they already hold. Only keywords a person ticked in the Keywords tab;
+  // this never buys research (the monthly job does).
+  //
+  // Soft-fails to an empty list, exactly like every other DataForSEO path: without a connection
+  // or the migrations, selection behaves as it does on main.
+  type PoolKeyword = { keyword: string; volume: number | null; difficulty: number | null; intent: string | null }
+  const candidatePool: PoolKeyword[] = await (async () => {
+    try {
+      const { candidates } = await getResearchCandidates(clientId)
+      return candidates
+        .map(c => ({ ...c, keyword: promptKeyword(c.keyword) ?? '' }))
+        .filter(c => c.keyword)
+    } catch (e) {
+      console.warn('[generateTopics] research unavailable:', e)
+      return []
+    }
+  })()
+
+  const rankOwned  = trackedRanks.filter(r => r.position != null && r.position <= 10).slice(0, 15)
+  const rankNear   = trackedRanks.filter(r => r.position != null && r.position > 10 && r.position <= 30).slice(0, 15)
+  const rankWeak   = trackedRanks.filter(r => r.position != null && r.position > 30).slice(0, 10)
 
   const topPages = Array.from(gscMap.entries())
     .map(([k, v]) => { const [page, query] = k.split('||'); return { page, query, ...v } })
@@ -314,7 +539,13 @@ export async function generateTopicsForClient(
   try {
     const dfsCtx = await getClientDfsContext(db, clientId)
     if (dfsCtx) {
-      const seeds = Array.from(new Set([...growthTargets, ...quickWins].map(t => t.query))).slice(0, 200)
+      // Paid converters are not seeded: buying figures for a term nothing will target is money
+      // spent to learn nothing. See "Converting paid terms" below.
+      const seeds = Array.from(new Set([
+        ...growthTargets.map(t => t.query),
+        ...quickWins.map(t => t.query),
+        ...ahrefsNearMiss.map(k => k.keyword),
+      ])).slice(0, 200)
       if (seeds.length) {
         const enriched = await dfsKeywordOverview(seeds, dfsCtx.creds, {
           locationCode: dfsCtx.config.location_code,
@@ -408,21 +639,30 @@ export async function generateTopicsForClient(
   const existingPosts  = (existingPostsRes.data ?? []) as { title?: string; focus_topic?: string; target_keyword?: string }[]
   const avoidEntries: string[] = []
   const avoidSeen = new Set<string>()
+  // A pinned keyword is the subject this run must keep, so nothing already written for it may
+  // appear as off-limits — earlier rewrites of the same post (rejected topics) included.
+  const pinnedKey = pinned ? normalizeKeyword(pinned.keyword) : ''
   function addAvoid(label: string | null | undefined, kw: string | null | undefined) {
     const key = (kw || label || '').toLowerCase().trim()
     if (!key || avoidSeen.has(key)) return
+    if (pinnedKey && kw && normalizeKeyword(kw) === pinnedKey) return
     avoidSeen.add(key)
     avoidEntries.push(kw && label ? `${label} [kw: ${kw}]` : (kw || label)!)
   }
-  existingTopics.forEach(t => addAvoid(t.topic, t.target_keyword))
-  existingPosts.forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
-  // Existing blog posts on the client's site (pre-system) — prevent topic overlap
+  // Each source has its own share of the list, so none is crowded out by another: the client's
+  // pre-existing articles (80), and the newest 260 of our posts and of our topics (both read newest
+  // first). One cut across the combined list dropped the site's own articles first.
   sitemapBlogPostUrls.slice(0, 80).forEach(url => {
     try {
       const slug = new URL(url).pathname.split('/').filter(Boolean).pop() ?? ''
       if (slug.length >= 4) addAvoid(slug.replace(/-/g, ' '), null)
     } catch { /* ignore */ }
   })
+  existingPosts.slice(0, 260).forEach(p => addAvoid(p.focus_topic ?? p.title, p.target_keyword))
+  existingTopics.slice(0, 260).forEach(t => addAvoid(t.topic, t.target_keyword))
+  // Bounded by the per-source shares above (at most 600): the list rides in a prompt that can be sent
+  // twice per slot (the cannibalization retry), and past a few hundred entries it costs tokens
+  // without adding protection.
   const avoidText = avoidEntries.join('\n')
 
   // ── E-E-A-T context ────────────────────────────────────────────────────────
@@ -445,7 +685,7 @@ export async function generateTopicsForClient(
   if (clientSettings?.business_background) contextLines.push(`Business: ${clientSettings.business_background}`)
   if (clientSettings?.services)            contextLines.push(`Services: ${clientSettings.services}`)
   if (clientSettings?.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-  if (clientSettings?.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+  const areaLine = serviceAreaLine(clientSettings?.geographic_focus); if (areaLine) contextLines.push(areaLine)
   if (clientSettings?.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
 
   const gscTopText = topPages.length > 0
@@ -471,6 +711,44 @@ export async function generateTopicsForClient(
     ? `\nNear-page-1 clusters (pos 5–9) — each "Existing page" ALREADY EXISTS; write adjacent long-tail SUPPORT articles that internally link back to strengthen these.${requestedIsBlog ? ' Do NOT reuse the query verbatim as the blog keyword — extract the educational question behind it and target that instead.' : ''}\n${quickWins.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)})${kwSuffix(p.query)}`).join('\n')}`
     : ''
 
+  // Converting paid terms are deliberately NOT handed to the model.
+  //
+  // They used to be, under a long caveat telling it not to target them directly. That is a lot of
+  // trust to place in a paragraph: they are the highest-converting phrases the client has, and a
+  // model asked to choose article subjects will reach for them. They are buying queries that
+  // belong to a service page — "atv financing bad credit", "$0 down motorcycle financing near
+  // me" — and a post chasing the same phrase competes with the page that should own it, which is
+  // the cannibalization guarded against everywhere else in this file.
+  //
+  // What survives is the half that was always safe: a paid term that converted still boosts the
+  // score of a RESEARCHED keyword matching it (score() in clientResearch), so proven commercial
+  // value still steers the choice without the buying query itself becoming the subject. The terms
+  // stay visible on the Keywords page under Converted in paid, as reporting.
+
+  const ahrefsNearText = ahrefsNearMiss.length > 0
+    ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${promptSafe(ahrefsNearMiss).map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`
+    : ''
+
+  // The actionable band leads, because this is where a single article changes a position.
+  const poolLine = (k: PoolKeyword) => {
+    const bits: string[] = []
+    if (k.volume != null)     bits.push(`${k.volume} searches/mo`)
+    if (k.difficulty != null) bits.push(`KD ${k.difficulty}`)
+    if (k.intent)             bits.push(k.intent)
+    return `  - "${k.keyword}"${bits.length ? ` (${bits.join(', ')})` : ''}`
+  }
+  const poolText = candidatePool.length > 0
+    ? `\nRESEARCHED OPPORTUNITIES — found for this client and not yet written about. Unlike every section above, these are NOT things the site already ranks for, so they are the only route to a subject the client sells but has no presence in. Treat them as candidates rather than instructions; every guardrail below still applies.\n${candidatePool.slice(0, 20).map(poolLine).join('\n')}`
+    : ''
+
+  const rankNearText = rankNear.length > 0
+    ? `\nTRACKED AT 11–30 — the band where one article moves a keyword onto page one. Write a SUPPORT article for the question behind the keyword and link it to the page listed, which is the URL Google currently ranks:\n${promptSafe(rankNear).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}${kwSuffix(r.keyword)}`).join('\n')}`
+    : ''
+
+  const rankWeakText = rankWeak.length > 0
+    ? `\nTRACKED BELOW 30 — a page exists but is not competitive. A sharper, more specific angle is worth trying; do not repeat the existing page's angle:\n${promptSafe(rankWeak).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${stripDomain(r.url)}` : ''}`).join('\n')}`
+    : ''
+
   const gscCtrText = ctrIssues.length > 0
     ? `\nCTR gap opportunities (pos 1–5, CTR below expected for position) — each "Existing page" ranks well but needs topical depth articles:\n${ctrIssues.map(p => `  - Keyword: "${p.query}" | Existing page: ${stripDomain(p.page)} (${p.totalImpr} impr, pos ${p.weightedPos.toFixed(1)}, CTR ${(p.weightedCtr * 100).toFixed(1)}%)`).join('\n')}`
     : ''
@@ -491,6 +769,14 @@ export async function generateTopicsForClient(
     .slice(0, 12)
   const alreadyWinningText = alreadyWinning.length > 0
     ? `\nALREADY RANKING TOP-5 — DO NOT CANNIBALIZE (live Google positions). Do NOT propose a new primary page for any of these; at most a support/cluster article that internally links to the exact ranking URL:\n${alreadyWinning.map(r => `  - "${r.query}" is already #${Math.round(r.weightedPos)} at ${stripDomain(r.page)}`).join('\n')}`
+    : ''
+
+  const ahrefsHoldingText = ahrefsHolding.length > 0
+    ? `\nALREADY ON PAGE ONE (Ahrefs) — DO NOT CANNIBALIZE. Do not propose a new primary page for any of these; at most a support article that internally links to the page already ranking:\n${promptSafe(ahrefsHolding).map(k => `  - "${k.keyword}" is already #${k.position}`).join('\n')}`
+    : ''
+
+  const rankOwnedText = rankOwned.length > 0
+    ? `\nTRACKED IN THE TOP 10 — DO NOT CANNIBALIZE. Google already ranks one of this client's pages for each of these. Never propose a new primary page for one, and never target it as a blog keyword. A SUPPORTING article is allowed only if it covers a genuinely narrower question and internally links to the exact URL below:\n${promptSafe(rankOwned).map(r => `  - "${r.keyword}" is #${r.position}${r.url ? ` at ${r.url}` : ''}`).join('\n')}`
     : ''
 
   // Self-cannibalization: the same query ranks 2+ of the client's own URLs.
@@ -534,108 +820,85 @@ export async function generateTopicsForClient(
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
-      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type, inject_internal_links')
+      .select('id, name, hub_page_url, hub_page_title, description, content_type')
       .eq('id', opts.siloId)
       .eq('client_id', clientId)
       .maybeSingle()
     if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
-    if (!silo) {
+    // A rewrite on a pinned keyword still has its subject without the set, so it carries on with no
+    // set context; anything else needs the set.
+    if (!silo && !pinned) {
       console.warn('[generateTopics] silo not found or does not belong to client:', opts.siloId)
       return { topics: [], clientName, count: 0, error: 'Silo not found or access denied' }
     }
+    if (!silo && pinned) console.warn(`[generateTopics] silo ${opts.siloId} not found — rewriting "${pinned.keyword}" without its set`)
 
     if (silo) {
       siloName        = silo.name as string
       siloContentType = (silo.content_type as string | null) ?? null
 
       // Fetch existing cluster posts in this silo to prevent duplicate intents
-      const { data: existingClusters } = await db
+      let clustersQ = db
         .from('content_posts')
         .select('title, target_keyword')
         .eq('silo_id', opts.siloId)
         .in('status', ['for_review', 'draft_saved', 'published', 'approved'])
         .limit(30)
+      // The post being rewritten is not "already covered": it is the article being replaced.
+      if (pinned?.replacesPostId) clustersQ = clustersQ.neq('id', pinned.replacesPostId)
+      const { data: existingClusters } = await clustersQ
 
       const existingClusterText = (existingClusters ?? [])
         .filter((c: { title: string | null; target_keyword: string | null }) => c.title)
+        .filter((c: { title: string | null; target_keyword: string | null }) => !pinnedKey || normalizeKeyword(c.target_keyword) !== pinnedKey)
         .map((c: { title: string | null; target_keyword: string | null }) => `  - "${c.title}" — keyword: ${c.target_keyword ?? 'n/a'}`)
         .join('\n')
+      const hubUrl = (silo.hub_page_url as string | null)?.trim() || null
+      const hub = hubUrl ? { url: hubUrl, title: ((silo.hub_page_title as string | null)?.trim() || (silo.name as string)) } : null
 
-      // Hub-first block: when hub page doesn't exist yet, inject as FIRST topic instruction
-      const hubFirstBlock = (silo.target_exists === false && silo.target_keyword)
-        ? `
-CRITICAL — HUB PAGE PRIORITY:
-The hub/pillar page does not exist yet. The FIRST topic in your response MUST target:
-  keyword: "${silo.target_keyword}"
-  This topic will be used to create the hub page before any cluster articles.
-  Make it a comprehensive, high-authority page — the definitive resource for this entity.
-`
-        : ''
-
-      // Cluster keyword seeding: inject planned keywords the AI should prioritize
-      type ClusterKw = { id?: string; keyword: string; title?: string | null; status: string; priority?: number }
-      const plannedKws = ((silo.cluster_keywords ?? []) as ClusterKw[])
-        .filter(k => k.status === 'planned')
-        .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
-        .slice(0, 12)
-
-      const clusterSeedText = plannedKws.length > 0
-        ? `\nDefined cluster keywords not yet covered (PRIORITIZE topics from this list — generate topics targeting these keywords):\n${plannedKws.map(k => `  - "${k.keyword}"${k.title ? ` (suggested title: "${k.title}")` : ''}`).join('\n')}`
-        : ''
-
-      // Hub-less silos are the common case: a flat set of keywords with no pillar
-      // page. Every silo in production today has hub_page_url NULL, and the
-      // hub-and-spoke prompt below would instruct the model to link to a hub that
-      // does not exist. Walk the keyword queue instead.
-      queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
-      const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
-
-      // An EXHAUSTED hub-less queue is not the hub-and-spoke case. Falling through
-      // to the else branch below emitted `Hub page: "..." at (URL not yet set)`
-      // plus a rule making a link to it mandatory — telling the model to link to a
-      // page that does not exist, while the writer prompt forbids inventing internal
-      // URLs. SiloManager still enables Generate on such a silo because
-      // content_silos.cluster_keywords stays populated after migration 201's
-      // backfill, and the cron path never checks at all, so this is reachable the
-      // moment a four-keyword silo is worked through. Nothing to generate is the
-      // honest answer.
-      if (!silo.hub_page_url && queueKeywords.length === 0) {
-        console.warn(`[generateTopics] silo ${opts.siloId} has no hub page and an empty keyword queue — nothing to generate`)
-        return {
-          topics:     [],
-          clientName: '',
-          count:      0,
-          error:      'This silo has no hub page and every keyword in its queue has been used. Add more keywords to generate from it.',
+      if (pinned) {
+        // The keyword is already the set's, written once; the caller relinks it to the new topic.
+        // Nothing is taken from the queue.
+        siloPromptBlock = buildKeywordQueueBlock(
+          silo.name as string, (silo.description as string | null) ?? null,
+          [pinnedKeywordEntry(pinned.keyword)], existingClusterText, count, hub,
+        ) + pinnedKeywordNote(pinned.keyword)
+      } else {
+        // Every set is a keyword queue, with or without a main page. The main page only adds
+        // linking: topics are angled to support it, and the writer links each article to it (see
+        // the generate route). A set with no keywords waiting is finished. The hub-and-spoke prompt
+        // this replaces invented topics around the hub for as long as the set stayed active, so a
+        // set with a main page never ended and every set added after it waited forever.
+        queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
+        if (queueKeywords.length === 0) {
+          console.warn(`[generateTopics] silo ${opts.siloId} has no keywords waiting — nothing to generate`)
+          return {
+            topics:     [],
+            clientName,
+            count:      0,
+            error:      'Every keyword in this set has been used. Add more keywords to keep it going.',
+          }
         }
-      }
-
-      if (isKeywordQueue) {
         siloPromptBlock = buildKeywordQueueBlock(
           silo.name as string,
           (silo.description as string | null) ?? null,
           queueKeywords,
           existingClusterText,
-          (silo as { inject_internal_links?: boolean }).inject_internal_links !== false,
+          count,
+          hub,
         )
-      } else {
-      // Hub-and-spoke: the original strategy, unchanged.
-      queueKeywords = []
-      siloPromptBlock = `
-${hubFirstBlock}TOPICAL SILO — HUB + CLUSTER STRATEGY:
-Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
-Central entity: ${silo.central_entity ?? silo.name}${silo.description ? `\nContext: ${silo.description}` : ''}
-${existingClusterText ? `\nAlready-published cluster articles in this silo (DO NOT duplicate these intents):\n${existingClusterText}` : ''}
-${clusterSeedText}
-
-SILO RULES (override any conflicting instructions above):
-1. Every topic must be a distinct subtopic or attribute of the central entity.
-2. Every article generated from these topics MUST link back to the hub page as a mandatory internal link.
-3. No two topics may target the same search intent — zero cannibalization within the silo.
-4. Prioritize subtopics closest to revenue (transactional/commercial intent first within the silo).
-5. Think: what questions does a searcher ask BEFORE contacting the business? Those cluster topics funnel authority to the hub.`
       }
     }
   }
+  // A pinned keyword with no set to read context from still gets its keyword block.
+  if (pinned && !siloPromptBlock) {
+    siloPromptBlock = buildKeywordQueueBlock(pinned.keyword, null, [pinnedKeywordEntry(pinned.keyword)], '', count, null)
+      + pinnedKeywordNote(pinned.keyword)
+  }
+  // Topics at the front of the model's list that answer for a keyword a person chose: the set's
+  // queue, or the pinned keyword of a rewrite. These are written as asked — a collision is demoted
+  // rather than swapped, and the blog-keyword filter does not drop them (see requestTopics).
+  const chosenCount = queueKeywords.length > 0 ? queueKeywords.length : pinned ? 1 : 0
 
   const effectiveContentType = siloContentType ?? opts?.contentType ?? 'blog'
   const isBlog = effectiveContentType === 'blog'
@@ -682,7 +945,7 @@ Return ONLY a JSON array of exactly ${count} objects:
     "target_keyword": "primary keyword phrase",
     "search_intent": "${intentEnumText}",
     "secondary_keywords": "comma-separated list of 3–5 LSI/semantic keyword variations",
-    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. When real search volume / keyword difficulty (KD 0–100) / intent figures are shown for the source keyword above, cite them and prefer lower-difficulty, higher-volume, intent-matching keywords. Any seasonal or trending component.",
+    "keyword_opportunity": "3–5 sentences: Which specific GSC signal drove this pick (name the page, position, and monthly impressions). Why this exact keyword is the right primary target. When real search volume / keyword difficulty (KD 0–100) / intent figures are shown for the source keyword above, cite them. They inform the choice; the priorities above (Search Console first) still decide it. Any seasonal or trending component.",
     "ranking_strategy": "3–5 sentences: Which competitor gaps this article fills. What unique angle or depth will outperform existing page-1 results. Specific linking strategy (which existing site page this supports and why). Why this approach wins for this client over generic competitors.",
     "audience_intent": "2–3 sentences: Who specifically is searching this (describe the person, their situation, and what they are trying to decide or do). What stage of the buyer/research journey they are in. What outcome they need from the content.",
     "why_now": "2–3 sentences: Specific seasonal or trending timing reason with data context if available. Competitor activity or content gap timing. Why generating this topic now versus later maximises the ranking window.",
@@ -698,15 +961,21 @@ ${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this t
 ${gscGrowthText}
 ${gscQuickWinsText}
 ${gscCtrText}
+${rankNearText}
+${ahrefsNearText}
+${poolText}
 ${competitorText}
 ${gscTopText}
 ${alreadyWinningText}
+${ahrefsHoldingText}
+${rankOwnedText}
+${rankWeakText}
 ${cannibalizationText}
 ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
 
-${opts?.steerKeyword?.trim() ? `\nEDITOR DIRECTION — the reviewer asked for this regeneration and specified: "${opts.steerKeyword.trim().slice(0, 200)}". Steer the topic toward it where that is compatible with the constraints above. The ALREADY COVERED block still applies and overrides this: if the direction names something already covered, choose the closest angle that is not.\n` : ''}
+${opts?.steerKeyword?.trim() ? `\nEDITOR DIRECTION — the reviewer asked for this regeneration and specified: "${opts.steerKeyword.trim().slice(0, 200)}". Steer the ${pinned ? 'angle' : 'topic'} toward it where that is compatible with the constraints above.${pinned ? ` The keyword stays "${pinned.keyword.replace(/"/g, "'")}".` : ' The ALREADY COVERED block still applies and overrides this: if the direction names something already covered, choose the closest angle that is not.'}\n` : ''}
 Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
 
   const provider = settings.ai_provider || 'anthropic'
@@ -715,52 +984,158 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
 
   // Routed through lib/ai/client so the call is metered. The inline provider branch this
   // replaces discarded the usage block, which is why AI spend was unmeasurable.
-  let rawText = ''
-  try {
-    const completion = await completeText({
-      provider: provider as 'anthropic' | 'openai',
-      model, apiKey,
-      system: systemPrompt,
-      user:   userPrompt,
-      maxTokens: 8192,
-      operation: 'topics',
-      clientId,
-    })
-    rawText = completion.text
-  } catch (err) {
-    return { topics: [], clientName, count: 0, error: String(err) }
+  /**
+   * One round-trip to the model: ask, parse, apply the blog-intent net.
+   *
+   * A function rather than a straight line because the cannibalization check below can reject
+   * what comes back and ask again. `extra` is appended to the user prompt on a retry and names
+   * exactly what was rejected and why.
+   */
+  async function requestTopics(extra: string): Promise<{ topics: TopicIdea[]; error?: string }> {
+    let rawText = ''
+    try {
+      const completion = await completeText({
+        provider: provider as 'anthropic' | 'openai',
+        model, apiKey,
+        system: systemPrompt,
+        user:   extra ? `${userPrompt}\n${extra}` : userPrompt,
+        maxTokens: 8192,
+        operation: 'topics',
+        clientId,
+      })
+      rawText = completion.text
+    } catch (err) {
+      return { topics: [], error: String(err) }
+    }
+
+    let parsed: TopicIdea[] = []
+    try {
+      const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+      const jsonMatch = stripped.match(/\[[\s\S]*\]/)
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]) as TopicIdea[]
+      else console.error('[generateTopics] no JSON array found in AI response, rawText length:', rawText.length)
+    } catch (parseErr) {
+      console.error('[generateTopics] JSON parse error:', parseErr, 'rawText snippet:', rawText.slice(0, 200))
+      return { topics: [], error: 'Failed to parse AI response' }
+    }
+    if (!Array.isArray(parsed)) return { topics: [], error: 'Failed to parse AI response' }
+
+    // Blog-intent safety net. The guardrail prompt is primary enforcement; this drops
+    // transactional/near-me leaks and relabels any non-informational intent the model slipped
+    // through. A short valid list beats a padded transactional one.
+    //
+    // Except for the topics a person chose the keyword of — the set's queue, or a pinned rewrite —
+    // which the prompt puts first. The filter is a word list ("company", "contractor", "book"), so
+    // it also catches informational phrases like "how to choose an awning company". Dropping one
+    // of those emptied the run, the keyword stayed waiting, and every later run picked the same set
+    // and failed the same way: the client's dates stayed empty for as long as the set was active.
+    if (isBlog) {
+      const before = parsed.length
+      const chosen = extra ? 0 : chosenCount
+      parsed = parsed.filter((t, i) => {
+        if (!t) return false
+        if (!isForbiddenBlogKeyword(t.target_keyword)) return true
+        if (i < chosen) {
+          console.warn(`[generateTopics] kept "${t.target_keyword}" for client ${clientId}: a chosen keyword, though it reads as transactional`)
+          return true
+        }
+        return false
+      })
+      parsed.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
+      if (parsed.length < before) {
+        console.warn(`[generateTopics] dropped ${before - parsed.length} transactional/near-me blog topic(s) for client ${clientId}`)
+      }
+    }
+    return { topics: parsed.filter(t => t && typeof t.topic === 'string' && t.topic.trim()) }
   }
 
-  // ── Parse ──────────────────────────────────────────────────────────────────
-  let topics: TopicIdea[] = []
-  try {
-    const stripped  = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    const jsonMatch = stripped.match(/\[[\s\S]*\]/)
-    if (jsonMatch) topics = JSON.parse(jsonMatch[0]) as TopicIdea[]
-    else console.error('[generateTopics] no JSON array found in AI response, rawText length:', rawText.length)
-  } catch (parseErr) {
-    console.error('[generateTopics] JSON parse error:', parseErr, 'rawText snippet:', rawText.slice(0, 200))
-    return { topics: [], clientName, count: 0, error: 'Failed to parse AI response' }
-  }
+  const first = await requestTopics('')
+  if (first.error) return { topics: [], clientName, count: 0, error: first.error }
+  // Held to what was asked for. A model asked for one topic sometimes returns three, and every
+  // extra was inserted onto the slot as a 'pending' topic nothing would ever approve.
+  let topics: TopicIdea[] = first.topics.slice(0, Math.max(1, count))
 
   if (!topics.length) {
-    console.error('[generateTopics] AI returned empty topics array, rawText length:', rawText.length)
+    console.error('[generateTopics] AI returned no usable topics')
     return { topics: [], clientName, count: 0, error: 'No topics returned from AI' }
   }
 
-  // ── Blog-intent safety net ──────────────────────────────────────────────────
-  // The guardrail prompt is primary enforcement; this drops transactional/near-me
-  // leaks and relabels any non-informational intent the model slipped through. A
-  // short valid list beats a padded transactional one (mirrors the uniqueness rule).
-  if (isBlog) {
-    const before = topics.length
-    topics = topics.filter(t => !isForbiddenBlogKeyword(t.target_keyword))
-    topics.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
-    if (topics.length < before) {
-      console.warn(`[generateTopics] dropped ${before - topics.length} transactional/near-me blog topic(s) for client ${clientId}`)
+  // ── Cannibalization guard (enforced, not requested) ───────────────────────
+  //
+  // Everything above this point is instruction. This is the check: whatever the model returned
+  // is compared against what the client already ranks for, and a topic that would compete with
+  // a winning page is either dropped or demoted to a supporting article.
+  //
+  // Built from all three ranking sources so it works whichever ones a client has: GSC positions
+  // (always available), Ahrefs (when synced), and tracked DataForSEO ranks (when connected).
+  const protectedKeywords = new Map<string, { position: number; url: string | null }>()
+  const protect = (kw: string, position: number, url: string | null) => {
+    const key = normalizeKeyword(kw)
+    if (!key) return
+    const existing = protectedKeywords.get(key)
+    // Keep the best position we know about, and any URL we have — the strongest claim wins.
+    if (!existing || position < existing.position) {
+      protectedKeywords.set(key, { position, url: url ?? existing?.url ?? null })
+    } else if (!existing.url && url) {
+      existing.url = url
     }
-    if (!topics.length) {
-      return { topics: [], clientName, count: 0, error: 'All generated topics were transactional/near-me intent — none suitable for a blog. Try again.' }
+  }
+  /**
+   * Which page Google actually ranks for a query, from Search Console.
+   *
+   * The demotion directive is only half useful without a URL: the topic is told to support a page
+   * it cannot name, so the writer gets no internal link and the article competes with the page it
+   * was meant to strengthen. Ahrefs is the source that causes this — ahrefs_keywords stores a
+   * keyword and a position and no URL at all, so there is nothing to pass — and tracked ranks can
+   * be missing one too.
+   *
+   * Search Console can answer it. Its rows are page+query pairs, so the page with the most
+   * impressions for that query IS the page Google ranks, which is exactly what the internal link
+   * should point at. Impressions rather than clicks because a page can rank without being clicked,
+   * and this question is about ranking.
+   */
+  const pageForQuery = new Map<string, { page: string; impr: number }>()
+  for (const [key, agg] of Array.from(gscMap.entries())) {
+    const sep = key.indexOf('||')
+    if (sep < 0) continue
+    const page = key.slice(0, sep)
+    const q    = normalizeKeyword(key.slice(sep + 2))
+    if (!q || !page) continue
+    const best = pageForQuery.get(q)
+    if (!best || agg.totalImpr > best.impr) pageForQuery.set(q, { page, impr: agg.totalImpr })
+  }
+  const gscPageFor = (kw: string): string | null => pageForQuery.get(normalizeKeyword(kw))?.page ?? null
+
+  // Every page-one query with real impressions, not the dozen the prompt displays. The display list
+  // is capped and leaves out anything already shown in another section — the CTR-gap queries at
+  // positions 1–5 among them — so protecting from it left a client's real rankings unguarded.
+  for (const r of gscRows) {
+    if (r.weightedPos >= 1 && r.weightedPos <= 10 && r.totalImpr >= 10) protect(r.query, Math.round(r.weightedPos), r.page)
+  }
+  for (const k of ahrefsHolding)  protect(k.keyword, k.position ?? 10,          gscPageFor(k.keyword))
+  for (const r of rankOwned)      protect(r.keyword, r.position ?? 10,          r.url ?? gscPageFor(r.keyword))
+
+  // ── Cannibalization: catch it, then ask for a better topic ────────────────
+  // The rule, the retry budget and the demotion all live in cannibalization.ts, which is tested
+  // against a stubbed model. This passes the real one in.
+  {
+    const res = await resolveCannibalization({
+      topics,
+      protectedKeywords,
+      requestTopics,
+      // Keywords a person queued (or a rewrite pinned to one) are the subject they asked for.
+      // Swapping one for a different keyword would tick the request off with an article about
+      // something else, so a collision is written as a supporting article for the page that ranks
+      // instead.
+      ...(chosenCount > 0 ? { maxRounds: 0 } : {}),
+      onLog: m => console.warn(`[generateTopics] client ${clientId}: ${m}`),
+    })
+    topics = res.topics
+    if (res.demoted.length > 0) {
+      console.warn(
+        `[generateTopics] cannibalization: ${res.demoted.length} topic(s) demoted to supporting articles` +
+        ` for client ${clientId}: ${res.demoted.join('; ')}`,
+      )
     }
   }
 
@@ -774,6 +1149,9 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     rationale:            [t.keyword_opportunity, t.ranking_strategy, t.audience_intent, t.why_now, t.competition_level].filter(Boolean).join(' | '),
     keyword_opportunity:  t.keyword_opportunity ?? null,
     ranking_strategy:     t.ranking_strategy    ?? null,
+    // Set only by the cannibalization guard. The article prompt renders it as "Core page to
+    // support (must appear as an internal link)".
+    page_to_support:      t.page_to_support     ?? null,
     audience_intent:      t.audience_intent     ?? null,
     why_now:              t.why_now             ?? null,
     competition_level:    t.competition_level   ?? null,
@@ -835,5 +1213,5 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     }
   }
 
-  return { topics: savedTopics, clientName, count: savedTopics.length }
+  return { topics: savedTopics, clientName, count: savedTopics.length, ...(warnings.length ? { warnings } : {}) }
 }

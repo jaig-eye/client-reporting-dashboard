@@ -66,21 +66,61 @@ export async function registerKeyword(params: {
   const language_code  = params.languageCode ?? 'en'
   try {
     const db = createAdminClient()
-    const { data: existing } = await db
+    const { data: existing, error: exErr } = await db
       .from('seo_keywords')
-      .select('id, content_post_id')
+      .select('id, content_post_id, is_tracked')
       .eq('client_id', params.clientId)
       .eq('normalized_keyword', normalized)
       .eq('location_code', location_code)
       .eq('language_code', language_code)
       .maybeSingle()
+    if (exErr) { console.warn('[seoRankings] registerKeyword lookup failed:', exErr.message); return null }
 
-    const row = existing as { id?: string; content_post_id?: string | null } | null
+    // The same keyword filed under another location. Research and typed keywords are stored under
+    // the client's DataForSEO connection location_code, while the writer registers under the 'us'
+    // default (2840) — so a client tracked in another country (Canada, 2124) never matches here.
+    // Keywords typed before that was fixed also sit under the research location's city or county
+    // code. Without this the chosen row was never claimed: it stayed in "researched, not yet
+    // written about" and was offered for a second article, while a duplicate row took the post link.
+    //
+    // Only a researched keyword someone ticked may be claimed this way: untracked, not dismissed,
+    // chosen, and not yet tied to a post. A hand-tracked keyword for another location, or a dismissed
+    // one, keeps its own history — claiming it would file that location's positions under this post
+    // and switch it to paid checks by post age.
+    let fallback: { id?: string; content_post_id?: string | null } | null = null
+    if (!existing) {
+      const { data: other, error: otherErr } = await db
+        .from('seo_keywords')
+        .select('id, content_post_id')
+        .eq('client_id', params.clientId)
+        .eq('normalized_keyword', normalized)
+        .eq('language_code', language_code)
+        .is('content_post_id', null)
+        .eq('is_tracked', false)
+        .is('dismissed_at', null)
+        .not('chosen_at', 'is', null)
+        .order('chosen_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      // Without migrations 223/225 there is no chosen keyword to claim; register a row as before.
+      if (!otherErr) fallback = other as typeof fallback
+    }
+
+    const row = (existing ?? fallback) as { id?: string; content_post_id?: string | null; is_tracked?: boolean | null } | null
     if (row?.id) {
       // Fill the post link only if empty — never overwrite an earlier post's claim.
       if (params.contentPostId && !row.content_post_id) {
         await db.from('seo_keywords')
-          .update({ content_post_id: params.contentPostId, updated_at: new Date().toISOString() })
+          .update({
+            content_post_id: params.contentPostId,
+            // Writing the article is what turns a candidate into something worth measuring.
+            // Discovery deliberately stores its suggestions untracked so nobody is billed to
+            // rank-check a list a tool produced; without this, a keyword we researched, chose and
+            // wrote for stayed untracked forever while one the model invented was tracked by
+            // default. Only ever set here, never cleared — un-tracking stays a human decision.
+            is_tracked:      true,
+            updated_at:      new Date().toISOString(),
+          })
           .eq('id', row.id)
       }
       return row.id
@@ -208,6 +248,22 @@ export interface TrackedKeyword {
   location_code:   number
   language_code:   string
   last_checked_at: string | null
+  /** The post this keyword was registered for, when it came from content. */
+  content_post_id: string | null
+  /**
+   * Days since the post went live. Null when no post backs this keyword — a money keyword or a
+   * manual one, which the rankings cron does not live-check; research's Labs snapshot is its only
+   * reading. Drives the check cadence — see checkIntervalDays in the rankings cron.
+   */
+  age_days:        number | null
+  /**
+   * A post is attached but has not published yet.
+   *
+   * Distinct from age_days === null, which means there is no post at all. A draft has nothing to
+   * rank, so checking it buys a guaranteed miss — and keywords are claimed at generation, often
+   * weeks before publication, so this is the common case rather than an edge one.
+   */
+  awaiting_publish: boolean
 }
 
 /** Tracked keywords for a client (the cron rank-checks these). Carries last_checked_at so the
@@ -218,18 +274,89 @@ export async function getTrackedKeywords(clientId: string): Promise<TrackedKeywo
     const db = createAdminClient()
     const { data, error } = await db
       .from('seo_keywords')
-      .select('id, keyword, location_code, language_code, last_checked_at')
+      .select('id, keyword, location_code, language_code, last_checked_at, content_post_id, created_at')
       .eq('client_id', clientId)
       .eq('is_tracked', true)
       .order('last_checked_at', { ascending: true, nullsFirst: true })
     if (error || !Array.isArray(data)) return []
-    return (data as Record<string, unknown>[]).map(k => ({
-      id:              String(k.id),
-      keyword:         String(k.keyword ?? ''),
-      location_code:   numOrNull(k.location_code) ?? 2840,
-      language_code:   String(k.language_code ?? 'en'),
-      last_checked_at: k.last_checked_at ? String(k.last_checked_at) : null,
-    }))
+    const rows = data as Record<string, unknown>[]
+
+    // A keyword's age is its post's age. Published date beats registration date: a keyword can be
+    // registered weeks before the article goes out, and it is the article's time in the index that
+    // decides how fast its position is still moving.
+    const postIds = Array.from(new Set(rows.map(r => r.content_post_id).filter((v): v is string => typeof v === 'string')))
+    const publishedAt = new Map<string, string>()
+    if (postIds.length > 0) {
+      type PostDates = {
+        id: string; published_at: string | null; last_pushed_at: string | null; wp_status: string | null
+        target_publish_date: string | null
+      }
+      const posts: PostDates[] = []
+      // Chunked: a client with a few hundred posts makes a single .in() a URL the proxy refuses.
+      for (let i = 0; i < postIds.length; i += 100) {
+        const { data: part, error: postsErr } = await db
+          .from('content_posts')
+          .select('id, published_at, last_pushed_at, wp_status, target_publish_date')
+          .in('id', postIds.slice(i, i + 100))
+        // Ages drive the whole cadence. A failed read leaves these posts without an anchor, so their
+        // keywords read as awaiting publication and are skipped this run — no spend, but no checks.
+        if (postsErr) console.warn('[seoRankings] cannot read post dates, skipping those keywords this run:', postsErr.message)
+        posts.push(...((part ?? []) as PostDates[]))
+      }
+      const today = new Date().toISOString().slice(0, 10)
+      const later = (a: string | null, b: string | null) => (!a ? b : !b ? a : a > b ? a : b)
+      for (const p of posts) {
+        // When the article went live, which is what its time in the index is measured from.
+        //
+        // - published_at: the legacy /content/publish route.
+        // - WordPress 'publish': pushed and live. A post scheduled ahead is pushed weeks before its
+        //   date and flipped to 'publish' later, so the later of push and scheduled date is when it
+        //   went live — the push time alone made a new post look weeks old and skipped the
+        //   indexing grace period.
+        // - WordPress 'future' whose date has come: live on the site even before wp-reconcile has
+        //   recorded the flip.
+        //
+        // BigCommerce posts are not anchored. Both push paths create the post as a DRAFT
+        // (is_published: false) and still store its permalink, and nothing records when a person
+        // publishes it in the store — so "has a URL" does not mean live, and anchoring on it bought
+        // depth-100 baselines of "not ranking" for drafts. They stay awaiting publication until a
+        // published signal exists.
+        const scheduled = p.target_publish_date
+        const anchor =
+          p.published_at
+          ?? (p.wp_status === 'publish' ? later(p.last_pushed_at, scheduled) : null)
+          ?? (p.wp_status === 'future' && scheduled && scheduled <= today ? scheduled : null)
+        if (anchor) publishedAt.set(p.id, anchor)
+      }
+    }
+
+    const daysSince = (iso: string | null): number | null => {
+      if (!iso) return null
+      const t = Date.parse(iso)
+      if (!isFinite(t)) return null
+      return Math.max(0, Math.floor((Date.now() - t) / 86_400_000))
+    }
+
+    return rows.map(k => {
+      const postId = typeof k.content_post_id === 'string' ? k.content_post_id : null
+      // No post means a money keyword or a manual one, and it has no age. The rankings cron
+      // SKIPS those (`age_days === null`) and leaves them to the free site-wide snapshot rather
+      // than paying for a live check — this comment used to claim the opposite, which is worth
+      // knowing if the policy is ever revisited: the snapshot only covers terms the domain
+      // already ranks for, so a money keyword it has not broken into yet is never measured.
+      const anchor = postId ? (publishedAt.get(postId) ?? null) : null
+      return {
+        id:               String(k.id),
+        keyword:          String(k.keyword ?? ''),
+        location_code:    numOrNull(k.location_code) ?? 2840,
+        language_code:    String(k.language_code ?? 'en'),
+        last_checked_at:  k.last_checked_at ? String(k.last_checked_at) : null,
+        content_post_id:  postId,
+        age_days:         postId ? daysSince(anchor) : null,
+        // A post that exists but has never published. Its keyword has nothing to rank yet.
+        awaiting_publish: !!postId && anchor === null,
+      }
+    })
   } catch {
     return []
   }
@@ -247,6 +374,8 @@ export async function upsertRanking(params: {
   serpFeatures?: string[]
   searchVolume?: number | null
   provider?:     string
+  /** Where the reading was taken (location_code, location_name) and anything else worth keeping with it. */
+  metadata?:     Record<string, unknown>
 }): Promise<boolean> {
   try {
     const db = createAdminClient()
@@ -261,6 +390,7 @@ export async function upsertRanking(params: {
       serp_features: params.serpFeatures ?? null,
       search_volume: params.searchVolume ?? null,
       provider:      params.provider ?? 'dataforseo',
+      ...(params.metadata ? { metadata: params.metadata } : {}),
     }, { onConflict: 'keyword_id,date,device' })
     if (error) { console.error('[seoRankings] upsertRanking:', error.message); return false }
     return true

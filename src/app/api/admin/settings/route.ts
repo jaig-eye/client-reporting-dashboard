@@ -6,6 +6,7 @@ import { getAdminSession, isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { logActivity }     from '@/lib/activity'
 import { parseBody }       from '@/lib/apiError'
 import { SECRET_FIELDS, maskSecrets, isUnchangedSecret, isClearedSecret } from '@/lib/secretMask'
+import { isImageModel } from '@/lib/content/imageModels'
 
 // This file used to define its OWN isAdminAuthed that shadowed the imported one
 // and compared the cookie to the raw ADMIN_PASSWORD. Because the shadow
@@ -19,9 +20,10 @@ import { SECRET_FIELDS, maskSecrets, isUnchangedSecret, isClearedSecret } from '
 // Third-party API keys/secrets never leave the server in cleartext (see
 // lib/secretMask): GET returns a fixed MASK for any secret that is SET (so the UI
 // still shows "configured"); PUT treats an incoming value equal to the mask (or
-// blank) as "unchanged" and does NOT overwrite the stored key — so saving any other
-// setting, or re-saving without retyping, can never wipe a key. The connections
-// page mirrors the same mask into its integration cards.
+// absent) as "unchanged" and does NOT overwrite the stored key — so saving any other
+// setting, or re-saving without retyping, can never wipe a key. A deliberately
+// blanked field is the one way to remove a key, and is stored as null. The
+// connections page mirrors the same mask into its integration cards.
 
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies()
@@ -69,7 +71,7 @@ export async function PUT(request: NextRequest) {
     'cron_enabled',
     'default_lead_action', 'default_lead_action_fallback',
     'default_purchase_action', 'default_purchase_action_fallback',
-    'ai_provider', 'ai_model', 'ai_api_key', 'openai_api_key',
+    'ai_provider', 'ai_model', 'ai_api_key', 'openai_api_key', 'image_model',
     'chart_color_spend', 'chart_color_prior_spend',
     'chart_color_conversions', 'chart_color_prior_conversions',
     'notification_email',
@@ -135,6 +137,13 @@ export async function PUT(request: NextRequest) {
     patch.contact_stale_days = n
   }
 
+  // Generation reads anything it does not offer as the default model, so an unrecognised value
+  // would be stored and then silently not used — the admin believing one model draws their images
+  // while another does. Refusing it here keeps the stored value one that actually runs.
+  if (patch.image_model !== undefined && !isImageModel(patch.image_model)) {
+    return NextResponse.json({ error: 'Unknown image model.' }, { status: 400 })
+  }
+
   const db = createAdminClient()
 
   // Nothing to change — e.g. an integration card was re-saved without editing its
@@ -153,12 +162,31 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Settings row not found — run migrations' }, { status: 500 })
   }
 
-  const { data, error } = await db
+  let written = patch
+  let { data, error } = await db
     .from('agency_settings')
-    .update(patch)
+    .update(written)
     .eq('id', existing.id)
     .select()
     .single()
+
+  // image_model arrives in migration 227, and naming a column PostgREST does not know fails the
+  // WHOLE update. Without this, choosing a model before 227 is applied would also throw away the
+  // key saved alongside it. So the rest is saved without the model, and the answer says why the
+  // model did not stick rather than pretending it did.
+  let warning: string | undefined
+  if (error && written.image_model !== undefined && isMissingImageModelColumn(error)) {
+    const { image_model: _unstored, ...rest } = written
+    written = rest
+    warning = 'Saved, except the image model: storing it needs migration 227 (agency_settings.image_model). '
+      + 'Featured images keep using the default model until it is applied.'
+    // Nothing else in the request (a model change on its own): read the row back to answer with.
+    const retry = Object.keys(rest).length > 0
+      ? await db.from('agency_settings').update(rest).eq('id', existing.id).select().single()
+      : await db.from('agency_settings').select('*').eq('id', existing.id).single()
+    data  = retry.data
+    error = retry.error
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -166,8 +194,10 @@ export async function PUT(request: NextRequest) {
   revalidatePath('/admin')
   revalidateTag('agency-settings')  // bust the cached getAgencySettings() on client dashboards
 
-  const adminSession = await getAdminSession()
-  logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(patch) } })
+  if (Object.keys(written).length > 0) {
+    const adminSession = await getAdminSession()
+    logActivity(adminSession, 'updated', 'agency_settings', { meta: { fields: Object.keys(written) } })
+  }
 
   // Strip the super-admin OTP columns from the response exactly as GET does. The
   // bare .select() returns the full row, so while a super-admin login is mid-flight
@@ -177,5 +207,15 @@ export async function PUT(request: NextRequest) {
   const { super_admin_otp_hash, super_admin_otp_expires_at, ...safe } =
     data as Record<string, unknown>
   void super_admin_otp_hash; void super_admin_otp_expires_at
-  return NextResponse.json(maskSecrets(safe))
+  return NextResponse.json(warning ? { ...maskSecrets(safe), warning } : maskSecrets(safe))
+}
+
+/**
+ * The update named image_model and the database has no such column — migration 227 not applied.
+ * PostgREST reports it as PGRST204 ("Could not find the 'image_model' column … in the schema
+ * cache"); Postgres itself as 42703 (undefined_column). Either way the message names the column,
+ * which is what tells it apart from any other column that might be missing.
+ */
+function isMissingImageModelColumn(error: { code?: string; message?: string }): boolean {
+  return (error.code === 'PGRST204' || error.code === '42703') && /image_model/.test(error.message ?? '')
 }

@@ -1,12 +1,26 @@
-// Shared image generation logic — called by the generate-image API route and
-// by the content generate route (auto-gen after post creation).
+// Shared image generation logic — called by the generate-image API route (a reviewer's
+// regenerate) and in the background by the blog and service-area generate routes.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { updatePostReleasingMediaLink } from '@/lib/content/featuredMediaLink'
 import { getDirection, UNIVERSAL_CONSTRAINTS } from '@/lib/content/imageDirections'
 import { recordAiUsage } from '@/lib/ai/usage'
-import { priceImages } from '@/lib/ai/pricing'
+import { priceImages, priceImageUsage, type ImageUsage } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
+import { IMAGE_MODELS, IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+import { splitPhrases } from '@/lib/content/phrases'
+import { locationCandidates } from '@/lib/content/researchSeeds'
+
+/** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
+const OPENAI_TIMEOUT_MS = 120_000
+
+/** Less than OpenAI: the fallback can start after OpenAI has used its full two minutes. */
+const GEMINI_TIMEOUT_MS = 60_000
+
+/** AbortSignal.timeout rejects with a DOMException named TimeoutError. */
+function isTimeout(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError'
+}
 
 type PostRow = {
   id:             string
@@ -44,7 +58,6 @@ const INTENT_SCENE: Record<string, string> = {
   informational:    'an editorial establishing shot of the subject in its real-world setting',
 }
 
-// PostRow carries no search_intent, so infer the angle from the title/keyword.
 /**
  * The same seven intents, said the way a person describes a photograph.
  *
@@ -68,14 +81,27 @@ function article(word: string): string {
   return /^[aeiou]/i.test(word.trim()) ? 'an' : 'a'
 }
 
-/** The industry and place both the prompt and the alt text situate the picture in. */
+/**
+ * The industry and place both the prompt and the alt text situate the picture in: the first
+ * service and the primary service area.
+ *
+ * Services are read with splitPhrases, the way the chip input wrote them. Cutting services on
+ * the first comma turned "gutter guards (mesh, micro-mesh)" into "gutter guards (mesh".
+ *
+ * The place is the primary market as keyword research reads it (locationCandidates): a place
+ * name, not the sentence it was written in. The raw first entry put prose into the picture —
+ * "in Nationwide online (ships across the US)", "in All of Canada (coast to coast)" — which is no
+ * place at all and reads badly aloud as alt text. A business with no local market gets none.
+ */
 function describeSetting(settings: ClientSettings | null): { industry: string; location: string } {
   return {
-    industry: settings?.services?.split(',')[0]?.trim() || 'local service',
-    location: settings?.geographic_focus?.trim() || '',
+    industry: splitPhrases(settings?.services)[0] || 'local service',
+    location: locationCandidates(String(settings?.geographic_focus ?? ''))
+      .find(place => !/\bonline\b/i.test(place)) ?? '',
   }
 }
 
+// PostRow carries no search_intent, so infer the angle from the title/keyword.
 function inferIntentFromTitle(t: string): keyof typeof INTENT_SCENE {
   const s = t.toLowerCase()
   if (/\bhow to\b|\bstep|\bguide\b|\btutorial\b/.test(s))          return 'how_to'
@@ -103,7 +129,7 @@ export function buildImagePrompt(
   const context = title ? ` for a blog article titled "${title}"` : ''
   const setting = `real-world ${industry} setting${location ? ` in ${location}` : ''}`
 
-  // Push hard toward a REAL photograph. gpt-image-1 / Imagen default to a glossy, over-lit,
+  // Push hard toward a REAL photograph. Image models default to a glossy, over-lit,
   // oversaturated "AI look"; photojournalistic grounding + an explicit anti-AI negative list
   // (the visual equivalent of the banned-phrase list for copy) counters it.
   // Style comes from the chosen direction. It used to be hardcoded photojournalism, which
@@ -186,8 +212,9 @@ export type ImageGenResult =
   | { ok: false; error: string }
 
 /**
- * Generate a featured image for a post and write the result back to the DB.
- * Pass `openaiKey` from agency_settings.openai_api_key (or env fallback).
+ * Generate a featured image for a post and write the result back to the DB — the image on
+ * success, the reason in image_generation_error on failure.
+ * Pass `openaiKey` from agency_settings.openai_api_key; null falls back to OPENAI_API_KEY.
  */
 export async function generatePostImage(
   db: ReturnType<typeof createAdminClient>,
@@ -200,8 +227,9 @@ export async function generatePostImage(
   const postRes = await db.from('content_posts')
     .select('id, client_id, image_concept, seo_title, title, target_keyword')
     .eq('id', postId)
-    .single()
+    .maybeSingle()
 
+  // Nothing to record the failure on.
   if (postRes.error || !postRes.data)
     return { ok: false, error: 'Post not found' }
 
@@ -243,42 +271,64 @@ export async function generatePostImage(
   const effectiveKey = openaiKey ?? process.env.OPENAI_API_KEY
   let imageUrl: string | null = null
   let usedProvider = ''
-  let lastError = ''
+  // One entry per provider that was tried and did not produce an image, in order. Kept rather
+  // than overwritten, so a fallback's failure cannot hide why the primary failed.
+  const failures: string[] = []
 
-  // ── OpenAI Image Generation (gpt-image-1) ───────────────────────────────────
+  // Which model. Every model on offer takes the same arguments (IMAGE_REQUEST) plus its own quality
+  // (IMAGE_MODELS), so this is a bare swap. A stored value that is no longer offered — the retired gpt-image-1 or dall-e-3 included —
+  // resolves to the default rather than being sent to an API that no longer serves it.
+  const chosenModel = await (async () => {
+    try {
+      const { data, error } = await db.from('agency_settings').select('image_model').maybeSingle()
+      // Column absent (migration 227 not applied) or unreadable: use the default.
+      if (error) return DEFAULT_IMAGE_MODEL
+      return resolveImageModel((data as { image_model?: unknown } | null)?.image_model)
+    } catch { return DEFAULT_IMAGE_MODEL }
+  })()
+
+  // ── OpenAI image generation ─────────────────────────────────────────────────
   if (effectiveKey) {
     try {
-      const dalleRes = await fetch('https://api.openai.com/v1/images/generations', {
+      const imageRes = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${effectiveKey}`,
         },
-        body: JSON.stringify({
-          model: 'gpt-image-1',
-          prompt,
-          n: 1,
-          size: '1536x1024',
-          quality: 'medium',
-        }),
+        body: JSON.stringify({ model: chosenModel, prompt, n: 1, ...IMAGE_REQUEST, quality: IMAGE_MODELS[chosenModel].quality }),
+        // OpenAI documents complex prompts taking "up to 2 minutes"
+        // (https://developers.openai.com/api/docs/guides/image-generation#limitations). Without a
+        // bound, a hung request holds the function until the platform kills it, and nothing after
+        // this point — the stock search it awaits, the error it would record — ever runs.
+        signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
       })
-      if (dalleRes.ok) {
-        // Billed per image, not per token, so the ledger records units and prices through
-        // priceImages. Only a successful generation is charged.
+      if (imageRes.ok) {
+        const data = await imageRes.json().catch(() => null) as
+          { data?: { b64_json?: string }[]; usage?: ImageUsage } | null
+
+        // These models bill per token, split by modality, and the response says how many were
+        // used — so the cost comes from that, not a flat per-image figure. The flat estimate is
+        // only for a response that omits usage (the API reference marks it optional). Recorded
+        // for any 2xx: OpenAI has charged for it whether or not the image then reaches storage.
+        const usage = data?.usage
         await recordAiUsage({
-          provider: 'openai',
-          model:    'gpt-image-1',
-          operation: 'image',
-          units:    1,
-          costUsd:  priceImages('gpt-image-1', 1),
-          clientId: String(post.client_id ?? '') || null,
+          provider:     'openai',
+          model:        chosenModel,
+          operation:    'image',
+          units:        1,
+          inputTokens:  usage?.input_tokens,
+          outputTokens: usage?.output_tokens,
+          costUsd:      priceImageUsage(chosenModel, usage) ?? priceImages(chosenModel, 1),
+          clientId:     String(post.client_id ?? '') || null,
           postId,
         })
-        const data = await dalleRes.json() as { data?: { b64_json?: string; url?: string }[] }
-        const item = data.data?.[0]
-        if (item?.b64_json) {
-          // gpt-image-1 returns base64 — decode and upload to Supabase directly
-          const buffer   = Buffer.from(item.b64_json, 'base64')
+
+        // GPT image models only ever answer with base64; there is no URL form to fall back to.
+        const b64 = data?.data?.[0]?.b64_json
+
+        if (b64) {
+          const buffer   = Buffer.from(b64, 'base64')
           const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
           const { error: upErr } = await db.storage
             .from('uploads')
@@ -286,42 +336,55 @@ export async function generatePostImage(
           if (!upErr) {
             const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
             imageUrl     = publicUrl
-            usedProvider = 'gpt-image-1'
+            usedProvider = chosenModel
           } else {
-            lastError = `Storage upload failed: ${upErr.message}`
+            failures.push(`The ${chosenModel} image could not be saved: ${upErr.message}`)
           }
-        } else if (item?.url) {
-          imageUrl     = item.url
-          usedProvider = 'gpt-image-1'
+        } else {
+          failures.push(`OpenAI ${chosenModel} answered without an image`)
         }
       } else {
-        const errData = await dalleRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `DALL-E error (${dalleRes.status}): ${errData?.error?.message ?? dalleRes.statusText}`
+        const errData = await imageRes.json().catch(() => ({})) as { error?: { message?: string } }
+        failures.push(`OpenAI ${chosenModel} failed (${imageRes.status}): ${errData?.error?.message ?? imageRes.statusText}`)
       }
     } catch (e) {
-      lastError = `DALL-E request failed: ${e instanceof Error ? e.message : String(e)}`
+      failures.push(isTimeout(e)
+        ? `OpenAI ${chosenModel} did not answer within ${OPENAI_TIMEOUT_MS / 1000}s`
+        : `OpenAI ${chosenModel} could not be reached: ${e instanceof Error ? e.message : String(e)}`)
     }
   } else {
-    lastError = 'No OpenAI API key configured — add it in Agency Settings → AI → Image Generation'
+    failures.push('No OpenAI API key — add one in Settings → AI → Image Generation')
   }
 
-  // ── Gemini Imagen 3 fallback ────────────────────────────────────────────────
+  // ── Gemini Imagen fallback ──────────────────────────────────────────────────
+  // KNOWN DEAD: Google has shut Imagen down in the Gemini API ("Imagen models are shut down. Use
+  // Nano Banana for image generation." — https://ai.google.dev/gemini-api/docs/imagen), so this
+  // call now fails and its reason is recorded after OpenAI's. The replacement (gemini-*-image via
+  // :generateContent) takes a different request and returns the image as a content part, so it is
+  // a port, not a model-id swap.
+  //
+  // The key travels in the x-goog-api-key header, not the query string: a URL is what request
+  // logs, proxies and error messages record.
   if (!imageUrl && process.env.GEMINI_API_KEY) {
     try {
       const gemRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${process.env.GEMINI_API_KEY}`,
+        'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type':   'application/json',
+            'x-goog-api-key': process.env.GEMINI_API_KEY,
+          },
           body: JSON.stringify({
             instances: [{ prompt }],
             parameters: { sampleCount: 1, aspectRatio: '16:9' },
           }),
+          signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
         }
       )
       if (gemRes.ok) {
-        const gemData = await gemRes.json() as { predictions?: { bytesBase64Encoded?: string }[] }
-        const b64 = gemData.predictions?.[0]?.bytesBase64Encoded
+        const gemData = await gemRes.json().catch(() => null) as { predictions?: { bytesBase64Encoded?: string }[] } | null
+        const b64 = gemData?.predictions?.[0]?.bytesBase64Encoded
         if (b64) {
           const buffer   = Buffer.from(b64, 'base64')
           const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
@@ -332,14 +395,20 @@ export async function generatePostImage(
             const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
             imageUrl = publicUrl
             usedProvider = 'gemini'
+          } else {
+            failures.push(`The Gemini fallback image could not be saved: ${upErr.message}`)
           }
+        } else {
+          failures.push('Gemini fallback answered without an image')
         }
       } else {
         const errData = await gemRes.json().catch(() => ({})) as { error?: { message?: string } }
-        lastError = `Gemini error (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`
+        failures.push(`Gemini fallback failed (${gemRes.status}): ${errData?.error?.message ?? gemRes.statusText}`)
       }
     } catch (e) {
-      lastError = `Gemini request failed: ${e instanceof Error ? e.message : String(e)}`
+      failures.push(isTimeout(e)
+        ? `Gemini fallback did not answer within ${GEMINI_TIMEOUT_MS / 1000}s`
+        : `Gemini fallback could not be reached: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -350,34 +419,16 @@ export async function generatePostImage(
   await candidatesPromise
 
   if (!imageUrl)
-    return { ok: false, error: lastError || 'Image generation failed — configure an API key in Agency Settings → AI → Image Generation' }
+    return { ok: false, error: await recordImageFailure(db, postId, failures.join(' · ') || 'Image generation failed') }
 
-  // gpt-image-1 responses are already uploaded to Supabase above (b64_json path).
-  // If a temp URL was returned (url path), download and re-upload so it doesn't expire.
-  let finalUrl = imageUrl
-  if (usedProvider === 'gpt-image-1' && imageUrl && !imageUrl.includes('supabase')) {
-    try {
-      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) })
-      if (imgRes.ok) {
-        const buffer   = Buffer.from(await imgRes.arrayBuffer())
-        const filename = `content-images/${post.client_id}/${postId}-ai-${Date.now()}.png`
-        const { error: upErr } = await db.storage
-          .from('uploads')
-          .upload(filename, buffer, { contentType: 'image/png', upsert: true })
-        if (!upErr) {
-          const { data: { publicUrl } } = db.storage.from('uploads').getPublicUrl(filename)
-          finalUrl = publicUrl
-        }
-      }
-    } catch {
-      // keep temp URL — will expire but better than nothing
-    }
-  }
-
-  await updatePostReleasingMediaLink(db, postId, {
-    featured_image_url:     finalUrl,
+  // Both providers hand back bytes, and both paths above upload them before setting imageUrl, so
+  // it is always our own storage URL — never a provider-hosted link that expires.
+  const { error: saveErr } = await updatePostReleasingMediaLink(db, postId, {
+    featured_image_url:     imageUrl,
     featured_image_prompt:  prompt,
     featured_image_source:  'ai_generated',
+    // Cleared here, on the only path that produced an image, so a reason recorded by an earlier
+    // failed attempt does not outlive the image that replaced it.
     image_generation_error: null,
     // Written at generation because this is the only point where what the picture SHOWS is
     // known — the prompt describes it, and nobody is going to come back and describe it
@@ -386,5 +437,36 @@ export async function generatePostImage(
     image_alt_text:         buildAltText(post, post.target_keyword?.trim() || '', altDepiction),
   })
 
-  return { ok: true, url: finalUrl, prompt, provider: usedProvider }
+  // The picture exists in storage but the post does not point at it, so as far as anyone reading
+  // the post can tell there is no image. Reporting success here would show the reviewer a URL that
+  // is gone on the next reload.
+  if (saveErr)
+    return { ok: false, error: await recordImageFailure(db, postId, `The image was generated but could not be attached to the post: ${saveErr.message}`) }
+
+  return { ok: true, url: imageUrl, prompt, provider: usedProvider }
+}
+
+/** Long enough for a provider's own explanation; short enough to read at a glance. */
+const MAX_REASON_CHARS = 300
+
+/**
+ * Leave the reason on the post when no image came out of a run, and return it.
+ *
+ * Two of the three callers start this in the background, where nobody sees what it returns (the
+ * blog route discards it outright) — so a post written by the pipeline used to ship with no
+ * featured image and nothing on it saying why.
+ * content_posts.image_generation_error (migration 108) is where that goes. It is only a trace: the
+ * featured image already on the post, if any, is left alone, so a failed regenerate never costs a
+ * working picture.
+ */
+async function recordImageFailure(
+  db: ReturnType<typeof createAdminClient>,
+  postId: string,
+  reason: string,
+): Promise<string> {
+  const short = reason.length > MAX_REASON_CHARS ? `${reason.slice(0, MAX_REASON_CHARS - 1).trimEnd()}…` : reason
+  console.warn(`[generatePostImage] no image for post ${postId}: ${short}`)
+  const { error } = await db.from('content_posts').update({ image_generation_error: short }).eq('id', postId)
+  if (error) console.warn(`[generatePostImage] could not record the failure on post ${postId}: ${error.message}`)
+  return short
 }

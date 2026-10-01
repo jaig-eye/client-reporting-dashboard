@@ -6,10 +6,12 @@
 // independently through the partial-update PUT /api/admin/content/client-settings
 // (only the keys a card sends are written), so sections never clobber each other.
 
-import { useState, useEffect, useCallback } from 'react'
-import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine } from '@phosphor-icons/react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine, Sparkle } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
-import ClientContentSettingsForm from '@/components/admin/ClientContentSettingsForm'
+import ClientContentSettingsForm, { SettingsLoadError } from '@/components/admin/ClientContentSettingsForm'
 
 type SettingsSection = 'brand' | 'publishing' | 'schedule' | 'writing'
 
@@ -20,7 +22,11 @@ interface Props {
   clientId:     string
   clientName:   string
   sites:        SiteOption[]
-  aiConfigured: boolean
+  /**
+   * A section another tab asked to show — the Pipeline's "Change in Content settings" opens
+   * Schedule. `n` changes on every request, so asking again after wandering off still moves there.
+   */
+  sectionRequest?: { section: SettingsSection; n: number } | null
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -34,9 +40,15 @@ const FREQ_OPTS = [
   { value: 'monthly_end',   label: 'Monthly — end of month (28th)' },
 ]
 
-function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+function Label({ children, hint, htmlFor, id }: {
+  children: React.ReactNode; hint?: string
+  /** The control this names. A label without one names nothing for a screen reader. */
+  htmlFor?: string
+  /** For a group of controls, which points at the label with aria-labelledby instead. */
+  id?: string
+}) {
   return (
-    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+    <label htmlFor={htmlFor} id={id} className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
       {children}
       {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
     </label>
@@ -74,7 +86,8 @@ function SaveRow({ onSave, saving, saved, error }: { onSave: () => void; saving:
 type SaveState = { saving: boolean; saved: boolean; error: string }
 const IDLE: SaveState = { saving: false, saved: false, error: '' }
 
-export default function ClientContentSettings({ clientId, clientName, sites }: Props) {
+export default function ClientContentSettings({ clientId, clientName, sites, sectionRequest = null }: Props) {
+  const router = useRouter()
   const clientSites = sites.filter(s => s.clientId === clientId)
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -84,6 +97,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   const [bcAuthor, setBcAuthor] = useState('')
   const [blogUrlPrefix, setBlogUrlPrefix] = useState('')
   const [categoryIds, setCategoryIds] = useState<number[]>([])
+  const [newCategory,      setNewCategory]      = useState('')
+  const [creatingCategory, setCreatingCategory] = useState(false)
+  const [categoryMsg,      setCategoryMsg]      = useState('')
   const [authors,    setAuthors]    = useState<Author[]>([])
   const [categories, setCategories] = useState<WpCategory[]>([])
   const [loading,    setLoading]    = useState(true)
@@ -91,23 +107,48 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   const [pubSave,   setPubSave]   = useState<SaveState>(IDLE)
   const [schedSave, setSchedSave] = useState<SaveState>(IDLE)
   const [writeSave, setWriteSave] = useState<SaveState>(IDLE)
-  const [activeSection, setActiveSection] = useState<SettingsSection>('brand')
+  const [activeSection, setActiveSection] = useState<SettingsSection>(sectionRequest?.section ?? 'brand')
+  // Bring the requested section to the front, and the panel into view: the sub-nav sits above the
+  // fold on a phone, and arriving from the Pipeline lands wherever the page was scrolled.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const requestN = sectionRequest?.n ?? 0
+  useEffect(() => {
+    if (!sectionRequest) return
+    setActiveSection(sectionRequest.section)
+    // After the tab around this is shown again (it was display:none until this render).
+    const t = setTimeout(() => panelRef.current?.scrollIntoView({ block: 'start' }), 50)
+    return () => clearTimeout(t)
+    // Keyed on the request counter: the object itself is rebuilt by the parent on every request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestN])
 
   const set = useCallback(<K extends keyof ClientScheduleSettings>(key: K, val: ClientScheduleSettings[K]) => {
     setForm(p => ({ ...p, [key]: val }))
   }, [])
 
   // ── Load settings ──────────────────────────────────────────────────────────
+  // A failed read is not an empty client. Filling the cards from an error body gave every field
+  // its default, and any card's Save then wrote those defaults over the real settings.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   useEffect(() => {
     setLoading(true)
+    setLoadError(null)
     fetch(`/api/admin/content/client-settings?client_id=${clientId}`)
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({})) as { error?: string }
+          throw new Error(body.error ?? `HTTP ${r.status}`)
+        }
+        return r.json()
+      })
       .then((d: Record<string, unknown>) => {
         const autoGen = (d.auto_generate as boolean) ?? false
         setForm({
           schedule_frequency:   (d.schedule_frequency   as string | null) ?? null,
           schedule_day_of_week: (d.schedule_day_of_week as number | null) ?? null,
           weeks_ahead:          (d.weeks_ahead          as number)        ?? 6,
+          posts_per_run:        (d.posts_per_run        as number | null) ?? 1,
           schedule_start_date:  (d.schedule_start_date  as string | null) ?? null,
           auto_generate:        autoGen,
           connection_id:        (d.connection_id        as string | null) ?? null,
@@ -134,12 +175,12 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           }).catch(() => {})
         }
       })
-      .catch(() => setLoading(false))
-  }, [clientId])
+      .catch(e => { setLoadError(e instanceof Error ? e.message : 'Could not load'); setLoading(false) })
+  }, [clientId, reloadKey])
 
   // ── Auto-default the connection when one exists but none is saved ───────────
   useEffect(() => {
-    if (loading) return
+    if (loading || loadError) return
     if (!form.connection_id && firstConnectionId) {
       set('connection_id', firstConnectionId)
       fetch('/api/admin/content/client-settings', {
@@ -178,6 +219,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save')
       setState({ saving: false, saved: true, error: '' })
       setTimeout(() => setState({ saving: false, saved: false, error: '' }), 2500)
+      // The Pipeline tab stays mounted beside this one and reads cadence and automation from the
+      // server-rendered settings. Without a refresh it kept saying "Running · weekly" after the
+      // schedule was changed here. This keeps local state; it only re-reads the page's data.
+      router.refresh()
     } catch (e) {
       setState({ saving: false, saved: false, error: e instanceof Error ? e.message : 'Failed to save' })
     }
@@ -197,6 +242,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     schedule_day_of_week:    showDayPicker ? (form.schedule_day_of_week ?? 1) : (form.schedule_day_of_week ?? null),
     publish_time:            form.publish_time ?? null,
     weeks_ahead:             form.weeks_ahead || 6,
+    // The column's CHECK is 1..10; clamp here so a typed 0 or 99 is corrected on save rather
+    // than rejected by the database with an error nobody can act on.
+    posts_per_run:           Math.min(10, Math.max(1, Number(form.posts_per_run) || 1)),
     schedule_start_date:     form.schedule_start_date ?? null,
     auto_generate:           form.auto_generate ?? false,
     auto_approve_topics:     form.auto_approve_topics ?? false,
@@ -211,12 +259,48 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
     topic_guidelines: form.topic_guidelines ?? null,
   }, setWriteSave)
 
+  /**
+   * Make a category on the client's site and select it.
+   *
+   * The same endpoint the post editor uses, including its treatment of duplicates: WordPress
+   * rejects a name it already has, and the API resolves that to the existing term instead of
+   * erroring — otherwise retyping a name you already made pushes you to invent a near-duplicate.
+   */
+  async function createCategory() {
+    const name = newCategory.trim()
+    if (!effectiveConn || name.length < 2) return
+    setCreatingCategory(true); setCategoryMsg('')
+    try {
+      const res = await fetch('/api/admin/wordpress/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: effectiveConn, name }),
+      })
+      // `existed` is a sibling of `category`, not a field on it: reading it off the category meant
+      // a name WordPress already had always said "Created".
+      const d = await res.json().catch(() => ({})) as { category?: WpCategory; existed?: boolean; error?: string }
+      if (!res.ok || d.error || !d.category) throw new Error(d.error ?? 'Could not create it')
+      const made = d.category
+      setCategories(prev => prev.some(c => c.id === made.id) ? prev : [...prev, made])
+      setCategoryIds(prev => prev.includes(made.id) ? prev : [...prev, made.id])
+      setNewCategory('')
+      setCategoryMsg(d.existed ? 'Already existed — selected. Save to apply.' : 'Created and selected. Save to apply.')
+    } catch (e) {
+      setCategoryMsg(e instanceof Error ? e.message : 'Could not create it')
+    } finally {
+      setCreatingCategory(false)
+    }
+  }
+
   function toggleCategory(id: number) {
     setCategoryIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
   if (loading) {
     return <p className="text-sm" style={{ color: 'var(--text-muted)', padding: '1rem 0' }}>Loading settings…</p>
+  }
+  if (loadError) {
+    return <SettingsLoadError message={loadError} onRetry={() => setReloadKey(k => k + 1)} />
   }
 
   const SECTIONS: { id: SettingsSection; label: string; desc: string; icon: React.ReactNode }[] = [
@@ -242,6 +326,15 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         .cc-set-navitem .cc-set-desc { display: none; }
       }
     `}</style>
+    {/* Every sub-tab names itself in the same shape: title, then one line. */}
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+      <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+        Settings
+      </h3>
+      <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+        Who this client is, where posts go, and how often.
+      </p>
+    </div>
     <div className="cc-set-grid">
       {/* Left sub-nav (progressive disclosure — one section at a time) */}
       <nav className="cc-set-rail" aria-label="Content settings sections">
@@ -263,16 +356,34 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
             </button>
           )
         })}
+
+        {/* The writing prompt every client inherits lives at agency level. Anyone tuning a client's
+            writing rules is one question away from wanting it, and there was no path from here. */}
+        <Link
+          href="/admin/content/settings"
+          className="cc-set-navitem"
+          style={{ textDecoration: 'none', marginTop: 4, borderTop: '1px solid var(--border)', borderRadius: 0, paddingTop: 12 }}
+        >
+          <Sparkle size={18} weight="duotone" style={{ color: 'var(--text-faint)' }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-muted)' }}>
+              Global prompts →
+            </span>
+            <span className="cc-set-desc" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
+              Applies to every client
+            </span>
+          </span>
+        </Link>
       </nav>
 
       {/* Right panel — active section */}
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div ref={panelRef} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem', scrollMarginTop: 16 }}>
 
       {/* Brand DNA — reused as-is (own save + AI auto-fill). Kept MOUNTED and hidden
           (not conditionally rendered) so unsaved edits survive a sub-nav switch —
           it holds its own internal form state, unlike the parent-owned sections below. */}
       <div style={{ display: activeSection === 'brand' ? 'block' : 'none' }}>
-        <ClientContentSettingsForm clientId={clientId} sites={sites} />
+        <ClientContentSettingsForm clientId={clientId} />
       </div>
 
       {/* ── Publishing ─────────────────────────────────────────────────────── */}
@@ -284,8 +395,9 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         </div>
 
         <div>
-          <Label>Site Connection</Label>
+          <Label htmlFor="cs-connection">Site Connection</Label>
           <select
+            id="cs-connection"
             className="input"
             value={form.connection_id ?? ''}
             onChange={e => {
@@ -303,40 +415,40 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
         {isBc ? (
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
-              <input className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
+              <Label htmlFor="cs-bc-author" hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
+              <input id="cs-bc-author" className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
             </div>
             <div>
-              <Label hint="URL prefix for BigCommerce blog posts">Blog URL Prefix</Label>
-              <input className="input" type="text" value={blogUrlPrefix} onChange={e => setBlogUrlPrefix(e.target.value)} placeholder="/blog/" />
+              <Label htmlFor="cs-blog-prefix" hint="URL prefix for BigCommerce blog posts">Blog URL Prefix</Label>
+              <input id="cs-blog-prefix" className="input" type="text" value={blogUrlPrefix} onChange={e => setBlogUrlPrefix(e.target.value)} placeholder="/blog/" />
             </div>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Default Author</Label>
-                <select className="input" value={form.default_author_id ?? ''} onChange={e => set('default_author_id', e.target.value ? Number(e.target.value) : null)}>
+                <Label htmlFor="cs-author">Default Author</Label>
+                <select id="cs-author" className="input" value={form.default_author_id ?? ''} onChange={e => set('default_author_id', e.target.value ? Number(e.target.value) : null)}>
                   <option value="">— Default —</option>
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
               <div>
-                <Label>WP Publish Mode</Label>
-                <select className="input" value={form.wp_publish_mode ?? 'scheduled_draft'} onChange={e => set('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
+                <Label htmlFor="cs-publish-mode">WP Publish Mode</Label>
+                <select id="cs-publish-mode" className="input" value={form.wp_publish_mode ?? 'scheduled_draft'} onChange={e => set('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
                   <option value="scheduled_draft">Scheduled Draft</option>
                   <option value="draft_only">Draft Only</option>
                 </select>
               </div>
             </div>
             <div>
-              <Label hint="applied to every new post from this client">Default WP Categories</Label>
+              <Label id="cs-categories-label" hint="applied to every new post from this client">Default WP Categories</Label>
               {categories.length === 0 ? (
                 <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
                   {effectiveConn ? 'No categories found for this site.' : 'Select a site connection to choose categories.'}
                 </p>
               ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div role="group" aria-labelledby="cs-categories-label" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {categories.map(c => {
                     const on = categoryIds.includes(c.id)
                     return (
@@ -354,6 +466,36 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
                   })}
                 </div>
               )}
+              {/* Same as the post editor: a category you need does not exist until someone makes
+                  it, and sending people to wp-admin to do that is how defaults stay unset. A name
+                  WordPress already has resolves to the existing term rather than erroring. */}
+              {effectiveConn && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                  <input
+                    className="input"
+                    value={newCategory}
+                    onChange={e => setNewCategory(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void createCategory() } }}
+                    aria-label="New category name"
+                    placeholder="New category…"
+                    style={{ maxWidth: 200, fontSize: '0.8125rem', padding: '0.3rem 0.55rem' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem', padding: '0.3rem 0.7rem' }}
+                    onClick={() => void createCategory()}
+                    disabled={creatingCategory || newCategory.trim().length < 2}
+                  >
+                    {creatingCategory ? 'Creating…' : 'Create'}
+                  </button>
+                  {categoryMsg && (
+                    <span className="text-xs" style={{ color: /could|error/i.test(categoryMsg) ? 'var(--red)' : 'var(--text-faint)' }}>
+                      {categoryMsg}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
@@ -367,35 +509,59 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       <div className="card p-6 space-y-4">
         <div>
           <h2 className="section-title" style={{ marginBottom: 0 }}>Schedule &amp; Automation</h2>
-          <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically.</p>
+          <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically. Each publishing window gets the number of posts set below.</p>
         </div>
 
         <div>
-          <Label>Publishing cadence</Label>
+          <Label htmlFor="cs-cadence">Publishing cadence</Label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <select className="input" style={{ width: 200 }} value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
+            <select id="cs-cadence" className="input" style={{ width: 200 }} value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
               <option value="">Use global default</option>
               {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            {/* One phrase, so a wrap never strands the "×" on the end of a line. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>×</span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                style={{ width: 72 }}
+                aria-label="Posts per publishing window"
+                value={form.posts_per_run ?? 1}
+                // Ceiling on change, floor on blur. Clamping the floor per keystroke made the
+                // field impossible to clear — delete it and Number('') || 1 wrote a 1 straight
+                // back — while correcting an empty field when focus leaves is expected.
+                onChange={e => set('posts_per_run', Math.min(10, Math.max(0, Number(e.target.value) || 0)))}
+                onBlur={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+              />
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                {(form.posts_per_run ?? 1) === 1 ? 'post' : 'posts'}
+              </span>
+            </div>
             {showDayPicker && (<>
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
-              <select className="input" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
+              <select className="input" aria-label="Publish day" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
                 {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
               </select>
             </>)}
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>at</span>
-            <input className="input" type="time" style={{ width: 120 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
+            {/* 120px fits "09:00 AM" but not the clock button Chrome draws inside the field on
+                top of it, so the two overlapped. Wide enough for both, and minWidth holds it
+                there when the row is tight. */}
+            <input className="input" type="time" aria-label="Publish time" style={{ width: 150, minWidth: 150 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label hint="how many publish dates to plan ahead">Weeks ahead</Label>
-            <input className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
+            <Label htmlFor="cs-weeks-ahead" hint="how many publish dates to plan ahead">Weeks ahead</Label>
+            <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
           </div>
           <div>
-            <Label hint="first date the schedule generates from">Start date</Label>
-            <input className="input" type="date" value={form.schedule_start_date ?? ''} onChange={e => set('schedule_start_date', e.target.value || null)} />
+            <Label htmlFor="cs-start-date" hint="first date the schedule generates from">Start date</Label>
+            <input id="cs-start-date" className="input" type="date" value={form.schedule_start_date ?? ''} onChange={e => set('schedule_start_date', e.target.value || null)} />
           </div>
         </div>
 
@@ -436,21 +602,30 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>Length, structure, and topics to avoid.</p>
         </div>
 
-        <div style={{ maxWidth: 200 }}>
-          <Label>Target word count</Label>
-          <input className="input" type="number" min={300} max={5000} step={100} value={form.target_length ?? 1500} onChange={e => set('target_length', Number(e.target.value))} />
+        {/* No maxWidth: the control lays itself out across the row. Boxed to 200px it had to
+            stack, which is why the band sat under the field with the rest of the card empty. */}
+        <div>
+          <Label htmlFor="cs-target-length">Target word count</Label>
+          {/* The generator holds posts to this band and revises anything past the ceiling, so the
+              number is a budget, not a suggestion — posts averaged 135% of target while this was
+              a sentence nobody read. Drawn to scale so the band is a shape rather than arithmetic. */}
+          <LengthBudget
+            id="cs-target-length"
+            value={form.target_length ?? 1500}
+            onChange={v => set('target_length', v)}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Writing instructions</Label>
-            <textarea className="input" rows={5} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
+            <Label htmlFor="cs-writing-instructions">Writing instructions</Label>
+            <textarea id="cs-writing-instructions" className="input" rows={5} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}
               value={form.post_structure ?? ''} onChange={e => set('post_structure', e.target.value)}
               placeholder={`e.g.\nAlways link to at least 2 priority pages.\nCite years of experience and named staff expertise.`} />
           </div>
           <div>
-            <Label>Topic restrictions</Label>
-            <textarea className="input" rows={5} style={{ width: '100%', resize: 'vertical' }}
+            <Label htmlFor="cs-topic-restrictions">Topic restrictions</Label>
+            <textarea id="cs-topic-restrictions" className="input" rows={5} style={{ width: '100%', resize: 'vertical' }}
               value={form.topic_guidelines ?? ''} onChange={e => set('topic_guidelines', e.target.value || null)}
               placeholder="e.g. Avoid bad-credit financing, payday loans, or topics with negative brand associations." />
           </div>
@@ -463,5 +638,71 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       </div>
     </div>
     </>
+  )
+}
+
+/**
+ * The word-count budget, drawn.
+ *
+ * The field and the band sit side by side: you set a number on the left and see the band it buys
+ * on the right, rather than reading a sentence that does the arithmetic out loud. The three
+ * labels under the band used to share one row with a sentence between them, which collided at
+ * this width — the sentence is a tooltip now and only the scale's ends are drawn.
+ */
+function LengthBudget({ id, value, onChange }: { id?: string; value: number; onChange: (v: number) => void }) {
+  const MIN = 300, MAX = 5000
+  const floor   = Math.round(value * 0.9)
+  const ceiling = Math.round(value * 1.15)
+  const pct = (n: number) => Math.max(0, Math.min(100, ((n - MIN) / (MAX - MIN)) * 100))
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+      <input
+        id={id}
+        className="input"
+        type="number" min={MIN} max={MAX} step={100}
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        aria-describedby="length-band"
+        style={{ width: 100, flexShrink: 0, fontSize: '1rem', fontWeight: 600, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}
+      />
+
+      {/* The band this target buys, to scale across the whole allowed range. */}
+      <div id="length-band" style={{ flex: '1 1 260px', minWidth: 240, maxWidth: 460 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8 }}>
+          <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+            {floor.toLocaleString()}–{ceiling.toLocaleString()}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>words accepted</span>
+        </div>
+        {/* The fill sits inside the track rather than outlined and overhanging it, and the handle
+            is centred on the track's midline instead of a hairline hung a pixel high. */}
+        <div
+          title="Drafts under the floor are rewritten longer; anything past the ceiling is shortened before it reaches you."
+          style={{ position: 'relative', height: 6, borderRadius: 999, background: 'var(--bg-subtle)' }}
+        >
+          <div
+            style={{
+              position: 'absolute', top: 0, bottom: 0,
+              left: `${pct(floor)}%`, width: `${pct(ceiling) - pct(floor)}%`,
+              minWidth: 8, borderRadius: 999,
+              background: 'var(--blue)', opacity: 0.35,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', top: '50%', left: `${pct(value)}%`,
+              width: 12, height: 12, transform: 'translate(-50%, -50%)',
+              borderRadius: '50%', background: 'var(--blue)',
+              border: '2px solid var(--bg-surface)', boxSizing: 'border-box',
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: '0.65rem', color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+          <span>{MIN.toLocaleString()}</span>
+          <span>{MAX.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
   )
 }

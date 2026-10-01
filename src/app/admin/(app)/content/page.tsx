@@ -1,5 +1,6 @@
 // Content Tool — /admin/content
-// Global calendar view + global settings. Per-client workflows live on the client tab.
+// Global calendar view, the agency-wide Clients and Priority topics overviews, and global settings.
+// Per-client workflows live on the client tab.
 
 import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
@@ -9,6 +10,12 @@ import ContentCalendar         from './ContentCalendar'
 import type { CalendarItem }   from './ContentCalendar'
 import MonthlyReviewSession    from '@/components/admin/MonthlyReviewSession'
 import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
+import PriorityTopicsOverview, { type OverviewClient } from '@/components/admin/PriorityTopicsOverview'
+import { nextOpenSlot }         from '@/lib/content/scheduleSlots'
+import { openLinkCount }        from '@/components/admin/priorityTopics'
+import ContentClientsOverview  from '@/components/admin/ContentClientsOverview'
+import { getClientsOverview }  from '@/lib/content/clientsOverviewData'
+import ContentViews, { type ContentView } from '@/components/admin/ContentViews'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,47 +29,53 @@ export default async function ContentPage({
   if (!isAdminAuthed(session)) redirect('/admin/login')
 
   const params      = await searchParams
-  // Monthly Review is the default landing view; Calendar + Silos are secondary views.
-  const activeView  = params.view ?? 'review'
+  // Monthly Review is the default landing view; Calendar and Priority topics are secondary views.
+  const activeView: ContentView = (['overview', 'review', 'calendar', 'silos'] as const)
+    .find(v => v === params.view) ?? 'review'
 
   const db = createAdminClient()
 
-  // Existing 5-element query (typing must stay intact — adding to this array breaks TS tuple inference)
+  // Review's own read starts now, alongside the shared one below rather than after it.
+  const reviewDataP = activeView === 'review'
+    ? getMonthlyReviewData(
+        db,
+        typeof params.month === 'string' ? params.month : null,
+        mp => `/admin/content?view=review&month=${mp}`,
+      )
+    : Promise.resolve(null)
+
+  // One parallel read (typing must stay intact — adding to this array breaks TS tuple inference)
   const [
     allClientsRes,
     postsRes,
     scheduledTopicsRes,
     silosRes,
-    siloPostsRes,
   ] = await Promise.all([
-    db.from('clients').select('id, name').order('name'),
-    db.from('content_posts')
+    db.from('clients').select('id, name, logo_url').order('name'),
+    activeView !== 'calendar' ? null : db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, generated_at, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale, content_type')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
-    db.from('content_topics')
+    activeView !== 'calendar' ? null : db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(500),
-    db.from('content_silos').select('id, client_id, name, hub_page_url, central_entity, section, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
-    db.from('content_posts').select('silo_id, status').not('silo_id', 'is', null).limit(2000),
+    // Oldest first — the order the topic run takes them — so "Next up" here is the set that really
+    // goes next. pending_links is the hand-linking checklist for sets with a main page.
+    activeView !== 'silos' ? null : db.from('content_silos').select('id, client_id, name, hub_page_url, hub_page_title, content_type, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
   ])
 
   // Monthly-review window data — only fetched when the Review view is active.
-  const reviewData = activeView === 'review'
-    ? await getMonthlyReviewData(
-        db,
-        typeof params.month === 'string' ? params.month : null,
-        mp => `/admin/content?view=review&month=${mp}`,
-      )
-    : null
+  const reviewData = await reviewDataP
 
-  const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
+  const allClientRows = (allClientsRes.data ?? []) as { id: string; name: string; logo_url: string | null }[]
+  const allClientsMap = new Map(allClientRows.map(c => [c.id, c.name]))
+  const allClientLogos = new Map(allClientRows.map(c => [c.id, c.logo_url]))
   const allClients    = (allClientsRes.data ?? []) as { id: string; name: string }[]
 
   // Build calendar items
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const postItems = ((postsRes.data ?? []) as Record<string, any>[]).map(p => ({
+  const postItems = ((postsRes?.data ?? []) as Record<string, any>[]).map(p => ({
     id:                 String(p.id),
     type:               'post' as const,
     contentType:        (p as Record<string, unknown>).content_type ? String((p as Record<string, unknown>).content_type) : 'blog',
@@ -90,7 +103,7 @@ export default async function ContentPage({
   }))
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const topicItems = ((scheduledTopicsRes.data ?? []) as Record<string, any>[]).map(t => ({
+  const topicItems = ((scheduledTopicsRes?.data ?? []) as Record<string, any>[]).map(t => ({
     id:                 String(t.id),
     type:               'topic' as const,
     contentType:        (t as Record<string, unknown>).content_type ? String((t as Record<string, unknown>).content_type) : 'blog',
@@ -124,71 +137,36 @@ export default async function ContentPage({
   const calendarItems: CalendarItem[] = [
     ...topicItems.filter(t => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const postId = ((scheduledTopicsRes.data ?? []) as Record<string, any>[]).find(r => String(r.id) === t.id)?.post_id
+      const postId = ((scheduledTopicsRes?.data ?? []) as Record<string, any>[]).find(r => String(r.id) === t.id)?.post_id
       return !postId || !postIdSet.has(String(postId))
     }),
     ...postItems,
   ]
 
-  // Silo coverage data
-  type SiloRow = { id: string; client_id: string; name: string; hub_page_url: string | null; central_entity: string | null; section: string; pending_links: unknown[] }
-  const silos = (silosRes.data ?? []) as SiloRow[]
-  const siloPostCounts: Record<string, { published: number; total: number }> = {}
-  for (const p of (siloPostsRes.data ?? []) as { silo_id: string; status: string }[]) {
-    if (!siloPostCounts[p.silo_id]) siloPostCounts[p.silo_id] = { published: 0, total: 0 }
-    siloPostCounts[p.silo_id].total++
-    if (p.status === 'draft_saved' || p.status === 'published') siloPostCounts[p.silo_id].published++
-  }
-  const silosGrouped = Array.from(
-    silos.reduce((m, s) => { if (!m.has(s.client_id)) m.set(s.client_id, []); m.get(s.client_id)!.push(s); return m }, new Map<string, SiloRow[]>())
-  )
+  // Priority topics (content_silos): read in full only when that view is open.
+  const silos = (silosRes?.data ?? []) as SiloRow[]
+  const overviewClients = activeView === 'silos'
+    ? await priorityOverview(db, silos, allClientsMap)
+    : []
 
-  const views = [
-    { id: 'review',   label: 'Review' },
-    { id: 'calendar', label: 'Calendar' },
-    { id: 'silos',    label: 'Silos' },
-  ]
+  // Clients: every client's content setup in one table — read only when that view is open.
+  const clientsOverview = activeView === 'overview'
+    ? await getClientsOverview(db, allClientsMap, allClientLogos)
+    : null
 
+  // The view's id stays "silos" so existing links keep working; its name follows the Pipeline's.
+  // Clients leads the switcher, but Review stays the landing view.
   return (
     <div>
-      {/* Header: title + gear settings on the left, view switcher on the right */}
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h1 className="page-title" style={{ margin: 0 }}>Content</h1>
-        <a
-          href="/admin/content/settings"
-          title="Content settings"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8125rem', color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)' }}
-        >
-          ⚙ Settings
-        </a>
-
-        <div style={{ flex: 1 }} />
-
-        {/* View switcher */}
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3 }}>
-          {views.map(v => (
-            <a
-              key={v.id}
-              href={`?view=${v.id}`}
-              style={{
-                display:        'inline-block',
-                padding:        '5px 14px',
-                borderRadius:   6,
-                fontSize:       '0.8125rem',
-                fontWeight:     activeView === v.id ? 600 : 400,
-                color:          activeView === v.id ? '#fff' : 'var(--text-muted)',
-                background:     activeView === v.id ? 'var(--blue, #2563eb)' : 'transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {v.label}
-            </a>
-          ))}
-        </div>
-      </div>
+      <ContentViews active={activeView}>
+      {activeView === 'overview' && clientsOverview && (
+        <ContentClientsOverview rows={clientsOverview.rows} error={clientsOverview.error} />
+      )}
 
       {activeView === 'review' && reviewData && (
         <MonthlyReviewSession
+          // A new month is a new session: its posts are state seeded from these props.
+          key={reviewData.month}
           posts={reviewData.posts}
           allSites={reviewData.allSites}
           month={reviewData.month}
@@ -203,66 +181,87 @@ export default async function ContentPage({
       )}
 
       {activeView === 'silos' && (
-        <div>
-          {silos.length === 0 ? (
-            <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-              No silos yet — create silos from a client&apos;s schedule tab to enable pillar-cluster topic strategy.
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {silosGrouped.map(([clientId, clientSilos]) => (
-                <div key={clientId}>
-                  <h3 style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    {allClientsMap.get(clientId) ?? 'Unknown Client'}
-                  </h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-                    {clientSilos.map(s => {
-                      const counts      = siloPostCounts[s.id] ?? { published: 0, total: 0 }
-                      const pct         = counts.total > 0 ? Math.round((counts.published / counts.total) * 100) : 0
-                      const pendingCount = Array.isArray(s.pending_links) ? s.pending_links.length : 0
-                      return (
-                        <div key={s.id} className="card" style={{ padding: '12px 14px' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6, marginBottom: 6 }}>
-                            <a href={`/admin/content/silos/${s.id}`} style={{ fontWeight: 700, fontSize: '0.8125rem', color: 'var(--text-primary)', textDecoration: 'none' }}>{s.name}</a>
-                            <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: 3, background: s.section === 'core' ? 'var(--blue-subtle)' : 'var(--amber-subtle)', color: s.section === 'core' ? 'var(--blue)' : 'var(--amber)', flexShrink: 0 }}>
-                              {s.section}
-                            </span>
-                          </div>
-                          {s.hub_page_url && (
-                            <a href={s.hub_page_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--blue)', display: 'block', marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {s.hub_page_url}
-                            </a>
-                          )}
-                          <div style={{ marginBottom: 6 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-faint)', marginBottom: 3 }}>
-                              <span>Coverage</span>
-                              <span>{counts.published} / {counts.total} published</span>
-                            </div>
-                            <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${pct}%`, background: 'var(--blue)', borderRadius: 2 }} />
-                            </div>
-                          </div>
-                          {pendingCount > 0 && (
-                            <div style={{ fontSize: '0.72rem', color: 'var(--amber)', marginTop: 4 }}>
-                              ⚠ {pendingCount} pending hub link{pendingCount !== 1 ? 's' : ''}
-                            </div>
-                          )}
-                          <div style={{ marginTop: 8 }}>
-                            <a href={`/admin/content/silos/${s.id}`} style={{ fontSize: '0.72rem', color: 'var(--blue)', textDecoration: 'none' }}>
-                              View authority planner →
-                            </a>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <PriorityTopicsOverview clients={overviewClients} />
       )}
-
+      </ContentViews>
     </div>
   )
+}
+
+/** Sets per read of their keywords: an `in` filter rides in the URL, so this keeps it short. */
+const SET_CHUNK = 200
+/** PostgREST answers at most this many rows per request, so longer reads are paged. */
+const PAGE = 1000
+
+/**
+ * Everything the Priority topics view shows, read in a bounded number of requests: the keywords of
+ * every listed set (in chunks of sets, paged), and each client's next open date — once per client
+ * with a set, in parallel, so one client's failure leaves the rest of the page intact.
+ *
+ * "Written" counts keywords with a post, "in progress" ones whose topic is picked but not yet
+ * written — the same split the Pipeline's card makes, so the two never disagree.
+ */
+type SiloRow = { id: string; client_id: string; name: string; hub_page_url: string | null; hub_page_title: string | null; content_type: string | null; pending_links: unknown[] | null }
+
+async function priorityOverview(
+  db: ReturnType<typeof createAdminClient>,
+  silos: SiloRow[],
+  clientNames: Map<string, string>,
+): Promise<OverviewClient[]> {
+  if (silos.length === 0) return []
+
+  type Stat = { total: number; written: number; picked: number; nextKeyword: string | null; nextOrder: number }
+  const stats = new Map<string, Stat | null>()
+  const ids = silos.map(s => s.id)
+  for (let i = 0; i < ids.length; i += SET_CHUNK) {
+    const chunk = ids.slice(i, i + SET_CHUNK)
+    const found = new Map<string, Stat>(chunk.map(id => [id, { total: 0, written: 0, picked: 0, nextKeyword: null, nextOrder: Infinity }]))
+    let failed = false
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await db
+        .from('content_silo_keywords')
+        .select('id, silo_id, keyword, used_at, target_post_id, sort_order')
+        .eq('selected', true)   // the queue, as the topic run and the Pipeline count it
+        .in('silo_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) { console.warn('[content/priority] keyword read failed:', error.message); failed = true; break }
+      const rows = (data ?? []) as { silo_id: string; keyword: string; used_at: string | null; target_post_id: string | null; sort_order: number | null }[]
+      for (const k of rows) {
+        const s = found.get(k.silo_id)
+        if (!s) continue
+        s.total++
+        if (k.target_post_id) s.written++
+        else if (k.used_at) s.picked++
+        else if ((k.sort_order ?? 0) < s.nextOrder) { s.nextOrder = k.sort_order ?? 0; s.nextKeyword = k.keyword }
+      }
+      if (rows.length < PAGE) break
+    }
+    // A failed read is "unknown", never "0 of 0".
+    for (const id of chunk) stats.set(id, failed ? null : found.get(id)!)
+  }
+
+  const clientIds = Array.from(new Set(silos.map(s => s.client_id)))
+  const slots = await Promise.allSettled(clientIds.map(id => nextOpenSlot(db, id)))
+  const slotOf = new Map(clientIds.map((id, i) => {
+    const r = slots[i]
+    return [id, r.status === 'fulfilled' ? r.value : 'error' as const]
+  }))
+
+  return clientIds
+    .map(id => ({
+      id,
+      name: clientNames.get(id) ?? 'Unknown client',
+      slot: slotOf.get(id) ?? null,
+      sets: silos.filter(s => s.client_id === id).map(s => {
+        const st = stats.get(s.id)
+        return {
+          id: s.id, name: s.name, contentType: s.content_type ?? 'blog',
+          hubUrl: s.hub_page_url, hubTitle: s.hub_page_title,
+          stats: st ? { total: st.total, written: st.written, picked: st.picked, nextKeyword: st.nextKeyword } : null,
+          linksOpen: s.hub_page_url ? openLinkCount(s) : 0,
+        }
+      }),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

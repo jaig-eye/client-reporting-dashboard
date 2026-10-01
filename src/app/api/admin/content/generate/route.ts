@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { PLATFORM_BOT_UA } from '@/lib/platformBot'
 import { stripHallucinatedLinks } from '@/lib/content/linkUtils'
 import { styleTables } from '@/lib/content/contentHtml'
+import { serviceAreaLine } from '@/lib/content/serviceAreas'
+import { lengthBudget, lengthInstruction, isOverLength, tightenPrompt, judgeTightened } from '@/lib/content/lengthRules'
 import { waitUntil } from '@vercel/functions'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
@@ -24,11 +26,26 @@ import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { formatBriefForPrompt } from '@/lib/content/siloEngine'
 import { BLOG_WRITER_INTENT_REMINDER, WRITER_QUALITY_RULES, BLOG_STRUCTURE_RULES } from '@/lib/content/blogStrategy'
 import { gatherCompetitorGap } from '@/lib/content/competitiveIntel'
+import { saveSerpInsightById, type SerpInsight } from '@/lib/content/serpInsights'
 import { registerKeyword } from '@/lib/content/seoRankings'
+import { readDemotion, normalizeKeyword } from '@/lib/content/cannibalization'
+import { computeInternalLinks } from '@/lib/content/internalLinks'
 import type { SeoBrief } from '@/lib/content/types'
 import type { OptimizationBrief } from '@/lib/types'
 
 export const maxDuration = 300
+
+/**
+ * Past this point in a topic's background job the tighten pass is skipped. A full-article call runs
+ * 1–2 minutes; starting one after 2.5 minutes risks the 300-second kill taking the saved draft with it.
+ */
+const TIGHTEN_START_DEADLINE_MS = 150_000
+
+/**
+ * Past this point the featured image is not started inside the topic's job. OpenAI documents image
+ * requests taking up to two minutes, and the upload follows.
+ */
+const IMAGE_START_DEADLINE_MS = 170_000
 
 /**
  * POST /api/admin/content/generate
@@ -48,6 +65,8 @@ type TopicData = {
   rationale:              string | null
   target_keyword:         string | null
   page_to_support:        string | null
+  /** The demotion directive when the cannibalization guard rewrote this topic's job. */
+  ranking_strategy:       string | null
   client_id:              string
   target_publish_date:    string | null
   search_intent:          string | null
@@ -360,9 +379,6 @@ function computeWordCount(html: string): number {
 function computeHeadingCount(html: string): number {
   return (html.match(/<h[234][^>]*>/gi) || []).length
 }
-function computeInternalLinks(html: string): number {
-  return (html.match(/<a [^>]+>/gi) || []).filter(l => !l.includes('http://') && !l.includes('https://')).length
-}
 
 // ─── Link validator ───────────────────────────────────────────────────────────
 
@@ -607,6 +623,7 @@ async function runTopicGeneration({
   suppressEmail:    boolean
   adminSession?:    AdminSession | null
 }): Promise<void> {
+  const startedAt = Date.now()
   const provider = agencySettings.ai_provider || 'anthropic'
   const model    = agencySettings.ai_model    || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o')
   const apiKey   = agencySettings.ai_api_key
@@ -660,7 +677,7 @@ async function runTopicGeneration({
       if (clientSettings.business_background) contextLines.push(`Business background: ${clientSettings.business_background}`)
       if (clientSettings.services)            contextLines.push(`Services offered: ${clientSettings.services}`)
       if (clientSettings.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-      if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+      const areaLine = serviceAreaLine(clientSettings.geographic_focus); if (areaLine) contextLines.push(areaLine)
       if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
       if (clientSettings.phone_number) {
         const ph     = String(clientSettings.phone_number)
@@ -684,6 +701,15 @@ async function runTopicGeneration({
     const allowedInternalUrls = new Set<string>(
       sitemapRows.filter(r => !r.is_excluded && isLinkableUrl(r.url)).map(r => r.url)
     )
+
+    // A topic the cannibalization guard demoted must link to the page it supports. That URL comes
+    // from Search Console or rank tracking, not the sitemap cache, so without this the link the
+    // prompt demands was stripped as invented — and the article went out competing instead of
+    // supporting.
+    const demotion = readDemotion(topicData.ranking_strategy, topicData.target_keyword)
+    if (topicData.page_to_support && /^https?:\/\//i.test(topicData.page_to_support)) {
+      allowedInternalUrls.add(topicData.page_to_support)
+    }
 
     const sitemapUrls: string[] = (() => {
       const urls = clientSettings?.sitemap_urls
@@ -792,7 +818,7 @@ async function runTopicGeneration({
         .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
         .replace(/\[AUDIENCE_DETAIL\]/g,   String(clientSettings.target_audience ?? ''))
         .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
-        .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
+        .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1500))
         .replace(/\[PRIMARY_KEYWORD\]/g,   topicData.target_keyword ?? '')
         .replace(/\[WORKING_TITLE\]/g,     topicData.topic ?? '')
         .replace(/\[SECONDARY_KEYWORDS\]/g, topicData.secondary_keywords ?? '(derive LSI terms from topic and primary keyword)')
@@ -850,6 +876,14 @@ async function runTopicGeneration({
     }
 
     const brief = topicData.seo_brief
+
+    // ── Length ────────────────────────────────────────────────────────────────
+    // One number decides this. The brief's target wins when it has one, otherwise the client's
+    // setting. "Approximately" is deliberately gone: measured against 50 posts it read as a floor,
+    // and the model cleared it by 35% on average.
+    // A silo topic's optimization brief, read below, can replace this with its own target.
+    let budget = lengthBudget(brief?.word_count_target ?? targetLength)
+
     const briefLines: string[] = []
     if (brief) {
       if (brief.h2_outline?.length > 0)
@@ -873,7 +907,7 @@ async function runTopicGeneration({
     if (topicData.silo_id) {
       const { data: silo, error: siloErr } = await db
         .from('content_silos')
-        .select('name, hub_page_url, hub_page_title, central_entity, cluster_keywords')
+        .select('name, hub_page_url, hub_page_title, central_entity, cluster_keywords, description')
         .eq('id', topicData.silo_id)
         .maybeSingle()
       if (siloErr) console.error('[generate] silo fetch error for topic', topicData.silo_id, ':', siloErr.message)
@@ -928,6 +962,13 @@ LINKING RULES:
 - Anchor text must name the specific entity or topic: "[service] in [city]", "[problem] cost guide", "[topic] explained", etc. Never generic: "click here", "read more", "this article."
 - GSC suggestions below are supplementary; silo hub + entity-reasoned sibling links take priority.`
       }
+
+      // Notes a person wrote on the set ("aim these at HOA managers"). They shaped the topic; without
+      // this the writer never saw them, so the article could drift back to the generic angle.
+      const notes = String(silo?.description ?? '').trim().slice(0, 1000)
+      if (silo && notes) {
+        siloSection += `\nNOTES FROM THE EDITOR for articles in "${silo.name}" — follow them wherever they fit this article:\n${notes}\n`
+      }
     }
 
     // ── Optimization brief injection ─────────────────────────────────────────
@@ -947,7 +988,13 @@ LINKING RULES:
               .maybeSingle()
         )
       if (optBrief) {
-        briefLines.push('\n' + formatBriefForPrompt(optBrief as OptimizationBrief))
+        // One length, not two. The brief carried its own "Target word count: ~2500 (min 1800, max
+        // 4000)" alongside the LENGTH requirement, so the writer got contradictory numbers, the
+        // tighten pass cut to one, and the silo audit then flagged the post short by the other.
+        // The brief's target becomes the budget and its own line is left out.
+        const optTarget = (optBrief as OptimizationBrief).recommended_word_count_target
+        if (optTarget) budget = lengthBudget(optTarget)
+        briefLines.push('\n' + formatBriefForPrompt(optBrief as OptimizationBrief, { includeWordCount: false }))
       }
     }
 
@@ -961,10 +1008,15 @@ LINKING RULES:
     // their own fetch timeouts — no withDeadline (which would abandon and still bill a call).
     // Skip the live SerpAPI tier if topic-time research already ran.
     const serpAlreadyTried = topicData.competitors_researched != null
-    const competitorGapSection = await gatherCompetitorGap({
+    // What Google showed for the target keyword, filed on the post's keyword row once it exists.
+    const serp: { insight: SerpInsight | null } = { insight: null }
+    // A supporting article for a phrase the client already ranks for exactly gets no talking points
+    // for that phrase: they would steer the writer back onto the head term it must stay off.
+    const competitorGapSection = demotion?.exact ? '' : await gatherCompetitorGap({
       db, clientId: effectiveClientId, keyword: topicData.target_keyword,
       serpApiKey: serpAlreadyTried ? null : agencySettings.serp_api_key,
       storedResearch: topicData.competitors_researched,
+      onInsight: i => { serp.insight = i },
     })
 
     // ── Editor direction notes ────────────────────────────────────────────────
@@ -1004,10 +1056,13 @@ LINKING RULES:
     const userPrompt = `Write a detailed, SEO-optimized ${contentTypeLabel} on the following topic:
 
 Title: ${topicData.topic}
-Target keyword: ${topicData.target_keyword || 'derive from topic'}
+${demotion?.exact
+  ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for.${topicData.page_to_support ? ` Use "${demotion.prot}" only as anchor text for the link to the page this article supports.` : ''}`
+  : `Target keyword: ${topicData.target_keyword || 'derive from topic'}`}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${contentType === 'regular_page' && topicData.custom_focus ? `Page focus: ${topicData.custom_focus}` : ''}
 ${topicData.page_to_support ? `Core page to support (must appear as an internal link): ${topicData.page_to_support}` : ''}
+${demotion ? `Supporting-article brief — follow this: ${demotion.directive}` : ''}
 ${siloSection}
 ${internalLinkLines.length > 0 ? '\n' + internalLinkLines.join('\n') : ''}
 ${briefLines.length > 0 ? briefLines.join('\n') : ''}
@@ -1015,7 +1070,7 @@ ${competitorGapSection}
 ${editNotesSection}
 ${intentSection}
 
-Target approximately ${brief?.word_count_target ?? targetLength} words.${writingRulesReminder}`
+${lengthInstruction(budget)}${writingRulesReminder}`
 
     // ── Generate ──────────────────────────────────────────────────────────────
     let rawText: string
@@ -1044,13 +1099,62 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // ── Minimum quality gate ──────────────────────────────────────────────────
     // Word count must be computed BEFORE FAQ schema injection so the JSON
     // text inside the script block doesn't inflate the count.
-    const wc0 = computeWordCount(parsed.content)
+    let wc0 = computeWordCount(parsed.content)
     if (!parsed.title.trim() || wc0 < 150) {
       console.error('[generate] generation failed quality gate — title empty or content too short:', { wc: wc0, title: parsed.title, topicId })
       await db.from('content_topics')
         .update({ status: 'approved', generation_error: 'AI returned empty or too-short content — please regenerate' })
         .eq('id', topicId)
       return
+    }
+
+    // ── Over-length: one tighten pass ─────────────────────────────────────────
+    // The prompt states a ceiling; models still clear it. One revision is worth its cost — the
+    // alternative is a 2,700-word post against a 1,500-word brief, which is what production has
+    // been shipping. Only one attempt: if it comes back still long, the post is kept and the
+    // overshoot is recorded rather than spending a third call.
+    //
+    // It runs inside the same background job as the first draft, capped at maxDuration. A job
+    // killed mid-rewrite loses the draft it already paid for and leaves the topic 'generating' until
+    // the cron's reaper frees it an hour later, when it is written again from scratch. So when the
+    // first draft already used most of the window, the draft ships as it is.
+    if (isOverLength(budget, wc0) && Date.now() - startedAt > TIGHTEN_START_DEADLINE_MS) {
+      console.warn(`[generate] topic ${topicId}: ${wc0} words (ceiling ${budget.ceiling}) — no time left for a tighten pass`)
+    } else if (isOverLength(budget, wc0)) {
+      try {
+        const tightened = await callAI(provider, model, apiKey, systemPrompt, tightenPrompt(budget, wc0, rawText), 'article', effectiveClientId)
+        const reparsed  = parseResponse(tightened)
+
+        // Sanitise before measuring. parsed.content has already had its invented links and filler
+        // anchors removed, so counting a raw revision against it would credit links that are about
+        // to be stripped.
+        const cleaned = styleTables(stripGenericAnchorText(stripH1FromContent(
+          stripDangerousHtml(stripHallucinatedLinks(reparsed.content, allowedInternalUrls)))))
+        const newWc = computeWordCount(cleaned)
+
+        const verdict = judgeTightened(
+          budget,
+          { words: wc0,   html: parsed.content, title: parsed.title },
+          { words: newWc, html: cleaned,        title: reparsed.title },
+        )
+        if (verdict.accept) {
+          parsed.title            = reparsed.title || parsed.title
+          parsed.metaDescription  = reparsed.metaDescription || parsed.metaDescription
+          // seoTitle travels with the title. Taking the rewritten headline and leaving the
+          // pre-rewrite SEO title shipped an article whose Rank Math title described the version
+          // it no longer was — and seo_title is what the push sends to the client's site.
+          parsed.seoTitle         = reparsed.seoTitle || parsed.seoTitle
+          parsed.content          = cleaned
+          wc0                     = newWc
+          console.log(`[generate] tightened topic ${topicId}: ${verdict.reason}`)
+        } else {
+          // Rejected: the original stands. An article slightly over its budget beats one that
+          // lost its links or its shape.
+          console.warn(`[generate] tighten pass rejected for topic ${topicId}: ${verdict.reason}`)
+        }
+      } catch (e) {
+        console.warn(`[generate] tighten pass failed for topic ${topicId}:`, e)
+      }
     }
 
     // Inject FAQ JSON-LD schema after quality gate so script text doesn't inflate wc0
@@ -1133,7 +1237,7 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
       suggested_tags:      parsed.suggestedTags,
       word_count:          wc,
       heading_count:       computeHeadingCount(parsed.content),
-      internal_links:      computeInternalLinks(parsed.content),
+      internal_links:      computeInternalLinks(parsed.content, allowedInternalUrls),
       generated_by:        'topic',
       ai_model:            model,
       prompt_used:         userPrompt,
@@ -1176,14 +1280,25 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // Register the target keyword in the SEO datastream (content → keyword link), so
     // once DataForSEO is connected, rank checks surface on this post's card and editor.
     // Soft-fails if the seo_keywords table isn't present yet (migration 189 pending).
-    if (parsed.focusKeyword) {
-      await registerKeyword({
+    //
+    // A supporting article that still chose the protected phrase as its focus keyword is not
+    // registered against it: that keyword's rankings belong to the page it supports, and claiming it
+    // here would file the other page's positions under this post.
+    const claimsProtected = demotion?.exact && normalizeKeyword(parsed.focusKeyword) === normalizeKeyword(demotion.prot)
+    if (claimsProtected) {
+      console.warn(`[generate] topic ${topicId}: supporting article chose the protected phrase "${demotion!.prot}" as its focus keyword`)
+    }
+    if (parsed.focusKeyword && !claimsProtected) {
+      const keywordId = await registerKeyword({
         clientId:      effectiveClientId,
         keyword:       parsed.focusKeyword,
         source:        'topic',
         contentPostId: savedPost.id,
         intent:        topicData.search_intent ?? null,
       })
+      // The talking points this post was written from, for the Analytics tab. The insight
+      // records which phrase was searched, since the writer may have pivoted the focus keyword.
+      if (keywordId && serp.insight) void saveSerpInsightById(db, keywordId, serp.insight)
     }
 
     logActivity(adminSession ?? null, 'generated', 'post', {
@@ -1195,7 +1310,16 @@ Target approximately ${brief?.word_count_target ?? targetLength} words.${writing
     // Auto-generate featured image in background if enabled and key is configured
     const imageEnabled = (clientSettings as Record<string, unknown> | null)?.content_image_generation === true
     const imagePromptOverride = (clientSettings as Record<string, unknown> | null)?.content_image_prompt as string | undefined
-    if (imageEnabled && (agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)) {
+    const imageKeyed = !!(agencySettings.openai_api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY)
+    if (imageEnabled && imageKeyed && Date.now() - startedAt > IMAGE_START_DEADLINE_MS) {
+      // The image runs in this same job, under the same 300-second limit. Started this late it would
+      // be cut off mid-generation with nothing recorded, so the post says why it has no image and a
+      // person can press Generate image, which runs in a job of its own.
+      await db.from('content_posts')
+        .update({ image_generation_error: 'Not generated: the article used most of the time available. Use Generate image on the post.' })
+        .eq('id', savedPost.id)
+      console.warn(`[generate] topic ${topicId}: skipped the featured image — ${Math.round((Date.now() - startedAt) / 1000)}s already used`)
+    } else if (imageEnabled && imageKeyed) {
       waitUntil(
         generatePostImage(db, savedPost.id, agencySettings.openai_api_key, imagePromptOverride).catch(() => {})
       )
@@ -1315,7 +1439,7 @@ export async function POST(request: NextRequest) {
   if (topic_id) {
     const { data: topic, error: topicErr } = await db
       .from('content_topics')
-      .select('id, topic, rationale, target_keyword, page_to_support, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id, custom_slug')
+      .select('id, topic, rationale, target_keyword, page_to_support, ranking_strategy, client_id, target_publish_date, search_intent, secondary_keywords, seo_brief, competitors_researched, edit_notes, content_type, custom_focus, silo_id, custom_slug')
       .eq('id', topic_id)
       .maybeSingle()
     if (topicErr || !topic) {
@@ -1393,7 +1517,7 @@ export async function POST(request: NextRequest) {
     if (clientSettings.business_background) contextLines.push(`Business background: ${clientSettings.business_background}`)
     if (clientSettings.services)            contextLines.push(`Services offered: ${clientSettings.services}`)
     if (clientSettings.target_audience)     contextLines.push(`Target audience: ${clientSettings.target_audience}`)
-    if (clientSettings.geographic_focus)    contextLines.push(`Geographic focus: ${clientSettings.geographic_focus}`)
+    const areaLine = serviceAreaLine(clientSettings.geographic_focus); if (areaLine) contextLines.push(areaLine)
     if (clientSettings.brand_voice)         contextLines.push(`Brand voice: ${clientSettings.brand_voice}`)
     if (clientSettings.phone_number) {
       const ph     = String(clientSettings.phone_number)
@@ -1484,7 +1608,7 @@ export async function POST(request: NextRequest) {
       .replace(/\[TARGET_AUDIENCE\]/g,   String(clientSettings.target_audience ?? ''))
       .replace(/\[AUDIENCE_DETAIL\]/g,   String(clientSettings.target_audience ?? ''))
       .replace(/\[VOICE_NOTES\]/g,       String(clientSettings.brand_voice ?? ''))
-      .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1800))
+      .replace(/\[WORD_COUNT\]/g,        String((clientSettings.target_length as number | null) ?? 1500))
       .replace(/\[PRIMARY_KEYWORD\]/g,   '')
       .replace(/\[WORKING_TITLE\]/g,     '')
       .replace(/\[SECONDARY_KEYWORDS\]/g, '(derive LSI terms from topic and primary keyword)')
@@ -1511,8 +1635,9 @@ export async function POST(request: NextRequest) {
   // serpTimeoutMs — NOT an outer deadline race, which would abandon the result while the
   // paid call still completes and bills (the scrape/SerpAPI tiers self-bound already).
   const manualSeed = extractManualSeed(prompt)
+  const manualSerp: { insight: SerpInsight | null } = { insight: null }
   const manualCompetitorSection = looksKeywordLike(manualSeed)
-    ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000 })
+    ? await gatherCompetitorGap({ db, clientId: effectiveClientId ?? '', keyword: manualSeed, serpApiKey: agencySettings.serp_api_key, serpTimeoutMs: 8000, onInsight: i => { manualSerp.insight = i } })
     : ''
 
   const systemPrompt = buildSystemPrompt(agency, clientContext, avoidList, postStructure, masterPreamble, manualContentType === 'blog' ? `${BLOG_WRITER_INTENT_REMINDER}\n\n${BLOG_STRUCTURE_RULES}` : null,
@@ -1625,7 +1750,7 @@ export async function POST(request: NextRequest) {
       suggested_tags:      parsed.suggestedTags,
       word_count:          wc,
       heading_count:       computeHeadingCount(parsed.content),
-      internal_links:      computeInternalLinks(parsed.content),
+      internal_links:      computeInternalLinks(parsed.content, sitemapRows.map(r => r.url)),
       generated_by:        'manual',
       ai_model:            model,
       prompt_used:         prompt ?? '',
@@ -1641,12 +1766,13 @@ export async function POST(request: NextRequest) {
     // Register the target keyword in the SEO datastream (see Path A). Soft-fails if
     // seo_keywords isn't present yet (migration 189 pending).
     if (postId && parsed.focusKeyword) {
-      await registerKeyword({
+      const keywordId = await registerKeyword({
         clientId:      effectiveClientId,
         keyword:       parsed.focusKeyword,
         source:        'manual',
         contentPostId: postId,
       })
+      if (keywordId && manualSerp.insight) void saveSerpInsightById(db, keywordId, manualSerp.insight)
     }
 
     // Auto-generate featured image in background

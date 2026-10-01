@@ -7,7 +7,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
-import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory } from '@/lib/connectors/wordpress'
+import { publishPost, publishPage, updatePost, updatePage, ensureTagIds, uploadMediaToWordPress, getCategories, createCategory , verifyPostMeta, fetchWithSiteCredentials, isWpPlaceholderLink, isLinkOnSite } from '@/lib/connectors/wordpress'
+import { xmlrpcSetPostMeta } from '@/lib/connectors/wordpressXmlrpc'
+import { rankMathUpdateMeta } from '@/lib/connectors/rankMathApi'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { logActivity }        from '@/lib/activity'
 import { sendDiscordMessage }  from '@/lib/discord'
@@ -15,11 +17,167 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 import { isPublicPermalink }   from '@/lib/content/postLinks'
+import { recordSiloLinkTasks } from '@/lib/content/siloLinkTasks'
 
+/**
+ * The Rank Math block sent with every post and page.
+ *
+ * One builder rather than the three identical literals this file used to carry — they had
+ * already started to drift, and a field added to one copy is a field silently missing from the
+ * others.
+ */
+function rankMathMeta(p: Record<string, unknown>): Record<string, string> {
+  return {
+    rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
+    rank_math_description:   p.meta_description ? String(p.meta_description) : '',
+    rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
+  }
+}
+
+/**
+ * Time kept back from maxDuration for everything after the SEO-field work — writing the response
+ * and the platform's own overhead. The work stops this far short of the limit.
+ */
+const RESPONSE_RESERVE_MS = 5_000
+
+/**
+ * Below this much time left, only Rank Math's write is attempted: no read-back and no XML-RPC
+ * fallback (two requests of their own). A slow site must never turn a push that worked into a
+ * timed-out request the caller reads as a failure.
+ */
+const FULL_META_CHECK_MIN_MS = 20_000
+
+/** Below this, not even Rank Math's write is attempted. */
+const META_WRITE_MIN_MS = 2_000
+
+/**
+ * Store the Rank Math fields, and report any that did not stick.
+ *
+ * The upload carries them, but Rank Math does not register its keys with show_in_rest, so
+ * WordPress answers 200 and drops them: live client posts show the post title where the SEO title
+ * should be. So they are written through Rank Math's own endpoint on every push — idempotent, one
+ * request, and capability-checked, which an application password satisfies — with XML-RPC as the
+ * fallback when that write fails. A site without Rank Math at all (its route does not exist) gets
+ * neither: there is nothing there to read rank_math_* fields.
+ *
+ * A write Rank Math accepted is done. Its own editor shows the values stored on sites where
+ * WordPress's REST API lists the same keys empty (Lumiere, post 99853, 2026-10-01), so reading
+ * back over REST reported every successful write there as a failure. The read-back now serves
+ * only the XML-RPC fallback: a readable key with the wrong value, or a write nothing accepted, is
+ * reported.
+ *
+ * Every request is bounded by `deadline` (epoch ms): the route runs this LAST, after everything
+ * that matters is recorded, and must answer before maxDuration whatever the client's site does.
+ *
+ * The result goes to the activity log as well as the console. A console warning is not a report:
+ * it lives in Vercel logs nobody opens, which is how a year of posts went out with no SEO title
+ * before anyone noticed.
+ *
+ * Never throws and never fails a push that already succeeded.
+ */
+async function reportMetaMisses(
+  args: {
+    postRowId: string; clientId: string; siteUrl: string
+    auth: { username: string; app_password: string }
+    wpId: number; expected: Record<string, string>; postType: 'posts' | 'pages'
+    deadline: number
+  },
+): Promise<void> {
+  try {
+    const fields = Object.fromEntries(Object.entries(args.expected).filter(([, v]) => v))
+    if (Object.keys(fields).length === 0) return
+
+    const left = () => args.deadline - Date.now()
+    const where = `${args.postType} ${args.wpId} on ${args.siteUrl}`
+
+    if (left() < META_WRITE_MIN_MS) {
+      console.warn(`[approve] SEO fields not written for ${where}: the request had no time left after the push`)
+      return
+    }
+    const write = await rankMathUpdateMeta(args.siteUrl, args.auth, args.wpId, fields, left())
+    // No Rank Math on the site: nothing to write the fields for, and nothing to report.
+    if (write === 'absent') return
+
+    if (write === 'stored') {
+      console.log(`[approve] SEO fields written via rankmath for ${where}`)
+      return
+    }
+
+    // Rank Math refused the write or could not be reached: XML-RPC, which does not consult
+    // show_in_rest, for whatever the read-back shows missing — every field when nothing can be read.
+    let via: 'xmlrpc' | null = null
+    let stillMissing: { key: string; sent: string; stored: string; readable: boolean }[]
+    /** Why the fallback did not run, when it did not. */
+    let fallbackSkipped: string | null = null
+    const everyField = () => Object.entries(fields).map(([key, sent]) => ({ key, sent, stored: '', readable: false }))
+
+    if (left() < FULL_META_CHECK_MIN_MS) {
+      stillMissing = everyField()
+      fallbackSkipped = 'not tried — the request was out of time after the push'
+    } else {
+      const read = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, fields, args.postType, left())
+      const toRepair = read ?? everyField()
+      stillMissing = toRepair
+      if (toRepair.length > 0) {
+        if (left() < FULL_META_CHECK_MIN_MS) {
+          fallbackSkipped = 'not tried — the request was out of time after the read-back'
+        } else {
+          const repair = Object.fromEntries(toRepair.map(m => [m.key, m.sent]))
+          if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair, left() - META_WRITE_MIN_MS)) {
+            via = 'xmlrpc'
+            stillMissing = left() < META_WRITE_MIN_MS
+              ? []
+              : ((await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType, left())) ?? [])
+                  .filter(m => m.readable)
+          }
+        }
+      }
+    }
+
+    if (stillMissing.length === 0) {
+      if (via) console.log(`[approve] SEO fields written via ${via} for ${where}`)
+      return
+    }
+
+    const summary = stillMissing
+      .map(m => `${m.key}: sent ${m.sent.length} chars, stored ${m.stored ? `"${m.stored.slice(0, 40)}"` : 'nothing'}`)
+      .join('; ')
+    console.warn(
+      `[approve] ${stillMissing.length} SEO field(s) could not be stored for ${where}: ${summary}. ` +
+      `REST drops them (Rank Math does not register its keys with show_in_rest), and ` +
+      (via
+        ? `${via} accepted the write without it taking effect.`
+        : `Rank Math's updateMeta refused the write; XML-RPC ${fallbackSkipped ?? 'was unavailable'}.`),
+    )
+    // Awaited: this runs last, and an unawaited insert can be lost when the function is frozen
+    // after the response — this row is what the Clients overview's SEO flag reads.
+    await logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
+      resourceId: args.postRowId,
+      clientId:   args.clientId || undefined,
+      meta: {
+        site:     args.siteUrl,
+        wp_id:    args.wpId,
+        wp_type:  args.postType,
+        fields:   stillMissing.map(m => m.key),
+        detail:   summary,
+        // What was tried, so nobody re-investigates from scratch.
+        rest:     'rejected — Rank Math does not register its meta keys with show_in_rest',
+        repaired_via: via ?? 'nothing available',
+        rankmath: 'refused the write, or could not be reached',
+        xmlrpc:   via === 'xmlrpc'   ? 'accepted the write but the value did not stick' : (fallbackSkipped ?? 'unavailable (xmlrpc.php disabled or blocked)'),
+      },
+    })
+  } catch (e) {
+    console.warn('[approve] SEO meta verification skipped:', e)
+  }
+}
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Everything after the push is fitted into what is left of maxDuration — see reportMetaMisses.
+  const deadline = Date.now() + maxDuration * 1000 - RESPONSE_RESERVE_MS
+
   const cookieStore = await cookies()
   if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -47,7 +205,7 @@ export async function POST(
     // id that only means anything on the site it was created on, so the write has
     // to go to the site the post RECORDS, not whatever connection the client
     // happens to have active now. See the republish guards below.
-    .select('id, client_id, connection_id, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
+    .select('id, client_id, connection_id, status, title, content, seo_title, meta_description, slug, focus_topic, target_keyword, suggested_tags, target_publish_date, wp_post_id, wp_site_url, bc_post_id, bc_store_hash, featured_image_url, content_type, city, state_abbr, service_name, service_page_url, silo_id, wp_author_id, wp_category_ids, image_alt_text, featured_image_source')
     .eq('id', id)
     .maybeSingle()
 
@@ -56,6 +214,16 @@ export async function POST(
   }
 
   const p = post as Record<string, unknown>
+
+  // Never while a regenerate is running. full-regenerate's background job owns the row until it
+  // writes the new article and sets 'for_review'; approving in between either pushes the text
+  // that is about to be replaced (WordPress, BigCommerce) or records an approval of it
+  // (approve_only) — and the job's save then puts a post nobody has read under that approval.
+  // Checked before every path below, so approve_only, WordPress and BigCommerce all refuse.
+  const GENERATING_REFUSAL = 'This post is still being regenerated — approve it once it finishes'
+  if (p.status === 'generating') {
+    return NextResponse.json({ error: GENERATING_REFUSAL }, { status: 409 })
+  }
 
   // A post that is already on a CMS is UPDATED in place, not duplicated.
   //
@@ -74,14 +242,21 @@ export async function POST(
     const approvedBy   = adminSession?.email ?? (adminSession?.isSuperAdmin ? 'super_admin' : 'admin')
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateErr } = await (db as any).from('content_posts').update({
+    const { data: approvedRows, error: updateErr } = await (db as any).from('content_posts').update({
       status:            'approved',
       admin_approved_at: new Date().toISOString(),
       admin_approved_by: approvedBy,
     }).eq('id', id)
+      // The check above read the status a moment ago; a regenerate claimed since then must still
+      // win. Conditional in the write itself, so there is no window between check and update.
+      .neq('status', 'generating')
+      .select('id')
 
     if (updateErr) {
       return NextResponse.json({ error: 'Failed to approve post' }, { status: 500 })
+    }
+    if (!approvedRows?.length) {
+      return NextResponse.json({ error: GENERATING_REFUSAL }, { status: 409 })
     }
 
     logActivity(adminSession, 'approved', 'post', {
@@ -411,15 +586,73 @@ export async function POST(
   const auth = { username, app_password: appPassword }
 
   // Fetch publish time and wp_publish_mode from content settings
-  const { data: csRow } = await db
+  const { data: csRow, error: csErr } = await db
     .from('content_settings')
     .select('publish_time, wp_publish_mode, default_author_id, default_category_ids')
     .eq('client_id', String(p.client_id))
     .maybeSingle()
+  // Falling through to defaults here silently publishes at 09:00 in 'scheduled_draft' mode, which
+  // may be nothing like what the client configured.
+  if (csErr) console.warn('[approve] cannot read publish settings, using defaults:', csErr.message)
   type CsRow = { publish_time?: string | null; wp_publish_mode?: string | null; default_author_id?: number | null; default_category_ids?: number[] | null }
   const cs             = csRow as CsRow | null
   const publishTime    = cs?.publish_time   ?? '09:00'
   const wpPublishMode  = cs?.wp_publish_mode ?? 'scheduled_draft'
+
+  /**
+   * The SEO-meta write and read-back, deferred until the very end — after the row records
+   * wp_post_id, the link tasks, the set's page and the activity log.
+   *
+   * reportMetaMisses costs up to five WordPress round trips and runs on every push. Awaiting it
+   * between publishPost() and the content_posts update put those seconds inside the window where
+   * the post is LIVE but unrecorded — and this route runs under maxDuration = 60. A kill there loses
+   * the id, so the next approve or auto-push publishes the article a second time on the client's
+   * site. Running it before the bookkeeping risked losing that instead. It is bounded by `deadline`.
+   */
+  let verifyMeta: (() => Promise<void>) | null = null
+
+  // Two posts on one date must not go out at the same minute.
+  //
+  // publish_time is a single value per client, which was right while a cadence window held one
+  // post. With posts_per_run above 1 it put every post on that date at exactly 09:00 — they
+  // compete with each other in the feed and in the index on the day they most need the
+  // attention. Each post shifts by its position on the date.
+  //
+  // Ordered by id. The sequence is arbitrary and that is fine — what matters is that the posts on
+  // a date get different times and that a post's own time never moves, because re-pushing must not
+  // reschedule a live URL. A UUID key gives both; updated_at would give neither, and created_at
+  // does not exist on this table.
+  const STAGGER_MINUTES = 120
+  let slotOffsetMinutes = 0
+  if (p.target_publish_date) {
+    const { data: sameDay, error: sameDayErr } = await db
+      .from('content_posts')
+      .select('id')
+      .eq('client_id', String(p.client_id ?? ''))
+      .eq('target_publish_date', String(p.target_publish_date))
+      // Only posts that will actually go out hold a slot. Counting rejected, archived and
+      // still-drafting rows meant a client publishing one post a day could land it at 11:00
+      // because two dead rows sat ahead of it in UUID order — a stagger built for a crowded
+      // date, applied to a date with nothing on it.
+      .in('status', ['approved', 'for_review', 'draft_saved', 'generated', 'scheduled', 'published'])
+      .order('id', { ascending: true })
+    // An unreadable sibling list reads as "no siblings", so the post takes the unstaggered time.
+    // Worth a line: two posts landing on the same minute is the thing the stagger exists to stop.
+    if (sameDayErr) console.warn('[approve] stagger siblings unreadable, publishing unstaggered:', sameDayErr.message)
+    const siblings = (sameDay ?? []) as { id: string }[]
+    const position = siblings.findIndex(s => s.id === id)
+    if (position > 0) slotOffsetMinutes = position * STAGGER_MINUTES
+  }
+
+  /** publish_time plus this post's stagger, clamped inside the same day. */
+  const staggeredTime = (base: string): string => {
+    const [h, m] = base.split(':').map(Number)
+    if (!isFinite(h) || !isFinite(m)) return base
+    // Never roll into the next day: a post scheduled past midnight would publish on a date the
+    // calendar never planned, which is worse than two posts sharing an hour.
+    const total = Math.min(h * 60 + m + slotOffsetMinutes, 23 * 60 + 59)
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+  }
 
   // Determine WP status and scheduled date from target_publish_date
   let wpPublishStatus: 'draft' | 'future' | 'publish' = 'draft'
@@ -429,7 +662,7 @@ export async function POST(
     wpPublishStatus = 'draft'
     wpDate = undefined
   } else if (p.target_publish_date) {
-    wpDate = `${String(p.target_publish_date)}T${publishTime}:00`
+    wpDate = `${String(p.target_publish_date)}T${staggeredTime(publishTime)}:00`
     wpPublishStatus = new Date(wpDate) > new Date() ? 'future' : 'publish'
   }
 
@@ -551,7 +784,7 @@ export async function POST(
         // Auto-push from cron or explicit publish mode — go live immediately
         saStatus = 'publish'
       } else if (saPublishMode !== 'draft_only' && p.target_publish_date) {
-        saDate   = `${String(p.target_publish_date)}T${saPublishTime}:00`
+        saDate   = `${String(p.target_publish_date)}T${staggeredTime(saPublishTime)}:00`
         saStatus = new Date(saDate) > new Date() ? 'future' : 'publish'
       }
 
@@ -570,7 +803,7 @@ export async function POST(
         for (let i = 0; i < segments.length - 1; i++) {
           try {
             const url = `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(segments[i])}&per_page=1${parentId ? `&parent=${parentId}` : ''}`
-            const res = await fetch(url, { headers: { Authorization: `Basic ${creds}` } })
+            const res = await fetchWithSiteCredentials(url, { headers: { Authorization: `Basic ${creds}` } })
             if (res.ok) {
               const pages = (await res.json()) as { id: number }[]
               parentId = pages[0]?.id
@@ -583,6 +816,8 @@ export async function POST(
         wpParent = parentId
       }
 
+      const pageMeta = rankMathMeta(p)
+
       result = existingWpId !== null
         // `status` is deliberately omitted, exactly as in the blog branch below:
         // saStatus defaults to 'draft', so sending it would UN-PUBLISH a live
@@ -594,11 +829,7 @@ export async function POST(
             // must not move a URL that already has inbound links pointing at it.
             // The Rank Math block goes with it, so a re-push also refreshes the
             // live SEO title/description rather than leaving the first version.
-            meta: {
-              rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-              rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-              rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-            },
+            meta: pageMeta,
           })
         : await publishPage(siteUrl, auth, {
         title:   String(p.title ?? ''),
@@ -607,11 +838,16 @@ export async function POST(
         date:    saDate,
         slug:    wpSlug,
         parent:  wpParent,
-        meta: {
-          rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-          rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-          rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-        },
+        meta: pageMeta,
+      })
+
+      // Same read-back as the blog branch. Service-area pages push the same three fields and
+      // had no check at all, so a page whose SEO title never landed looked identical to one
+      // whose did.
+      const pageWpId = result.id
+      verifyMeta = () => reportMetaMisses({
+        postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
+        wpId: pageWpId, expected: pageMeta, postType: 'pages', deadline,
       })
     } else {
       const authorId = p.wp_author_id
@@ -683,11 +919,7 @@ export async function POST(
         }
       }
 
-      const wpMeta = {
-        rank_math_title:         p.seo_title        ? String(p.seo_title)        : String(p.title ?? ''),
-        rank_math_description:   p.meta_description ? String(p.meta_description) : '',
-        rank_math_focus_keyword: p.target_keyword   ? String(p.target_keyword)   : '',
-      }
+      const wpMeta = rankMathMeta(p)
 
       result = existingWpId !== null
         // Already live — overwrite in place so the URL and any links to it survive.
@@ -721,32 +953,81 @@ export async function POST(
             categories:     postCategoryIds,
             meta:           wpMeta,
           })
+
+      const postWpId = result.id
+      verifyMeta = () => reportMetaMisses({
+        postRowId: id, clientId: String(p.client_id ?? ''), siteUrl, auth,
+        wpId: postWpId, expected: wpMeta, postType: 'posts', deadline,
+      })
     }
 
     const wpEditUrl = isServiceArea
       ? `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
       : `${siteUrl}/wp-admin/post.php?post=${result.id}&action=edit`
 
-    await db.from('content_posts').update({
+    // Only a real permalink goes in published_url; the wp-admin fallback lives in
+    // platform_edit_url so internal-link injection never emits it. And when WP returns no link at
+    // all, keep whatever was already stored rather than nulling a permalink that was previously
+    // correct.
+    //
+    // A '?p=<id>' (post) or '?page_id=<id>' (page) link is WordPress's placeholder for content that
+    // isn't public yet. Storing it makes an unpublished post look published and leaves a URL that
+    // will be wrong the moment it goes live, so it is not written while the post is unpublished —
+    // /api/cron/wp-reconcile collects the real permalink once the post is out. Once the post IS
+    // public that same shape is the real thing: a site left on plain permalinks serves '?p=123'
+    // permanently, and refusing it there would leave that client with no published_url at all.
+    //
+    // And it must be an absolute link on the site we just pushed to. published_url becomes "View
+    // live" and an internal link in other articles, so anything else would be carried into client
+    // content; not storing it costs a missing link, which reconcile retries.
+    const storedLink = (() => {
+      if (!result.link) return null
+      if (isWpPlaceholderLink(result.link) && (result.status || wpPublishStatus) !== 'publish') return null
+      if (!isLinkOnSite(result.link, siteUrl)) {
+        console.warn(`[approve] post ${id}: WordPress returned a link that is not an http(s) URL on ${siteUrl} — published_url not stored`)
+        return null
+      }
+      return result.link
+    })()
+
+    // What WordPress now holds, written whatever else is happening to the row. Losing wp_post_id
+    // here means the next push publishes the article a second time on the client's site.
+    const recordFields = {
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
-      // On a republish the WordPress status is deliberately NOT sent (so a live
-      // post is not knocked back to draft), which means wpPublishStatus is not
-      // what the site actually has. result.status is the value WP returned, so
-      // trust that whenever it is available.
-      wp_status:         isRepublish ? (result.status || wpPublishStatus)
-                        : isServiceArea ? result.status
-                        : wpPublishStatus,
-      status:            'draft_saved',
-      // Only a real permalink goes in published_url; the wp-admin fallback lives
-      // in platform_edit_url so internal-link injection never emits it. And when
-      // WP returns no link at all, keep whatever was already stored rather than
-      // nulling a permalink that was previously correct.
-      ...(result.link ? { published_url: result.link } : {}),
+      // WordPress's answer wins, always. It used to win only for republishes and service
+      // areas, and a new blog post recorded wpPublishStatus — what we asked for. WordPress
+      // silently downgrades a status it won't grant (an app password without publish_posts
+      // becomes a draft) and answers 200 either way, so the two diverge without a trace.
+      wp_status:         result.status || wpPublishStatus,
+      // See storedLink above.
+      ...(storedLink ? { published_url: storedLink } : {}),
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
-    }).eq('id', id)
+    }
+    let { error: recordErr } = await db.from('content_posts').update(recordFields).eq('id', id)
+    // One retry: the post is live on the site, and a lost wp_post_id means the next push publishes
+    // it a second time.
+    if (recordErr) ({ error: recordErr } = await db.from('content_posts').update(recordFields).eq('id', id))
+    if (recordErr) {
+      console.error(`[approve] post ${id} is on ${siteUrl} as wp ${result.id}, but recording that failed twice:`, recordErr.message)
+      // Not marked pushed: a row reading 'draft_saved' with no wp_post_id is never picked up again, and
+      // the next manual approve would create a second copy on the site. Say what happened instead.
+      return NextResponse.json({
+        error: `Sent to WordPress as post ${result.id}, but saving that here failed. Check the post on the site before pushing again, or it will be published twice.`,
+      }, { status: 500 })
+    }
+
+    // The lifecycle status, in its own write so it can step aside for a regenerate. A
+    // full-regenerate that claimed the row ('generating') while this push was in flight owns it:
+    // overwriting the claim lifts every guard that waits on it and lets a second regenerate start
+    // alongside the first. The job sets 'for_review' when it finishes; the fields above stay.
+    const { error: statusErr } = await db.from('content_posts')
+      .update({ status: 'draft_saved' })
+      .eq('id', id)
+      .neq('status', 'generating')
+    if (statusErr) console.error(`[approve] post ${id}: could not set status draft_saved:`, statusErr.message)
 
     // Inject nearby-city links into sibling SA pages (fire-and-forget)
     if (isServiceArea) {
@@ -754,92 +1035,45 @@ export async function POST(
         .catch(() => {})
     }
 
-    // Auto-update WP hub page if this post belongs to a silo (fire-and-forget).
-    // p.silo_id is only populated once migration 149 (content_silos) is applied.
+    // The address a reader can open today, or null. Link tasks and the set's page record only
+    // this: a scheduled or draft post's link is WordPress's '?p=N' placeholder, which 404s for
+    // visitors until the post goes out — and a person would be asked to put exactly that link on a
+    // live main page. wp-reconcile records them once the real permalink exists. (A site on plain
+    // permalinks never gets a pretty one, so its sets get no tasks rather than a '?p=' address.)
+    const livePermalink =
+      result.status === 'publish' && storedLink && !isWpPlaceholderLink(storedLink) && isPublicPermalink(storedLink)
+        ? storedLink
+        : null
+
+    // A post from a set with a main page: record the links a person should add by hand — on the
+    // main page, and in the set's previous post — instead of editing the live main page. This used
+    // to append a "Related … Resources" list to the bottom of the hub page on WordPress, which put
+    // the link where nobody chose to put it. See lib/content/siloLinkTasks.
     //
-    // !isRepublish is essential now that re-pushing a live post is allowed. This
-    // block appends a link to the client's hub page and only checks for the
-    // section marker, never for whether the link is already there — and
-    // append_silo_pending_link is a raw JSONB concat with no uniqueness test. So
-    // without this guard, every re-push adds another duplicate <li> to a live
-    // page: push N times, get N copies. The BigCommerce counterpart already
-    // carries the same guard.
-    if ((p as Record<string, unknown>).silo_id && !isRepublish) {
-      ;(async () => {
-        try {
-          const { data: siloRaw } = await db
-            .from('content_silos')
-            .select('name, hub_page_url, central_entity, pending_links')
-            .eq('id', String(p.silo_id))
-            .single()
-          if (!siloRaw?.hub_page_url) return
-          const silo = siloRaw as { name: string; hub_page_url: string; central_entity: string | null; pending_links: { url: string; title: string; added_at: string }[] }
-          const hubSlug = silo.hub_page_url.replace(/\/$/, '').split('/').pop() ?? ''
-          if (!hubSlug) return
-          const creds    = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-          const pagesRes = await fetch(
-            `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(hubSlug)}&per_page=1`,
-            { headers: { Authorization: `Basic ${creds}` } }
-          )
-          if (!pagesRes.ok) return
-          const pages = (await pagesRes.json()) as { id: number; status: string; content: { rendered: string } }[]
-          if (!pages.length) return
-          const hubId        = pages[0].id
-          const hubStatus    = pages[0].status ?? 'draft'
-          const current      = pages[0].content?.rendered ?? ''
-          // A hub link is a PUBLIC href on the client's live site. The old
-          // `result.link || wpEditUrl` fallback wrote a wp-admin editor URL into
-          // that page — a login-gated 404 for every reader — and the same string
-          // then went into content_silos.pending_links and
-          // content_silo_pages.target_url, neither of which migration 202
-          // repairs. If WordPress did not return a real permalink there is
-          // nothing worth linking to, so skip rather than emit a broken link.
-          const clusterUrl   = result.link
-          if (!isPublicPermalink(clusterUrl)) {
-            console.warn(`[approve] silo hub link skipped for post ${id}: WordPress returned no public permalink`)
-            return
-          }
-          const clusterTitle = String(p.title ?? '')
-          const entity       = silo.central_entity || silo.name
-          const safeTitle    = clusterTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-          const safeUrl      = encodeURI(clusterUrl).replace(/"/g, '%22')
-          const linkHtml     = `<li><a href="${safeUrl}">${safeTitle}</a></li>`
-          const updatedContent = current.includes('<!-- silo-cluster-links -->')
-            ? current.replace(/<\/ul>\s*<!-- \/silo-cluster-links -->/, `${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`)
-            : `${current}\n<!-- silo-cluster-links -->\n<h3>Related ${entity} Resources</h3>\n<ul>\n${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`
-          await fetch(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
-            method:  'POST',
-            headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ content: updatedContent, status: hubStatus }),
-          })
-          // Atomic append via RPC — prevents race condition when two cluster posts
-          // from the same silo are pushed in the same batch (fetch-spread-update would overwrite)
-          await db.rpc('append_silo_pending_link', {
-            silo_id: String(p.silo_id),
-            link: { url: clusterUrl, title: clusterTitle, added_at: new Date().toISOString() },
-          })
-        } catch (e) {
-          console.error('[approve] silo hub update failed:', e)
-        }
-      })()
+    // On every push of a live post, republishes included: a post pushed while scheduled and
+    // re-pushed after it went live would otherwise never get its tasks if this ran before
+    // reconcile did. recordSiloLinkTasks skips a post the set already has tasks for. Awaited — a
+    // few small queries — because work left running after the response can be cut off, and a
+    // lost entry is a link nobody is told to add.
+    if (p.silo_id && livePermalink) {
+      await recordSiloLinkTasks(db, {
+        siloId:  String(p.silo_id),
+        postId:  id,
+        url:     livePermalink,
+        title:   String(p.title ?? ''),
+        keyword: p.target_keyword ? String(p.target_keyword) : null,
+      }).catch(e => console.error('[approve] recording silo link tasks failed:', e))
     }
 
-    // Update silo page status to published + store final URL (fire-and-forget)
+    // The set's page for this post: published, and its address once there is a live one. target_url
+    // is rendered as a public link, so neither an admin URL nor a placeholder may land there; the
+    // column is left alone until there is a live permalink.
     if (p.silo_id) {
-      ;(async () => {
-        try {
-          // target_url is rendered as a public link, so an admin URL must never
-          // land here — same reasoning as the hub-link guard above. Leave the
-          // column alone when WordPress returned no permalink.
-          const publishedUrl = isPublicPermalink(result.link) ? result.link : null
-          await db.from('content_silo_pages')
-            .update({ status: 'published', ...(publishedUrl ? { target_url: publishedUrl } : {}), updated_at: new Date().toISOString() })
-            .eq('content_post_id', id)
-            .eq('silo_id', String(p.silo_id))
-        } catch (e) {
-          console.error('[approve] silo page status update failed:', e)
-        }
-      })()
+      const { error: siloPageErr } = await db.from('content_silo_pages')
+        .update({ status: 'published', ...(livePermalink ? { target_url: livePermalink } : {}), updated_at: new Date().toISOString() })
+        .eq('content_post_id', id)
+        .eq('silo_id', String(p.silo_id))
+      if (siloPageErr) console.error('[approve] silo page status update failed:', siloPageErr.message)
     }
 
     const adminSession = await getAdminSession()
@@ -867,6 +1101,10 @@ export async function POST(
       }
     } catch { /* non-fatal */ }
 
+    // Last, after everything that matters is recorded, and bounded by the time left: a kill from
+    // here on loses a diagnostic, never the row's link to a live post, its tasks or its log line.
+    if (verifyMeta) await verifyMeta().catch(() => {})
+
     return NextResponse.json({
       wp_post_id:    result.id,
       wp_site_url:   siteUrl,
@@ -874,8 +1112,9 @@ export async function POST(
       // The DB write above deliberately keeps admin URLs out of published_url;
       // returning wpEditUrl here put one straight back into the editor's local
       // state, so the just-pushed post showed no 'View live' link until a full
-      // reload. Report exactly what was stored.
-      published_url: isPublicPermalink(result.link) ? result.link : null,
+      // reload. Report exactly what was stored — a link refused above must not reach "View live"
+      // through the response either.
+      published_url: storedLink && isPublicPermalink(storedLink) ? storedLink : null,
     })
   } catch (err) {
     // A FAILED PUSH IS NOT A FAILED APPROVAL.
@@ -895,11 +1134,15 @@ export async function POST(
     // It also makes regeneration self-healing: the cron re-pushes a live post whose DB copy is
     // newer than its CMS copy, so regenerating an approved article now reaches the site
     // without anyone re-approving it.
+    //
+    // Not over 'generating' either. A regenerate that claimed the row during this push owns it;
+    // overwriting the claim hands the half-rewritten post to the cron's push stage and lets a
+    // second regenerate start alongside the first.
     const { error: markErr } = await db
       .from('content_posts')
       .update({ status: 'approved', admin_approved_at: new Date().toISOString() })
       .eq('id', id)
-      .not('status', 'in', '("published","draft_saved")')
+      .not('status', 'in', '("published","draft_saved","generating")')
     if (markErr) {
       console.error(`[approve] push failed AND could not mark ${id} for retry:`, markErr.message)
     }

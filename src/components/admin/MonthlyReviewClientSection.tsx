@@ -76,6 +76,10 @@ export default function MonthlyReviewClientSection({
     if (autoScannedRef.current || effectivelyCollapsed || posts.length === 0) return
     autoScannedRef.current = true
     void runScan()
+    // runScan is deliberately not a dependency. It is redeclared every render, so listing it would
+    // re-run this effect on every render — the ref above would still stop a second scan, which is
+    // the point: one scan per section, never a retry loop against the client's site.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectivelyCollapsed, posts.length])
 
   async function runScan() {
