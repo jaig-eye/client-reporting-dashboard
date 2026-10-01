@@ -40,7 +40,7 @@ export async function GET(
       ? db.from('content_posts').select('id, title, status, published_url, target_publish_date').in('id', postIds)
       : Promise.resolve({ data: [] }),
     topicIds.length
-      ? db.from('content_topics').select('id, topic, status').in('id', topicIds)
+      ? db.from('content_topics').select('id, topic, status, target_publish_date').in('id', topicIds)
       : Promise.resolve({ data: [] }),
   ])
 
