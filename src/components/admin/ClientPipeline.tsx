@@ -412,6 +412,15 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         </div>
       )}
 
+      {/* ── Priority topics ───────────────────────────────────────────────── */}
+      {/* Above the calendar and open, rather than collapsed at the bottom: these take the next
+          publish dates ahead of everything else, so they are what to see first. Short when empty. */}
+      <SiloManager
+        clientId={clientId}
+        onGenerated={loadPipeline}
+        platform={clientSites.some(s => s.connectorType === 'bigcommerce') ? 'bigcommerce' : 'wordpress'}
+      />
+
       {/* ── Content Calendar (cards) ───────────────────────────────────────── */}
       <div className="card p-6">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -520,18 +529,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           </div>
         )}
       </div>
-
-      {/* ── Topic Silos (collapsible) ──────────────────────────────────────── */}
-      <details className="card" style={{ overflow: 'hidden' }}>
-        <summary className="p-5 cursor-pointer font-semibold text-sm" style={{ color: 'var(--text-primary)', listStyle: 'none' }}>▸ Topic Silos</summary>
-        <div className="p-5 pt-0" style={{ borderTop: '1px solid var(--border)' }}>
-          <SiloManager
-            clientId={clientId}
-            onGenerated={loadPipeline}
-            platform={clientSites.some(s => s.connectorType === 'bigcommerce') ? 'bigcommerce' : 'wordpress'}
-          />
-        </div>
-      </details>
 
       {/* ── Generate-Plan modal ────────────────────────────────────────────── */}
       {calendarModalOpen && (

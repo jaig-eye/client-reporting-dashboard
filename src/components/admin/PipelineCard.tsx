@@ -279,19 +279,16 @@ export default function PipelineCard(props: Props) {
               {t.cluster_group && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '0 5px', borderRadius: 3 }}>{t.cluster_group}</span>}
             </div>
           )}
-          {/* Where this topic came from: which keyword set, and the exact term it
-              consumed. Without this, a silo-driven topic is indistinguishable from
-              an ad-hoc one once it reaches the queue. */}
+          {/* Where this topic came from: which set of priority topics, and the exact keyword it
+              used. Without this, a priority topic is indistinguishable from an ad-hoc one once it
+              reaches the queue. Named the way the Pipeline's Priority topics section names it, in
+              theme colours — the violet hex this used stayed the same in dark mode. */}
           {t.silo && (
-            <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-              <span style={{
-                background: 'rgba(139,92,246,0.12)', color: '#8b5cf6',
-                border: '1px solid rgba(139,92,246,0.28)',
-                padding: '0 5px', borderRadius: 3, fontWeight: 600,
-              }}>
-                silo: {t.silo.name}
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span className="badge badge-blue" title="Comes from a set of priority topics">
+                Priority · {t.silo.name}
               </span>
-              {t.silo_keyword && <span>from &ldquo;{t.silo_keyword.keyword}&rdquo;</span>}
+              {t.silo_keyword && <span>for &ldquo;{t.silo_keyword.keyword}&rdquo;</span>}
             </div>
           )}
         </div>
