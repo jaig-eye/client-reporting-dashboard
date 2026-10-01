@@ -14,7 +14,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { isAdminAuthed } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
 import { researchScoreOf, localVolumeOf, serviceTagger } from '@/lib/content/clientResearch'
-import { readResearchLocation } from '@/lib/connectors/dataforseo'
+import { readResearchLocation, resolveDfsCreds, type DfsCreds } from '@/lib/connectors/dataforseo'
+import { deriveResearchLocation } from '@/lib/content/deriveLocation'
 
 export const dynamic = 'force-dynamic'
 /**
@@ -314,44 +315,59 @@ export async function GET(req: NextRequest) {
   // gated on the client having its own connection row — so without one, "Find keywords" is a
   // button that can only ever report finding nothing. Better to say why up front. Adding
   // keywords by hand still works; they simply arrive without volume or difficulty.
-  const readHasDataForSeo = async (): Promise<boolean> => {
+  // Whether DataForSEO is connected, and its credentials — the Market card reads the location
+  // research would use, and deriving one needs the (free) locations list.
+  const readDataForSeo = async (): Promise<{ has: boolean; creds: DfsCreds | null }> => {
     try {
       const { data, error } = await db
         .from('client_connections')
-        .select('connector:connectors(type)')
+        .select('connector:connectors(type, auth)')
         .eq('client_id', clientId)
-      if (error) { console.warn('[keyword-sources] connection check failed:', error.message); return true }
-      type Row = { connector: { type?: string } | { type?: string }[] | null }
-      return ((data ?? []) as Row[]).some(r => {
+      if (error) { console.warn('[keyword-sources] connection check failed:', error.message); return { has: true, creds: null } }
+      type Conn = { type?: string; auth?: Record<string, unknown> }
+      type Row = { connector: Conn | Conn[] | null }
+      for (const r of (data ?? []) as Row[]) {
         const c = Array.isArray(r.connector) ? r.connector[0] : r.connector
-        return c?.type === 'dataforseo'
-      })
-    } catch { return true }   // unreadable: say nothing rather than claim it is missing
+        if (c?.type === 'dataforseo') return { has: true, creds: resolveDfsCreds(c.auth ?? {}) }
+      }
+      return { has: false, creds: null }
+    } catch { return { has: true, creds: null } }   // unreadable: say nothing rather than claim it is missing
   }
 
   // Where the researched numbers were measured (migration 224) and when research last ran
   // (migration 222), so the list can say what it is and how old it is instead of leaving the
   // operator to guess whether these were found, invented, or typed in.
-  const readSettings = async (): Promise<{ location: string | null; lastRun: string | null }> => {
+  const readSettings = async (): Promise<{ location: string | null; lastRun: string | null; geographicFocus: string }> => {
     try {
       const read = (cols: string) => db.from('content_settings').select(cols).eq('client_id', clientId).maybeSingle()
-      let { data: cs, error: locErr } = await read('research_location, last_keyword_research_at')
-      if (locErr && /last_keyword_research_at/i.test(locErr.message)) ({ data: cs, error: locErr } = await read('research_location'))
+      let { data: cs, error: locErr } = await read('research_location, last_keyword_research_at, geographic_focus')
+      if (locErr && /last_keyword_research_at/i.test(locErr.message)) ({ data: cs, error: locErr } = await read('research_location, geographic_focus'))
       // Migration 224 has landed, so a failure here is a real one, not the column being absent.
       if (locErr) console.warn('[research-location] read failed, staying country-wide:', locErr.message)
-      const row = cs as { research_location?: unknown; last_keyword_research_at?: unknown } | null
+      const row = cs as { research_location?: unknown; last_keyword_research_at?: unknown; geographic_focus?: unknown } | null
       return {
         location: readResearchLocation(row?.research_location)?.name ?? null,
         lastRun:  row?.last_keyword_research_at ? String(row.last_keyword_research_at) : null,
+        geographicFocus: String(row?.geographic_focus ?? ''),
       }
-    } catch { return { location: null, lastRun: null } }   // column absent
+    } catch { return { location: null, lastRun: null, geographicFocus: '' } }   // column absent
   }
 
   // Everything that does not depend on anything else, at once. `researched` is the exception: it
   // joins against the leads map that readPaidTerms fills, so it waits for that one alone.
-  const [paidTerms, ahrefs, poolTotal, hasDataForSeo, settings, tagger] = await Promise.all([
-    readPaidTerms(), readAhrefs(), readPoolTotal(), readHasDataForSeo(), readSettings(), serviceTagger(clientId),
+  const [paidTerms, ahrefs, poolTotal, dfs, settings, tagger] = await Promise.all([
+    readPaidTerms(), readAhrefs(), readPoolTotal(), readDataForSeo(), readSettings(), serviceTagger(clientId),
   ])
+  const hasDataForSeo = dfs.has
+
+  // The market research actually measures in. Nobody picks one any more, so research reads it out
+  // of the service areas each run (deriveResearchLocation); showing only a picked location said
+  // "Whole country" for every client, including the ones research had placed in a city. Same
+  // derivation, same free cached lookup.
+  let researchLocation = settings.location
+  if (!researchLocation && dfs.creds && settings.geographicFocus) {
+    researchLocation = (await deriveResearchLocation(settings.geographicFocus, dfs.creds).catch(() => null))?.location.name ?? null
+  }
   const { rows: researched } = await readResearched()
 
   // Rows stored before research recorded a service are matched now, with the same rule research
@@ -362,7 +378,7 @@ export async function GET(req: NextRequest) {
     paidTerms, ahrefs, researched,
     // The client's services in its own order: what the list groups by.
     services:         tagger.services,
-    researchLocation: settings.location,
+    researchLocation,
     lastResearchAt:   settings.lastRun,
     poolTotal, hasDataForSeo,
   })

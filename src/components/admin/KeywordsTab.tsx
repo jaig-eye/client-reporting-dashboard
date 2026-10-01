@@ -365,9 +365,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
                 <div className="kw-stat-value">{place ?? (hasDfs ? 'Whole country' : 'Not measured')}</div>
                 <p className="kw-stat-sub">
                   {place
-                    ? 'Search counts are for this area — the first service area.'
+                    ? 'Search counts are for this area, read from the service areas.'
                     : hasDfs
-                      ? 'No local area resolved, so search counts are national.'
+                      ? 'No service area matched a place Google knows, so search counts are national. Put a city or county first.'
                       : 'Search counts come with DataForSEO research.'}
                 </p>
               </>

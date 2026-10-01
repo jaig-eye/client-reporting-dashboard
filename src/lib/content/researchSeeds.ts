@@ -55,7 +55,10 @@ export function buildResearchSeeds(services: string[], geo: string, foundational
  * A business that says "nationwide" is telling us its competitors are national, and forcing it
  * into a city would be a worse answer than leaving it alone.
  */
-const NON_LOCAL = /^\s*(nation-?wide|national|all of|across|worldwide|global|online only|e-?commerce|united states|usa|canada|uk)\b/i
+/** Words that make service-area text a sentence rather than a list of places. */
+const PROSE_JOINER = /\n|;|\b(including|surrounding|and|serving)\b/i
+
+const NON_LOCAL =/^\s*(nation-?wide|national|all of|across|worldwide|global|online only|e-?commerce|united states|usa|canada|uk)\b/i
 
 /**
  * Candidate place names in the order they are worth trying.
@@ -74,11 +77,30 @@ export function locationCandidates(geographicFocus: string): string[] {
   //
   // Split the way the chip input stored it. Cutting on every comma turned the "Springfield, MA"
   // chip into "Springfield" and "MA", and "Springfield" alone resolves to Ohio.
+  //
+  // Each entry is tried as typed first ("Melbourne, FL" is already a place), then the way prose is
+  // read. An entry is still prose someone typed: "Los Angeles and Tri-County area" is one chip
+  // meaning one city, and only the prose reading finds Los Angeles in it. Trying entries as typed
+  // and nothing else sent such a client's research country-wide, where reading the same words as
+  // one sentence had found the city.
+  //
+  // Only a plain list is read as one. Text with joiners ("Melbourne, FL and Brevard County") is a
+  // sentence: splitting it on commas cut the state off its city and looked up a bare "Melbourne".
   const asList = splitPhrases(raw)
-  if (asList.length > 1 && asList.every(v => v.split(/\s+/).length <= 5)) {
-    return asList.filter(v => !NON_LOCAL.test(v)).slice(0, 4)
+  if (asList.length > 1 && !PROSE_JOINER.test(raw) && asList.every(v => v.split(/\s+/).length <= 5)) {
+    const out: string[] = []
+    for (const entry of asList) {
+      if (NON_LOCAL.test(entry)) continue
+      out.push(entry, ...proseCandidates(entry))
+    }
+    return Array.from(new Set(out)).slice(0, 6)
   }
 
+  return Array.from(new Set(proseCandidates(raw))).slice(0, 4)
+}
+
+/** Place names read out of prose, in the order written: joiners cut, area words dropped. */
+function proseCandidates(raw: string): string[] {
   const out: string[] = []
   // Parentheticals go first, before the split: "(Rockledge and Melbourne)" contains a joiner, so
   // splitting first would tear the bracket in half and leave an orphan "(" in the candidate.
@@ -88,6 +110,7 @@ export function locationCandidates(geographicFocus: string): string[] {
     const cleaned = clause
       .replace(/\b(area|areas|region|county-wide|metro)\b/gi, ' ')
       .replace(/\s+/g, ' ')
+      .replace(/ ,/g, ',')
       .trim()
       .replace(/^[,\-–—]+|[,\-–—]+$/g, '')
       .trim()
@@ -105,6 +128,6 @@ export function locationCandidates(geographicFocus: string): string[] {
     // Keep the fuller form too: "Los Angeles County" should beat "Los Angeles" when both exist.
     if (cleaned !== head && cleaned.length <= 40) out.push(cleaned)
   }
-  return Array.from(new Set(out)).slice(0, 4)
+  return out
 }
 

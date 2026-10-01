@@ -9,8 +9,8 @@
 //
 // It checks. A service area is prose someone typed, and "Tri-County area" is not a place any
 // search tool knows. Saying "Measured in Tri-County area" when nothing will resolve would be worse
-// than saying nothing, so the candidate is looked up and the line reports what actually happened.
-// The lookup is a free, cached endpoint.
+// than saying nothing, so the candidates are looked up — in order, the way research tries them —
+// and the line reports what research will actually use. The lookup is a free, cached endpoint.
 
 import { useEffect, useState } from 'react'
 import { locationCandidates } from '@/lib/content/researchSeeds'
@@ -23,7 +23,9 @@ type State =
   | { kind: 'unchecked'; guess: string }   // the lookup could not answer at all
 
 export default function MarketLine({ geographicFocus }: { geographicFocus: string }) {
-  const guess = locationCandidates(geographicFocus ?? '')[0] ?? null
+  // Joined so the effect below re-runs when the candidates change, not on every render.
+  const candidateKey = locationCandidates(geographicFocus ?? '').join('\n')
+  const guess = candidateKey ? candidateKey.split('\n')[0] : null
   const [state, setState] = useState<State>(guess ? { kind: 'checking', guess } : { kind: 'none' })
 
   useEffect(() => {
@@ -36,19 +38,26 @@ export default function MarketLine({ geographicFocus }: { geographicFocus: strin
     // WITH an error) all mean the place was never looked up. Only an answer with no error and no
     // match means the text names no place; reading the others that way told the operator that
     // searches would be nationwide when nothing had been checked.
-    const t = setTimeout(() => {
-      fetch(`/api/admin/content/dfs-locations?q=${encodeURIComponent(guess)}`)
-        .then(async r => {
-          const d = await r.json().catch(() => null) as { locations?: Array<{ name?: string }>; error?: string } | null
-          if (cancelled) return
-          if (!r.ok || !d || d.error) { setState({ kind: 'unchecked', guess }); return }
-          const hit = d.locations?.[0]?.name
-          setState(hit ? { kind: 'found', name: hit.split(',')[0] } : { kind: 'unresolved', guess })
-        })
-        .catch(() => { if (!cancelled) setState({ kind: 'unchecked', guess }) })
+    // Each candidate in turn, as research does: "Los Angeles and Tri-County area" is not a place,
+    // but the "Los Angeles" in it is. Stops at the first place found.
+    const t = setTimeout(async () => {
+      for (const candidate of candidateKey.split('\n')) {
+        let d: { locations?: Array<{ name?: string }>; error?: string } | null = null
+        let ok = false
+        try {
+          const r = await fetch(`/api/admin/content/dfs-locations?q=${encodeURIComponent(candidate)}`)
+          ok = r.ok
+          d = await r.json().catch(() => null)
+        } catch { /* unreachable — reported below */ }
+        if (cancelled) return
+        if (!ok || !d || d.error) { setState({ kind: 'unchecked', guess }); return }
+        const hit = d.locations?.[0]?.name
+        if (hit) { setState({ kind: 'found', name: hit.split(',')[0] }); return }
+      }
+      if (!cancelled) setState({ kind: 'unresolved', guess })
     }, 500)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [guess])
+  }, [guess, candidateKey])
 
   const base = { fontSize: '0.6875rem', marginTop: 4, lineHeight: 1.5 } as const
 
@@ -58,25 +67,25 @@ export default function MarketLine({ geographicFocus }: { geographicFocus: strin
   if (state.kind === 'unresolved') {
     return (
       <p style={{ ...base, color: 'var(--amber)' }}>
-        Couldn&apos;t find &ldquo;{state.guess}&rdquo; — searches will be nationwide. Try a city or county name first.
+        None of these matched a place Google knows, so keyword searches will be nationwide. Put a city or county first.
       </p>
     )
   }
   if (state.kind === 'unchecked') {
     return (
       <p style={{ ...base, color: 'var(--text-faint)' }}>
-        Measured in <strong style={{ color: 'var(--text-muted)' }}>{state.guess}</strong>, the first
-        area listed — the place couldn&apos;t be checked just now.
+        Keyword searches will be measured in <strong style={{ color: 'var(--text-muted)' }}>{state.guess}</strong> —
+        the place couldn&apos;t be checked just now.
       </p>
     )
   }
   return (
     <p style={{ ...base, color: 'var(--text-faint)' }}>
-      Measured in{' '}
+      Keyword searches are measured in{' '}
       <strong style={{ color: 'var(--text-muted)' }}>
         {state.kind === 'found' ? state.name : state.guess}
       </strong>
-      , the first area listed.
+      . Every area listed still goes to the writer.
     </p>
   )
 }
