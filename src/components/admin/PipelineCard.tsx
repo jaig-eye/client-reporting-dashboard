@@ -34,6 +34,7 @@ export interface Topic {
   cluster_group?:        string | null
   generation_error?:     string | null
   post?:                 { id: string; title: string | null; status: string; published_url: string | null } | null
+  created_at?:           string
   /** Silo provenance — which set this topic came out of, and on which keyword. */
   silo?:                 { id: string; name: string; hub_page_url: string | null } | null
   silo_keyword?:         { id: string; keyword: string } | null

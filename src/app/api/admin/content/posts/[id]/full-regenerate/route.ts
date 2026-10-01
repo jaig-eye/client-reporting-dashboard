@@ -250,6 +250,8 @@ export async function POST(
 
   // Hoisted so the catch block can reverse topic state changes made in step 2
   let newTopicId: string | undefined
+  // Every topic this post replaces, with the status each had, so a failure can put them back.
+  let superseded: { id: string; status: string }[] = []
   // The set keyword this post was written for, when it came from a priority set. A regenerate
   // rewrites the same keyword at a fresh angle: asking the set for a topic would claim its NEXT
   // keyword instead, so the post changed subject while the original stayed marked written, and
@@ -326,13 +328,29 @@ export async function POST(
         .update({ post_id: postId, status: 'approved' })
         .eq('id', newTopicId)
 
-      if (post.topic_id) {
+      // Retire EVERY topic that points at this post, not only post.topic_id. Most posts were linked
+      // from the topic side only (content_posts.topic_id null: 120 of 172 in production), so
+      // retiring post.topic_id alone left the old topic attached — the Pipeline then showed the
+      // rewritten post twice, under its old topic and its new one (Altec, 2026-09-04).
+      {
+        const { data: claiming } = await db
+          .from('content_topics')
+          .select('id, status')
+          .eq('post_id', postId)
+          .neq('id', newTopicId)
+        const byId = new Map(((claiming ?? []) as { id: string; status: string }[]).map(t => [t.id, t]))
+        if (post.topic_id && post.topic_id !== newTopicId && !byId.has(post.topic_id as string)) {
+          byId.set(post.topic_id as string, { id: post.topic_id as string, status: 'approved' })
+        }
+        superseded = Array.from(byId.values())
+      }
+      if (superseded.length > 0) {
         await db.from('content_topics')
           .update({ post_id: null, status: 'rejected' })
-          .eq('id', post.topic_id as string)
-        // The superseded topic hands its silo keyword back to the queue; the new
-        // topic claims its own. Skipping this strands the term as used forever.
-        await releaseKeywordForTopic(db, post.topic_id as string).catch(() => {})
+          .in('id', superseded.map(t => t.id))
+        // A superseded topic hands its silo keyword back to the queue; the new topic claims its
+        // own. Skipping this strands the term as used forever.
+        for (const t of superseded) await releaseKeywordForTopic(db, t.id).catch(() => {})
       }
 
       // 3. Fetch full topic data (TopicSummary only has a few fields)
@@ -595,10 +613,11 @@ ${lengthInstruction(budget)}`
         if (setKeyword && post.topic_id) {
           await db.from('content_silo_keywords').update({ target_topic_id: post.topic_id }).eq('id', setKeyword.id)
         }
-        if (post.topic_id) {
+        // Put back every topic step 2 retired, each with the status it had.
+        for (const t of superseded) {
           await db.from('content_topics')
-            .update({ post_id: postId, status: 'approved' })
-            .eq('id', post.topic_id as string)
+            .update({ post_id: postId, status: t.status === 'rejected' ? 'approved' : t.status })
+            .eq('id', t.id)
         }
       }
     }

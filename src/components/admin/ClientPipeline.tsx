@@ -293,7 +293,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     e.preventDefault()
     setGenerating(true)
     // A dropped connection or a non-JSON error page (a gateway timeout) must not leave the button
-    // stuck on "Picking topics…": every way out of here clears it.
+    // stuck on "Generating topics…": every way out of here clears it.
     let res: Response
     let data: { queued?: boolean; slots?: string[]; reason?: string; error?: string }
     try {
@@ -312,7 +312,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       setCalendarModalOpen(false)
       if (data.queued) {
         const n = (data.slots ?? []).length
-        showToast(n ? `Picking ${n} topic${n === 1 ? '' : 's'}. They appear in the calendar as each one is ready.` : 'Picking topics. They appear in the calendar as each one is ready.', 'info')
+        showToast(n ? `Generating ${n} topic${n === 1 ? '' : 's'}. They appear in the calendar as each one is ready.` : 'Generating topics. They appear in the calendar as each one is ready.', 'info')
         const prevCount = topicsRef.current.length
         let polls = 0
         if (pollRef.current) clearInterval(pollRef.current)
@@ -341,7 +341,21 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     const seenPostIds = new Set<string>()
     const allItems: RowItem[] = []
 
+    // A post claimed by more than one topic belongs to the topic the post itself names, else the
+    // newest claimant; the others were superseded and are not shown. A full regenerate used to
+    // retire only the topic the post recorded — most posts record none — so the old topic kept
+    // pointing at the rewritten post and the post rendered twice on its date.
+    const ownerOf = new Map<string, Topic>()
+    for (const t of topics) {
+      const pid = t.post?.id
+      if (!pid) continue
+      const cur = ownerOf.get(pid)
+      const named = posts.find(p => p.id === pid)?.topic_id
+      if (!cur || named === t.id || (named !== cur.id && (t.created_at ?? '') > (cur.created_at ?? ''))) ownerOf.set(pid, t)
+    }
+
     topics.forEach(t => {
+      if (t.post?.id && ownerOf.get(t.post.id) !== t) return
       // Three links, strongest first. The keyword+date guess USED to be the only fallback,
       // and it is guaranteed to break on exactly the rows people look at most: a full
       // regenerate picks a new topic and a new target_keyword, so the topic and its post stop
@@ -681,8 +695,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
               <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {planMode === 'regenerate'
-                  ? <>Picks new topics for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
-                  : <>Picks a topic for each date below. They appear in the calendar, where you can edit or reject any of them.</>}
+                  ? <>New topics are chosen automatically for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
+                  : <>Topics for these dates are chosen automatically, from Search Console, rankings and your ticked keywords. You can edit or reject any of them in the calendar.</>}
               </p>
               <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
                 <dt style={{ color: 'var(--text-muted)' }}>Schedule</dt>
@@ -717,9 +731,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
                   {generating
-                    ? 'Picking topics…'
+                    ? 'Generating topics…'
                     : plan && plan.posts > 0
-                      ? `Pick ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
+                      ? `Generate ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
                       : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
                 </button>
               </div>
