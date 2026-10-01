@@ -6,6 +6,8 @@
 export interface PrioritySet {
   id:                    string
   name:                  string
+  /** Only blog sets take publish dates; service and regular page sets are made on demand. */
+  content_type?:         string | null
   description:           string | null
   hub_page_url:          string | null
   hub_page_title:        string | null
@@ -51,12 +53,16 @@ export function stateOf(k: SetKeyword): KeywordState {
 /** A set that never runs out: with a main page it plans topics around that page until archived. */
 export const isHub = (s: PrioritySet) => !!s.hub_page_url
 
+/** Whether the topic run fills publish dates from this set. It only takes blog sets. */
+export const takesDates = (s: Pick<PrioritySet, 'content_type'>) => (s.content_type ?? 'blog') === 'blog'
+
 /**
  * The order the topic run takes sets in — the order the API returns them (priority, then oldest
- * first) — and which one takes the next date: the first that is a hub or still has keywords waiting.
+ * first) — and which one takes the next date: the first blog set that is a hub or still has
+ * keywords waiting.
  */
 export function nextUpId(sets: PrioritySet[]): string | null {
-  return sets.find(s => isHub(s) || s.keywordUnused > 0)?.id ?? null
+  return sets.find(s => takesDates(s) && (isHub(s) || s.keywordUnused > 0))?.id ?? null
 }
 
 /** One keyword per line, trimmed, repeats dropped (case-insensitive) — what the server will keep. */

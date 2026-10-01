@@ -17,7 +17,7 @@
 
 import { useState, type ReactNode } from 'react'
 import {
-  canPickNow, fmtPublishDay, isHub, parseKeywordLines, stateOf,
+  canPickNow, fmtPublishDay, isHub, parseKeywordLines, stateOf, takesDates,
   type KeywordState, type NextSlot, type PrioritySet, type SetKeyword,
 } from '@/components/admin/priorityTopics'
 
@@ -52,6 +52,9 @@ export default function PrioritySetCard({
   const [adding, setAdding] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const hub = isHub(set)
+  // Service and regular page sets are made on demand from the page generator and never take a
+  // publish date, so none of the scheduling language applies to them.
+  const pages = !takesDates(set)
 
   const counts = { waiting: 0, picked: 0, written: 0, live: 0 } as Record<KeywordState, number>
   for (const k of keywords ?? []) counts[stateOf(k)]++
@@ -67,7 +70,7 @@ export default function PrioritySetCard({
   // the thing they came here to see.
   const [listOpen, setListOpen] = useState(!usedUp && !hub)
   const shown = keywords ? (showAll ? keywords : keywords.slice(0, FIRST_ROWS)) : []
-  const pickNow = !usedUp && !empty && canPickNow(slot)
+  const pickNow = !pages && !usedUp && !empty && canPickNow(slot)
 
   const { keywords: toAdd } = parseKeywordLines(draft)
   async function add() {
@@ -79,7 +82,8 @@ export default function PrioritySetCard({
   }
 
   const status: { label: string; tone: string } =
-    hub      ? { label: 'Main page', tone: 'badge-blue' }
+    pages    ? { label: 'Service pages', tone: 'badge-gray' }
+    : hub    ? { label: 'Main page', tone: 'badge-blue' }
     : empty  ? { label: 'No keywords yet', tone: 'badge-amber' }
     : allDone ? { label: 'All written', tone: 'badge-green' }
     : usedUp ? { label: 'All picked', tone: 'badge-gray' }
@@ -121,7 +125,7 @@ export default function PrioritySetCard({
 
       {/* ── When ───────────────────────────────────────────────────────── */}
       <When
-        isNext={isNext} aheadOf={aheadOf} slot={slot}
+        pages={pages} isNext={isNext} aheadOf={aheadOf} slot={slot}
         usedUp={usedUp} allDone={allDone} empty={empty} inProgress={counts.picked}
       />
       {pickNow && (
@@ -208,13 +212,15 @@ export default function PrioritySetCard({
 }
 
 /** The sentence that says when this set's next post happens — or why it isn't happening. */
-function When({ isNext, aheadOf, slot, usedUp, allDone, empty, inProgress }: {
-  isNext: boolean; aheadOf: { name: string; left: number; hub: boolean } | null
+function When({ pages, isNext, aheadOf, slot, usedUp, allDone, empty, inProgress }: {
+  pages: boolean; isNext: boolean; aheadOf: { name: string; left: number; hub: boolean } | null
   slot: NextSlot | null; usedUp: boolean; allDone: boolean; empty: boolean; inProgress: number
 }) {
   let text: ReactNode
   let tone = ''
-  if (empty) {
+  if (pages) {
+    text = 'Service and regular pages are made from the page generator when someone runs it. They don’t take publish dates.'
+  } else if (empty) {
     text = 'Add keywords below and this set starts taking publish dates — one post per keyword.'
   } else if (usedUp) {
     text = allDone
