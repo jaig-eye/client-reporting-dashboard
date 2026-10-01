@@ -1,6 +1,10 @@
 // POST /api/admin/content/sitemap-parse?client_id=X
 // Fetches and parses the client's configured sitemap(s), upserts page URLs to DB, returns full list.
 //
+// Optional body { xml }: sitemap XML (or a plain list of URLs) pasted by hand, for a site that
+// refuses our servers (Cruisin Gold answers Vercel with a 502). Read instead of the configured
+// sitemaps, and added to the cache without pruning, since a paste is often one part of a site.
+//
 // This was the ONLY route under /api/admin/content without a maxDuration export,
 // so it ran on the platform default (~10s) while every sibling sets 60-300. A
 // sitemap index with 8-10 children fetched sequentially exceeds that, and a
@@ -18,6 +22,12 @@ const SUB_FETCH_TIMEOUT_MS = 12_000
 
 /** How many URLs we keep per client. Shared fairly across sub-sitemaps below. */
 const MAX_CACHED_URLS = 500
+
+/** The largest paste read, in characters. A 500-URL sitemap is well under 100k. */
+const MAX_PASTE_CHARS = 2_000_000
+
+/** Where pasted URLs are filed in the source map; stored as no source sitemap. */
+const PASTED = '(pasted)'
 
 /**
  * An individual-PRODUCT sitemap, as opposed to a category or collection one.
@@ -56,6 +66,16 @@ export async function POST(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('client_id')
   if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
 
+  // Callers that fetch send no body; a paste sends { xml }.
+  const body = await request.json().catch(() => null) as { xml?: unknown } | null
+  const pasted = typeof body?.xml === 'string' ? body.xml.replace(/^\uFEFF/, '').trim() : null
+  if (pasted !== null) {
+    if (!pasted) return NextResponse.json({ error: 'Paste the sitemap XML first.' }, { status: 400 })
+    if (pasted.length > MAX_PASTE_CHARS) {
+      return NextResponse.json({ error: 'That paste is too large. Paste one sitemap file at a time.' }, { status: 400 })
+    }
+  }
+
   const db = createAdminClient()
 
   const { data: settings } = await db
@@ -75,7 +95,7 @@ export async function POST(request: NextRequest) {
     ...(s?.sitemap_url ? [s.sitemap_url as string] : []),
   ].filter(Boolean)
 
-  if (sitemapUrls.length === 0) {
+  if (sitemapUrls.length === 0 && pasted === null) {
     return NextResponse.json(
       { error: 'No sitemap URLs configured. Add sitemap URLs in Brand DNA settings.' },
       { status: 400 }
@@ -94,7 +114,18 @@ export async function POST(request: NextRequest) {
     'Upgrade-Insecure-Requests': '1',
   }
 
-  for (const sitemapUrl of sitemapUrls) {
+  if (pasted !== null) {
+    // XML gives its <loc> entries; anything else is read as a list of URLs, one per line.
+    const locs = pasted.includes('<loc') ? extractLocs(pasted)
+      : pasted.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u))
+    if (pasted.includes('<sitemapindex')) {
+      fetchErrors.push('That is a sitemap index, which only lists other sitemaps. Open each one it lists and paste those instead.')
+    } else {
+      for (const loc of locs) if (!pageMap.has(loc)) pageMap.set(loc, PASTED)
+    }
+  }
+
+  for (const sitemapUrl of pasted !== null ? [] : sitemapUrls) {
     if (!isPublicUrl(sitemapUrl)) {
       fetchErrors.push(`${sitemapUrl} → blocked (private or non-HTTP URL)`)
       continue
@@ -229,6 +260,9 @@ export async function POST(request: NextRequest) {
   }
 
   if (urls.length === 0) {
+    if (pasted !== null) {
+      return NextResponse.json({ error: fetchErrors[0] ?? 'No page URLs found in what was pasted. Paste the sitemap’s XML, or a list of page URLs.' }, { status: 400 })
+    }
     const detail = fetchErrors.length > 0 ? ` Errors: ${fetchErrors.join('; ')}` : ''
     return NextResponse.json({ error: `No pages found in sitemap.${detail}` }, { status: 400 })
   }
@@ -247,7 +281,10 @@ export async function POST(request: NextRequest) {
   // Worse, the empty cache silently disables cannibalisation protection at
   // generation time. Degrade to writing without the column rather than writing
   // nothing at all.
-  const rows = urls.map(url => ({ client_id: clientId, url, source_sitemap: pageMap.get(url) ?? null }))
+  const rows = urls.map(url => {
+    const src = pageMap.get(url)
+    return { client_id: clientId, url, source_sitemap: src && src !== PASTED ? src : null }
+  })
 
   let { error: upsertErr } = await db
     .from('content_sitemap_pages')
@@ -291,7 +328,8 @@ export async function POST(request: NextRequest) {
     .select('url, is_priority, is_excluded')
     .eq('client_id', clientId)
 
-  const stale = ((cached ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[])
+  // A paste adds to what is cached rather than replacing it.
+  const stale = pasted !== null ? [] : ((cached ?? []) as { url: string; is_priority: boolean; is_excluded: boolean }[])
     .filter(r => !keep.has(r.url) && !r.is_priority && !r.is_excluded)
     .map(r => r.url)
 

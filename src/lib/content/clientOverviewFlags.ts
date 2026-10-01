@@ -22,6 +22,8 @@ export interface OverviewFacts {
   scheduleStartDate: string | null
   /** The site posts go to, null when the client has none. Undefined when connections could not be read. */
   site?:             { platform: string; name: string; status: string } | null
+  /** WordPress sends posts as plain drafts, so nothing goes live on its date. */
+  draftOnly?:        boolean
   /** Publish dates inside the planning window with room for another topic. */
   openDates:         number | null
   /** Topics planned for future dates, rejected ones aside. */
@@ -43,10 +45,13 @@ export interface OverviewFacts {
 export interface ClientOverviewRow {
   id:          string
   name:        string
+  logoUrl:     string | null
   running:     boolean
   /** Automation's sub-switches that are off while it runs — the planner turns them back on. */
   offSwitches: string[]
   cadence:     string
+  /** Posts written for each publish date. */
+  postsPerDate: number
   window:      string
   startDate:   string | null
   site:        { platform: string; name: string; status: string; mode: string | null } | 'none' | null
@@ -80,10 +85,14 @@ export function overviewFlags(f: OverviewFacts): OverviewFlag[] {
       `The ${f.site.platform} connection for ${f.site.name} is ${word}. ` +
       (f.autoGenerate ? 'Finished posts can’t be published until it works again. ' : '') +
       'Reconnect it on the client’s Connections tab.')
-  } else if (f.site === null && f.autoGenerate) {
-    issue('no_site', 'No site to publish to',
-      'Automation is running, but this client has no WordPress or BigCommerce connection, so finished posts have nowhere to go. ' +
-      'Connect the site on the client’s Connections tab, or pause automation in Content settings.')
+  } else if (f.site === null) {
+    issue('no_site', 'No site connected',
+      'This client has no WordPress or BigCommerce connection, so finished posts have nowhere to go. ' +
+      'Connect the site on the client’s Connections tab.')
+  } else if (f.site && f.draftOnly) {
+    issue('draft_only', 'Draft only',
+      `Posts go to ${f.site.name} as plain drafts, so none of them go live on their dates until someone publishes them in WordPress. ` +
+      'Switch publishing to Scheduled draft in the client’s Content settings.')
   }
 
   if (f.autoGenerate && (f.openDates ?? 0) > 0) {

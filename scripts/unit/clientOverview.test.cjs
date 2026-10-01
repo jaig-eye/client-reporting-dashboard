@@ -41,7 +41,15 @@ test('a broken connection is one flag, not also "no site"; with automation off i
 })
 
 test('automation-only problems stay quiet while automation is off', () => {
-  assert.deepEqual(keys(ok({ autoGenerate: false, plannedFuture: 0, site: null, openDates: 5 })), [])
+  assert.deepEqual(keys(ok({ autoGenerate: false, plannedFuture: 0, openDates: 5 })), [])
+})
+
+test('no site and draft-only publishing are issues whether or not automation runs', () => {
+  assert.deepEqual(keys(ok({ autoGenerate: false, plannedFuture: 0, site: null })), ['no_site'])
+  assert.deepEqual(keys(ok({ draftOnly: true })), ['draft_only'])
+  assert.deepEqual(keys(ok({ autoGenerate: false, plannedFuture: 0, draftOnly: true })), ['draft_only'])
+  // A broken connection says more than its mode.
+  assert.deepEqual(keys(ok({ draftOnly: true, site: { platform: 'WordPress', name: 'x.com', status: 'error' } })), ['site_inactive'])
 })
 
 test('paused with topics still planned is info, not an issue', () => {

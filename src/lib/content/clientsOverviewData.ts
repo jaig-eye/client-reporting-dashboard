@@ -92,7 +92,7 @@ function siteName(c: ConnRow): string {
   return raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '') || 'Unnamed site'
 }
 
-export async function getClientsOverview(db: Db, clientNames: Map<string, string>): Promise<{ rows: ClientOverviewRow[]; error: string | null }> {
+export async function getClientsOverview(db: Db, clientNames: Map<string, string>, clientLogos: Map<string, string | null> = new Map()): Promise<{ rows: ClientOverviewRow[]; error: string | null }> {
   const now      = new Date()
   const today    = now.toISOString().slice(0, 10)
   const sinceDay = new Date(now.getTime() - RECENT_DAYS * 86_400_000).toISOString().slice(0, 10)
@@ -286,6 +286,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       autoGenerate: running, frequency,
       monthlyPublishDay: cs.monthly_publish_day, scheduleStartDate: cs.schedule_start_date,
       site: site === null ? undefined : site === 'none' ? null : site,
+      draftOnly: site !== null && site !== 'none' && cs.wp_publish_mode === 'draft_only' && site.mode !== null,
       openDates: planned?.open ?? null, plannedFuture,
       reviewOverdue: review?.overdue ?? null,
       pushErrors, imageErrors,
@@ -295,11 +296,13 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
     return {
       id,
       name:        clientNames.get(id) ?? 'Unknown client',
+      logoUrl:     clientLogos.get(id) ?? null,
       running,
       offSwitches: running
         ? [cs.auto_approve_topics !== true && 'topic approval', cs.auto_push_posts !== true && 'publishing'].filter((x): x is string => !!x)
         : [],
-      cadence:     cadenceLabel({ ...cs, schedule_frequency: frequency, schedule_day_of_week: dayOfWeek }),
+      cadence:     cadenceLabel({ ...cs, schedule_frequency: frequency, schedule_day_of_week: dayOfWeek, posts_per_run: 1 }),
+      postsPerDate: Math.min(10, Math.max(1, Number(cs.posts_per_run ?? 1) || 1)),
       window:      planningWindowLabel(frequency, cs.weeks_ahead),
       startDate:   cs.schedule_start_date,
       site, planned, review, lastPublished,

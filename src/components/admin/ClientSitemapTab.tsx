@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import SitemapPaste from '@/components/admin/SitemapPaste'
 import { Star, MinusCircle, MapPin, GearSix } from '@phosphor-icons/react'
 
 type SitemapPage = {
@@ -399,6 +400,19 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       {error && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 12 }}>{error}</p>
       )}
+
+      <div style={{ marginBottom: 12 }}>
+        <SitemapPaste
+          clientId={clientId}
+          onImported={(list, n) => {
+            const data = list as SitemapPage[]
+            setPages(data)
+            snapshotOrder(data)
+            setNotes(n)
+            setError('')
+          }}
+        />
+      </div>
 
       {notes && (
         <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 12 }}>{notes}</p>

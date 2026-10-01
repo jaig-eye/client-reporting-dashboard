@@ -1290,13 +1290,34 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .cco-client-name { display: block; color: var(--text-primary); text-decoration: none; overflow-wrap: anywhere; }
 .cco-client-name:hover { text-decoration: underline; }
 .cco-client-name:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: 3px; }
+.cco-client-line { display: flex; align-items: center; gap: 8px; }
+.cco-client-text { min-width: 0; }
+.cco-logo { width: 24px; height: 24px; flex-shrink: 0; border-radius: 6px; object-fit: contain; }
+.cco-logo--initial {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-size: 0.625rem; font-weight: 700;
+}
 .cco-client-issues { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 600; color: var(--red); }
 
 .cco-main { display: block; color: var(--text-primary); }
+
+/* Sitemap paste: a quiet link that opens a box. */
+.smp-link {
+  padding: 0; border: none; background: none; cursor: pointer;
+  font-size: 0.75rem; color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px;
+}
+.smp-link:hover { color: var(--text-primary); }
+.smp-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: 3px; }
+.smp-link:disabled { cursor: default; opacity: 0.6; }
+.smp { display: flex; flex-direction: column; gap: 6px; }
+.smp-label { font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
+.smp-text { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; resize: vertical; }
+.smp-error { margin: 0; font-size: 0.78rem; color: var(--red); }
+.smp-actions { display: flex; align-items: center; gap: 12px; }
 .cco-sub { display: block; margin-top: 2px; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
 .cco-sub .badge { margin-left: 2px; vertical-align: 1px; }
 .cco-inline { display: flex; align-items: center; gap: 4px; }
-.cco-site { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cco-sub.cco-strong { color: var(--text-secondary); font-weight: 500; }
 .cco-none { color: var(--text-faint); }
 .cco-unknown { color: var(--text-faint); cursor: help; }
 .cco-warn { color: var(--amber); font-weight: 500; }

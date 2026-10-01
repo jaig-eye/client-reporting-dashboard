@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import SitemapPaste from '@/components/admin/SitemapPaste'
 import MarketLine from './MarketLine'
 import { cadenceLabel } from '@/lib/content/cadence'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
@@ -838,6 +839,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               sitemapUrl={sitemapUrl}
               setSitemapUrl={setSitemapUrl}
               onFetch={handleFetchPages}
+              onPasted={list => { setPages(list); setSitemapMsg(`Imported ${list.length} page${list.length !== 1 ? 's' : ''}`) }}
               fetching={fetchingPages}
               fetchMsg={sitemapMsg}
               pages={pages}
@@ -1373,11 +1375,12 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
 
 // ─── Step 4: Sitemap ──────────────────────────────────────────────────────────
 
-function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, fetchMsg, pages, setPages }: {
+function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, onPasted, fetching, fetchMsg, pages, setPages }: {
   clientId: string
   sitemapUrl: string
   setSitemapUrl: (v: string) => void
   onFetch: () => void
+  onPasted: (pages: SitemapPage[]) => void
   fetching: boolean
   fetchMsg: string
   pages: SitemapPage[]
@@ -1475,6 +1478,10 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, fetching, f
           {fetchMsg}
         </p>
       )}
+
+      <div style={{ marginBottom: 12 }}>
+        <SitemapPaste clientId={clientId} onImported={list => onPasted(list as SitemapPage[])} />
+      </div>
 
       {saveErr && (
         <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 10 }}>

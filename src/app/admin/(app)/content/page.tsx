@@ -40,7 +40,7 @@ export default async function ContentPage({
     scheduledTopicsRes,
     silosRes,
   ] = await Promise.all([
-    db.from('clients').select('id, name').order('name'),
+    db.from('clients').select('id, name, logo_url').order('name'),
     db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, generated_at, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale, content_type')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
@@ -63,7 +63,9 @@ export default async function ContentPage({
       )
     : null
 
-  const allClientsMap = new Map(((allClientsRes.data ?? []) as { id: string; name: string }[]).map(c => [c.id, c.name]))
+  const allClientRows = (allClientsRes.data ?? []) as { id: string; name: string; logo_url: string | null }[]
+  const allClientsMap = new Map(allClientRows.map(c => [c.id, c.name]))
+  const allClientLogos = new Map(allClientRows.map(c => [c.id, c.logo_url]))
   const allClients    = (allClientsRes.data ?? []) as { id: string; name: string }[]
 
   // Build calendar items
@@ -144,7 +146,7 @@ export default async function ContentPage({
 
   // Clients: every client's content setup in one table — read only when that view is open.
   const clientsOverview = activeView === 'overview'
-    ? await getClientsOverview(db, allClientsMap)
+    ? await getClientsOverview(db, allClientsMap, allClientLogos)
     : null
 
   // The view's id stays "silos" so existing links keep working; its name follows the Pipeline's.

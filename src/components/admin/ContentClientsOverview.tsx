@@ -34,8 +34,7 @@ const Unknown = () => <span className="cco-unknown" title="Couldn’t load this"
 
 const HELP = {
   automation: 'Running: the planner picks topics, writes the posts and publishes them on their dates. Paused: nothing happens until someone does it by hand.',
-  schedule:   'How often this client publishes, how far ahead the planner fills dates, and the date the schedule counts from.',
-  site:       'Where finished posts go. Scheduled draft: the post is sent set to go live on its date. Draft only: it lands as a draft for someone to publish.',
+  schedule:   'How often this client publishes, how many posts go out on each date, how far ahead the planner fills dates, and the date the schedule counts from.',
   planned:    'The furthest date that has a topic, and how many publish dates inside the planning window still have room for one.',
   review:     'Posts written and waiting for someone to review them, and how many of those have a publish date that has already gone by.',
   published:  'The newest post that is live on the client’s site.',
@@ -59,8 +58,15 @@ function Row({ r }: { r: ClientOverviewRow }) {
   return (
     <tr className={issues > 0 ? 'cco-row--issue' : undefined}>
       <th scope="row" className="cco-client">
-        <Link href={pipelineHref(r.id)} className="cco-client-name">{r.name}</Link>
-        {issues > 0 && <span className="cco-client-issues">{plural(issues, 'issue')}</span>}
+        <span className="cco-client-line">
+          {r.logoUrl
+            ? <img src={r.logoUrl} alt="" className="cco-logo" />
+            : <span className="cco-logo cco-logo--initial" aria-hidden>{r.name.charAt(0).toUpperCase()}</span>}
+          <span className="cco-client-text">
+            <Link href={pipelineHref(r.id)} className="cco-client-name">{r.name}</Link>
+            {issues > 0 && <span className="cco-client-issues">{plural(issues, 'issue')}</span>}
+          </span>
+        </span>
       </th>
 
       {/* Next to the name, so a laptop shows every problem without scrolling sideways. */}
@@ -85,23 +91,12 @@ function Row({ r }: { r: ClientOverviewRow }) {
 
       <td className="cco-wide">
         <span className="cco-main">{r.cadence}</span>
+        <span className="cco-sub cco-strong">{plural(r.postsPerDate, 'post')} each date</span>
         <span className="cco-sub">
           Plans {r.window}
           {' · '}
           {r.startDate ? `${r.startDate > new Date().toISOString().slice(0, 10) ? 'Starts' : 'Started'} ${fmtDate(r.startDate)}` : 'No start date'}
         </span>
-      </td>
-
-      <td className="cco-wide">
-        {r.site === null ? <Unknown /> : r.site === 'none' ? <span className="cco-none">No site</span> : (
-          <>
-            <span className="cco-main cco-site" title={r.site.name}>{r.site.name}</span>
-            <span className="cco-sub">
-              {r.site.platform}{r.site.mode ? ` · ${r.site.mode}` : ''}
-              {r.site.status !== 'active' && <> {' '}<span className="badge badge-red">{r.site.status[0].toUpperCase() + r.site.status.slice(1)}</span></>}
-            </span>
-          </>
-        )}
       </td>
 
       <td>
@@ -215,7 +210,6 @@ export default function ContentClientsOverview({ rows, error }: { rows: ClientOv
                 <th scope="col"><Explained name="Issues" help={HELP.issues}>Issues</Explained></th>
                 <th scope="col"><Explained name="Automation" help={HELP.automation}>Automation</Explained></th>
                 <th scope="col"><Explained name="Schedule" help={HELP.schedule}>Schedule</Explained></th>
-                <th scope="col"><Explained name="Publishes to" help={HELP.site}>Publishes to</Explained></th>
                 <th scope="col"><Explained name="Planned" help={HELP.planned}>Planned</Explained></th>
                 <th scope="col"><Explained name="In review" help={HELP.review}>In review</Explained></th>
                 <th scope="col"><Explained name="Last published" help={HELP.published}>Last published</Explained></th>
