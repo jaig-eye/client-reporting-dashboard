@@ -22,107 +22,7 @@ import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getCycleDays(frequency: string): number {
-  switch (frequency) {
-    case 'monthly': case 'monthly_first': case 'monthly_mid': case 'monthly_end': return 28
-    case 'biweekly': return 14
-    case 'weekly':   return 7
-    default:         return 1
-  }
-}
-
-function daysInMonth(year: number, month: number): number {
-  // getUTCDate, not getDate. Date.UTC builds the instant for midnight UTC on the
-  // month's last day; reading it back with the LOCAL getDate() returns the previous
-  // day in any negative-UTC-offset zone, so this reported 30 for a 31-day month when
-  // run outside UTC. Harmless on Vercel (UTC) and at day 25, but it silently
-  // mis-clamped day-29/30/31 schedules in local development and testing.
-  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
-}
-
-/**
- * The day-of-month a rolling-monthly schedule publishes on.
- *
- * This MUST be stable across runs. It used to be `now.getUTCDate()` — today's date —
- * and because this cron runs every day, every run anchored a brand-new monthly
- * series on a different day: run on the 25th and you get the 25th of each month,
- * run on the 26th and you get the 26th as well, and so on. After a week of runs a
- * "monthly" client had seven consecutive publish dates, repeating every month —
- * a week-long burst once a month instead of one post a month.
- *
- * Preference order: the explicitly configured monthly_publish_day, then the day
- * component of the schedule's start date (what the Start date field in the UI
- * means), and only then today — which is now merely a last resort for a client
- * with neither configured, rather than the normal path.
- */
-function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: string | null, now: Date): number {
-  if (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31) return monthlyPublishDay
-  if (startDate) {
-    const d = new Date(startDate + 'T00:00:00Z')
-    if (!Number.isNaN(d.getTime())) return d.getUTCDate()
-  }
-  // Last resort, and it is the ORIGINAL BUG: with no anchor the day-of-month is
-  // whatever today happens to be, and because this cron runs every two hours, each
-  // new calendar day starts a fresh monthly series — producing a run of consecutive
-  // publish dates that repeats every month. Nothing can be done about it here without
-  // an anchor, but it must not fail silently the way it did before: this is the one
-  // configuration that still reproduces the burst, so say so loudly enough to find
-  // in the logs. Fix by setting content_settings.monthly_publish_day (or a
-  // schedule_start_date) for the client.
-  console.warn(
-    `[content-topics cron] MONTHLY CLIENT HAS NO ANCHOR — neither monthly_publish_day nor ` +
-    `schedule_start_date is set, so the publish day falls back to today (${now.getUTCDate()}) ` +
-    `and WILL drift on every calendar day, recreating the burst. Set monthly_publish_day.`,
-  )
-  return now.getUTCDate()
-}
-
-function computeFutureSlots(
-  frequency: string,
-  dayOfWeek: number,
-  weeksLookahead: number,
-  monthlyPublishDay: number | null = null,
-  scheduleStartDate: string | null = null,
-): string[] {
-  const now  = new Date()
-  const end  = new Date(now.getTime() + weeksLookahead * 7 * 86_400_000)
-  const slots: string[] = []
-
-  if (frequency === 'daily') {
-    let cur = new Date(now.getTime() + 86_400_000)
-    while (cur <= end) { slots.push(cur.toISOString().slice(0, 10)); cur = new Date(cur.getTime() + 86_400_000) }
-    return slots
-  }
-
-  if (frequency === 'weekly' || frequency === 'biweekly') {
-    const interval = frequency === 'biweekly' ? 14 : 7
-    let cur = new Date(now)
-    const daysUntil = (dayOfWeek - cur.getUTCDay() + 7) % 7 || 7
-    cur = new Date(cur.getTime() + daysUntil * 86_400_000)
-    while (cur <= end) { slots.push(cur.toISOString().slice(0, 10)); cur = new Date(cur.getTime() + interval * 86_400_000) }
-    return slots
-  }
-
-  if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
-    const targetDay = frequency === 'monthly_first' ? 1
-                    : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 28
-                    : rollingMonthlyDay(monthlyPublishDay, scheduleStartDate, now)
-    let y = now.getUTCFullYear(), m = now.getUTCMonth()
-    while (true) {
-      const candidate = new Date(Date.UTC(y, m, Math.min(targetDay, daysInMonth(y, m))))
-      if (candidate > end) break
-      if (candidate > now) slots.push(candidate.toISOString().slice(0, 10))
-      m++; if (m > 11) { m = 0; y++ }
-    }
-    return slots
-  }
-
-  return []
-}
+import { getCycleDays, computeFutureSlots } from '@/lib/content/scheduleSlots'
 
 // ── Cron handler ──────────────────────────────────────────────────────────────
 
@@ -329,60 +229,50 @@ export async function GET(request: NextRequest) {
       return d > 0 && d <= leadWindow
     })
 
-    // ── Silo auto-selection: pick least-covered active silo, filtered by active content types ──
-    let autoSiloId: string | undefined
-    let autoSiloTargetExists: boolean | undefined
-    let autoSiloTargetKeyword: string | undefined
-    {
-      // service_page and regular_page are now generated on-demand via the
-      // Page Generation Wizard — they no longer participate in automated silo discovery.
-      // The post-generation loop still processes any wizard-queued approved topics of those types.
-      void generate_service_pages  // suppress unused-var lint without removing the destructure
-      void generate_regular_pages
-      const activeContentTypes: string[] = ['blog']
-
-      const { data: activeSilos } = await db
+    // ── Priority set: the oldest active set with keywords left takes the date ──
+    // A person adds a set (a silo) to have those keywords written next, so an active set takes
+    // every new date until its keywords are used, oldest set first. Picked per date rather than
+    // once per run: a set that runs out mid-run hands the next date back to the usual selection.
+    //
+    // A hub-less set with no keywords left is skipped. Picking it made generation refuse ("every
+    // keyword in its queue has been used"), and every date for the client stayed empty for as
+    // long as the set stayed active.
+    //
+    // service_page and regular_page are generated on demand by the Page Generation Wizard and
+    // take no part here. The post-generation loop still processes approved topics of those types.
+    void generate_service_pages  // suppress unused-var lint without removing the destructure
+    void generate_regular_pages
+    type SiloCandidate = { id: string; target_exists: boolean; target_keyword: string | null; hub_page_url: string | null }
+    const pickSilo = async (): Promise<SiloCandidate | null> => {
+      const { data: activeSilos, error: silosErr } = await db
         .from('content_silos')
-        .select('id, content_type, target_exists, target_keyword, priority')
+        .select('id, target_exists, target_keyword, hub_page_url')
         .eq('client_id', client_id)
         .eq('status', 'active')
-        .in('content_type', activeContentTypes)
-        .order('priority', { ascending: true })
-
-      if (activeSilos && activeSilos.length > 0) {
-        type SiloCandidate = { id: string; content_type: string; target_exists: boolean; target_keyword: string | null; priority: number }
-        const siloList = activeSilos as SiloCandidate[]
-        const siloIds  = siloList.map(s => s.id)
-
-        const { data: clusterPosts } = await db
-          .from('content_posts')
-          .select('silo_id')
-          .in('silo_id', siloIds)
-          .in('status', ['for_review', 'approved', 'draft_saved', 'published', 'pending'])
-
-        const counts = new Map<string, number>(siloIds.map(id => [id, 0]))
-        for (const p of (clusterPosts ?? []) as { silo_id: string }[]) {
-          counts.set(p.silo_id, (counts.get(p.silo_id) ?? 0) + 1)
-        }
-
-        // Sort by priority ASC, then post count ASC (least-covered within same priority tier)
-        const ranked = [...siloList].sort((a, b) => {
-          const priDiff = a.priority - b.priority
-          if (priDiff !== 0) return priDiff
-          return (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0)
-        })
-
-        const chosen = ranked[0]
-        if (chosen) {
-          autoSiloId            = chosen.id
-          autoSiloTargetExists  = chosen.target_exists
-          autoSiloTargetKeyword = chosen.target_keyword ?? undefined
-          console.log(`[content-topics cron] auto-selected silo ${autoSiloId} (${chosen.content_type}, priority=${chosen.priority}, posts=${counts.get(autoSiloId) ?? 0}) for ${client_id}`)
-          if (!chosen.target_exists && chosen.target_keyword) {
-            console.log(`[content-topics cron] silo ${autoSiloId} hub not yet created — target_keyword: "${chosen.target_keyword}"`)
-          }
-        }
+        .eq('content_type', 'blog')
+        .order('priority',   { ascending: true })
+        .order('created_at', { ascending: true })
+      if (silosErr) {
+        console.warn(`[content-topics cron] silo read failed for ${client_id}, using the usual selection:`, silosErr.message)
+        return null
       }
+      const list = (activeSilos ?? []) as SiloCandidate[]
+      const hubless = list.filter(s => !s.hub_page_url).map(s => s.id)
+      const withKeywords = new Set<string>()
+      if (hubless.length > 0) {
+        const { data: left, error: leftErr } = await db
+          .from('content_silo_keywords')
+          .select('silo_id')
+          .in('silo_id', hubless)
+          .eq('selected', true)
+          .is('used_at', null)
+        if (leftErr) {
+          console.warn(`[content-topics cron] silo keyword read failed for ${client_id}, using the usual selection:`, leftErr.message)
+          return null
+        }
+        for (const k of (left ?? []) as { silo_id: string }[]) withKeywords.add(k.silo_id)
+      }
+      return list.find(s => s.hub_page_url || withKeywords.has(s.id)) ?? null
     }
 
     // ── Slots a human deliberately emptied — never refill them ───────────────
@@ -448,7 +338,9 @@ export async function GET(request: NextRequest) {
       if (needed <= 0) continue
 
       try {
-        const result = await generateTopicsForClient(db, client_id, needed, slot, { suppressEmail: true, siloId: autoSiloId })
+        const silo = await pickSilo()
+        if (silo) console.log(`[content-topics cron] slot ${slot} for ${client_id} comes from silo ${silo.id}`)
+        const result = await generateTopicsForClient(db, client_id, needed, slot, { suppressEmail: true, siloId: silo?.id })
         // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
         // saw a refused run. A client could produce nothing every two hours forever and the only
         // trace was the absence of topics. Say why.
@@ -465,17 +357,17 @@ export async function GET(request: NextRequest) {
           topicsGenerated.push(`${client_id}:${slot}`)
 
           // Flip target_exists=true if we just generated hub topic for this silo
-          if (autoSiloId && autoSiloTargetExists === false && autoSiloTargetKeyword) {
+          const hubKeyword = silo?.target_exists === false ? silo.target_keyword?.toLowerCase() : undefined
+          if (silo && hubKeyword) {
             const hubTopic = result.topics.find(t =>
-              t.target_keyword?.toLowerCase().includes(autoSiloTargetKeyword!.toLowerCase()) ||
-              autoSiloTargetKeyword!.toLowerCase().includes((t.target_keyword ?? '').toLowerCase())
+              t.target_keyword?.toLowerCase().includes(hubKeyword) ||
+              hubKeyword.includes((t.target_keyword ?? '').toLowerCase())
             )
             if (hubTopic) {
-              await db.from('content_silos').update({ target_exists: true }).eq('id', autoSiloId)
-              console.log(`[content-topics cron] flipped target_exists=true for silo ${autoSiloId} (hub topic: "${hubTopic.topic}")`)
-              autoSiloTargetExists = true
+              await db.from('content_silos').update({ target_exists: true }).eq('id', silo.id)
+              console.log(`[content-topics cron] flipped target_exists=true for silo ${silo.id} (hub topic: "${hubTopic.topic}")`)
             } else {
-              console.warn(`[content-topics cron] silo ${autoSiloId} hub not found in generated topics — target_exists not flipped`)
+              console.warn(`[content-topics cron] silo ${silo.id} hub not found in generated topics — target_exists not flipped`)
             }
           }
         }
