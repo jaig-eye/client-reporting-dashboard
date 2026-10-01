@@ -112,6 +112,12 @@ export default function ClientContentTabPanel({
 
   const reviewBadge = overviewStats.forReviewPostsCount + overviewStats.saForReviewPostsCount
 
+  // The same test the Pipeline's plan card uses: any topic or post that wasn't turned down means
+  // the plan is under way, and the wizard's last step stops offering to start it.
+  const planActive = overviewStats.upcomingTopicsCount + overviewStats.recentPostsCount
+    + overviewStats.pendingTopicsCount + overviewStats.approvedTopicsCount
+    + overviewStats.forReviewPostsCount + overviewStats.publishedPostsCount > 0
+
   const TABS: TabDef[] = [
     { id: 'pipeline',  label: 'Pipeline',  icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
     { id: 'keywords',  label: 'Keywords',  icon: <MagnifyingGlass size={22} weight="duotone" /> },
@@ -140,6 +146,7 @@ export default function ClientContentTabPanel({
         <ClientContentSetupWizard
           clientId={clientId}
           clientName={clientName}
+          planActive={planActive}
           onComplete={() => { setShowWizard(false); setResearchEpoch(e => e + 1); router.refresh() }}
         />
       )}

@@ -79,6 +79,8 @@ interface Props {
   clientId:   string
   clientName: string
   onComplete: () => void
+  /** The client's content plan is already under way: the last step saves, and starts nothing. */
+  planActive?: boolean
 }
 
 const TOTAL_STEPS = 9
@@ -97,7 +99,7 @@ const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','
 
 // ─── Wizard ───────────────────────────────────────────────────────────────────
 
-export default function ClientContentSetupWizard({ clientId, clientName, onComplete }: Props) {
+export default function ClientContentSetupWizard({ clientId, clientName, onComplete, planActive = false }: Props) {
   const [step, setStep] = useState(1)
 
   // Step 1 state
@@ -865,6 +867,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               hasResearch={(research?.keywords.length ?? 0) > 0}
               saving={saving}
               saveMsg={saveMsg}
+              planActive={planActive}
               onSave={handleSave}
               onSaveAndGenerate={handleSaveAndGenerate}
             />
@@ -1975,8 +1978,9 @@ function LoadingRow({ label }: { label: string }) {
 
 // ─── Step 8: Ready ────────────────────────────────────────────────────────────
 
-function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearch, saving, saveMsg, onSave, onSaveAndGenerate }: {
+function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearch, saving, saveMsg, planActive, onSave, onSaveAndGenerate }: {
   clientName: string
+  planActive: boolean
   brand: BrandDna
   schedule: Schedule
   pagesCount: number
@@ -2005,7 +2009,26 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
   return (
     <div>
       <StepTitle>Setup complete!</StepTitle>
-      <StepSub>{clientName} is ready for AI content generation.</StepSub>
+      <StepSub>
+        {planActive
+          ? `${clientName}'s content plan is already running. Saving updates the settings it follows.`
+          : `${clientName} is ready for AI content generation.`}
+      </StepSub>
+
+      {/* A running plan is not started again from here — that only re-asked for dates the plan
+          already fills. Say what saving does to it instead. */}
+      {planActive && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '0.75rem 0.875rem', marginBottom: 16, border: '1px solid var(--border)', borderLeft: `3px solid ${schedule.autoGenerate ? 'var(--green)' : 'var(--amber)'}`, borderRadius: 8, background: 'var(--bg-subtle)' }}>
+          <span className={`badge ${schedule.autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem', flexShrink: 0, marginTop: 1 }}>
+            {schedule.autoGenerate ? 'Running' : 'Paused'}
+          </span>
+          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            {schedule.autoGenerate
+              ? 'Dates already planned stay as they are. New dates follow these settings as they come up.'
+              : 'Automatic planning is off, so no new dates fill in on their own. Dates already planned stay as they are.'}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
@@ -2043,19 +2066,21 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
         <button
           onClick={onSave}
           disabled={saving}
-          className="btn btn-secondary"
+          className={planActive ? 'btn btn-primary' : 'btn btn-secondary'}
           style={{ fontSize: '0.875rem', flex: 1 }}
         >
           {saving ? 'Saving…' : 'Save Setup'}
         </button>
-        <button
-          onClick={onSaveAndGenerate}
-          disabled={saving}
-          className="btn btn-primary"
-          style={{ fontSize: '0.875rem', flex: 2 }}
-        >
-          {saving ? 'Saving…' : 'Save & Generate First Topics'}
-        </button>
+        {!planActive && (
+          <button
+            onClick={onSaveAndGenerate}
+            disabled={saving}
+            className="btn btn-primary"
+            style={{ fontSize: '0.875rem', flex: 2 }}
+          >
+            {saving ? 'Saving…' : 'Save & Generate First Topics'}
+          </button>
+        )}
       </div>
     </div>
   )
