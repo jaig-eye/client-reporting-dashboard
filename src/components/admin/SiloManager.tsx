@@ -43,11 +43,10 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return body.error ?? `${fallback} (HTTP ${res.status})`
 }
 
-export default function SiloManager({ clientId, onGenerated, platform = 'wordpress' }: {
+export default function SiloManager({ clientId, onGenerated }: {
   clientId: string
   /** After topics are picked here, so the calendar below reloads. */
   onGenerated?: () => void
-  platform?: 'wordpress' | 'bigcommerce'
 }) {
   const [sets,      setSets]      = useState<PrioritySet[] | null>(null)
   const [slot,      setSlot]      = useState<NextSlot | null>(null)
@@ -199,7 +198,6 @@ export default function SiloManager({ clientId, onGenerated, platform = 'wordpre
       description:           draft.notes.trim() || null,
       hub_page_url:          draft.hubUrl.trim() || null,
       hub_page_title:        draft.hubTitle.trim() || null,
-      inject_internal_links: draft.linkTogether,
     }
     try {
       if (modal.mode === 'create') {
@@ -327,7 +325,6 @@ export default function SiloManager({ clientId, onGenerated, platform = 'wordpre
           key={modal.mode === 'edit' ? modal.set.id : 'create'}
           mode={modal.mode}
           initial={draftFrom(modal.mode === 'edit' ? modal.set : null)}
-          platform={platform}
           saving={saving}
           error={modalError}
           onCancel={() => setModal(null)}

@@ -418,7 +418,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       <SiloManager
         clientId={clientId}
         onGenerated={loadPipeline}
-        platform={clientSites.some(s => s.connectorType === 'bigcommerce') ? 'bigcommerce' : 'wordpress'}
       />
 
       {/* ── Content Calendar (cards) ───────────────────────────────────────── */}

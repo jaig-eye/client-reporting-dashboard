@@ -7,8 +7,14 @@
 // tier, and a cluster-keyword editor with its own titles, statuses and arrows. The one field that
 // decides what gets written — the keyword list — sat between them with no more weight than the rest.
 // It asks for three now: what the batch is about, the keywords (each one a post), and optional notes
-// for the writer. The main page and cross-linking sit under Advanced, because changing either changes
-// how the set behaves and most sets want neither. The legacy columns are left alone in the database.
+// for the writer. The main page sits under Advanced, because setting one changes how the set behaves
+// and most sets want none. The legacy columns are left alone in the database.
+//
+// "Link these posts to each other" is gone too. For a set without a main page it changed one
+// sentence of the topic prompt, topics carry no links, and the writer never saw it: each post is
+// written on its own with the client's usual internal links. Offering it as a choice promised
+// behaviour that does not exist, so the modal says what does happen instead, and the column keeps
+// its default.
 //
 // Editing covers the name, the notes and Advanced. Keywords are added and removed on the set's card,
 // where you can see which ones are already written.
@@ -17,29 +23,26 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { MAX_KEYWORDS, MAX_NOTES, parseKeywordLines, type PrioritySet } from '@/components/admin/priorityTopics'
 
 export interface SetDraft {
-  name:                string
-  keywords:            string
-  notes:               string
-  hubUrl:              string
-  hubTitle:            string
-  linkTogether:        boolean
+  name:     string
+  keywords: string
+  notes:    string
+  hubUrl:   string
+  hubTitle: string
 }
 
 export function draftFrom(set: PrioritySet | null): SetDraft {
   return {
-    name:         set?.name ?? '',
-    keywords:     '',
-    notes:        set?.description ?? '',
-    hubUrl:       set?.hub_page_url ?? '',
-    hubTitle:     set?.hub_page_title ?? '',
-    linkTogether: set ? set.inject_internal_links !== false : true,
+    name:     set?.name ?? '',
+    keywords: '',
+    notes:    set?.description ?? '',
+    hubUrl:   set?.hub_page_url ?? '',
+    hubTitle: set?.hub_page_title ?? '',
   }
 }
 
-export default function PrioritySetModal({ mode, initial, platform, saving, error, onCancel, onSave }: {
+export default function PrioritySetModal({ mode, initial, saving, error, onCancel, onSave }: {
   mode:     'create' | 'edit'
   initial:  SetDraft
-  platform: 'wordpress' | 'bigcommerce'
   saving:   boolean
   /** What went wrong on the last save, said here rather than in a toast behind the modal. */
   error:    string | null
@@ -47,12 +50,10 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
   onSave:   (draft: SetDraft) => void
 }) {
   const [draft, setDraft] = useState<SetDraft>(initial)
-  // Open on edit when either advanced setting is already in use, so it is not hidden from the
-  // person changing the set.
-  const [advanced, setAdvanced] = useState(!!(initial.hubUrl || initial.hubTitle) || !initial.linkTogether)
+  // Open on edit when a main page is already set, so it is not hidden from the person changing it.
+  const [advanced, setAdvanced] = useState(!!(initial.hubUrl || initial.hubTitle))
   const ids = useId()
   const nameRef = useRef<HTMLInputElement>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { nameRef.current?.focus() }, [])
   useEffect(() => {
@@ -76,7 +77,7 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
 
   return (
     <div className="pt-overlay" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onCancel() }}>
-      <div ref={dialogRef} className="pt-modal card" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="pt-modal card" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="pt-modal-head">
           <div>
             <h3 id={titleId} className="pt-modal-title">
@@ -84,7 +85,7 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
             </h3>
             <p className="pt-modal-lede">
               {mode === 'create'
-                ? 'Each keyword becomes one post. They take the next open publish dates, ahead of the usual topic picks, in the order you list them.'
+                ? 'Each keyword becomes one post. They go next in the queue: the next open publish dates, ahead of the usual topic picks, in the order you list them.'
                 : 'Keywords are added and removed on the set itself, where you can see which are already written.'}
             </p>
           </div>
@@ -107,7 +108,7 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
               onChange={e => set('name', e.target.value)}
               placeholder="e.g. Commercial landscaping"
             />
-            <p className="pt-help">A name for the team. It also shows on the topics this set produces.</p>
+            <p className="pt-help">A name for the team. It also shows on the topics and posts this set produces.</p>
           </div>
 
           {mode === 'create' && (
@@ -163,19 +164,24 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
                 <polyline points="9 6 15 12 9 18" />
               </svg>
               Advanced
-              {!advanced && (hubOn || !draft.linkTogether) && (
-                <span className="pt-adv-note">{[hubOn && 'main page set', !draft.linkTogether && 'linking off'].filter(Boolean).join(', ')}</span>
-              )}
+              {!advanced && hubOn && <span className="pt-adv-note">main page set</span>}
             </button>
+            {!advanced && (
+              <p className="pt-help">
+                Each keyword becomes its own post. Posts aren’t linked to each other unless you set a
+                main page under Advanced.
+              </p>
+            )}
 
             {advanced && (
               <div id={`${ids}-adv`} className="pt-adv-body">
                 <div className="pt-field">
-                  <span className="pt-label" id={`${ids}-hub-label`}>Main page these support <span className="pt-optional">optional</span></span>
+                  <span className="pt-label">Main page these support <span className="pt-optional">optional</span></span>
                   <p className="pt-help pt-help--above">
                     Set this only to build around one page. The set then stops writing one post per
-                    keyword: topics are planned around the page instead, every post links back to it, and
-                    it keeps going until you archive it.
+                    keyword: topics are planned around that page instead, every post links back to it
+                    and to the set’s posts already live, and it keeps going until you archive it.
+                    Without one, each keyword is its own post and they aren’t linked to each other.
                   </p>
                   <div className="pt-two">
                     <input
@@ -194,23 +200,6 @@ export default function PrioritySetModal({ mode, initial, platform, saving, erro
                       placeholder="e.g. Commercial Landscaping Services"
                     />
                   </div>
-                </div>
-
-                <div className="pt-field">
-                  <label className="pt-check">
-                    <input type="checkbox" checked={draft.linkTogether} onChange={e => set('linkTogether', e.target.checked)} />
-                    <span>Link these posts to each other</span>
-                  </label>
-                  {draft.linkTogether && platform === 'bigcommerce' && (
-                    <p className="pt-help pt-help--warn" role="note">
-                      This client publishes to BigCommerce. Links only work once a post has its real
-                      public address, and posts pushed before the permalink fix saved the store’s admin
-                      address instead. Run the permalink backfill first, or leave this off for now.
-                    </p>
-                  )}
-                  {!draft.linkTogether && (
-                    <p className="pt-help">Each post is written on its own, with no links to the others in this set.</p>
-                  )}
                 </div>
               </div>
             )}

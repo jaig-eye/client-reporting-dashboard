@@ -1163,7 +1163,6 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .pt-optional { margin-left: 4px; font-weight: 400; color: var(--text-muted); }
 .pt-help { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
 .pt-help--above { margin-top: -2px; }
-.pt-help--warn { color: var(--amber); }
 .pt-count { text-align: right; font-variant-numeric: tabular-nums; }
 .pt-count strong { color: var(--text-primary); font-weight: 600; }
 .pt-textarea { font-family: inherit; line-height: 1.55; resize: vertical; }
@@ -1171,8 +1170,6 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .pt-adv-note { font-weight: 400; color: var(--text-muted); }
 .pt-adv-body { display: flex; flex-direction: column; gap: 16px; }
 .pt-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.pt-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
-.pt-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
 
 @container (max-width: 520px) {
   .pt-section { padding: 14px; }
