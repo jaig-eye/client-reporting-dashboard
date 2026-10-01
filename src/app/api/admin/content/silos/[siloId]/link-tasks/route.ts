@@ -29,7 +29,10 @@ export async function PATCH(
     .select('pending_links')
     .eq('id', params.siloId)
     .maybeSingle()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[link-tasks] read failed:', error.message)
+    return NextResponse.json({ error: 'Could not read this set. Try again.' }, { status: 500 })
+  }
   if (!silo) return NextResponse.json({ error: 'Silo not found' }, { status: 404 })
 
   const entries = (Array.isArray((silo as { pending_links: unknown }).pending_links)
@@ -48,7 +51,10 @@ export async function PATCH(
     .from('content_silos')
     .update({ pending_links: next })
     .eq('id', params.siloId)
-  if (writeErr) return NextResponse.json({ error: writeErr.message }, { status: 500 })
+  if (writeErr) {
+    console.error('[link-tasks] write failed:', writeErr.message)
+    return NextResponse.json({ error: 'Could not save that. Try again.' }, { status: 500 })
+  }
 
   return NextResponse.json({ pending_links: next })
 }

@@ -13,6 +13,21 @@ import { nextOpenSlot } from '@/lib/content/scheduleSlots'
 /** Most keywords one request can add — enough for any real batch, short of an accidental paste of a list. */
 const MAX_KEYWORDS_PER_ADD = 200
 
+/**
+ * A main-page URL as stored: an absolute http(s) URL, or null. It is rendered as a link on the set's
+ * card and in its link tasks, and React renders a `javascript:` href as written — so anything else is
+ * refused rather than stored. Undefined means "not provided".
+ */
+function hubUrl(raw: unknown): { ok: true; value: string | null | undefined } | { ok: false } {
+  if (raw === undefined) return { ok: true, value: undefined }
+  const s = String(raw ?? '').trim()
+  if (!s) return { ok: true, value: null }
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:' ? { ok: true, value: u.toString() } : { ok: false }
+  } catch { return { ok: false } }
+}
+
 type ClusterKeyword = {
   id: string
   keyword: string
@@ -148,6 +163,8 @@ export async function POST(request: NextRequest) {
   const name = cleanQueueKeyword(body.name).slice(0, 120)
   if (!body.client_id || !name)
     return NextResponse.json({ error: 'Missing client_id or name' }, { status: 400 })
+  const hub = hubUrl(body.hub_page_url)
+  if (!hub.ok) return NextResponse.json({ error: 'The main page must be a full web address starting with http:// or https://' }, { status: 400 })
 
   if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
     return NextResponse.json({ error: `Invalid content_type. Must be one of: ${VALID_CONTENT_TYPES.join(', ')}` }, { status: 400 })
@@ -158,7 +175,7 @@ export async function POST(request: NextRequest) {
     .insert({
       client_id:        body.client_id,
       name,
-      hub_page_url:     body.hub_page_url     ?? null,
+      hub_page_url:     hub.value ?? null,
       hub_page_title:   body.hub_page_title   ?? null,
       central_entity:   body.central_entity   ?? null,
       description:      cleanSiloNotes(body.description),
@@ -272,6 +289,11 @@ export async function PATCH(request: NextRequest) {
     update.name = name
   }
   if ('description' in update) update.description = cleanSiloNotes(update.description)
+  if ('hub_page_url' in update) {
+    const hub = hubUrl(update.hub_page_url)
+    if (!hub.ok) return NextResponse.json({ error: 'The main page must be a full web address starting with http:// or https://' }, { status: 400 })
+    update.hub_page_url = hub.value ?? null
+  }
 
   if (Object.keys(update).length === 0)
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
