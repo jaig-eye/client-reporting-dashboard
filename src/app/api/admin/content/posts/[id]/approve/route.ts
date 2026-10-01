@@ -35,11 +35,17 @@ function rankMathMeta(p: Record<string, unknown>): Record<string, string> {
 }
 
 /**
- * Read the SEO meta back and report anything WordPress did not store.
+ * Store the Rank Math fields, and report any that did not stick.
  *
- * WordPress answers 200 whether it stored a meta key or discarded it, so a push can look
- * completely successful and set nothing. Rank Math never registers its keys with show_in_rest and
- * its own REST namespace is read-only, so an unprepared site drops all three every time.
+ * The upload carries them, but Rank Math does not register its keys with show_in_rest, so
+ * WordPress answers 200 and drops them: live client posts show the post title where the SEO title
+ * should be. So they are written through Rank Math's own endpoint on every push — idempotent, one
+ * request, and capability-checked, which an application password satisfies — with XML-RPC as the
+ * fallback where Rank Math's route is missing.
+ *
+ * Then it reads back what REST can see. On most sites Rank Math's keys are not readable over REST
+ * at all, and an unreadable key is not a failed one: when an endpoint accepted the write, it
+ * stands. Only a readable key with the wrong value, or a write nothing accepted, is reported.
  *
  * The result goes to the activity log as well as the console. A console warning is not a report:
  * it lives in Vercel logs nobody opens, which is how a year of posts went out with no SEO title
@@ -55,32 +61,34 @@ async function reportMetaMisses(
   },
 ): Promise<void> {
   try {
-    const missed = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, args.expected, args.postType)
-    if (missed.length === 0) return
+    const fields = Object.fromEntries(Object.entries(args.expected).filter(([, v]) => v))
+    if (Object.keys(fields).length === 0) return
 
-    // REST dropped these. Write them over XML-RPC, which does not consult show_in_rest, then ask
-    // WordPress again rather than trusting the write — the whole reason this code exists is that a
-    // successful-looking response proved nothing.
-    const repair: Record<string, string> = {}
-    for (const m of missed) repair[m.key] = m.sent
-
-    // Rank Math's own endpoint first. It is capability-checked rather than nonce-checked, so an
-    // application password satisfies it, and it exists wherever Rank Math does — which is a far
-    // larger set of sites than those with xmlrpc.php still switched on.
     let via: 'rankmath' | 'xmlrpc' | null = null
-    if (await rankMathUpdateMeta(args.siteUrl, args.auth, args.wpId, repair)) via = 'rankmath'
-    else if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair)) via = 'xmlrpc'
+    if (await rankMathUpdateMeta(args.siteUrl, args.auth, args.wpId, fields)) via = 'rankmath'
 
-    // Ask WordPress again rather than trusting either answer — a successful-looking response is
-    // precisely what proved nothing the first time round.
-    const stillMissing = via
-      ? await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType)
-      : missed
+    // null: nothing could be read back.
+    const read = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, fields, args.postType)
+    let stillMissing: { key: string; sent: string; stored: string; readable: boolean }[]
+    if (via) {
+      stillMissing = (read ?? []).filter(m => m.readable)
+    } else {
+      // Rank Math's route is missing or refused. XML-RPC, which does not consult show_in_rest, for
+      // whatever the read shows missing — every field, when nothing could be read.
+      const toRepair = read ?? Object.entries(fields).map(([key, sent]) => ({ key, sent, stored: '', readable: false }))
+      stillMissing = toRepair
+      if (toRepair.length > 0) {
+        const repair = Object.fromEntries(toRepair.map(m => [m.key, m.sent]))
+        if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair)) {
+          via = 'xmlrpc'
+          stillMissing = ((await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType)) ?? [])
+            .filter(m => m.readable)
+        }
+      }
+    }
 
     if (stillMissing.length === 0) {
-      console.log(
-        `[approve] repaired ${missed.length} SEO field(s) via ${via} for ${args.postType} ${args.wpId} on ${args.siteUrl}`,
-      )
+      if (via) console.log(`[approve] SEO fields written via ${via} for ${args.postType} ${args.wpId} on ${args.siteUrl}`)
       return
     }
 

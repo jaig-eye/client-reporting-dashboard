@@ -266,12 +266,12 @@ export interface WpPostPayload {
  * `show_in_rest`, answering 200 either way — so a push can look completely successful and set
  * nothing. This asks the question directly: fetch the post as the editor sees it and compare.
  *
- * A key that does not stick is repaired over XML-RPC — see lib/connectors/wordpressXmlrpc.ts.
- * Rank Math never registers these keys with `show_in_rest` and its own REST namespace is
- * read-only, so REST will always discard them; wp.editPost writes the meta directly instead.
+ * Rank Math never registers its keys with `show_in_rest`, so on most sites REST can neither store
+ * nor show them: such a key comes back `readable: false`, and its absence proves nothing about
+ * whether Rank Math's own endpoint stored it. Only a readable key that differs is a real miss.
  *
- * Best-effort by design. A site that refuses `context=edit`, a plugin that hides the field, or
- * any network failure returns an empty list rather than failing a publish that already worked.
+ * Best-effort by design. A site that refuses `context=edit`, or any network failure, returns null
+ * (nothing could be read) rather than failing a publish that already worked.
  */
 export async function verifyPostMeta(
   siteUrl: string,
@@ -280,7 +280,7 @@ export async function verifyPostMeta(
   expected: Record<string, string>,
   // Service-area pages carry the same Rank Math fields and live on a different REST route.
   postType: 'posts' | 'pages' = 'posts',
-): Promise<{ key: string; sent: string; stored: string }[]> {
+): Promise<{ key: string; sent: string; stored: string; readable: boolean }[] | null> {
   try {
     // The only fetch in this file that had no timeout, and it is awaited twice per push — so an
     // unresponsive client site hung the approve request AFTER the post was already live.
@@ -288,12 +288,12 @@ export async function verifyPostMeta(
       headers: wpHeaders(auth),
       signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
     })
-    if (!res.ok) return []
+    if (!res.ok) return null
     const data  = await res.json() as { meta?: Record<string, unknown> }
     const meta  = data.meta
-    // No meta object at all means the site doesn't expose it — that is not evidence of a problem.
-    if (!meta || typeof meta !== 'object') return []
-    const wrong: { key: string; sent: string; stored: string }[] = []
+    // No meta object at all means the site doesn't expose it — nothing could be read.
+    if (!meta || typeof meta !== 'object') return null
+    const wrong: { key: string; sent: string; stored: string; readable: boolean }[] = []
     // WordPress sanitizes on the way in — sanitize_text_field collapses whitespace — so a title
     // with a double space comes back legitimately different. Comparing raw would report that as
     // "not stored", and a report that cries wolf is worse than no report.
@@ -303,12 +303,13 @@ export async function verifyPostMeta(
       if (!sent) continue
       // A key absent from the response was never registered; a key present but different was
       // registered and then overwritten. Both are worth seeing, and the value says which.
+      const readable = Object.prototype.hasOwnProperty.call(meta, key)
       const stored = meta[key] == null ? '' : String(meta[key])
-      if (comparable(stored) !== comparable(sent)) wrong.push({ key, sent, stored })
+      if (comparable(stored) !== comparable(sent)) wrong.push({ key, sent, stored, readable })
     }
     return wrong
   } catch {
-    return []
+    return null
   }
 }
 
