@@ -17,6 +17,7 @@ import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
 import { injectNearbyLinks }   from '@/lib/content/injectNearbyLinks'
 import { styleTables, stripEditorialMarkers } from '@/lib/content/contentHtml'
 import { isPublicPermalink }   from '@/lib/content/postLinks'
+import { recordSiloLinkTasks } from '@/lib/content/siloLinkTasks'
 
 /**
  * The Rank Math block sent with every post and page.
@@ -952,74 +953,22 @@ export async function POST(
         .catch(() => {})
     }
 
-    // Auto-update WP hub page if this post belongs to a silo (fire-and-forget).
-    // p.silo_id is only populated once migration 149 (content_silos) is applied.
+    // A post from a set with a main page: record the links a person should add by hand — on the
+    // main page, and in the set's previous post — instead of editing the live main page. This used
+    // to append a "Related … Resources" list to the bottom of the hub page on WordPress, which put
+    // the link where nobody chose to put it. See lib/content/siloLinkTasks.
     //
-    // !isRepublish is essential now that re-pushing a live post is allowed. This
-    // block appends a link to the client's hub page and only checks for the
-    // section marker, never for whether the link is already there — and
-    // append_silo_pending_link is a raw JSONB concat with no uniqueness test. So
-    // without this guard, every re-push adds another duplicate <li> to a live
-    // page: push N times, get N copies. The BigCommerce counterpart already
-    // carries the same guard.
-    if ((p as Record<string, unknown>).silo_id && !isRepublish) {
-      ;(async () => {
-        try {
-          const { data: siloRaw } = await db
-            .from('content_silos')
-            .select('name, hub_page_url, central_entity, pending_links')
-            .eq('id', String(p.silo_id))
-            .single()
-          if (!siloRaw?.hub_page_url) return
-          const silo = siloRaw as { name: string; hub_page_url: string; central_entity: string | null; pending_links: { url: string; title: string; added_at: string }[] }
-          const hubSlug = silo.hub_page_url.replace(/\/$/, '').split('/').pop() ?? ''
-          if (!hubSlug) return
-          const creds    = Buffer.from(`${auth.username}:${auth.app_password}`).toString('base64')
-          const pagesRes = await fetchWithSiteCredentials(
-            `${siteUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(hubSlug)}&per_page=1`,
-            { headers: { Authorization: `Basic ${creds}` } }
-          )
-          if (!pagesRes.ok) return
-          const pages = (await pagesRes.json()) as { id: number; status: string; content: { rendered: string } }[]
-          if (!pages.length) return
-          const hubId        = pages[0].id
-          const hubStatus    = pages[0].status ?? 'draft'
-          const current      = pages[0].content?.rendered ?? ''
-          // A hub link is a PUBLIC href on the client's live site. The old
-          // `result.link || wpEditUrl` fallback wrote a wp-admin editor URL into
-          // that page — a login-gated 404 for every reader — and the same string
-          // then went into content_silos.pending_links and
-          // content_silo_pages.target_url, neither of which migration 202
-          // repairs. If WordPress did not return a real permalink there is
-          // nothing worth linking to, so skip rather than emit a broken link.
-          const clusterUrl   = result.link
-          if (!isPublicPermalink(clusterUrl)) {
-            console.warn(`[approve] silo hub link skipped for post ${id}: WordPress returned no public permalink`)
-            return
-          }
-          const clusterTitle = String(p.title ?? '')
-          const entity       = silo.central_entity || silo.name
-          const safeTitle    = clusterTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-          const safeUrl      = encodeURI(clusterUrl).replace(/"/g, '%22')
-          const linkHtml     = `<li><a href="${safeUrl}">${safeTitle}</a></li>`
-          const updatedContent = current.includes('<!-- silo-cluster-links -->')
-            ? current.replace(/<\/ul>\s*<!-- \/silo-cluster-links -->/, `${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`)
-            : `${current}\n<!-- silo-cluster-links -->\n<h3>Related ${entity} Resources</h3>\n<ul>\n${linkHtml}\n</ul>\n<!-- /silo-cluster-links -->`
-          await fetchWithSiteCredentials(`${siteUrl}/wp-json/wp/v2/pages/${hubId}`, {
-            method:  'POST',
-            headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ content: updatedContent, status: hubStatus }),
-          })
-          // Atomic append via RPC — prevents race condition when two cluster posts
-          // from the same silo are pushed in the same batch (fetch-spread-update would overwrite)
-          await db.rpc('append_silo_pending_link', {
-            silo_id: String(p.silo_id),
-            link: { url: clusterUrl, title: clusterTitle, added_at: new Date().toISOString() },
-          })
-        } catch (e) {
-          console.error('[approve] silo hub update failed:', e)
-        }
-      })()
+    // !isRepublish: re-pushing a live post must not ask for the same links again. Awaited — a
+    // few small queries — because work left running after the response can be cut off, and a
+    // lost entry is a link nobody is told to add.
+    if ((p as Record<string, unknown>).silo_id && !isRepublish && isPublicPermalink(result.link)) {
+      await recordSiloLinkTasks(db, {
+        siloId:  String(p.silo_id),
+        postId:  id,
+        url:     result.link,
+        title:   String(p.title ?? ''),
+        keyword: p.target_keyword ? String(p.target_keyword) : null,
+      }).catch(e => console.error('[approve] recording silo link tasks failed:', e))
     }
 
     // Update silo page status to published + store final URL (fire-and-forget)

@@ -10,6 +10,7 @@ import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { publishBCPage, updateBCPage, updateBCBlogPost, fetchBCPage, fetchBCStorefrontOrigin, bcPermalink } from '@/lib/connectors/bigcommerce'
 import { injectNearbyLinks } from '@/lib/content/injectNearbyLinks'
+import { recordSiloLinkTasks } from '@/lib/content/siloLinkTasks'
 import { stripEditorialMarkers } from '@/lib/content/contentHtml'
 
 function slugify(text: string): string {
@@ -32,7 +33,7 @@ export async function POST(
   // Selecting a non-existent column causes PostgREST to error → "Post not found" 404.
   const { data: post, error: postErr } = await db
     .from('content_posts')
-    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url, status')
+    .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url, status, silo_id')
     .eq('id', id)
     .maybeSingle()
 
@@ -202,13 +203,13 @@ export async function POST(
       injectNearbyLinks(id, String(p.client_id), p.service_page_url ? String(p.service_page_url) : null)
         .catch(() => {})
 
-      // Log cluster link to silo pending_links — atomic append to prevent race
-      // conditions. Only a real permalink is worth linking to, and only once.
+      // The links to add by hand for a post from a set with a main page (lib/content/siloLinkTasks).
+      // Only a real permalink is worth linking to, and only once.
       if (p.silo_id && publicUrl && !isRepublish) {
-        Promise.resolve(db.rpc('append_silo_pending_link', {
-          silo_id: String(p.silo_id),
-          link: { url: publicUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
-        })).catch(() => {})
+        await recordSiloLinkTasks(db, {
+          siloId: String(p.silo_id), postId: id, url: publicUrl,
+          title: String(p.title ?? ''), keyword: p.target_keyword ? String(p.target_keyword) : null,
+        }).catch(e => console.error('[publish-bigcommerce] recording silo link tasks failed:', e))
       }
 
       return NextResponse.json({ bc_post_id: bcPageId, bc_edit_url: bcEditUrl, published_url: publicUrl, republished: isRepublish })
@@ -277,13 +278,14 @@ export async function POST(
       meta: { title: p.title, bc_post_id: bcPostId, republished: isRepublish },
     })
 
-    // Log cluster link to silo pending_links — atomic append to prevent race
-    // conditions. Only a real permalink is worth linking to, and only once.
+    // The links to add by hand for a post from a set with a main page (lib/content/siloLinkTasks).
+    // Only a real permalink is worth linking to, and only once. silo_id was missing from this
+    // route's select until now, so this never ran for a BigCommerce post.
     if (p.silo_id && publicUrl && !isRepublish) {
-      Promise.resolve(db.rpc('append_silo_pending_link', {
-        silo_id: String(p.silo_id),
-        link: { url: publicUrl, title: String(p.title ?? ''), added_at: new Date().toISOString() },
-      })).catch(() => {})
+      await recordSiloLinkTasks(db, {
+        siloId: String(p.silo_id), postId: id, url: publicUrl,
+        title: String(p.title ?? ''), keyword: p.target_keyword ? String(p.target_keyword) : null,
+      }).catch(e => console.error('[publish-bigcommerce] recording silo link tasks failed:', e))
     }
 
     // The response always carries the key — the conditional spread above is a
