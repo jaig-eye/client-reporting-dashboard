@@ -96,7 +96,7 @@ export default function ClientRawData({ clientId }: { clientId: string }) {
           className="btn btn-primary"
           style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
         >
-          {loading ? 'Loading…' : 'Load Data'}
+          {loading ? 'Loading…' : 'Load data'}
         </button>
 
         {loaded && (

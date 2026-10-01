@@ -1,5 +1,6 @@
 'use client'
 
+import { SkRows } from '@/components/ui/Skeleton'
 import { useEffect, useState, useCallback } from 'react'
 
 interface CampaignRow {
@@ -58,7 +59,7 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
     }
   }, [clientId])
 
-  if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading campaigns…</p>
+  if (loading) return <SkRows rows={4} tile={false} />
   if (error)   return <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>
   if (campaigns.length === 0) return (
     <p className="text-xs py-3 px-4 rounded" style={{
@@ -147,7 +148,7 @@ function ModeToggle({ value, onChange }: { value: string; onChange: (v: string) 
               border: 'none',
               cursor: 'pointer',
               fontWeight: active ? 600 : 400,
-              background:  active ? (mode === 'ecommerce' ? 'var(--blue)' : '#16a34a') : 'transparent',
+              background:  active ? (mode === 'ecommerce' ? 'var(--blue)' : 'var(--green)') : 'transparent',
               color:       active ? '#fff' : 'var(--text-muted)',
               transition:  'all 0.12s',
             }}

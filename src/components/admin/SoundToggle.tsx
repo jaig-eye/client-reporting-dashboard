@@ -73,25 +73,13 @@ export default function SoundToggle() {
     }
   }
 
-  const accentColor = 'var(--accent, var(--blue))'
-  const mutedColor  = 'var(--text-muted)'
-
   return (
     <button
+      type="button"
       onClick={toggle}
-      title={armed ? 'Payment sounds enabled — click to disable' : 'Enable payment sounds'}
-      className="focus-ring w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm"
-      style={{
-        color:      armed ? accentColor : mutedColor,
-        background: armed ? 'var(--accent-subtle, rgba(37,99,235,0.06))' : 'transparent',
-        border:     'none',
-        cursor:     'pointer',
-        textAlign:  'left',
-        transition: 'background 0.1s, color 0.1s',
-        opacity:    armed ? 1 : 0.65,
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = armed ? 'var(--accent-subtle, rgba(37,99,235,0.08))' : 'var(--bg-subtle)'; e.currentTarget.style.opacity = '1' }}
-      onMouseLeave={e => { e.currentTarget.style.background = armed ? 'var(--accent-subtle, rgba(37,99,235,0.06))' : 'transparent'; e.currentTarget.style.opacity = armed ? '1' : '0.65' }}
+      aria-pressed={armed}
+      title={armed ? 'Payment sounds are on. Click to turn them off.' : 'Play a sound when a payment arrives'}
+      className={`adm-um-item${armed ? ' adm-um-item--on' : ''}`}
     >
       <span className="flex items-center" style={{ width: '1rem', justifyContent: 'center' }}>
         {armed
@@ -99,7 +87,7 @@ export default function SoundToggle() {
           : <SpeakerX    size={15} aria-hidden />
         }
       </span>
-      {armed ? 'Sounds on' : 'Sounds off'}
+      {armed ? 'Payment sounds on' : 'Payment sounds off'}
     </button>
   )
 }

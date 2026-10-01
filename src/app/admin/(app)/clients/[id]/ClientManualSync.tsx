@@ -112,7 +112,7 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
   }
 
   function statusIcon(s: string) {
-    if (s === 'success') return <span style={{ color: 'var(--green)' }}>✓</span>
+    if (s === 'success') return <span style={{ color: 'var(--green-fg)' }}>✓</span>
     if (s === 'error')   return <span style={{ color: 'var(--red)' }}>✗</span>
     if (s === 'running') return <span style={{ color: 'var(--blue)' }}>⏳</span>
     return <span style={{ color: 'var(--text-faint)' }}>⬜</span>
@@ -127,8 +127,9 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
             key={job.label}
             onClick={() => handleSync(job)}
             disabled={isSyncing}
-            className="btn btn-primary"
-            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem', opacity: isSyncing ? 0.6 : 1 }}
+            // Secondary: six equal choices, none of them the one main action. The backfills are long
+            // and heavy, so they read as the outline buttons they are rather than a wall of blue.
+            className="btn btn-secondary btn-sm"
           >
             {isSyncing && activeLabel === job.label ? 'Syncing…' : job.label}
           </button>
@@ -240,7 +241,7 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
         </p>
       )}
       {status === 'error' && (
-        <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>
+        <p className="text-xs" style={{ color: 'var(--red-fg)' }}>{error}</p>
       )}
     </div>
   )

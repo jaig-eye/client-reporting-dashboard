@@ -21,6 +21,8 @@
   --shadow-md: 0 10px 28px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 24px 64px rgba(15, 23, 42, 0.22), 0 4px 14px rgba(15, 23, 42, 0.10);
   --ring:      0 0 0 2px var(--bg-surface), 0 0 0 4px var(--accent);
+  /* Behind dialogs and the phone drawer. */
+  --scrim:     rgba(15, 23, 42, 0.45);
 
   --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
 
@@ -45,6 +47,7 @@
 }
 
 :root[data-theme="dark"] {
+  --scrim: rgba(0, 0, 0, 0.6);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02);
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
@@ -135,7 +138,7 @@
   }
   .adm[data-drawer="open"] .adm-sidebar { transform: none; }
   .adm-scrim {
-    display: block; position: fixed; inset: 0; z-index: 65; background: rgba(15, 23, 42, 0.42);
+    display: block; position: fixed; inset: 0; z-index: 65; background: var(--scrim);
     opacity: 0; pointer-events: none; transition: opacity 0.2s;
   }
   .adm[data-drawer="open"] .adm-scrim { opacity: 1; pointer-events: auto; }
@@ -383,14 +386,15 @@
   display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 16px 20px;
   background: var(--bg-surface); color: inherit; text-decoration: none;
 }
-/* The last stat stretches to the row's end, so an odd count never leaves an empty grey cell. */
-.cl-stat:last-child { grid-column-end: -1; }
 .cl-stat--link { transition: background 0.12s; }
 .cl-stat--link:hover { background: var(--bg-hover); }
 .cl-stat--link:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .cl-stat-label { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; font-weight: 500; color: var(--text-muted); }
 .cl-stat-value { font-size: 1.625rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 @media (max-width: 1023px) { .cl-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Five stats on three or two columns: the fifth spans two, so no empty grey cell is left. (A bare
+   grid-column-end: -1 does not do this — with an auto start it still spans one column.) */
+@media (max-width: 1023px) { .cl-stat:nth-child(5):last-child { grid-column: auto / span 2; } }
 @media (max-width: 639px)  {
   .cl-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cl-stat { padding: 14px 16px; }
@@ -513,9 +517,8 @@
 
 .int-modal-scrim {
   position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 16px;
-  background: rgba(15, 23, 42, 0.5); animation: int-fade 0.15s ease-out;
+  background: var(--scrim); animation: int-fade 0.15s ease-out;
 }
-:root[data-theme="dark"] .int-modal-scrim { background: rgba(0, 0, 0, 0.6); }
 @keyframes int-fade { from { opacity: 0; } to { opacity: 1; } }
 .int-modal {
   position: relative; width: 100%; max-width: 460px; max-height: calc(100vh - 32px); overflow: auto;
@@ -628,3 +631,33 @@
   .us-bar-row { grid-template-columns: minmax(0, 1fr) auto; }
   .us-bar-track { grid-column: 1 / -1; order: 3; }
 }
+
+/* Sidebar account row and its menu (UserMenu, SoundToggle). */
+.adm-um { position: relative; }
+.adm-um-row { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--radius); }
+.adm-um-avatar { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.adm-um-avatar--initials { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 0.72rem; font-weight: 700; }
+.adm-um-text { flex: 1; min-width: 0; }
+.adm-um-name, .adm-um-email { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; }
+.adm-um-name { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.adm-um-email { font-size: 0.72rem; color: var(--text-faint); }
+.adm-um-trigger {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0;
+  border: none; border-radius: var(--radius); background: none; color: var(--text-muted); cursor: pointer;
+}
+.adm-um-trigger:hover, .adm-um-trigger[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.adm-um-trigger:focus-visible { outline: none; box-shadow: var(--ring); }
+.adm-um-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--sidebar-bg); }
+.adm-um-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; z-index: 60; padding: 4px;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  animation: ui-pop 0.12s var(--ease-out);
+}
+.adm-um-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: none; border-radius: 7px;
+  background: none; font: inherit; font-size: 0.8125rem; color: var(--text-secondary); text-decoration: none; text-align: left; cursor: pointer;
+}
+.adm-um-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.adm-um-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.adm-um-item:disabled { opacity: 0.6; cursor: default; }
+.adm-um-item--on { color: var(--accent); }

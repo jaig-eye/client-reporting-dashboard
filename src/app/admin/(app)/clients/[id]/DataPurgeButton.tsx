@@ -55,7 +55,8 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
     setDeleteError('')
     const res = await fetch(`/api/admin/clients/${clientId}`, { method: 'DELETE' })
     if (res.ok) {
-      window.location.href = '/admin/dashboard'
+      router.push('/admin/dashboard')
+      router.refresh()
     } else {
       const d = await res.json().catch(() => ({}))
       setDeleteError(d.error || 'Failed to delete client')
@@ -141,7 +142,7 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
         {deleteStep === 'confirm' ? (
           <div
             className="rounded-xl p-4"
-            style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca' }}
+            style={{ background: 'var(--red-subtle)', border: '1px solid var(--red-border)' }}
           >
             <p className="text-sm font-medium mb-1" style={{ color: 'var(--red)' }}>
               Delete {clientName}?
