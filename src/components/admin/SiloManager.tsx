@@ -107,7 +107,7 @@ export default function SiloManager({ clientId, onGenerated }: {
     if (arrived || sets === null || typeof window === 'undefined') return
     setArrived(true)
     if (window.location.hash === `#${SECTION_ID}`) {
-      document.getElementById(SECTION_ID)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      document.getElementById(SECTION_ID)?.scrollIntoView({ block: 'start' })
     }
   }, [sets, arrived])
 
@@ -289,7 +289,7 @@ export default function SiloManager({ clientId, onGenerated }: {
         </div>
       ) : sets.length === 0 ? (
         <p className="pt-empty">
-          Nothing is prioritised for this client. Add a batch — say, ten commercial landscaping
+          Nothing is prioritized for this client. Add a batch — say, ten commercial landscaping
           keywords — and they take the next publish dates, one post each.
         </p>
       ) : (
