@@ -12,6 +12,7 @@ import MonthlyReviewSession    from '@/components/admin/MonthlyReviewSession'
 import { getMonthlyReviewData } from '@/lib/content/monthlyReviewData'
 import PriorityTopicsOverview, { type OverviewClient } from '@/components/admin/PriorityTopicsOverview'
 import { nextOpenSlot }         from '@/lib/content/scheduleSlots'
+import { openLinkCount }        from '@/components/admin/priorityTopics'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,13 +31,12 @@ export default async function ContentPage({
 
   const db = createAdminClient()
 
-  // Existing 5-element query (typing must stay intact — adding to this array breaks TS tuple inference)
+  // One parallel read (typing must stay intact — adding to this array breaks TS tuple inference)
   const [
     allClientsRes,
     postsRes,
     scheduledTopicsRes,
     silosRes,
-    siloPostsRes,
   ] = await Promise.all([
     db.from('clients').select('id, name').order('name'),
     db.from('content_posts')
@@ -47,10 +47,9 @@ export default async function ContentPage({
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(500),
-    // In the order the topic run takes them (priority, then oldest first), so "Next up" here is the
-    // set that really goes next.
-    db.from('content_silos').select('id, client_id, name, hub_page_url, hub_page_title, content_type').neq('status', 'archived').order('priority', { ascending: true }).order('created_at', { ascending: true }),
-    db.from('content_posts').select('silo_id, status').not('silo_id', 'is', null).limit(2000),
+    // Oldest first — the order the topic run takes them — so "Next up" here is the set that really
+    // goes next. pending_links is the hand-linking checklist for sets with a main page.
+    db.from('content_silos').select('id, client_id, name, hub_page_url, hub_page_title, content_type, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
   ])
 
   // Monthly-review window data — only fetched when the Review view is active.
@@ -136,14 +135,9 @@ export default async function ContentPage({
   ]
 
   // Priority topics (content_silos): read in full only when that view is open.
-  type SiloRow = { id: string; client_id: string; name: string; hub_page_url: string | null; hub_page_title: string | null; content_type: string | null }
   const silos = (silosRes.data ?? []) as SiloRow[]
-  const siloPostCounts: Record<string, number> = {}
-  for (const p of (siloPostsRes.data ?? []) as { silo_id: string }[]) {
-    siloPostCounts[p.silo_id] = (siloPostCounts[p.silo_id] ?? 0) + 1
-  }
   const overviewClients = activeView === 'silos'
-    ? await priorityOverview(db, silos, siloPostCounts, allClientsMap)
+    ? await priorityOverview(db, silos, allClientsMap)
     : []
 
   // The view's id stays "silos" so existing links keep working; its name follows the Pipeline's.
@@ -227,10 +221,11 @@ const PAGE = 1000
  * "Written" counts keywords with a post, "in progress" ones whose topic is picked but not yet
  * written — the same split the Pipeline's card makes, so the two never disagree.
  */
+type SiloRow = { id: string; client_id: string; name: string; hub_page_url: string | null; hub_page_title: string | null; content_type: string | null; pending_links: unknown[] | null }
+
 async function priorityOverview(
   db: ReturnType<typeof createAdminClient>,
-  silos: { id: string; client_id: string; name: string; hub_page_url: string | null; hub_page_title: string | null; content_type: string | null }[],
-  postCounts: Record<string, number>,
+  silos: SiloRow[],
   clientNames: Map<string, string>,
 ): Promise<OverviewClient[]> {
   if (silos.length === 0) return []
@@ -284,7 +279,7 @@ async function priorityOverview(
           id: s.id, name: s.name, contentType: s.content_type ?? 'blog',
           hubUrl: s.hub_page_url, hubTitle: s.hub_page_title,
           stats: st ? { total: st.total, written: st.written, picked: st.picked, nextKeyword: st.nextKeyword } : null,
-          posts: postCounts[s.id] ?? 0,
+          linksOpen: s.hub_page_url ? openLinkCount(s) : 0,
         }
       }),
     }))

@@ -17,8 +17,8 @@
 
 import { useState, type ReactNode } from 'react'
 import {
-  canPickNow, fmtPublishDay, isHub, parseKeywordLines, stateOf, takesDates,
-  type KeywordState, type NextSlot, type PrioritySet, type SetKeyword,
+  canPickNow, fmtPublishDay, isHub, linkTasksOf, parseKeywordLines, stateOf, takesDates,
+  type KeywordState, type LinkTask, type NextSlot, type PrioritySet, type SetKeyword,
 } from '@/components/admin/priorityTopics'
 
 /** Keyword rows shown before "Show all", so a long batch does not push the calendar off the page. */
@@ -28,7 +28,7 @@ export interface CardNotice { tone: 'success' | 'warning' | 'error' | 'neutral';
 
 export default function PrioritySetCard({
   set, keywords, keywordsError, isNext, aheadOf, slot, picking, notice,
-  onReloadKeywords, onAddKeywords, onRemoveKeyword, onPickNow, onEdit, onArchive,
+  onReloadKeywords, onAddKeywords, onRemoveKeyword, onPickNow, onEdit, onArchive, onLinkDone,
 }: {
   set:            PrioritySet
   /** Null while loading. Only keywords in the queue — `selected` — as the counts and the topic run use. */
@@ -37,7 +37,7 @@ export default function PrioritySetCard({
   /** This set takes the client's next open date. */
   isNext:         boolean
   /** When another set is ahead of this one: its name and how many keywords it has left. */
-  aheadOf:        { name: string; left: number; hub: boolean } | null
+  aheadOf:        { name: string; left: number } | null
   slot:           NextSlot | null
   picking:        boolean
   notice:         CardNotice | null
@@ -47,6 +47,8 @@ export default function PrioritySetCard({
   onPickNow:      () => void
   onEdit:         () => void
   onArchive:      () => void
+  /** Mark one link from the "Finish linking" checklist added, or take that back. */
+  onLinkDone:     (task: LinkTask, done: boolean) => void
 }) {
   const [draft, setDraft]   = useState('')
   const [adding, setAdding] = useState(false)
@@ -61,14 +63,16 @@ export default function PrioritySetCard({
   const total   = keywords?.length ?? set.keywordTotal
   const written = counts.written + counts.live
   const waiting = keywords ? counts.waiting : set.keywordUnused
-  const usedUp  = !hub && total > 0 && waiting === 0
+  const usedUp  = total > 0 && waiting === 0
   const allDone = usedUp && counts.picked === 0 && keywords !== null
-  const empty   = !hub && total === 0
+  const empty   = total === 0
   const firstWaiting = keywords?.find(k => stateOf(k) === 'waiting')?.id ?? null
+  const linkTasks = hub ? linkTasksOf(set) : []
+  const linksOpen = linkTasks.filter(t => !t.doneAt).length
 
   // Done sets fold their list away; everything else shows it, because a batch someone just added is
   // the thing they came here to see.
-  const [listOpen, setListOpen] = useState(!usedUp && !hub)
+  const [listOpen, setListOpen] = useState(!usedUp)
   const shown = keywords ? (showAll ? keywords : keywords.slice(0, FIRST_ROWS)) : []
   const pickNow = !pages && !usedUp && !empty && canPickNow(slot)
 
@@ -83,7 +87,6 @@ export default function PrioritySetCard({
 
   const status: { label: string; tone: string } =
     pages    ? { label: 'Service pages', tone: 'badge-gray' }
-    : hub    ? { label: 'Main page', tone: 'badge-blue' }
     : empty  ? { label: 'No keywords yet', tone: 'badge-amber' }
     : allDone ? { label: 'All written', tone: 'badge-green' }
     : usedUp ? { label: 'All picked', tone: 'badge-gray' }
@@ -105,7 +108,7 @@ export default function PrioritySetCard({
       </header>
 
       {/* ── Progress ───────────────────────────────────────────────────── */}
-      {!hub && total > 0 && (
+      {total > 0 && (
         <div className="pt-progress-row">
           <div
             className="pt-progress"
@@ -119,6 +122,7 @@ export default function PrioritySetCard({
             {keywords === null
               ? `${total - waiting} of ${total} used`
               : <><strong>{written} of {total}</strong> written{counts.picked > 0 && `, ${counts.picked} in progress`}</>}
+            {linksOpen > 0 && <span className="pt-links-due"> · {linksOpen} link{linksOpen === 1 ? '' : 's'} to add</span>}
           </span>
         </div>
       )}
@@ -144,14 +148,14 @@ export default function PrioritySetCard({
 
       {hub && (
         <p className="pt-hub">
-          Topics are planned around{' '}
+          Main page:{' '}
           {set.hub_page_url
-            ? <a href={set.hub_page_url} target="_blank" rel="noopener noreferrer">{set.hub_page_title || set.hub_page_url}</a>
+            ? <a href={set.hub_page_url} target="_blank" rel="noopener noreferrer">{set.hub_page_title || set.hub_page_url}<span aria-hidden> ↗</span></a>
             : set.hub_page_title}
-          , each linking back to it. {set.clusterCount > 0 ? `${set.clusterCount} post${set.clusterCount === 1 ? '' : 's'} so far.` : 'None written yet.'}
-          {(set.pending_links?.length ?? 0) > 0 && ` ${set.pending_links!.length} of them aren’t linked from that page yet.`}
+          . Each post links to it and to this set’s earlier live posts; the links back are yours to add, listed below as posts go live.
         </p>
       )}
+      {hub && linkTasks.length > 0 && <FinishLinking tasks={linkTasks} onDone={onLinkDone} />}
 
       {/* ── Keywords ───────────────────────────────────────────────────── */}
       {keywordsError ? (
@@ -165,7 +169,7 @@ export default function PrioritySetCard({
         </div>
       ) : keywords.length > 0 && (
         <>
-          {(usedUp || hub) && (
+          {usedUp && (
             <button type="button" className="pt-disclosure" aria-expanded={listOpen} onClick={() => setListOpen(v => !v)}>
               <svg className="pt-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <polyline points="9 6 15 12 9 18" />
@@ -189,7 +193,7 @@ export default function PrioritySetCard({
       )}
 
       {/* ── Add more ───────────────────────────────────────────────────── */}
-      {!hub && keywords !== null && (
+      {keywords !== null && (
         <div className="pt-add">
           <label className="sr-only" htmlFor={`pt-add-${set.id}`}>Add keywords to {set.name}, one per line</label>
           <textarea
@@ -213,7 +217,7 @@ export default function PrioritySetCard({
 
 /** The sentence that says when this set's next post happens — or why it isn't happening. */
 function When({ pages, isNext, aheadOf, slot, usedUp, allDone, empty, inProgress }: {
-  pages: boolean; isNext: boolean; aheadOf: { name: string; left: number; hub: boolean } | null
+  pages: boolean; isNext: boolean; aheadOf: { name: string; left: number } | null
   slot: NextSlot | null; usedUp: boolean; allDone: boolean; empty: boolean; inProgress: number
 }) {
   let text: ReactNode
@@ -227,9 +231,7 @@ function When({ pages, isNext, aheadOf, slot, usedUp, allDone, empty, inProgress
       ? 'Every keyword here is written. Add more below to keep it going, or archive it.'
       : `Every keyword has a topic; ${inProgress === 1 ? 'one is' : `${inProgress} are`} still being written. Add more below to keep it going.`
   } else if (!isNext && aheadOf) {
-    text = aheadOf.hub
-      ? <>Waiting behind “{aheadOf.name}”, which plans around a main page and doesn’t run out. Archive it to let this set go next.</>
-      : <>Starts once “{aheadOf.name}” runs out — it has {aheadOf.left} keyword{aheadOf.left === 1 ? '' : 's'} left.</>
+    text = <>Starts once “{aheadOf.name}” runs out — it has {aheadOf.left} keyword{aheadOf.left === 1 ? '' : 's'} left.</>
   } else if (!slot) {
     text = 'There’s no open publish date to fill right now. Check the client’s schedule in Settings.'
   } else if (!slot.autoGenerate) {
@@ -259,7 +261,13 @@ function KeywordRow({ k, upNext, slot, onRemove }: { k: SetKeyword; upNext: bool
     detail = <>{k.post.title || 'Untitled post'}{k.post.target_publish_date && <span className="pt-kw-date"> · for {fmtPublishDay(k.post.target_publish_date)}</span>}</>
   } else if (state === 'picked') {
     const s = k.topic?.status
-    detail = <>{k.topic?.topic ?? 'Topic picked'}{s === 'pending' && <span className="pt-kw-date"> · waiting for approval</span>}{s === 'generating' && <span className="pt-kw-date"> · being written now</span>}</>
+    const day = k.topic?.target_publish_date
+    detail = <>
+      {k.topic?.topic ?? 'Topic picked'}
+      {day && <span className="pt-kw-date"> · for {fmtPublishDay(day)}</span>}
+      {s === 'pending' && <span className="pt-kw-date"> · waiting for approval</span>}
+      {s === 'generating' && <span className="pt-kw-date"> · being written now</span>}
+    </>
   } else if (upNext && slot) {
     detail = <span className="pt-kw-date">Up next · for {fmtPublishDay(slot.date)}</span>
   }
@@ -302,5 +310,110 @@ function StateIcon({ state }: { state: KeywordState }) {
     <svg className="pt-kw-icon pt-kw-icon--waiting" width="16" height="16" viewBox="0 0 24 24" aria-hidden>
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
     </svg>
+  )
+}
+
+// ─── Finish linking ───────────────────────────────────────────────────────────
+
+/**
+ * The links the team adds by hand once a post from a main-page set goes live: one on the main page,
+ * and one in the set's previous live post. Nothing edits a live page automatically, so each task says
+ * exactly which page to open, what to link to and with what words, and the team ticks it off.
+ */
+function FinishLinking({ tasks, onDone }: { tasks: LinkTask[]; onDone: (task: LinkTask, done: boolean) => void }) {
+  const open = tasks.filter(t => !t.doneAt)
+  const done = tasks.filter(t => t.doneAt)
+  const [showDone, setShowDone] = useState(false)
+
+  return (
+    <section className="pt-links" aria-label="Finish linking">
+      <div className="pt-links-head">
+        <span className="pt-links-title">Finish linking</span>
+        <span className="pt-links-count">
+          {open.length > 0 ? `${open.length} to add` : 'All links added'}
+        </span>
+      </div>
+
+      {open.length > 0 ? (
+        <ul className="pt-links-list">
+          {open.map(t => <LinkTaskRow key={`${t.kind}-${t.url}-${t.addedAt}`} task={t} onDone={onDone} />)}
+        </ul>
+      ) : (
+        <p className="pt-links-alldone">Every link from this set’s live posts is in place.</p>
+      )}
+
+      {done.length > 0 && (
+        <>
+          <button type="button" className="pt-disclosure pt-links-donebtn" aria-expanded={showDone} onClick={() => setShowDone(v => !v)}>
+            <svg className="pt-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
+            {done.length} done
+          </button>
+          {showDone && (
+            <ul className="pt-links-list pt-links-list--done">
+              {done.map(t => (
+                <li key={`${t.kind}-${t.url}-${t.addedAt}`} className="pt-link pt-link--done">
+                  <span className="pt-link-what">
+                    On <strong>{t.fromTitle}</strong>, linked to <strong>{t.title}</strong>
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onDone(t, false)} aria-label={`Undo: the link to “${t.title}” on “${t.fromTitle}” isn’t added`}>
+                    Undo
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function LinkTaskRow({ task, onDone }: { task: LinkTask; onDone: (task: LinkTask, done: boolean) => void }) {
+  return (
+    <li className="pt-link">
+      <p className="pt-link-what">
+        On <PageLink url={task.fromUrl} title={task.fromTitle} />, add a link to <PageLink url={task.url} title={task.title} />
+        {task.kind === 'previous' && <span className="pt-link-kind"> (the set’s previous post)</span>}
+      </p>
+      <p className="pt-link-anchor">Anchor text: <q>{task.anchor}</q></p>
+      <div className="pt-link-actions">
+        {task.url && <CopyButton text={task.url} label="Copy link" what={`the address of “${task.title}”`} />}
+        <CopyButton text={task.anchor} label="Copy anchor" what="the anchor text" />
+        <button type="button" className="btn btn-secondary btn-sm pt-link-done" onClick={() => onDone(task, true)}
+          aria-label={`Done: the link to “${task.title}” is on “${task.fromTitle}”`}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Done
+        </button>
+      </div>
+    </li>
+  )
+}
+
+function PageLink({ url, title }: { url: string | null; title: string }) {
+  return url
+    ? <a href={url} target="_blank" rel="noopener noreferrer" className="pt-link-page"><strong>{title}</strong><span aria-hidden> ↗</span></a>
+    : <strong>{title}</strong>
+}
+
+/** Copies text, and says so on the button for a moment. */
+function CopyButton({ text, label, what }: { text: string; label: string; what: string }) {
+  const [copied, setCopied] = useState<boolean | null>(null)
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+    setTimeout(() => setCopied(null), 1800)
+  }
+  return (
+    <button type="button" className="btn btn-ghost btn-sm pt-copy" onClick={() => void copy()} aria-label={`Copy ${what}`}>
+      <span aria-live="polite">{copied === true ? 'Copied' : copied === false ? 'Couldn’t copy' : label}</span>
+    </button>
   )
 }

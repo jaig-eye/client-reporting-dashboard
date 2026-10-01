@@ -18,8 +18,53 @@ export interface PrioritySet {
   keywordUnused:         number
   clusterCount:          number
   publishedCount:        number
-  pending_links?:        Array<{ title: string }> | null
+  /** Links the team is asked to add by hand for a main-page set. See linkTasksOf. */
+  pending_links?:        unknown[] | null
 }
+
+/**
+ * One link the team adds by hand: on `from` (the main page, or the set's previous live post), a link
+ * to the post that just went live. Nothing edits a live page automatically.
+ */
+export interface LinkTask {
+  kind:      'hub' | 'previous'
+  fromUrl:   string | null
+  fromTitle: string
+  url:       string
+  title:     string
+  anchor:    string
+  addedAt:   string
+  doneAt:    string | null
+}
+
+/**
+ * The link checklist for a set, from `pending_links`. Older entries were only `{ url, title,
+ * added_at }` and always meant "link this from the main page", so they read as that.
+ */
+export function linkTasksOf(set: Pick<PrioritySet, 'pending_links' | 'hub_page_url' | 'hub_page_title' | 'name'>): LinkTask[] {
+  const out: LinkTask[] = []
+  for (const raw of set.pending_links ?? []) {
+    if (!raw || typeof raw !== 'object') continue
+    const e = raw as Record<string, unknown>
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+    const kind = e.kind === 'previous' ? 'previous' : 'hub'
+    const title = str(e.title) ?? str(e.url) ?? 'the new post'
+    out.push({
+      kind,
+      fromUrl:   str(e.from_url) ?? (kind === 'hub' ? set.hub_page_url : null),
+      fromTitle: str(e.from_title) ?? (kind === 'hub' ? (set.hub_page_title ?? 'the main page') : 'the previous post'),
+      url:       str(e.url) ?? '',
+      title,
+      anchor:    str(e.anchor) ?? title,
+      addedAt:   str(e.added_at) ?? '',
+      doneAt:    str(e.done_at),
+    })
+  }
+  return out
+}
+
+/** How many links are still to add. */
+export const openLinkCount = (set: Parameters<typeof linkTasksOf>[0]) => linkTasksOf(set).filter(t => !t.doneAt).length
 
 /** The next date the topic run will fill for this client, from GET /silos. */
 export interface NextSlot {
@@ -37,7 +82,7 @@ export interface SetKeyword {
   sort_order: number
   selected?:  boolean
   post:  { id: string; title: string | null; status: string; published_url: string | null; target_publish_date: string | null } | null
-  topic: { id: string; topic: string; status: string } | null
+  topic: { id: string; topic: string; status: string; target_publish_date?: string | null } | null
 }
 
 export type KeywordState = 'waiting' | 'picked' | 'written' | 'live'
@@ -50,19 +95,24 @@ export function stateOf(k: SetKeyword): KeywordState {
   return 'waiting'
 }
 
-/** A set that never runs out: with a main page it plans topics around that page until archived. */
-export const isHub = (s: PrioritySet) => !!s.hub_page_url
+/**
+ * A set with a main page. It is written from its keywords like any other set and is done when they
+ * run out; the main page only adds linking — each post links to it and to the set's earlier live
+ * posts, and the team gets a checklist of links to add by hand.
+ */
+export const isHub = (s: Pick<PrioritySet, 'hub_page_url'>) => !!s.hub_page_url
 
 /** Whether the topic run fills publish dates from this set. It only takes blog sets. */
 export const takesDates = (s: Pick<PrioritySet, 'content_type'>) => (s.content_type ?? 'blog') === 'blog'
 
-/**
- * The order the topic run takes sets in — the order the API returns them (priority, then oldest
- * first) — and which one takes the next date: the first blog set that is a hub or still has
- * keywords waiting.
- */
+/** Oldest set first — the order the topic run takes them in. */
+export function inRunOrder<T extends { created_at: string }>(sets: T[]): T[] {
+  return [...sets].sort((a, b) => a.created_at.localeCompare(b.created_at))
+}
+
+/** Which set takes the next date: the oldest blog set that still has keywords waiting. */
 export function nextUpId(sets: PrioritySet[]): string | null {
-  return sets.find(s => takesDates(s) && (isHub(s) || s.keywordUnused > 0))?.id ?? null
+  return inRunOrder(sets).find(s => takesDates(s) && s.keywordUnused > 0)?.id ?? null
 }
 
 /** One keyword per line, trimmed, repeats dropped (case-insensitive) — what the server will keep. */

@@ -1,5 +1,6 @@
 // The Content page's agency-wide view of Priority topics: every client's sets, how far through them
-// each is, and what is written next. Server-rendered; the page reads the data and passes it in.
+// each is, what is written next, and which links the team still has to add by hand.
+// Server-rendered; the page reads the data and passes it in.
 //
 // It was the "Silos" view: post counts labelled "Coverage", a core/outer section badge, pending hub
 // links, and each set opening the authority planner — a pillar-cluster tool most sets never use. It
@@ -18,13 +19,14 @@ export interface OverviewSet {
   hubTitle:    string | null
   /** Null when its keywords could not be read. */
   stats: { total: number; written: number; picked: number; nextKeyword: string | null } | null
-  /** Posts filed under the set — what a main-page set is measured by. */
-  posts:       number
+  /** Links the team still has to add by hand (main-page sets). */
+  linksOpen:   number
 }
 
 export interface OverviewClient {
   id:    string
   name:  string
+  /** Oldest set first — the order the topic run takes them. */
   sets:  OverviewSet[]
   /** The next open date, from the same rule the topic run uses. 'error' when it could not be read. */
   slot:  { date: string; picksOn: string | null; autoGenerate: boolean } | null | 'error'
@@ -33,12 +35,11 @@ export interface OverviewClient {
 const pipelineHref = (clientId: string) => `/admin/clients/${clientId}?tab=content&subtab=pipeline#priority-topics`
 
 const isPages = (s: OverviewSet) => s.contentType !== 'blog'
-const isHub   = (s: OverviewSet) => !!s.hubUrl
 const waiting = (s: OverviewSet) => s.stats ? s.stats.total - s.stats.written - s.stats.picked : 0
 
-/** The set that takes the client's next date: the first blog set (in run order) with work left. */
+/** The set that takes the client's next date: the oldest blog set with keywords waiting. */
 function nextUp(sets: OverviewSet[]): OverviewSet | null {
-  return sets.find(s => !isPages(s) && (isHub(s) || waiting(s) > 0)) ?? null
+  return sets.find(s => !isPages(s) && waiting(s) > 0) ?? null
 }
 
 export default function PriorityTopicsOverview({ clients }: { clients: OverviewClient[] }) {
@@ -57,22 +58,24 @@ export default function PriorityTopicsOverview({ clients }: { clients: OverviewC
 
   const setCount = clients.reduce((n, c) => n + c.sets.length, 0)
   const waitingCount = clients.reduce((n, c) => n + c.sets.reduce((m, s) => m + (isPages(s) ? 0 : waiting(s)), 0), 0)
+  const linkCount = clients.reduce((n, c) => n + c.sets.reduce((m, s) => m + s.linksOpen, 0), 0)
 
   return (
     <div className="pto">
       <p className="pto-lede">
         Keywords the team asked to have written next, across {clients.length} client{clients.length === 1 ? '' : 's'}:{' '}
-        {setCount} set{setCount === 1 ? '' : 's'}, {waitingCount} keyword{waitingCount === 1 ? '' : 's'} waiting. Each
-        set takes its client’s next open publish dates, ahead of the usual topic picks, until it runs out.
+        {setCount} set{setCount === 1 ? '' : 's'}, {waitingCount} keyword{waitingCount === 1 ? '' : 's'} waiting
+        {linkCount > 0 && <>, <strong className="pto-links-due">{linkCount} link{linkCount === 1 ? '' : 's'} to add</strong></>}.
+        Each set takes its client’s next open publish dates, ahead of the usual topic picks, until it runs out.
       </p>
 
       {clients.map(c => {
         const next = nextUp(c.sets)
-        // Sets with work left first (in the order the run takes them), then empty ones, then done.
+        // Sets with work left first (oldest first), then empty ones, then done.
         const ordered = [
-          ...c.sets.filter(s => isPages(s) || isHub(s) || waiting(s) > 0 || s.stats === null),
-          ...c.sets.filter(s => !isPages(s) && !isHub(s) && s.stats !== null && s.stats.total === 0),
-          ...c.sets.filter(s => !isPages(s) && !isHub(s) && s.stats !== null && s.stats.total > 0 && waiting(s) === 0),
+          ...c.sets.filter(s => isPages(s) || waiting(s) > 0 || s.stats === null),
+          ...c.sets.filter(s => !isPages(s) && s.stats !== null && s.stats.total === 0),
+          ...c.sets.filter(s => !isPages(s) && s.stats !== null && s.stats.total > 0 && waiting(s) === 0),
         ]
         return (
           <section key={c.id} className="pto-client" aria-labelledby={`pto-${c.id}`}>
@@ -107,14 +110,12 @@ function SetCard({ set, clientId, isNext, next, slot }: {
 }) {
   const st = set.stats
   const pages = isPages(set)
-  const hub = isHub(set)
   const left = waiting(set)
-  const done = !pages && !hub && !!st && st.total > 0 && left === 0
-  const empty = !pages && !hub && !!st && st.total === 0
+  const done = !pages && !!st && st.total > 0 && left === 0
+  const empty = !pages && !!st && st.total === 0
 
   const badge =
     pages  ? { label: 'Service pages', tone: 'badge-gray' }
-    : hub  ? { label: 'Main page', tone: 'badge-blue' }
     : empty ? { label: 'No keywords yet', tone: 'badge-amber' }
     : done ? (st!.picked === 0 ? { label: 'All written', tone: 'badge-green' } : { label: 'All picked', tone: 'badge-gray' })
     : isNext ? { label: 'Next up', tone: 'badge-blue' }
@@ -123,15 +124,11 @@ function SetCard({ set, clientId, isNext, next, slot }: {
   let line: string
   if (!st) line = 'Its keywords couldn’t be read just now.'
   else if (pages) line = 'Made from the page generator on demand, not on the publish schedule.'
-  else if (hub) line = `Planned around ${set.hubTitle || 'its main page'}. ${set.posts} post${set.posts === 1 ? '' : 's'} so far.`
   else if (empty) line = 'Add keywords in the Pipeline to start it.'
   else if (done) line = st.picked === 0 ? 'Every keyword is written. Add more to keep it going.' : `Every keyword has a topic; ${st.picked} still being written.`
   else if (isNext && st.nextKeyword) {
     const date = slot && slot !== 'error' ? ` · for ${fmtPublishDay(slot.date)}` : ''
     line = `Next: “${st.nextKeyword}”${date}`
-  } else if (next && isHub(next)) {
-    // A main-page set never runs out, so "once it runs out" would never come true.
-    line = `Next: “${st.nextKeyword ?? '—'}”. Waiting behind “${next.name}”, which plans around a main page and doesn’t run out.`
   } else line = `Next: “${st.nextKeyword ?? '—'}”, once “${next?.name ?? 'the set ahead'}” runs out.`
 
   return (
@@ -140,7 +137,7 @@ function SetCard({ set, clientId, isNext, next, slot }: {
         <a className="pt-set-name pto-set-name" href={pipelineHref(clientId)}>{set.name}</a>
         <span className={`badge ${badge.tone}`}>{badge.label}</span>
       </div>
-      {st && !hub && !pages && st.total > 0 && (
+      {st && !pages && st.total > 0 && (
         <div className="pt-progress-row">
           <div className="pt-progress" role="img" aria-label={`${st.written} of ${st.total} written${st.picked ? `, ${st.picked} in progress` : ''}`}>
             <span className="pt-progress-done" style={{ width: `${(st.written / st.total) * 100}%` }} />
@@ -150,6 +147,12 @@ function SetCard({ set, clientId, isNext, next, slot }: {
         </div>
       )}
       <p className="pto-set-line">{line}</p>
+      {set.hubUrl && (
+        <p className="pto-set-line pto-set-hub">
+          Main page: {set.hubTitle || set.hubUrl}.
+          {set.linksOpen > 0 && <> <strong className="pto-links-due">{set.linksOpen} link{set.linksOpen === 1 ? '' : 's'} to add</strong> by hand.</>}
+        </p>
+      )}
       <a className="pto-quiet" href={`/admin/content/silos/${set.id}`}>Authority planner</a>
     </article>
   )

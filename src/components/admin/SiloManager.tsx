@@ -29,8 +29,8 @@ import { useSiloSounds } from '@/lib/useSiloSounds'
 import PrioritySetCard, { type CardNotice } from '@/components/admin/PrioritySetCard'
 import PrioritySetModal, { draftFrom, type SetDraft } from '@/components/admin/PrioritySetModal'
 import {
-  fmtPublishDay, isHub, nextUpId, parseKeywordLines,
-  type NextSlot, type PrioritySet, type SetKeyword,
+  fmtPublishDay, inRunOrder, nextUpId, parseKeywordLines,
+  type LinkTask, type NextSlot, type PrioritySet, type SetKeyword,
 } from '@/components/admin/priorityTopics'
 
 type Modal = { mode: 'create' } | { mode: 'edit'; set: PrioritySet }
@@ -114,10 +114,11 @@ export default function SiloManager({ clientId, onGenerated }: {
   // ── Order: what goes next first, then sets waiting for keywords, then finished ones ────────
   const nextId = useMemo(() => nextUpId(sets ?? []), [sets])
   const ordered = useMemo(() => {
-    const list = sets ?? []
-    const live  = list.filter(s => isHub(s) || s.keywordUnused > 0)
-    const empty = list.filter(s => !isHub(s) && s.keywordTotal === 0)
-    const done  = list.filter(s => !isHub(s) && s.keywordTotal > 0 && s.keywordUnused === 0)
+    // Oldest first, as the topic run takes them. A set with a main page ends like any other.
+    const list = inRunOrder(sets ?? [])
+    const live  = list.filter(s => s.keywordUnused > 0)
+    const empty = list.filter(s => s.keywordTotal === 0)
+    const done  = list.filter(s => s.keywordTotal > 0 && s.keywordUnused === 0)
     return [...live, ...empty, ...done]
   }, [sets])
   const next = (sets ?? []).find(s => s.id === nextId) ?? null
@@ -175,11 +176,16 @@ export default function SiloManager({ clientId, onGenerated }: {
       const dates = Array.from(new Set(d.slots ?? [])).sort()
       const n = d.dates ?? dates.length
       playTopicGenerated()
+      // It fills at most one date per keyword waiting, so fewer dates than are open is expected.
+      const capped = set.keywordUnused > 0 && n >= set.keywordUnused
+        ? ` That’s every keyword it has waiting.`
+        : ''
       notify(set.id, {
         tone: 'success',
-        text: n === 1 && dates[0]
-          ? `Picking a topic for ${fmtPublishDay(dates[0])} from this set. It shows in the calendar in a minute or two.`
-          : `Picking topics for ${n} open dates from this set${dates[0] ? `, starting ${fmtPublishDay(dates[0])}` : ''}. They show in the calendar in a minute or two.`,
+        text: (n === 1 && dates[0]
+          ? `Picking a topic for ${fmtPublishDay(dates[0])} from this set.`
+          : `Picking topics for ${n} open dates from this set${dates[0] ? `, starting ${fmtPublishDay(dates[0])}` : ''}.`)
+          + `${capped} They show in the calendar in a minute or two.`,
       })
       // Picking runs in the background; look again once it has had time to land.
       setTimeout(() => { void loadSets(); onGenerated?.() }, 4000)
@@ -232,15 +238,42 @@ export default function SiloManager({ clientId, onGenerated }: {
   }
 
   async function requestArchive(set: PrioritySet) {
-    // Topics this set already put in the pipeline stay there; say so before archiving.
-    // The topics route has no silo filter — it answers with every topic the client has — so the
-    // set's own are picked out here. Counting them all is what told people a set with one topic in
-    // the pipeline had nine.
-    const r = await fetch(`/api/admin/content/topics?client_id=${clientId}`).catch(() => null)
+    // Topics this set already put in the pipeline stay there; say so before archiving. Asked for by
+    // set, and still checked by set here: a server that ignored the filter used to count every
+    // topic the client had, which told people a set with one topic in the pipeline had nine.
+    const r = await fetch(`/api/admin/content/topics?client_id=${clientId}&silo_id=${set.id}`).catch(() => null)
     const list = r?.ok ? await r.json().catch(() => []) as Array<{ status: string; silo_id?: string | null }> : []
     const active = Array.isArray(list) ? list.filter(t => t.silo_id === set.id && ACTIVE_TOPIC.includes(t.status)).length : 0
     if (active > 0) { setArchiving({ set, active }); return }
     await archive(set)
+  }
+
+  /**
+   * Mark one link added (or not). Shown at once, put back if the server says no — a checklist that
+   * waits on a round trip per tick is slower than the job it tracks.
+   */
+  async function setLinkDone(set: PrioritySet, task: LinkTask, done: boolean) {
+    notify(set.id, null)
+    const matches = (e: unknown) => {
+      const x = (e ?? {}) as Record<string, unknown>
+      return x.url === task.url && x.added_at === task.addedAt && (x.kind === 'previous' ? 'previous' : 'hub') === task.kind
+    }
+    const before = set.pending_links ?? []
+    const optimistic = before.map(e => matches(e) ? { ...(e as object), done_at: done ? new Date().toISOString() : null } : e)
+    const put = (links: unknown[]) => setSets(p => (p ?? []).map(s => s.id === set.id ? { ...s, pending_links: links } : s))
+    put(optimistic)
+    try {
+      const r = await fetch(`/api/admin/content/silos/${set.id}/link-tasks`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: task.url, added_at: task.addedAt, kind: task.kind, done }),
+      })
+      if (!r.ok) throw new Error(await readError(r, 'Couldn’t save that'))
+      const d = await r.json().catch(() => ({})) as { pending_links?: unknown[] }
+      if (Array.isArray(d.pending_links)) put(d.pending_links)
+    } catch (e) {
+      put(before)
+      notify(set.id, { tone: 'error', text: `Couldn’t mark that link ${done ? 'added' : 'not added'}: ${e instanceof Error ? e.message : 'try again'}` })
+    }
   }
 
   async function archive(set: PrioritySet) {
@@ -301,8 +334,8 @@ export default function SiloManager({ clientId, onGenerated }: {
               keywords={keywords[set.id] ?? null}
               keywordsError={kwErrors[set.id] ?? null}
               isNext={set.id === nextId}
-              aheadOf={next && set.id !== nextId && (isHub(set) || set.keywordUnused > 0)
-                ? { name: next.name, left: next.keywordUnused, hub: isHub(next) }
+              aheadOf={next && set.id !== nextId && set.keywordUnused > 0
+                ? { name: next.name, left: next.keywordUnused }
                 : null}
               slot={slot}
               picking={!!picking[set.id]}
@@ -310,6 +343,7 @@ export default function SiloManager({ clientId, onGenerated }: {
               onReloadKeywords={() => loadKeywords(set.id)}
               onAddKeywords={list => addKeywords(set, list)}
               onRemoveKeyword={k => void removeKeyword(set, k)}
+              onLinkDone={(task, done) => void setLinkDone(set, task, done)}
               onPickNow={() => void pickNow(set)}
               onEdit={() => { setModalError(null); setModal({ mode: 'edit', set }) }}
               onArchive={() => void requestArchive(set)}

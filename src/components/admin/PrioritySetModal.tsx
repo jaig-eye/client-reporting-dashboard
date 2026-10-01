@@ -178,10 +178,10 @@ export default function PrioritySetModal({ mode, initial, saving, error, onCance
                 <div className="pt-field">
                   <span className="pt-label">Main page these support <span className="pt-optional">optional</span></span>
                   <p className="pt-help pt-help--above">
-                    Set this only to build around one page. The set then stops writing one post per
-                    keyword: topics are planned around that page instead, every post links back to it
-                    and to the set’s posts already live, and it keeps going until you archive it.
-                    Without one, each keyword is its own post and they aren’t linked to each other.
+                    Set this to build the batch around one page. Each keyword is still one post, and
+                    each post links to that page and to the set’s earlier live posts. As posts go live,
+                    the set lists the links for you to add back by hand — on this page and on the
+                    previous post. Without one, the posts aren’t linked to each other.
                   </p>
                   <div className="pt-two">
                     <input
