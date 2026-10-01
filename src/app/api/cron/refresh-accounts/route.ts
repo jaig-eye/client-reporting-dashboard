@@ -9,7 +9,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyCronAuth } from '@/lib/auth'
-import { createAdminClient }         from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
+import { isDeadCredentialError } from '@/lib/connectors/authFailure'
+import { metaTokenExpiry } from '@/lib/connectors/meta-ads'
 import { getConnectorAdapter }       from '@/lib/connectors/registry'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
@@ -127,12 +129,50 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
   const problems: string[] = []
 
   // ── Expiring soon ─────────────────────────────────────────────────────────
+  //
+  // Only for credentials that cannot renew themselves. A Google access token expires roughly
+  // hourly and is refreshed on every sync, so its token_expires_at is always inside any horizon
+  // worth warning about — which is why this reported "expires in 0 day(s)" for all four Google
+  // connectors every morning while their syncs ran perfectly.
+  //
+  // A revoked refresh token is not missed by going quiet here: it fails with invalid_grant and
+  // the auth-failure scan below reports it the day it happens.
   try {
-    const { data: conns } = await db.from('connectors').select('type, auth')
+    const { data: conns, error } = await db.from('connectors').select('id, type, auth')
+    // A check that could not run must say so. Logging alone left the alert empty, which reads
+    // exactly like "nothing is wrong".
+    if (error) {
+      console.warn('[refresh-accounts] connector read failed:', error.message)
+      problems.push(`Health check: could not read connector credentials (${error.message}) — expiry dates were not checked today`)
+    }
     const horizon = new Date(Date.now() + TOKEN_WARN_DAYS * 86_400_000).toISOString()
     const now     = new Date().toISOString()
-    for (const c of (conns ?? []) as { type: string; auth: Record<string, unknown> | null }[]) {
-      const exp = c.auth?.token_expires_at
+    for (const c of (conns ?? []) as { id: string; type: string; auth: Record<string, unknown> | null }[]) {
+      // Self-renewing. Its access-token expiry says nothing about whether the credential works.
+      const refresh = c.auth?.refresh_token
+      if (typeof refresh === 'string' && refresh) continue
+      let exp = c.auth?.token_expires_at
+
+      // A Meta user token saved without its expiry — everything connected before the OAuth
+      // callback began storing it. Ask Meta once, keep the answer, and warn from it like any other.
+      // A System User token never expires and is left alone.
+      const metaToken = c.auth?.access_token
+      if (c.type === 'meta_ads' && (typeof exp !== 'string' || !exp)
+          && typeof metaToken === 'string' && metaToken && !c.auth?.system_user_token) {
+        const info = await metaTokenExpiry(metaToken)
+        if (info && !info.valid) {
+          problems.push(`${c.type}: Meta reports this token is no longer valid — reconnect in Agency Settings`)
+          continue
+        }
+        if (info?.expiresAt) {
+          exp = info.expiresAt
+          const { error: saveErr } = await db.from('connectors')
+            .update({ auth: { ...c.auth, token_expires_at: info.expiresAt } })
+            .eq('id', c.id)
+          if (saveErr) console.warn('[refresh-accounts] could not store the Meta token expiry:', saveErr.message)
+        }
+      }
+
       if (typeof exp !== 'string' || !exp) continue
       if (exp > horizon) continue
       const days = Math.round((Date.parse(exp) - Date.now()) / 86_400_000)
@@ -142,6 +182,7 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
     }
   } catch (e) {
     console.warn('[refresh-accounts] token expiry check failed:', e)
+    problems.push('Health check: the token expiry check failed to run today — see the refresh-accounts log')
   }
 
   // ── Already failing ───────────────────────────────────────────────────────
@@ -149,20 +190,26 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
   // failure row for every client using it, and seventeen identical lines is a worse alert than one.
   try {
     const since = new Date(Date.now() - 86_400_000).toISOString()
-    const { data: failures } = await db
+    const { data: failures, error: failErr } = await db
       .from('sync_jobs')
       .select('error_message, connection_id, client_connections(connectors(type))')
       .eq('status', 'error')
       .gte('started_at', since)
       .limit(500)
+    if (failErr) {
+      console.warn('[refresh-accounts] sync failure read failed:', failErr.message)
+      problems.push(`Health check: could not read yesterday's sync results (${failErr.message}) — authentication failures were not checked today`)
+    }
 
     const authFailures = new Map<string, number>()
     for (const row of (failures ?? []) as { error_message: string | null; client_connections: unknown }[]) {
-      const msg = row.error_message ?? ''
-      // The signatures that mean "our credential is dead", not "this one request went wrong".
-      if (!/OAuthException|code\D*190|access token|token has expired|invalid_grant|401|invalid_client/i.test(msg)) continue
+      // Dead credential, and not merely a bad five minutes wearing the same words.
+      if (!isDeadCredentialError(row.error_message)) continue
       const cc   = row.client_connections as { connectors?: { type?: string } | { type?: string }[] } | null
       const conn = Array.isArray(cc?.connectors) ? cc?.connectors[0] : cc?.connectors
+      // No connector type is exempt. GHL's cancelled-client noise ("Location is not active") is
+      // vetoed as transient inside isDeadCredentialError, so exempting the whole type only hid a
+      // real failure — the agency key going, across every GHL client at once.
       const type = conn?.type ?? 'unknown'
       authFailures.set(type, (authFailures.get(type) ?? 0) + 1)
     }
@@ -171,6 +218,7 @@ async function reportConnectorHealth(db: ReturnType<typeof createAdminClient>) {
     }
   } catch (e) {
     console.warn('[refresh-accounts] auth failure scan failed:', e)
+    problems.push('Health check: the authentication-failure scan failed to run today — see the refresh-accounts log')
   }
 
   if (problems.length === 0) return { problems: 0 }
