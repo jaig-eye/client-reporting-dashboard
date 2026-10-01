@@ -301,7 +301,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
-        showToast(`Planning ${(data.slots ?? []).length || 'the'} post${(data.slots ?? []).length === 1 ? '' : 's'}. Their topics appear here as each one is ready.`, 'info')
+        const n = (data.slots ?? []).length
+        showToast(n ? `Picking ${n} topic${n === 1 ? '' : 's'}. They appear in the calendar as each one is ready.` : 'Picking topics. They appear in the calendar as each one is ready.', 'info')
         const prevCount = topicsRef.current.length
         let polls = 0
         if (pollRef.current) clearInterval(pollRef.current)
@@ -310,7 +311,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           loadPipeline()
           if (topicsRef.current.length > prevCount || polls >= 12) {
             clearInterval(pollRef.current!); pollRef.current = null
-            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topic${topicsRef.current.length - prevCount === 1 ? '' : 's'} planned`, 'success')
+            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topic${topicsRef.current.length - prevCount === 1 ? '' : 's'} added to the calendar`, 'success')
           }
         }, 15_000)
       } else {
@@ -484,10 +485,10 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 {publishes}.{' '}
                 {autoGenerate ? (
                   plannedThrough
-                    ? <>Topics are lined up through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong>, and new ones are added automatically as dates come up.</>
-                    : <>New topics are added automatically as dates come up.</>
+                    ? <>Topics are picked through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong>. The next ones are picked automatically as dates get closer.</>
+                    : <>The next topics are picked automatically as dates get closer.</>
                 ) : (
-                  <>Automatic planning is off, so no new topics are added{plannedThrough && <>. Topics are lined up through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
+                  <>Automatic planning is off, so no new topics are being picked{plannedThrough && <>. Topics are picked through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
                 )}
               </div>
             </div>
@@ -508,8 +509,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {hadPlan
-                  ? <>{publishes}. Its planned posts were cleared. Regenerating lines up topics for the coming publish dates again{autoGenerate ? ', and new ones are added automatically after that' : ''}.</>
-                  : <>{publishes}. Starting lines up topics for the coming publish dates{autoGenerate ? ', and new ones are added automatically after that' : ''}.</>}
+                  ? <>{publishes}. Its planned topics were cleared. Regenerating picks new topics for the upcoming publish dates{autoGenerate ? '; after that, new topics are picked automatically' : ''}.</>
+                  : <>{publishes}. Starting picks a topic for each upcoming publish date{autoGenerate ? '; after that, new topics are picked automatically' : ''}.</>}
               </div>
             </div>
             <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -665,13 +666,13 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
               <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {planMode === 'regenerate'
-                  ? <>Fills the open dates in the planning window again, including dates whose posts you deleted or rejected. Topics and posts already planned are kept. It follows this client&apos;s schedule in Content settings.</>
-                  : <>The plan follows this client&apos;s schedule in Content settings.</>}
+                  ? <>Picks new topics for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
+                  : <>Picks a topic for each date below. They appear in the calendar, where you can edit or reject any of them.</>}
               </p>
               <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
-                <dt style={{ color: 'var(--text-muted)' }}>Cadence</dt>
+                <dt style={{ color: 'var(--text-muted)' }}>Schedule</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
-                <dt style={{ color: 'var(--text-muted)' }}>{planMode === 'regenerate' ? 'Fills' : 'Plans now'}</dt>
+                <dt style={{ color: 'var(--text-muted)' }}>Topics for</dt>
                 <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
                   {planError
                     ? <>{planError}{' '}<button type="button" onClick={() => void openPlan(planMode)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Try again</button></>
@@ -679,31 +680,31 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                       ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
                       : plan.dates.length === 0
                         ? (planMode === 'regenerate'
-                          ? 'Nothing to fill: every date in the window has a topic. Delete the ones you don’t want, then regenerate.'
-                          : 'Nothing: every date in the window already has a topic.')
+                          ? 'Every upcoming date already has a topic. Delete the ones you don’t want, then regenerate.'
+                          : 'Every upcoming date already has a topic.')
                         : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
                 </dd>
                 <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                   {autoGenerate
-                    ? 'New topics are added automatically as each publish date comes up.'
-                    : 'Automatic planning is off, so only these dates get topics.'}
+                    ? 'New topics are picked automatically as later dates get closer.'
+                    : 'Automatic planning is off, so later dates won’t get topics on their own.'}
                 </dd>
               </dl>
               {onOpenSettings && (
                 <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  To change the start date, cadence or how far ahead it plans, edit{' '}
-                  <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>
-                  {' '}first.
+                  The schedule and start date come from{' '}
+                  <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>.
+                  {' '}Change them there first if they aren&apos;t right.
                 </p>
               )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
                   {generating
-                    ? (planMode === 'regenerate' ? 'Regenerating…' : 'Starting…')
+                    ? 'Picking topics…'
                     : plan && plan.posts > 0
-                      ? `${planMode === 'regenerate' ? 'Regenerate' : 'Plan'} ${plan.posts} post${plan.posts === 1 ? '' : 's'}`
+                      ? `Pick ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
                       : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
                 </button>
               </div>
