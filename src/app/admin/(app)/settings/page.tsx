@@ -726,10 +726,10 @@ export default function AgencySettingsPage() {
             onSave={saveImgCredential}
           >
             <div>
-              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+              <label htmlFor="img-openai-key" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
                 OpenAI API Key <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— used for featured image generation only</span>
               </label>
-              <input className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
+              <input id="img-openai-key" className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
                 placeholder="sk-…" autoComplete="off" style={{ width: '100%' }} />
               {form.openai_api_key && (
                 <p className="section-desc" style={{ margin: '6px 0 0' }}>
@@ -738,10 +738,11 @@ export default function AgencySettingsPage() {
               )}
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
+              <label htmlFor="img-model" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
                 Model <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>— which one draws the featured image</span>
               </label>
               <select
+                id="img-model"
                 className="input"
                 style={{ width: '100%' }}
                 value={imgModalModel}

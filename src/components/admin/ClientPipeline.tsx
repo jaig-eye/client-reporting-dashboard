@@ -292,12 +292,22 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   async function generateCalendar(e: React.FormEvent) {
     e.preventDefault()
     setGenerating(true)
-    const res = await fetch('/api/admin/content/calendar/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, regenerate: true }),
-    })
-    const data = await res.json()
-    setGenerating(false)
+    // A dropped connection or a non-JSON error page (a gateway timeout) must not leave the button
+    // stuck on "Picking topics…": every way out of here clears it.
+    let res: Response
+    let data: { queued?: boolean; slots?: string[]; reason?: string; error?: string }
+    try {
+      res = await fetch('/api/admin/content/calendar/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, regenerate: true }),
+      })
+      data = await res.json().catch(() => ({}))
+    } catch {
+      showToast('Couldn’t reach the server, so no topics were picked. Try again.', 'error')
+      return
+    } finally {
+      setGenerating(false)
+    }
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
@@ -320,7 +330,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         // "N topics generated" fallback here could never show, and nothing changed to reload.
         showToast(data.reason ?? 'Nothing to generate — every date already has a topic.', 'info')
       }
-    } else showToast(data.error || 'Generation failed', 'error')
+    } else showToast(data.error || `Couldn’t pick topics (HTTP ${res.status}).`, 'error')
   }
 
   const statusCounts = useMemo(() => computeStatusCounts(topics, posts), [topics, posts])
@@ -405,15 +415,20 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   // on the cron keeps its dates filled from Content settings, so the card says it is running
   // rather than offering to start it again — a second "plan" only re-asked for dates that were
   // already taken, from a start date that no longer meant anything.
-  const planStarted = topics.some(t => t.status !== 'rejected') || posts.length > 0
+  //
+  // Rejected posts don't count, any more than rejected topics do: discarding a draft leaves the
+  // post in the list with status 'rejected' (it is not archived), and counting it kept a client
+  // whose every post was turned down reading "Running" instead of offering to regenerate.
+  const livePosts = useMemo(() => posts.filter(p => p.status !== 'rejected'), [posts])
+  const planStarted = topics.some(t => t.status !== 'rejected') || livePosts.length > 0
   const plannedThrough = useMemo(() => {
     const from = today()
     const dates = [
       ...topics.filter(t => t.status !== 'rejected').map(t => t.target_publish_date),
-      ...posts.map(p => p.target_publish_date),
+      ...livePosts.map(p => p.target_publish_date),
     ].map(d => (d ?? '').slice(0, 10)).filter(d => d && d >= from).sort()
     return dates.length ? dates[dates.length - 1] : null
-  }, [topics, posts])
+  }, [topics, livePosts])
 
   // Nothing live: find out whether this client had a plan whose posts were cleared (deleted, or
   // all rejected), which the card words as regenerating rather than starting.
@@ -427,7 +442,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     })
     return () => { cancelled = true }
   }, [aiConfigured, dataLoading, planStarted, fetchPlanPreview])
-  const hadPlan = topics.length > 0 || (idlePreview?.cleared.length ?? 0) > 0
+  const hadPlan = topics.length > 0 || posts.length > 0 || (idlePreview?.cleared.length ?? 0) > 0
 
   // Shared card-props builder for a RowItem
   const cardProps = (item: RowItem) => {

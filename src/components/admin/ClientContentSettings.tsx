@@ -6,7 +6,9 @@
 // independently through the partial-update PUT /api/admin/content/client-settings
 // (only the keys a card sends are written), so sections never clobber each other.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine, Sparkle } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
 import ClientContentSettingsForm, { SettingsLoadError } from '@/components/admin/ClientContentSettingsForm'
@@ -20,6 +22,11 @@ interface Props {
   clientId:     string
   clientName:   string
   sites:        SiteOption[]
+  /**
+   * A section another tab asked to show — the Pipeline's "Change in Content settings" opens
+   * Schedule. `n` changes on every request, so asking again after wandering off still moves there.
+   */
+  sectionRequest?: { section: SettingsSection; n: number } | null
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -79,7 +86,8 @@ function SaveRow({ onSave, saving, saved, error }: { onSave: () => void; saving:
 type SaveState = { saving: boolean; saved: boolean; error: string }
 const IDLE: SaveState = { saving: false, saved: false, error: '' }
 
-export default function ClientContentSettings({ clientId, clientName, sites }: Props) {
+export default function ClientContentSettings({ clientId, clientName, sites, sectionRequest = null }: Props) {
+  const router = useRouter()
   const clientSites = sites.filter(s => s.clientId === clientId)
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
@@ -99,7 +107,20 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
   const [pubSave,   setPubSave]   = useState<SaveState>(IDLE)
   const [schedSave, setSchedSave] = useState<SaveState>(IDLE)
   const [writeSave, setWriteSave] = useState<SaveState>(IDLE)
-  const [activeSection, setActiveSection] = useState<SettingsSection>('brand')
+  const [activeSection, setActiveSection] = useState<SettingsSection>(sectionRequest?.section ?? 'brand')
+  // Bring the requested section to the front, and the panel into view: the sub-nav sits above the
+  // fold on a phone, and arriving from the Pipeline lands wherever the page was scrolled.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const requestN = sectionRequest?.n ?? 0
+  useEffect(() => {
+    if (!sectionRequest) return
+    setActiveSection(sectionRequest.section)
+    // After the tab around this is shown again (it was display:none until this render).
+    const t = setTimeout(() => panelRef.current?.scrollIntoView({ block: 'start' }), 50)
+    return () => clearTimeout(t)
+    // Keyed on the request counter: the object itself is rebuilt by the parent on every request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestN])
 
   const set = useCallback(<K extends keyof ClientScheduleSettings>(key: K, val: ClientScheduleSettings[K]) => {
     setForm(p => ({ ...p, [key]: val }))
@@ -198,6 +219,10 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save')
       setState({ saving: false, saved: true, error: '' })
       setTimeout(() => setState({ saving: false, saved: false, error: '' }), 2500)
+      // The Pipeline tab stays mounted beside this one and reads cadence and automation from the
+      // server-rendered settings. Without a refresh it kept saying "Running · weekly" after the
+      // schedule was changed here. This keeps local state; it only re-reads the page's data.
+      router.refresh()
     } catch (e) {
       setState({ saving: false, saved: false, error: e instanceof Error ? e.message : 'Failed to save' })
     }
@@ -334,7 +359,7 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
 
         {/* The writing prompt every client inherits lives at agency level. Anyone tuning a client's
             writing rules is one question away from wanting it, and there was no path from here. */}
-        <a
+        <Link
           href="/admin/content/settings"
           className="cc-set-navitem"
           style={{ textDecoration: 'none', marginTop: 4, borderTop: '1px solid var(--border)', borderRadius: 0, paddingTop: 12 }}
@@ -342,17 +367,17 @@ export default function ClientContentSettings({ clientId, clientName, sites }: P
           <Sparkle size={18} weight="duotone" style={{ color: 'var(--text-faint)' }} />
           <span style={{ minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-muted)' }}>
-              Global prompts ↗
+              Global prompts →
             </span>
             <span className="cc-set-desc" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
               Applies to every client
             </span>
           </span>
-        </a>
+        </Link>
       </nav>
 
       {/* Right panel — active section */}
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div ref={panelRef} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem', scrollMarginTop: 16 }}>
 
       {/* Brand DNA — reused as-is (own save + AI auto-fill). Kept MOUNTED and hidden
           (not conditionally rendered) so unsaved edits survive a sub-nav switch —

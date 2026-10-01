@@ -14,7 +14,8 @@ interface UsageSummary {
 interface UsageResponse {
   configured: boolean
   balance: number | null
-  budget?: { limit: number | null; spent: number; allowed: boolean; reason?: string }
+  /** spent is null when the server could not read the month's usage (it sends NaN, which JSON makes null). */
+  budget?: { limit: number | null; spent: number | null; allowed: boolean; reason?: string }
   currency: string
   summary: UsageSummary
 }
@@ -92,8 +93,18 @@ export default function DataForSeoUsagePanel() {
         : d.monthly_budget
       setData(prev => {
         if (!prev) return prev
-        const spent = prev.budget?.spent ?? prev.summary.total
-        return { ...prev, budget: { ...prev.budget, spent, limit, allowed: limit == null || spent < limit } }
+        // Under no limit the server reports spent as 0 without reading it, so the month's total is
+        // the better number then. Under a limit, null spent means the server could not read the
+        // month's usage — which still holds research after this save, so it stays unknown.
+        const had = prev.budget
+        const spent = had?.limit == null
+          ? prev.summary.total
+          : typeof had.spent === 'number' && Number.isFinite(had.spent) ? had.spent : null
+        if (limit == null) return { ...prev, budget: { limit, spent: spent ?? 0, allowed: true } }
+        if (spent == null) {
+          return { ...prev, budget: { limit, spent: null, allowed: false, reason: had?.reason ?? 'could not read this month’s usage' } }
+        }
+        return { ...prev, budget: { limit, spent, allowed: spent < limit } }
       })
       setBudgetDraft(limit == null ? '' : String(limit))
       setBudgetMsg({ text: limit == null ? 'Saved — no limit' : 'Saved', error: false })
@@ -105,6 +116,10 @@ export default function DataForSeoUsagePanel() {
   }
 
   const s = data.summary
+  const budget = data.budget
+  const budgetHeld = !!budget && budget.limit != null && !budget.allowed
+  const budgetReached = budgetHeld && typeof budget.spent === 'number' && Number.isFinite(budget.spent)
+    && budget.spent >= (budget.limit ?? Infinity)
   const maxDay = Math.max(...s.daily.map(d => d.cost), 0.0001)
   const maxOp  = Math.max(...s.byOperation.map(o => o.cost), 0.0001)
 
@@ -151,12 +166,16 @@ export default function DataForSeoUsagePanel() {
         >
           {savingBudget ? 'Saving…' : 'Save'}
         </button>
-        <span className="text-xs" style={{ color: 'var(--text-faint)', flex: 1, minWidth: 220 }}>
+        <span className="text-xs" style={{ color: budgetHeld ? 'var(--amber)' : 'var(--text-faint)', flex: 1, minWidth: 220 }}>
           {data.budget?.limit == null
             ? 'No ceiling — paid research runs until you set one.'
             : data.budget.allowed
               ? `$${s.total.toFixed(2)} of $${data.budget.limit.toFixed(2)} used this month.`
-              : 'Reached — paid research is paused until next month.'}
+              : budgetReached
+                ? 'Reached — paid research is paused until next month.'
+                // Held for another reason — the month's spend couldn't be read. Not "reached", and
+                // not "until next month": it lifts as soon as the spend can be read again.
+                : `Paid research is paused: ${data.budget.reason ?? 'this month’s spend couldn’t be checked'}. It resumes once the spend can be read.`}
         </span>
         {budgetMsg && (
           <span role={budgetMsg.error ? 'alert' : 'status'} className="text-xs" style={{ color: budgetMsg.error ? 'var(--red)' : 'var(--green)' }}>

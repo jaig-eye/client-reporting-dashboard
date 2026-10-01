@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { SERVICES_HELP, SERVICE_AREAS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
 import MarketLine from '@/components/admin/MarketLine'
+import { HelpTip } from '@/components/admin/KeywordUi'
 import type { EeatData }       from '@/lib/content/types'
 
 interface BrandDnaForm {
@@ -42,31 +43,28 @@ function Label({ children, hint, help, htmlFor }: {
   /** A few words, shown inline. */
   hint?: string
   /**
-   * The longer explanation, on hover rather than on screen.
+   * The longer explanation, behind a "?" rather than on screen.
    *
    * These forms were mostly prose about the form. Guidance someone needs once, while deciding what
-   * to type, does not have to occupy the page for everyone who already knows.
+   * to type, does not have to occupy the page for everyone who already knows. It opens on hover,
+   * keyboard focus and tap (HelpTip) — a title attribute, which this used to be, shows on none of
+   * the last two. The "?" sits beside the label, not inside it, so its text does not become part
+   * of the field's name.
    */
   help?: string
 }) {
-  return (
-    <label htmlFor={htmlFor} className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+  const label = (
+    <label htmlFor={htmlFor} className={help ? 'text-xs font-medium' : 'block text-xs font-medium mb-1'} style={{ color: 'var(--text-muted)' }}>
       {children}
       {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
-      {help && (
-        <span
-          title={help}
-          aria-label={help}
-          tabIndex={0}
-          style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            width: 13, height: 13, marginLeft: 5, borderRadius: '50%', cursor: 'help',
-            border: '1px solid var(--border)', color: 'var(--text-faint)',
-            fontSize: '0.5625rem', fontWeight: 700, lineHeight: 1, verticalAlign: 'middle',
-          }}
-        >?</span>
-      )}
     </label>
+  )
+  if (!help) return label
+  return (
+    <div className="mb-1" style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+      {label}
+      <HelpTip label={`About “${typeof children === 'string' ? children : 'this field'}”`}>{help}</HelpTip>
+    </div>
   )
 }
 

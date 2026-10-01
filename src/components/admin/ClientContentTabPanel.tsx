@@ -112,11 +112,20 @@ export default function ClientContentTabPanel({
 
   const reviewBadge = overviewStats.forReviewPostsCount + overviewStats.saForReviewPostsCount
 
-  // The same test the Pipeline's plan card uses: any topic or post that wasn't turned down means
-  // the plan is under way, and the wizard's last step stops offering to start it.
-  const planActive = overviewStats.upcomingTopicsCount + overviewStats.recentPostsCount
+  // The Pipeline's plan-card test, as near as these counts allow: any topic or post that wasn't
+  // turned down means the plan is under way, and the wizard's last step stops offering to start it.
+  // recentPostsCount is left out on purpose — it counts every post generated this month, rejected
+  // ones included, so a client whose posts were all discarded read as having a plan running.
+  const planActive = overviewStats.upcomingTopicsCount
     + overviewStats.pendingTopicsCount + overviewStats.approvedTopicsCount
     + overviewStats.forReviewPostsCount + overviewStats.publishedPostsCount > 0
+  // Which Settings section to show when another tab sends someone there. A counter as well as the
+  // section, so asking twice for the same section still moves to it.
+  const [settingsRequest, setSettingsRequest] = useState<{ section: 'schedule'; n: number } | null>(null)
+  function openSettingsSchedule() {
+    setSettingsRequest(r => ({ section: 'schedule', n: (r?.n ?? 0) + 1 }))
+    handleTabChange('settings')
+  }
 
   const TABS: TabDef[] = [
     { id: 'pipeline',  label: 'Pipeline',  icon: <CalendarBlank size={22} weight="duotone" />, badge: reviewBadge || undefined },
@@ -218,13 +227,13 @@ export default function ClientContentTabPanel({
               aiConfigured={aiConfigured}
               isActive={activeTab === 'pipeline'}
               contentSettings={contentSettings}
-              onOpenSettings={() => handleTabChange('settings')}
+              onOpenSettings={openSettingsSchedule}
             />
           </div>
         )}
         {visited.has('settings') && (
           <div style={{ display: activeTab === 'settings' ? 'block' : 'none' }} className={animatingTab === 'settings' ? 'cc-tab-content' : ''}>
-            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} />
+            <ClientContentSettings clientId={clientId} clientName={clientName} sites={sites} sectionRequest={settingsRequest} />
           </div>
         )}
         {visited.has('sitemap') && (

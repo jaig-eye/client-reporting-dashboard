@@ -34,12 +34,13 @@
 // something in the list fills it. Leads is the column that carries those clients: some of their
 // keywords came from converting ad terms.
 //
-// Nothing is used until it is ticked and saved: topic selection reads only chosen keywords. The
-// one control here that spends money — Find new — says so before it runs.
+// Nothing here is used until it is ticked and saved: of the researched keywords, topic selection
+// reads only the chosen ones. (It also reads Search Console and rankings, which this list is not.)
+// Nothing in this panel spends money; looking for new keywords is the caller's control.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { groupKeywords, type GroupedKeyword } from '@/lib/content/keywordGrouping'
-import { Caret, Difficulty, Explained, HELP, HelpTip, RefreshIcon, fmtCount, fmtDay, fmtLeads } from '@/components/admin/KeywordUi'
+import { Caret, Difficulty, Explained, HELP, HelpTip, fmtCount, fmtDay, fmtLeads } from '@/components/admin/KeywordUi'
 
 export interface ResearchKeyword {
   keyword:       string
@@ -107,8 +108,8 @@ interface Section {
 }
 
 export default function KeywordResearchPanel({
-  clientId, keywords, geoWords = NO_GEO, onChanged, onDirtyChange, place, busy, onRefresh, refreshing,
-  refreshSpends = true, total, lastResearchAt, services = NO_SERVICES, hideSummary = false, emptyHint,
+  clientId, keywords, geoWords = NO_GEO, onChanged, onDirtyChange, place, busy,
+  total, cap, lastResearchAt, services = NO_SERVICES, hideSummary = false, emptyHint,
   emptyServiceHint,
 }: {
   clientId:   string
@@ -122,16 +123,13 @@ export default function KeywordResearchPanel({
   /** The market these numbers describe, when one is set. */
   place?:     string | null
   busy?:      boolean
-  /** When given, a refresh control appears in the summary line. */
-  onRefresh?: () => void
-  refreshing?: boolean
-  /**
-   * Whether that refresh goes to DataForSEO and spends. Without a connection it only re-reads the
-   * Ahrefs and Google Ads rows already here, and saying it costs money would be untrue.
-   */
-  refreshSpends?: boolean
   /** Candidates in the pool behind the ones shown, so "60 found" is not read as the whole pool. */
   total?:     number | null
+  /**
+   * The most rows the caller's read returns, when it does not know the total. A list that reaches
+   * it is the strongest slice of a bigger pool, and says so rather than "60 found".
+   */
+  cap?:       number
   /** When research last ran, so the list can say how old it is. */
   lastResearchAt?: string | null
   /** The client's services in its own order. When given, the list can be read service by service. */
@@ -164,7 +162,6 @@ export default function KeywordResearchPanel({
   const [origin, setOrigin]   = useState<string>('all')
   /** Which service the list is narrowed to, or 'all'. Service view only. */
   const [svc, setSvc]         = useState<string>('all')
-  const [confirmRefresh, setConfirmRefresh] = useState(false)
   const [allChips, setAllChips] = useState(false)
 
   const hasServices = services.length > 0
@@ -353,39 +350,22 @@ export default function KeywordResearchPanel({
     }
   }
 
-  // The one control here that spends, so it asks first — from the empty state as much as from the
-  // summary. The empty state's button used to fire straight away, and it is also what showed when
-  // the list merely failed to load.
-  const refreshConfirm = onRefresh && (
-    <span className="kw-inline-actions">
-      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmRefresh(false)}>Cancel</button>
-      <button type="button" className="btn btn-primary btn-sm" onClick={() => { setConfirmRefresh(false); onRefresh() }}>Look now</button>
-    </span>
-  )
-
   if (!keywords.length) {
     return (
       <div className="kw-empty">
-        <p className="kw-empty-title">
-          {!confirmRefresh
-            ? 'No keywords to choose from yet.'
-            : refreshSpends
-              ? 'This asks DataForSEO for keyword ideas and spends credit. Go ahead?'
-              : 'This looks for keyword ideas in the Ahrefs and Google Ads data already here. Go ahead?'}
-        </p>
-        {!confirmRefresh && emptyHint && <p className="kw-empty-hint">{emptyHint}</p>}
-        {onRefresh && (confirmRefresh ? refreshConfirm : (
-          <button
-            type="button" className="btn btn-secondary btn-sm"
-            onClick={() => setConfirmRefresh(true)} disabled={refreshing || busy}
-            title={refreshSpends ? 'Asks DataForSEO for keyword ideas. Costs money.' : 'Looks in the Ahrefs and Google Ads data already here. Free.'}
-          >
-            {refreshing ? 'Looking…' : 'Find keywords'}
-          </button>
-        ))}
+        <p className="kw-empty-title">No keywords to choose from yet.</p>
+        {emptyHint && <p className="kw-empty-hint">{emptyHint}</p>}
       </div>
     )
   }
+
+  // What the count above the list says. A known total says how much is behind the rows shown; a
+  // read that stops at `cap` without one says the list is the strongest slice, not the whole pool.
+  const countLabel = total && total > keywords.length
+    ? `showing ${keywords.length} of ${total.toLocaleString()} found`
+    : cap && keywords.length >= cap
+      ? `the strongest ${keywords.length} shown`
+      : `${keywords.length} found`
 
   // The tray: everything ticked right now, saved or not. Unsaved additions are marked, and an
   // unsaved un-tick stays visible, struck through, until it is saved or taken back.
@@ -401,32 +381,14 @@ export default function KeywordResearchPanel({
           <span
             title={total && total > keywords.length
               ? `Research found ${total.toLocaleString()} candidates. The strongest ${keywords.length}, plus everything in use, are shown.`
-              : undefined}
+              : cap && keywords.length >= cap
+                ? 'Research holds more than this. The Keywords tab shows the whole list.'
+                : undefined}
           >
-            {total && total > keywords.length
-              ? `showing ${keywords.length} of ${total.toLocaleString()} found`
-              : `${keywords.length} found`}
+            {countLabel}
           </span>
           {place && <span>measured in {place}</span>}
           {fmtDay(lastResearchAt) && <span>last looked {fmtDay(lastResearchAt)}</span>}
-          {onRefresh && (
-            <span className="kw-pick-meta-action">
-              {confirmRefresh ? refreshConfirm : (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setConfirmRefresh(true)}
-                  disabled={refreshing || busy}
-                  title={refreshSpends
-                    ? 'Asks DataForSEO for new keyword ideas. Costs money, and anything already in use stays.'
-                    : 'Looks again in the Ahrefs and Google Ads data already here. Free, and anything already in use stays.'}
-                >
-                  <RefreshIcon spinning={!!refreshing} />
-                  {refreshing ? 'Looking…' : 'Find new'}
-                </button>
-              )}
-            </span>
-          )}
         </div>
       )}
 
@@ -437,7 +399,7 @@ export default function KeywordResearchPanel({
         </span>
         {trayKeys.length === 0 ? (
           <span className="kw-tray-empty">
-            Nothing ticked yet. Tick keywords in the list below — new blog topics only come from these.
+            Nothing ticked yet. Tick keywords in the list below to steer new blog topics toward them.
           </span>
         ) : (
           <>

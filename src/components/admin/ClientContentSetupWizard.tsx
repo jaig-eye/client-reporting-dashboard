@@ -856,6 +856,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
               hasDfs={hasDfs}
               onPicksSaved={reloadStoredResearch}
               onPicksDirty={onPicksDirty}
+              picksDirty={picksDirty}
             />
           )}
           {step === 9 && (
@@ -1699,7 +1700,7 @@ function StepContentTypes({
 
 // --- Step 7: Research --------------------------------------------------------
 
-function StepResearch({ research, phase, outcome, clientId, servicesText, seeds, setSeeds, onResearch, hasDfs, onPicksSaved, onPicksDirty }: {
+function StepResearch({ research, phase, outcome, clientId, servicesText, seeds, setSeeds, onResearch, hasDfs, onPicksSaved, onPicksDirty, picksDirty }: {
   research:  ResearchData | null
   /** 'loading' is the free read of the stored pool; 'researching' is a paid run. */
   phase:     'idle' | 'loading' | 'researching'
@@ -1716,6 +1717,11 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
   /** After the picks are saved, so the wizard's copy of the pool matches the server's. */
   onPicksSaved: () => void
   onPicksDirty: (dirty: boolean) => void
+  /**
+   * Ticks in the list that are not saved. Looking again waits for them: a run replaces every
+   * keyword not saved as ticked, and the unsaved ticks would go with those rows.
+   */
+  picksDirty: boolean
 }) {
   // Every hook first. An early return above a useState changes the hook order between renders,
   // which React refuses — and this component is rendered with hasDfs false and then true as the
@@ -1779,8 +1785,9 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
       <StepTitle>Choose what to write around</StepTitle>
       <StepSub>
         Search terms this business could realistically win, and the sites already winning them.
-        Tick the ones worth pursuing — topics are only ever chosen from keywords you tick. You can
-        change the picks at any time on the client&apos;s Keywords tab.
+        Tick the ones worth pursuing: of these, topics use only the ones you tick, alongside what
+        Search Console and rankings show. You can change the picks at any time on the
+        client&apos;s Keywords tab.
       </StepSub>
 
       {/* Starting keywords + look again: the two things an operator can do about a bad list */}
@@ -1814,10 +1821,10 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
               placeholder="permanent outdoor lighting, landscape lighting installation…"
             />
           </div>
-          {confirming ? (
+          {confirming && !picksDirty ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200 }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
-                Replace the unticked ideas below? Ticked keywords stay.
+                Replace the unticked ideas below? Saved ticks stay.
               </span>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button type="button" className="btn btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => setConfirming(false)}>Cancel</button>
@@ -1829,7 +1836,8 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
               type="button"
               className="btn btn-primary"
               onClick={() => (hadRun ? setConfirming(true) : onResearch())}
-              disabled={busy || !canResearch}
+              disabled={busy || !canResearch || picksDirty}
+              aria-describedby={picksDirty ? 'wizard-research-hold' : undefined}
               title="Uses DataForSEO credit"
               style={{ whiteSpace: 'nowrap', fontSize: '0.8125rem' }}
             >
@@ -1837,10 +1845,15 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
             </button>
           )}
         </div>
+        {picksDirty && !busy && (
+          <p id="wizard-research-hold" style={{ fontSize: '0.75rem', color: 'var(--amber)', margin: '6px 0 0', lineHeight: 1.5 }}>
+            Save your picks first — looking again replaces every keyword that isn&apos;t saved as ticked.
+          </p>
+        )}
         {/* Said plainly, because it is the one button in the wizard that costs money. */}
         <p style={{ fontSize: '0.6875rem', color: 'var(--text-faint)', margin: '6px 0 0', lineHeight: 1.5 }}>
           {hadRun
-            ? `${researchedOn ? `Last researched ${researchedOn}. ` : ''}Research refreshes by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the unticked ideas with a fresh search from these terms.`
+            ? `${researchedOn ? `Last researched ${researchedOn}. ` : ''}Research refreshes by itself once a month. Looking again spends DataForSEO credit now: it saves your answers, then replaces the ideas not saved as ticked with a fresh search from these terms.`
             : 'Research spends DataForSEO credit, so it runs only when you press the button. It saves your answers so far first, because it searches from them. After that it refreshes by itself once a month.'}
         </p>
       </div>
@@ -1886,6 +1899,8 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
               geoWords={geoWords}
               place={place}
               busy={busy}
+              // The stored-pool read returns the strongest 60 and no total; say so, not "60 found".
+              cap={60}
               onChanged={onPicksSaved}
               onDirtyChange={onPicksDirty}
             />

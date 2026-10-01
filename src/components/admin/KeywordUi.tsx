@@ -57,7 +57,7 @@ export const HELP = {
   searches:   'Roughly how many times a month people search this on Google.',
   difficulty: 'How hard it is to reach the first page of Google for this, from 0 to 100. Easy is under 30; hard is over 60.',
   spot:       'Where the site shows up in Google results for this search, on average. 1–10 is the first page; 11–20 is the second.',
-  shown:      'How many times the site appeared in Google results for this search in the last few months.',
+  shown:      'How many times the site appeared in Google results for this search in the last 28 days.',
   clickRate:  'Of the times the site was shown, how often someone clicked it.',
   leads:      'Leads this exact search brought in through Google Ads in the last 90 days.',
 } as const
@@ -112,6 +112,14 @@ export function HelpTip({ label, children }: { label: string; children: ReactNod
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const btn = useRef<HTMLButtonElement>(null)
   const id = useId()
+  /**
+   * The pointer type of a press in progress, or null for the keyboard.
+   *
+   * A tap fires a hover, a focus and a click in one go. Opening on the first two and toggling on the
+   * click shut it again in the same tap, so on a phone it never showed. Hover is mouse-only now,
+   * focus opens it only from the keyboard, and the click decides for touch.
+   */
+  const via = useRef<string | null>(null)
 
   const show = useCallback(() => {
     const r = btn.current?.getBoundingClientRect()
@@ -128,13 +136,17 @@ export function HelpTip({ label, children }: { label: string; children: ReactNod
   useEffect(() => {
     if (!pos) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null) }
+    // A tap anywhere else closes it. iOS does not focus a tapped button, so no blur would come.
+    const onDown = (e: PointerEvent) => { if (!btn.current?.contains(e.target as Node)) setPos(null) }
     window.addEventListener('scroll', hide, true)
     window.addEventListener('resize', hide)
     document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown, true)
     return () => {
       window.removeEventListener('scroll', hide, true)
       window.removeEventListener('resize', hide)
       document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown, true)
     }
   }, [pos, hide])
 
@@ -146,12 +158,21 @@ export function HelpTip({ label, children }: { label: string; children: ReactNod
         className="kw-help"
         aria-label={label}
         aria-describedby={pos ? id : undefined}
-        onMouseEnter={show}
-        onMouseLeave={hide}
-        onFocus={show}
-        onBlur={hide}
+        onPointerDown={e => { via.current = e.pointerType }}
+        onPointerEnter={e => { if (e.pointerType === 'mouse') show() }}
+        onPointerLeave={e => { if (e.pointerType === 'mouse') hide() }}
+        onFocus={() => { if (!via.current) show() }}
+        onBlur={() => { via.current = null; hide() }}
         // Inside a <label> or a clickable header this must not also tick the box or toggle the section.
-        onClick={e => { e.preventDefault(); e.stopPropagation(); if (pos) hide(); else show() }}
+        onClick={e => {
+          e.preventDefault(); e.stopPropagation()
+          const kind = via.current
+          via.current = null
+          // A mouse is already showing it by hovering; clicking keeps it. Touch and keyboard toggle.
+          if (kind === 'mouse') show()
+          else if (pos) hide()
+          else show()
+        }}
       >
         ?
       </button>

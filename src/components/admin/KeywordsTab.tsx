@@ -212,13 +212,38 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
     setReload(v => v + 1)
   }, [clientId])
 
-  /** Add what is in the box to the pool, already chosen. */
+  /**
+   * Add what is in the box to the pool, already chosen.
+   *
+   * Phrases already in use, or already rank-tracked, are set aside first and named. The server
+   * counts any row it already holds as "chosen again", so sending them came back as "Added — it's
+   * in use" for a keyword that was in use all along, or for a tracked one that this list never
+   * shows. The evidence rows make the same check before offering Add.
+   */
   const addTyped = useCallback(async () => {
     const list = splitPhrases([draft, pending].filter(Boolean).join(', '))
     if (!list.length) return
-    setAdding(true); setAddNotice(null)
+    const norm = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
+    const already = list.filter(k => inUse.has(norm(k)))
+    const isTracked = list.filter(k => !inUse.has(norm(k)) && tracked.has(norm(k)))
+    const toSend = list.filter(k => !inUse.has(norm(k)) && !tracked.has(norm(k)))
+    const quote = (l: string[]) => l.map(k => `“${k}”`).join(', ')
+    const setAside = [
+      already.length ? `${quote(already)} ${already.length === 1 ? 'is' : 'are'} already in use.` : '',
+      isTracked.length
+        ? `${quote(isTracked)} ${isTracked.length === 1 ? 'is' : 'are'} already tracked — a post targets ${isTracked.length === 1 ? 'it' : 'them'} or the site ranks for ${isTracked.length === 1 ? 'it' : 'them'} — so ${isTracked.length === 1 ? 'it isn’t' : 'they aren’t'} in this list.`
+        : '',
+    ].filter(Boolean).join(' ')
+    setAddNotice(null)
+    if (!toSend.length) {
+      setAddNotice({ tone: 'neutral', text: setAside })
+      setDraft(''); setPending('')
+      return
+    }
+    setAdding(true)
     try {
-      await addKeywords(list)
+      await addKeywords(toSend)
+      if (setAside) setAddNotice(n => n ? { ...n, text: `${n.text} ${setAside}` } : { tone: 'neutral', text: setAside })
       setDraft(''); setPending('')
       setShowAdd(false)
     } catch (e) {
@@ -226,7 +251,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
     } finally {
       setAdding(false)
     }
-  }, [addKeywords, draft, pending])
+  }, [addKeywords, draft, pending, inUse, tracked])
 
   /** Add one search from the evidence. Its row shows the progress; the list above shows the result. */
   const addFromEvidence = useCallback(async (term: string) => {
@@ -352,7 +377,7 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
                     ? 'You have unsaved changes in the list below.'
                     : ticked === 0
                       ? (available ? 'None yet. Tick some below to steer new topics.' : 'Nothing to choose from yet.')
-                      : 'New blog topics are chosen from these.'}
+                      : 'New topics favour these, alongside what Search Console and rankings show.'}
                 </p>
               </>
             )}
@@ -380,10 +405,10 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
               <>
                 <div className="kw-stat-value">{lastRun ? <>Looked {lastRun}</> : 'Not run yet'}</div>
                 <p className="kw-stat-sub">{nextLabel}</p>
-                {confirmResearch ? (
+                {confirmResearch && !dirty ? (
                   <div className="kw-confirm" role="group" aria-label="Confirm looking for new keywords">
-                    This buys a fresh search from DataForSEO, which costs money. Keywords nobody
-                    ticked are replaced; ticked ones stay.
+                    This buys a fresh search from DataForSEO, which costs money. Unticked keywords
+                    are replaced; saved ticks stay.
                     <span className="kw-inline-actions">
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmResearch(false)}>Cancel</button>
                       <button type="button" className="btn btn-primary btn-sm" onClick={() => { setConfirmResearch(false); void research() }}>Look now</button>
@@ -391,16 +416,24 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
                   </div>
                 ) : (
                   <div className="kw-stat-action">
+                    {/* Not while ticks are unsaved: a run replaces every keyword that isn't saved as
+                        ticked, and those rows — with the ticks on them — would go with it. */}
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
                       onClick={() => setConfirmResearch(true)}
-                      disabled={busy || adding}
-                      title="Asks DataForSEO for new keyword ideas now. Costs money; anything ticked stays."
+                      disabled={busy || adding || dirty}
+                      aria-describedby={dirty ? `kw-research-hold-${clientId}` : undefined}
+                      title="Asks DataForSEO for new keyword ideas now. Costs money; saved ticks stay."
                     >
                       <RefreshIcon spinning={busy} />
                       {busy ? 'Looking…' : 'Find new keywords'}
                     </button>
+                    {dirty && !busy && (
+                      <span id={`kw-research-hold-${clientId}`} className="kw-stat-sub kw-stat-sub--warn" style={{ margin: 0 }}>
+                        Save your picks first.
+                      </span>
+                    )}
                   </div>
                 )}
               </>
@@ -429,8 +462,9 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
             <div>
               <h3 id={`kw-pick-${clientId}`} className="kw-card-title">What we write about</h3>
               <p className="kw-card-desc">
-                Tick the keywords new blog topics should come from — nothing else is used for new
-                subjects. Changes count once saved.
+                Tick the keywords new blog topics should favour. Of the keywords research finds, only
+                ticked ones are used; topics also draw on Search Console and rankings. Changes count
+                once saved.
               </p>
             </div>
             <button
