@@ -212,8 +212,9 @@ export default function KeywordResearchPanel({
    * Every service with how many keywords it has and how many are ticked — the chips above the list.
    *
    * These are what make an uneven pool visible at a glance: a hundred and twenty keywords for one
-   * service beside three for another, without scrolling a list to find out. A service with none is
-   * kept, because the gap is the point; "Other" is dropped when it is empty.
+   * service beside three for another, without scrolling a list to find out. A service with none has
+   * no chip: one line above the list names those instead (emptyServices), so a client with one
+   * keyword is not a wall of zeros.
    */
   const serviceCounts = useMemo(() => [...services, OTHER_SERVICE].map(key => {
     const mine = visible.filter(k => serviceKey(k) === key)
@@ -221,7 +222,12 @@ export default function KeywordResearchPanel({
       key, label: key === OTHER_SERVICE ? 'Other' : capitalise(key),
       n: mine.length, ticked: mine.filter(k => chosen.has(k.keyword.toLowerCase())).length,
     }
-  }).filter(s => s.key !== OTHER_SERVICE || s.n > 0), [services, visible, serviceKey, chosen])
+  }).filter(s => s.n > 0), [services, visible, serviceKey, chosen])
+
+  /** Services with no keywords at all (before any text filter), named once above the list. */
+  const emptyServices = useMemo(
+    () => services.filter(s => !keywords.some(k => serviceKey(k) === s)).map(capitalise),
+    [services, keywords, serviceKey])
 
   // Same rule as the origin chips: a service narrowed to, then filtered away, lets go.
   useEffect(() => {
@@ -265,15 +271,14 @@ export default function KeywordResearchPanel({
             : undefined,
         }
       })
-        // The empty service stays, so a gap is visible; an empty "Other" and anything a filter
-        // emptied do not.
-        .filter(s => s.count > 0 || (!q && s.key !== OTHER_SERVICE))
+        // Empty services are named in one line above the list rather than as empty sections.
+        .filter(s => s.count > 0)
     }
     return ORIGINS.map(o => {
       const mine = shown.filter(k => originOf(k) === o.key)
       return { key: o.key, label: o.label, hint: o.hint, count: mine.length, ticked: tickedIn(mine), groups: themed(mine) }
     }).filter(s => s.count > 0)
-  }, [view, services, shown, serviceKey, themed, chosen, q, svc])
+  }, [view, services, shown, serviceKey, themed, chosen, svc])
 
   // Bars are measured against the largest bucket overall, so narrowing to one service does not
   // stretch its bar to full and hide how it compares.
@@ -508,7 +513,16 @@ export default function KeywordResearchPanel({
           {anyDiff   && <span className="kw-num kw-col-diff"><Explained name="Difficulty" help={HELP.difficulty}>Difficulty</Explained></span>}
         </div>
 
-        {sections.length === 0 && (
+        {view === 'service' && svc === 'all' && !q && emptyServices.length > 0 && (
+          <p className="kw-list-note kw-list-note--quiet">
+            No keywords yet for {emptyServices.length === 1 ? emptyServices[0] : <>
+              {emptyServices.length} services: {emptyServices.slice(0, 8).join(', ')}
+              {emptyServices.length > 8 && <span title={emptyServices.slice(8).join(', ')}> and {emptyServices.length - 8} more</span>}
+            </>}.{emptyServiceHint ? ` ${emptyServiceHint}` : ''}
+          </p>
+        )}
+
+        {sections.length === 0 && q && (
           <p className="kw-list-note">Nothing matches &ldquo;{filter}&rdquo;.</p>
         )}
 
@@ -542,11 +556,6 @@ export default function KeywordResearchPanel({
 
               {!closed && (
                 <div id={bodyId}>
-                  {section.count === 0 && (
-                    <p className="kw-list-note">
-                      Nothing found for this service yet.{emptyServiceHint ? ` ${emptyServiceHint}` : ''}
-                    </p>
-                  )}
                   {section.groups.map(group => {
                     const [lead, ...rest] = group.members
                     const gKey = `${section.key}::${group.label}`

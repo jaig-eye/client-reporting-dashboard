@@ -877,6 +877,7 @@ details[open] > summary .details-caret { transform: rotate(180deg); }
 .kw-col-diff { width: 100px; }
 .kw-list-head .kw-num { display: flex; justify-content: flex-end; }
 .kw-list-note { margin: 0; padding: 12px 14px; font-size: 0.8125rem; line-height: 1.45; color: var(--text-muted); }
+.kw-list-note--quiet { font-size: 0.78rem; color: var(--text-faint); border-bottom: 1px solid var(--border-subtle); }
 
 .kw-group + .kw-group .kw-group-head { border-top: 1px solid var(--border); }
 .kw-group-head {
