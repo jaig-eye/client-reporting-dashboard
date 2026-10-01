@@ -4,19 +4,13 @@ Migrations in `supabase/migrations/` that have **not** been applied to productio
 no migration history table — migrations are applied by hand — so this list was checked against the
 live schema (columns and tables in `information_schema`), not taken on trust.
 
-**Checked 2026-09-30.** Already in production, and removed from this folder: 189, 190, 191, 222,
-223, 224, 225. Still to apply, in this order:
+**Checked 2026-10-01: nothing pending.** 189, 190, 191 and 222–229 are all in production and none
+are left in this folder. The last ones applied by hand were 226 (`agency_settings.dataforseo_monthly_budget`),
+227 (`agency_settings.image_model`), 228 (RLS on the SEO tables) and 229
+(`content_settings.plan_generation`).
 
-| File | What it adds | What stays broken without it |
-|---|---|---|
-| `226_dataforseo_budget.sql` | `agency_settings.dataforseo_monthly_budget` (default 100) + an index on the usage ledger's date | No monthly ceiling: spend is recorded and displayed but never stopped. Reads treat the missing column as no limit, and the limit cannot be saved (the panel answers 501) |
-| `227_image_model.sql` | `agency_settings.image_model` (no default — empty means the code's default model) | The model picker in Settings → Image Generation cannot save a choice (the key still saves, with a warning). Generation keeps working on the default model |
-| `228_seo_tables_rls.sql` | RLS on `seo_keywords`, `seo_rankings`, `dataforseo_usage`; `security_invoker` on the `seo_keyword_current` view; revokes anon/authenticated | Nothing visible — production already has RLS on these tables and no public grants. This puts that in the migration files, so a database built from them is not exposed |
-
-All three are additive and idempotent: no drops, no rewrites of existing rows, safe to re-run.
-
-Apply them **before** deploying the branch. The code tolerates each column being absent, but the
-ceiling and the image model only take effect once they exist.
+A new migration goes here as well as in `supabase/migrations/` until it is applied, with a line on
+what it adds and what stays broken without it.
 
 ## Migration numbers shared with another branch
 
