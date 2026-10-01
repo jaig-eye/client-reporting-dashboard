@@ -9,12 +9,13 @@
 //   single   — stateData.connector_type is a specific type (backward compat)
 //              Upserts only that connector type.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { exchangeGoogleCode, googleAdsConnector } from '@/lib/connectors/google-ads'
 import { googleAnalyticsConnector }               from '@/lib/connectors/google-analytics'
 import { googleSearchConsoleConnector }           from '@/lib/connectors/google-search-console'
 import { googleBusinessProfileConnector }         from '@/lib/connectors/google-business-profile'
 import { createAdminClient }                      from '@/lib/supabase/server'
+import { decodeState, verifyOAuthCallback, finishOAuth, type OAuthState } from '@/lib/oauthFlow'
 import type { ConnectorType }                     from '@/lib/types'
 
 const CONNECTOR_META: Record<string, { label: string; type: ConnectorType }> = {
@@ -64,33 +65,30 @@ async function discoverForConnector(
 
 export async function GET(request: NextRequest) {
   const code   = request.nextUrl.searchParams.get('code')
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+
+  // Decode state (malformed state falls through to unified mode — and then fails the nonce check).
+  const stateData = decodeState(request.nextUrl.searchParams.get('state')) as OAuthState & {
+    mode?:            string
+    connector_type?:  string
+    developer_token?: string
+    mcc_customer_id?: string
+  }
+  const done = (ok: boolean, path: string, error?: string) =>
+    finishOAuth(request, stateData, { ok, provider: 'google', path, error })
 
   if (!code) {
-    return NextResponse.redirect(`${appUrl}/admin/connections?error=google_auth_failed`)
+    return done(false, '/admin/connections?error=google_auth_failed', 'Google sign-in was cancelled or denied.')
   }
+
+  // Only the signed-in admin who started this flow may complete it (see lib/oauthFlow).
+  const rejected = await verifyOAuthCallback(request, stateData)
+  if (rejected) return done(false, '/admin/connections?error=google_auth_failed', rejected)
 
   try {
     const tokens    = await exchangeGoogleCode(code)
     const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString()
 
     const db = createAdminClient()
-
-    // Decode state
-    let stateData: {
-      mode?:            string
-      connector_type?:  string
-      developer_token?: string
-      mcc_customer_id?: string
-    } = {}
-    const stateParam = request.nextUrl.searchParams.get('state')
-    if (stateParam) {
-      try {
-        stateData = JSON.parse(Buffer.from(stateParam, 'base64url').toString())
-      } catch {
-        // ignore malformed state — fall through to unified mode
-      }
-    }
 
     // ── UNIFIED MODE — upsert all 4 Google connectors ──────────────────────────
     if (stateData.mode === 'unified' || (!stateData.connector_type && !stateData.mode)) {
@@ -165,7 +163,7 @@ export async function GET(request: NextRequest) {
           .catch(e => console.warn(`[google/callback] Discovery failed for ${connType} (non-fatal):`, e))
       }
 
-      return NextResponse.redirect(`${appUrl}/admin/connections?connected=google`)
+      return done(true, '/admin/connections?connected=google')
     }
 
     // ── SINGLE MODE — backward compat for per-type links ───────────────────────
@@ -221,7 +219,7 @@ export async function GET(request: NextRequest) {
 
     if (error || !connector) {
       console.error('Google connector save failed:', error)
-      return NextResponse.redirect(`${appUrl}/admin/connections?error=google_save_failed`)
+      return done(false, '/admin/connections?error=google_save_failed', 'Google signed in, but the connection couldn’t be saved. Try again.')
     }
 
     try {
@@ -230,9 +228,9 @@ export async function GET(request: NextRequest) {
       console.warn(`${meta.label} account discovery failed (non-fatal):`, e)
     }
 
-    return NextResponse.redirect(`${appUrl}/admin/connections/${connector.id}?connected=${meta.type}`)
+    return done(true, `/admin/connections/${connector.id}?connected=${meta.type}`)
   } catch (e) {
     console.error('Google callback error:', e)
-    return NextResponse.redirect(`${appUrl}/admin/connections?error=google_failed`)
+    return done(false, '/admin/connections?error=google_failed', 'Google connection failed. Try again in a minute.')
   }
 }

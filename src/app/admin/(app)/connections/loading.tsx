@@ -1,21 +1,15 @@
-import Bone from '@/components/admin/Bone'
+import { SkHeader, SkRows, SkPage, Sk } from '@/components/ui/Skeleton'
 
 export default function ConnectionsLoading() {
   return (
-    <div>
-      <div className="page-header">
-        <Bone className="h-7 w-36 rounded" />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-        {[...Array(6)].map((_, i) => (
-          <div key={i} className="card" style={{ padding: 20 }}>
-            <Bone className="h-5 w-24 rounded mb-3" />
-            <Bone className="h-4 w-full rounded mb-2" />
-            <Bone className="h-4 w-3/4 rounded" style={{ marginBottom: 12 }} />
-            <Bone className="h-8 w-28 rounded" />
-          </div>
-        ))}
-      </div>
-    </div>
+    <SkPage label="Loading integrations">
+      <SkHeader actions={0} />
+      {[3, 3, 2].map((rows, i) => (
+        <div key={i} style={{ marginTop: i ? 28 : 0 }}>
+          <Sk w={150} h={14} style={{ marginBottom: 10 }} />
+          <div className="card" style={{ padding: 0 }}><SkRows rows={rows} /></div>
+        </div>
+      ))}
+    </SkPage>
   )
 }

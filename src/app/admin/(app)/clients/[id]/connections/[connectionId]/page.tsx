@@ -3,7 +3,8 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
+import PageHeader from '@/components/ui/PageHeader'
+import BrandLogo from '@/components/ui/BrandLogo'
 import type { Client, ClientConnection, Connector } from '@/lib/types'
 import { getConnectorDef } from '@/lib/connectors/registry'
 import ConnectionSettingsForm from './ConnectionSettingsForm'
@@ -40,38 +41,14 @@ export default async function ConnectionSettingsPage({
   const def = getConnectorDef(connection.connector.type)
 
   return (
-    <div className="max-w-lg">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-6 text-sm flex-wrap">
-        <Link href="/admin/clients" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Clients
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <Link href={`/admin/clients/${id}`} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          {client.name}
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{def.label} Settings</span>
-      </div>
-
-      <div className="card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div
-            className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-            style={{ background: def.color }}
-          >
-            {def.icon}
-          </div>
-          <div>
-            <h1 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {def.label}
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {connection.external_name ?? connection.external_id}
-            </p>
-          </div>
-        </div>
-
+    <div style={{ maxWidth: 620 }}>
+      <PageHeader
+        back={{ href: `/admin/clients/${id}?tab=sources`, label: client.name }}
+        leading={<BrandLogo type={connection.connector.type} size={24} tile tileSize="xl" />}
+        title={`${def.label} settings`}
+        description={connection.external_name ?? connection.external_id}
+      />
+      <div className="card" style={{ padding: 20 }}>
         <ConnectionSettingsForm clientId={id} connection={connection} />
       </div>
     </div>

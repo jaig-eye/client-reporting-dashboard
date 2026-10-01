@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { StripeLogo } from '@/components/ConnectorLogo'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
 
@@ -33,7 +32,7 @@ export default function StripeAgencyCard({ initialApiKey, initialWebhookSecret }
   return (
     <>
       <IntegrationCard
-        icon={<StripeLogo size={22} />}
+        brand="stripe"
         name="Stripe"
         description="Auto-log ad fuel payments from Stripe invoices. Configure each client's Customer ID in their Integrations tab."
         isConnected={isConnected}
@@ -46,7 +45,7 @@ export default function StripeAgencyCard({ initialApiKey, initialWebhookSecret }
         onClose={() => setOpen(false)}
         onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
         title="Stripe (Agency)"
-        icon={<StripeLogo size={20} />}
+        brand="stripe"
         isConnected={isConnected}
         howTo={
           <div>

@@ -62,7 +62,7 @@ export default function ConnectionSettingsForm({
         const d = await res.json()
         throw new Error(d.error || 'Failed to disconnect')
       }
-      window.location.href = `/admin/clients/${clientId}`
+      router.push(`/admin/clients/${clientId}?tab=sources`)
       router.refresh()
     } catch (err) {
       setStatus('error')

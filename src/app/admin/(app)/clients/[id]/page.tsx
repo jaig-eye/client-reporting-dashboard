@@ -9,7 +9,6 @@ import Link from 'next/link'
 import type { Client, ClientConnection, Connector, SyncJob, ClientTemperature } from '@/lib/types'
 import {
   GOOGLE_CONNECTOR_TYPES,
-  UNGROUPED_CONNECTOR_TYPES,
   getConnectorDef,
   isConnectorImplemented,
 } from '@/lib/connectors/registry'
@@ -17,7 +16,6 @@ import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
 import ClientSyncButton from './ClientSyncButton'
 import ClientManualSync from './ClientManualSync'
 import DataPurgeButton from './DataPurgeButton'
-import ClientLogoUpload from './ClientLogoUpload'
 import ClientRawData from './ClientRawData'
 import ClientConversionMapping from './ClientConversionMapping'
 import ClientCampaignManager from './ClientCampaignManager'
@@ -38,6 +36,7 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import BrandLogo from '@/components/ui/BrandLogo'
 import { RouteTabs } from '@/components/ui/PillTabs'
 import ClientLinksMenu from '@/components/admin/ClientLinksMenu'
+import IntegrationRow, { IntegrationGroup } from '@/components/admin/integrations/IntegrationRow'
 import { CLIENT_TAB_SKELETONS } from './ClientSkeletons'
 import { PresentationChart } from '@phosphor-icons/react/dist/ssr'
 
@@ -136,7 +135,6 @@ export default async function ClientDetailPage({
     ai_api_key?: string | null
     contact_stale_days?: number | null
   } | null
-  const aiConfigured = !!(agencySettings?.ai_api_key)
   const globalCut    = agencySettings?.ad_fuel_cut ?? DEFAULT_SETTINGS.ad_fuel_cut
   const agencyLead   = agencySettings?.default_lead_action     ?? 'lead'
   const agencyPurch  = agencySettings?.default_purchase_action ?? 'purchase'
@@ -217,245 +215,132 @@ export default async function ClientDetailPage({
         />
       )}
 
-      {/* ── DATA SOURCES ─────────────────────────────────────────────── */}
-      {activeTab === 'sources' && (
-        <div className="space-y-4 max-w-2xl">
+      {/* ── INTEGRATIONS ─────────────────────────────────────────────── */}
+      {/* The same rows as the agency Integrations page. Account-based services (Google, Meta,
+          Ahrefs, DataForSEO) get an account assigned from the agency's connection; site and CRM
+          connections (WordPress, HighLevel, BigCommerce) connect here with their own details;
+          notifications and billing are per-client IDs. Every change refreshes the page in place. */}
+      {activeTab === 'sources' && (() => {
+        const fmtSynced = (d: string | null | undefined) => d
+          ? `synced ${new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+          : 'not synced yet'
 
-          {/* ── Google group card ──────────────────────────────────── */}
-          <div className="card p-5">
-            {/* Header */}
-            <div className="flex items-center gap-3 pb-3 mb-1" style={{ borderBottom: '1px solid var(--border)' }}>
-              <div
-                className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-bold"
-                style={{ background: '#4285F4', fontSize: '1rem' }}
-              >
-                G
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Google</h3>
-                <p className="text-xs" style={{ color: 'var(--text-faint)' }}>Ads · Analytics · Search Console · Business Profile</p>
-              </div>
-            </div>
-
-            {/* Sub-rows — one per Google connector type */}
-            <div className="space-y-2 mt-3">
-              {GOOGLE_CONNECTOR_TYPES.map(type => {
-                const def        = getConnectorDef(type)
-                const connection = connByType.get(type)
-                const connector  = connectors.find(c => c.type === type)
-
-                const state =
-                  !connector ? 'connector-missing'
-                  : connection ? 'connected'
-                  : 'not-connected'
-
-                return (
-                  <div
-                    key={type}
-                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
-                    style={{ background: 'var(--bg-subtle)' }}
-                  >
-                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                      <div
-                        className="h-6 w-6 rounded flex items-center justify-center flex-shrink-0"
-                        style={{ background: `${def.color}18`, border: `1px solid ${def.color}30` }}
-                      >
-                        {def.logo
-                          ? <def.logo size={14} />
-                          : <span style={{ color: def.color, fontWeight: 700, fontSize: '0.65rem' }}>{def.icon}</span>
-                        }
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                            {def.label}
-                          </span>
-                          <SourceBadge state={state} compact />
-                        </div>
-                        {state === 'connected' && connection && (
-                          <p className="text-xs truncate" style={{ color: 'var(--text-faint)' }}>
-                            {connection.external_name ?? connection.external_id}
-                            {connection.last_synced_at && ` · synced ${new Date(connection.last_synced_at).toLocaleString('en-US', { month: 'short', day: 'numeric' })}`}
-                          </p>
-                        )}
-                        {state === 'connector-missing' && (
-                          <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                            <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency connection first →</Link>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {state === 'connected' && connection && (
-                        <>
-                          <ClientSyncButton clientId={id} connectionId={connection.id} />
-                          <Link
-                            href={`/admin/clients/${id}/connections/${connection.id}`}
-                            className="btn btn-secondary"
-                            style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-                          >
-                            Settings
-                          </Link>
-                        </>
-                      )}
-                      {state === 'not-connected' && connector && (
-                        <Link
-                          href={`/admin/clients/${id}/connections/new?connector=${connector.id}`}
-                          className="btn btn-primary"
-                          style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-                        >
-                          Assign Account
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* ── Ungrouped flat connector cards ───────────────────── */}
-          {UNGROUPED_CONNECTOR_TYPES.map(type => {
-            const def         = getConnectorDef(type)
-            const connection  = connByType.get(type)
-            const connector   = connectors.find(c => c.type === type)
-            const implemented = isConnectorImplemented(type)
-            const isDirectType = type === 'ghl' || type === 'wordpress' || type === 'bigcommerce'
-
-            const state =
-              !implemented ? 'coming-soon'
-              : isDirectType
-                ? (connection ? 'connected' : 'direct-connect')
-                : !connector ? 'connector-missing'
-                : connection ? 'connected'
-                : 'not-connected'
-
-            const existingDirectTypes = connections
-              .filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress' || c.connector.type === 'bigcommerce')
-              .map(c => c.connector.type as 'ghl' | 'wordpress' | 'bigcommerce')
-
-            return (
-              <div key={type} className="card p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div
-                      className="h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ background: state === 'coming-soon' ? '#f3f4f6' : `${def.color}15`, border: `1px solid ${def.color}30` }}
-                    >
-                      {def.logo
-                        ? <def.logo size={22} />
-                        : <span style={{ color: def.color, fontWeight: 700, fontSize: '0.9rem' }}>{def.icon}</span>
-                      }
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{def.label}</h3>
-                        <SourceBadge state={state} />
-                      </div>
-                      {state === 'connected' && connection && (
-                        <div className="text-xs space-y-0.5" style={{ color: 'var(--text-muted)' }}>
-                          <p>{connection.external_name ?? connection.external_id}</p>
-                          {connection.last_synced_at && (
-                            <p>Last synced {new Date(connection.last_synced_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
-                          )}
-                        </div>
-                      )}
-                      <p className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 2 }}>{def.description}</p>
-                      {state === 'connector-missing' && (
-                        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                          <Link href="/admin/connections" style={{ color: 'var(--blue)' }}>Set up agency connection first →</Link>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {state === 'connected' && connection && (
-                      <>
-                        <ClientSyncButton clientId={id} connectionId={connection.id} />
-                        <Link href={`/admin/clients/${id}/connections/${connection.id}`} className="btn btn-secondary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
-                          Settings
-                        </Link>
-                      </>
-                    )}
-                    {state === 'not-connected' && connector && (
-                      <Link href={`/admin/clients/${id}/connections/new?connector=${connector.id}`} className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
-                        Connect Account
-                      </Link>
-                    )}
-                  </div>
-                </div>
-                {state === 'direct-connect' && isDirectType && (
-                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                    <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType={type as 'ghl' | 'wordpress' | 'bigcommerce'} />
-                  </div>
-                )}
-                {type === 'bigcommerce' && state === 'connected' && (
-                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                    <ClientBcDailyReport
-                      clientId={id}
-                      enabled={!!(client as unknown as { bc_daily_report?: boolean }).bc_daily_report}
-                      hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
-                    />
-                    <div style={{ marginTop: 12 }}>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                          <div
-                            className="h-7 w-7 rounded flex items-center justify-center flex-shrink-0 text-sm"
-                            style={{ background: '#f59e0b18', border: '1px solid #f59e0b30' }}
-                          >
-                            📦
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Analytics Connection</span>
-                              <SourceBadge state={analyticsBcConn ? 'connected' : 'direct-connect'} compact />
-                            </div>
-                            {analyticsBcConn ? (
-                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                {analyticsBcConn.external_name ?? analyticsBcConn.external_id} — used as primary source for sales reports; falls back to main connection if unavailable.
-                              </p>
-                            ) : (
-                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                Optional. Add a dedicated connection (e.g. the overseer account) — it will be used first for sales reports with the main connection as fallback.
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        {analyticsBcConn && (
-                          <Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-secondary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', flexShrink: 0 }}>
-                            Settings
-                          </Link>
-                        )}
-                      </div>
-                      {!analyticsBcConn && (
-                        <div style={{ marginTop: 10 }}>
-                          <ClientDirectConnections
-                            clientId={id}
-                            existingTypes={existingDirectTypes}
-                            singleType="bigcommerce_analytics"
-                            bcAnalyticsConnected={false}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-
-          {/* ── Third-party integration cards ─────────────────────── */}
-          <div>
-            <ClientIntegrationCards
-              clientId={id}
-              discordChannelId={(client as unknown as { discord_channel_id?: string }).discord_channel_id ?? null}
-              stripeCustomerId={(client as unknown as { stripe_customer_id?: string }).stripe_customer_id ?? null}
-              localDominatorUrl={(client as unknown as { local_dominator_url?: string }).local_dominator_url ?? null}
+        /** A row for a service whose account comes from the agency connection. */
+        const assignedRow = (type: string, opts: { sub?: boolean } = {}) => {
+          const def        = getConnectorDef(type as Parameters<typeof getConnectorDef>[0])
+          const connection = connByType.get(type)
+          const connector  = connectors.find(c => c.type === type)
+          return (
+            <IntegrationRow
+              key={type}
+              sub={opts.sub}
+              brand={type}
+              name={def.label}
+              description={opts.sub ? undefined : def.description}
+              status={connection
+                ? { tone: connection.status === 'active' ? 'success' : 'warning', label: connection.status === 'active' ? 'Connected' : connection.status.charAt(0).toUpperCase() + connection.status.slice(1) }
+                : connector ? { tone: 'neutral', label: 'Not assigned' }
+                : { tone: 'warning', label: 'Agency not connected', title: 'Connect this service on the agency Integrations page first.' }}
+              meta={connection ? `${connection.external_name ?? connection.external_id}, ${fmtSynced(connection.last_synced_at)}` : undefined}
+              actions={connection
+                ? <>
+                    <ClientSyncButton clientId={id} connectionId={connection.id} />
+                    <Link href={`/admin/clients/${id}/connections/${connection.id}`} className="btn btn-ghost btn-sm">Settings</Link>
+                  </>
+                : connector
+                  ? <Link href={`/admin/clients/${id}/connections/new?connector=${connector.id}`} className="btn btn-secondary btn-sm">Assign account</Link>
+                  : <Link href="/admin/connections" className="btn btn-ghost btn-sm">Set up</Link>}
             />
+          )
+        }
+
+        const existingDirectTypes = connections
+          .filter(c => c.connector.type === 'ghl' || c.connector.type === 'wordpress' || c.connector.type === 'bigcommerce')
+          .map(c => c.connector.type as 'ghl' | 'wordpress' | 'bigcommerce')
+
+        /** A site or CRM connection: connected → its row; not → the connect row from ClientDirectConnections. */
+        const directRow = (type: 'wordpress' | 'ghl' | 'bigcommerce') => {
+          const connection = connByType.get(type)
+          if (!connection) {
+            return <ClientDirectConnections key={type} clientId={id} existingTypes={existingDirectTypes} singleType={type} />
+          }
+          const def = getConnectorDef(type)
+          return (
+            <IntegrationRow
+              key={type}
+              brand={type}
+              name={type === 'ghl' ? 'HighLevel' : def.label}
+              status={{ tone: connection.status === 'active' ? 'success' : 'warning', label: connection.status === 'active' ? 'Connected' : connection.status.charAt(0).toUpperCase() + connection.status.slice(1) }}
+              description={def.description}
+              meta={`${connection.external_name ?? connection.external_id}, ${fmtSynced(connection.last_synced_at)}`}
+              actions={<>
+                <ClientSyncButton clientId={id} connectionId={connection.id} />
+                <Link href={`/admin/clients/${id}/connections/${connection.id}`} className="btn btn-ghost btn-sm">Settings</Link>
+              </>}
+            >
+              {type === 'bigcommerce' && (
+                <>
+                  <ClientBcDailyReport
+                    clientId={id}
+                    enabled={!!(client as unknown as { bc_daily_report?: boolean }).bc_daily_report}
+                    hasDiscord={!!(client as unknown as { discord_channel_id?: string }).discord_channel_id}
+                  />
+                  {analyticsBcConn ? (
+                    <IntegrationRow
+                      sub
+                      brand="bigcommerce_analytics"
+                      name="Analytics connection"
+                      status={{ tone: 'success', label: 'Connected' }}
+                      meta={`${analyticsBcConn.external_name ?? analyticsBcConn.external_id}. Used first for sales reports; the main connection is the fallback.`}
+                      actions={<Link href={`/admin/clients/${id}/connections/${analyticsBcConn.id}`} className="btn btn-ghost btn-sm">Settings</Link>}
+                    />
+                  ) : (
+                    <ClientDirectConnections clientId={id} existingTypes={existingDirectTypes} singleType="bigcommerce_analytics" bcAnalyticsConnected={false} />
+                  )}
+                </>
+              )}
+            </IntegrationRow>
+          )
+        }
+
+        const googleAssigned = GOOGLE_CONNECTOR_TYPES.filter(t => connByType.get(t)).length
+        const implemented = (t: string) => isConnectorImplemented(t as Parameters<typeof isConnectorImplemented>[0])
+
+        return (
+          <div style={{ maxWidth: 900 }}>
+            <IntegrationGroup id="ci-ads" title="Ads and analytics" description="Accounts from the agency's Google and Meta connections.">
+              <IntegrationRow
+                brand="google"
+                name="Google"
+                status={googleAssigned === 0
+                  ? { tone: 'neutral', label: 'Nothing assigned' }
+                  : { tone: googleAssigned === GOOGLE_CONNECTOR_TYPES.length ? 'success' : 'info', label: `${googleAssigned} of ${GOOGLE_CONNECTOR_TYPES.length} assigned` }}
+                description="Ads, Analytics, Search Console and Business Profile. Assign each account below."
+              >
+                {GOOGLE_CONNECTOR_TYPES.map(t => assignedRow(t, { sub: true }))}
+              </IntegrationRow>
+              {implemented('meta_ads') && assignedRow('meta_ads')}
+            </IntegrationGroup>
+
+            <IntegrationGroup id="ci-site" title="Website and CRM" description="Where posts publish, and where leads and calls come from.">
+              {(['wordpress', 'ghl', 'bigcommerce'] as const).filter(implemented).map(directRow)}
+            </IntegrationGroup>
+
+            <IntegrationGroup id="ci-seo" title="SEO data" description="Rankings and keyword research for this client's site.">
+              {(['ahrefs', 'dataforseo'] as const).filter(implemented).map(t => assignedRow(t))}
+            </IntegrationGroup>
+
+            <IntegrationGroup id="ci-ops" title="Notifications and billing" description="Where this client's alerts go, and how their payments and maps are linked.">
+              <ClientIntegrationCards
+                clientId={id}
+                discordChannelId={(client as unknown as { discord_channel_id?: string }).discord_channel_id ?? null}
+                stripeCustomerId={(client as unknown as { stripe_customer_id?: string }).stripe_customer_id ?? null}
+                localDominatorUrl={(client as unknown as { local_dominator_url?: string }).local_dominator_url ?? null}
+              />
+            </IntegrationGroup>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ── PERFORMANCE ──────────────────────────────────────────────── */}
       {activeTab === 'performance' && (
@@ -637,7 +522,7 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
   const monthStart  = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
-  const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, postsData, agencySettingsData] = await Promise.all([
+  const [wpConnData, settingsData, topicsData, recentPostsData, gscRaw, recentKwData, agencySettingsData] = await Promise.all([
     db.from('client_connections')
       .select('id, external_id, external_name, connector:connectors!inner(type, config)')
       .eq('client_id', clientId).eq('status', 'active').in('connector.type', ['wordpress', 'bigcommerce']),
@@ -669,12 +554,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
       .eq('client_id', clientId)
       .gte('generated_at', new Date(Date.now() - 90 * 86_400_000).toISOString())
       .limit(60),
-    db.from('content_posts')
-      .select('id, status, target_keyword, title, word_count, heading_count, internal_links, generated_at, generated_by, published_url, generate_by_date, target_publish_date, wp_post_id, wp_site_url, topic_rationale')
-      .eq('client_id', clientId)
-      .not('status', 'in', '("published","draft_saved")')
-      .order('generated_at', { ascending: false })
-      .limit(200),
     db.from('agency_settings').select('ai_api_key').single(),
   ])
 
@@ -757,66 +636,6 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
     highVolume: sortSection(aggRows.filter(r => r.position > 20  && r.impressions > 20), 50),
   }
 
-  const topicQueueItems = upcomingTopics.map(t => ({
-    type:               'topic' as const,
-    id:                 t.id,
-    clientId,
-    clientName,
-    status:             t.status,
-    targetKeyword:      t.target_keyword ?? null,
-    title:              null,
-    topicText:          t.topic,
-    wordCount:          null,
-    headingCount:       null,
-    internalLinks:      null,
-    generatedAt:        t.created_at,
-    generatedBy:        'scheduled',
-    publishedUrl:       null,
-    generateByDate:     t.generate_by_date ?? null,
-    targetPublishDate:  t.target_publish_date ?? null,
-    rationale:          t.rationale ?? null,
-    wpPostId:           null,
-    wpSiteUrl:          null,
-    keywordOpportunity: t.keyword_opportunity ?? null,
-    rankingStrategy:    t.ranking_strategy ?? null,
-    audienceIntent:     t.audience_intent ?? null,
-    whyNow:             t.why_now ?? null,
-    competitionLevel:   t.competition_level ?? null,
-    generationError:    t.generation_error ?? null,
-    suggestedTitle:     t.suggested_title ?? null,
-    searchVolume:       t.search_volume ?? null,
-    keywordDifficulty:  t.keyword_difficulty ?? null,
-  }))
-
-  const posts = [
-    ...topicQueueItems,
-    ...(postsData.data ?? []).map(p => {
-      type P = Record<string, unknown>
-      const r = p as P
-      return {
-        type:             'post' as const,
-        id:               String(r.id),
-        clientId,
-        clientName,
-        status:           String(r.status),
-        targetKeyword:    r.target_keyword ? String(r.target_keyword) : null,
-        title:            r.title         ? String(r.title)          : null,
-        topicText:        null,
-        wordCount:        r.word_count     != null ? Number(r.word_count)    : null,
-        headingCount:     r.heading_count  != null ? Number(r.heading_count) : null,
-        internalLinks:    r.internal_links != null ? Number(r.internal_links): null,
-        generatedAt:      String(r.generated_at),
-        generatedBy:      String(r.generated_by ?? ''),
-        publishedUrl:     r.published_url  ? String(r.published_url)  : null,
-        generateByDate:   r.generate_by_date ? String(r.generate_by_date) : null,
-        targetPublishDate:r.target_publish_date ? String(r.target_publish_date) : null,
-        rationale:        r.topic_rationale ? String(r.topic_rationale) : null,
-        wpPostId:         r.wp_post_id     ? Number(r.wp_post_id)   : null,
-        wpSiteUrl:        r.wp_site_url    ? String(r.wp_site_url)  : null,
-      }
-    }),
-  ]
-
   return (
     <Suspense fallback={null}>
       <ClientContentTabPanel
@@ -846,16 +665,3 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
   )
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function SourceBadge({ state }: { state: string; compact?: boolean }) {
-  const m: Record<string, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
-    'connected':         { label: 'Connected',   tone: 'success' },
-    'connector-missing': { label: 'Not set up',  tone: 'warning' },
-    'not-connected':     { label: 'Available',   tone: 'neutral' },
-    'coming-soon':       { label: 'Coming soon', tone: 'neutral' },
-    'direct-connect':    { label: 'Not set up',  tone: 'warning' },
-  }
-  const d = m[state] ?? { label: state, tone: 'neutral' as const }
-  return <StatusBadge tone={d.tone}>{d.label}</StatusBadge>
-}

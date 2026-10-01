@@ -13,7 +13,6 @@ interface Props {
   initialDevices?: SeoDevice[]
 }
 
-const DfsIcon = <span style={{ fontWeight: 800, fontSize: '1rem', color: '#6366f1' }}>D</span>
 const ALL_DEVICES: SeoDevice[] = ['desktop', 'mobile']
 
 export default function DataForSeoAgencyCard({
@@ -71,7 +70,7 @@ export default function DataForSeoAgencyCard({
   return (
     <>
       <IntegrationCard
-        icon={DfsIcon}
+        brand="dataforseo"
         name="DataForSEO"
         description="Keyword rankings, search volume, difficulty, intent, and SERP data. Bring your own DataForSEO key (pay-as-you-go)."
         isConnected={isConnected || !!hasCreds}
@@ -84,7 +83,7 @@ export default function DataForSeoAgencyCard({
         onClose={() => setOpen(false)}
         onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
         title="DataForSEO"
-        icon={DfsIcon}
+        brand="dataforseo"
         isConnected={!!hasCreds}
         howTo={
           <div>

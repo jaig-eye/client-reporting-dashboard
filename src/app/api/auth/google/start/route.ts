@@ -4,11 +4,12 @@
 // plus optional developer_token and mcc_customer_id (Google Ads only).
 // All params are encoded into the OAuth state so the callback can restore them.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { beginOAuth, appUrlFrom } from '@/lib/oauthFlow'
 
 export async function GET(request: NextRequest) {
-  const appUrl        = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const appUrl        = appUrlFrom(request)
   const connectorType = request.nextUrl.searchParams.get('connector_type') ?? ''
   const mccCustomerId = request.nextUrl.searchParams.get('mcc_customer_id') ?? ''
   const connectorId   = request.nextUrl.searchParams.get('connector_id') ?? ''
@@ -42,15 +43,14 @@ export async function GET(request: NextRequest) {
   // Old per-type links (?connector_type=google_analytics) remain fully backward compatible.
   const isUnified = !connectorType || connectorType === 'google'
 
-  const state = Buffer.from(
-    JSON.stringify({
-      ...(isUnified
-        ? { mode: 'unified' }
-        : { connector_type: connectorType }),
-      developer_token: developerToken,
-      mcc_customer_id: mccCustomerId,
-    })
-  ).toString('base64url')
+  // Requires a signed-in admin; adds a one-time nonce (and ?popup=1) to the state. See oauthFlow.
+  const state = {
+    ...(isUnified
+      ? { mode: 'unified' }
+      : { connector_type: connectorType }),
+    developer_token: developerToken,
+    mcc_customer_id: mccCustomerId,
+  }
 
   // Request all Google scopes in a single OAuth flow so one token set covers
   // Google Ads, GA4, Search Console, and Business Profile connectors.
@@ -61,17 +61,16 @@ export async function GET(request: NextRequest) {
     'https://www.googleapis.com/auth/business.manage',
   ].join(' ')
 
-  const params = new URLSearchParams({
-    client_id:     process.env.GOOGLE_CLIENT_ID!,
-    redirect_uri:  `${appUrl}/api/auth/google/callback`,
-    response_type: 'code',
-    scope:         GOOGLE_SCOPES,
-    access_type:   'offline',
-    prompt:        'consent', // always get a refresh_token
-    state,
+  return beginOAuth(request, state, encoded => {
+    const params = new URLSearchParams({
+      client_id:     process.env.GOOGLE_CLIENT_ID!,
+      redirect_uri:  `${appUrl}/api/auth/google/callback`,
+      response_type: 'code',
+      scope:         GOOGLE_SCOPES,
+      access_type:   'offline',
+      prompt:        'consent', // always get a refresh_token
+      state:         encoded,
+    })
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`
   })
-
-  return NextResponse.redirect(
-    `https://accounts.google.com/o/oauth2/v2/auth?${params}`
-  )
 }

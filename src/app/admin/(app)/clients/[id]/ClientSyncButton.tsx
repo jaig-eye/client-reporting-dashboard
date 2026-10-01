@@ -1,10 +1,11 @@
 'use client'
 
-// Sync trigger button for a specific client connection.
-// Calls the sync API route and shows loading/success/error state with a progress bar.
+// Syncs one of a client's connections now. When it finishes the page refreshes in place, so the
+// row's "synced …" time updates without a reload.
 
 import { useState } from 'react'
-import { ArrowsCounterClockwise } from '@phosphor-icons/react'
+import { useRouter } from 'next/navigation'
+import { ArrowsCounterClockwise, Check, WarningCircle } from '@phosphor-icons/react'
 
 interface Props {
   clientId: string
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export default function ClientSyncButton({ clientId, connectionId }: Props) {
+  const router = useRouter()
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
 
   async function handleSync() {
@@ -24,6 +26,7 @@ export default function ClientSyncButton({ clientId, connectionId }: Props) {
       })
       if (!res.ok) throw new Error('Sync failed')
       setStatus('success')
+      router.refresh()
       setTimeout(() => setStatus('idle'), 3000)
     } catch {
       setStatus('error')
@@ -31,33 +34,20 @@ export default function ClientSyncButton({ clientId, connectionId }: Props) {
     }
   }
 
-  const isLoading = status === 'loading'
-
   return (
-    <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '0.25rem', minWidth: 72 }}>
-      <button
-        onClick={handleSync}
-        disabled={isLoading}
-        className="btn btn-secondary"
-        style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem', opacity: isLoading ? 0.7 : 1 }}
-      >
-        {isLoading
-          ? 'Syncing…'
-          : status === 'success' ? 'Synced ✓'
-          : status === 'error'   ? 'Error ✗'
-          : <><ArrowsCounterClockwise size={13} style={{ marginRight: 4 }} />Sync</>
-        }
-      </button>
-      {isLoading && (
-        <div style={{ height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden', position: 'relative' }}>
-          <div style={{
-            position: 'absolute', top: 0, left: 0, height: '100%', width: '40%',
-            background: 'var(--blue)', borderRadius: 2,
-            animation: 'syncSlide 1.4s ease-in-out infinite',
-          }} />
-          <style>{`@keyframes syncSlide { 0% { left: -40%; } 100% { left: 100%; } }`}</style>
-        </div>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={handleSync}
+      disabled={status === 'loading'}
+      className="btn btn-secondary btn-sm"
+      aria-live="polite"
+      title={status === 'error' ? 'The sync failed. System & logs has the details.' : 'Pull the latest data for this connection'}
+      style={status === 'success' ? { color: 'var(--green-fg)' } : status === 'error' ? { color: 'var(--red-fg)' } : undefined}
+    >
+      {status === 'loading' ? <><ArrowsCounterClockwise size={13} className="int-spin" aria-hidden />Syncing…</>
+       : status === 'success' ? <><Check size={13} weight="bold" aria-hidden />Synced</>
+       : status === 'error'   ? <><WarningCircle size={13} weight="bold" aria-hidden />Failed</>
+       : <><ArrowsCounterClockwise size={13} aria-hidden />Sync</>}
+    </button>
   )
 }

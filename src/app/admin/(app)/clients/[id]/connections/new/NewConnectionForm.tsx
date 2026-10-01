@@ -76,7 +76,8 @@ export default function NewConnectionForm({
         const d = await res.json()
         throw new Error(d.error || 'Failed to create connection')
       }
-      window.location.href = `/admin/clients/${clientId}?connected=${connectorType}`
+      // Back to the client's Integrations tab (it used to land on Overview), in place.
+      router.push(`/admin/clients/${clientId}?tab=sources&connected=${connectorType}`)
       router.refresh()
     } catch (err) {
       setStatus('error')

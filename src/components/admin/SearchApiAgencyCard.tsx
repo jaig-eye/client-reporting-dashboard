@@ -9,7 +9,6 @@ interface Props {
   initialProvider: string
 }
 
-const SerpIcon = <span style={{ fontWeight: 800, fontSize: '1rem', color: '#0ea5e9' }}>⌕</span>
 
 export default function SearchApiAgencyCard({ initialApiKey, initialProvider }: Props) {
   const [open,        setOpen]        = useState(false)
@@ -55,7 +54,7 @@ export default function SearchApiAgencyCard({ initialApiKey, initialProvider }: 
   return (
     <>
       <IntegrationCard
-        icon={SerpIcon}
+        brand="serpapi"
         name="Search API"
         description="Competitor research during content generation — finds and analyzes top-ranking pages for each keyword."
         isConnected={isConnected}
@@ -68,7 +67,7 @@ export default function SearchApiAgencyCard({ initialApiKey, initialProvider }: 
         onClose={() => setOpen(false)}
         onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
         title="Search API"
-        icon={SerpIcon}
+        brand="serpapi"
         isConnected={isConnected}
         howTo={
           <div>

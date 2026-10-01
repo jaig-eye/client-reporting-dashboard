@@ -1,91 +1,50 @@
 'use client'
 
+// An integration configured in a dialog (API keys, IDs): Ahrefs, DataForSEO, SerpApi, Discord,
+// Stripe at agency level; WordPress, HighLevel, BigCommerce, Discord, Stripe, Local Dominator per
+// client. Drawn as the shared IntegrationRow so every integration looks the same; the button opens
+// the dialog (IntegrationModal).
+
 import { useEffect, useState } from 'react'
+import IntegrationRow from './integrations/IntegrationRow'
 
 interface IntegrationCardProps {
-  icon:            React.ReactNode
+  /** Legacy icon (emoji or element). Ignored when `brand` is set. */
+  icon?:           React.ReactNode
+  /** Connector type / service key: the real logo. */
+  brand?:          string
   name:            string
   description:     string
   isConnected:     boolean
   connectedLabel?: string          // e.g. "ch: 123456789..." or "cus_xxx..."
   onConfigure:     () => void
-  justConnected?:  boolean         // parent sets true after save → triggers animation
+  justConnected?:  boolean         // parent sets true after save → the badge pops
 }
 
 export default function IntegrationCard({
-  icon, name, description, isConnected, connectedLabel, onConfigure, justConnected,
+  icon, brand, name, description, isConnected, connectedLabel, onConfigure, justConnected,
 }: IntegrationCardProps) {
-  const [animate, setAnimate] = useState(false)
-
+  const [pop, setPop] = useState(false)
   useEffect(() => {
-    if (justConnected) {
-      setAnimate(true)
-      const t = setTimeout(() => setAnimate(false), 1600)
-      return () => clearTimeout(t)
-    }
+    if (!justConnected) return
+    setPop(true)
+    const t = setTimeout(() => setPop(false), 1600)
+    return () => clearTimeout(t)
   }, [justConnected])
 
   return (
-    <div style={{
-      background: 'var(--bg-surface)',
-      border: `1px solid ${isConnected ? 'var(--border)' : 'var(--border-subtle)'}`,
-      borderRadius: 10,
-      padding: '1rem 1.125rem',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.875rem',
-    }}>
-      {/* Icon */}
-      <div style={{
-        width: 40, height: 40, borderRadius: 8, flexShrink: 0,
-        background: 'var(--bg-subtle)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '1.25rem',
-      }}>
-        {icon}
-      </div>
-
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{name}</span>
-          {isConnected && (
-            <span
-              className={animate ? 'integration-badge-pop' : ''}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600,
-                background: '#dcfce7', color: '#166534',
-                transition: 'all 0.3s',
-              }}
-            >
-              {animate ? (
-                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" style={{ animation: 'checkmark-draw 0.4s ease forwards' }}>
-                  <circle cx="6" cy="6" r="5.5" stroke="#16a34a" strokeWidth="1" fill="#dcfce7" style={{ animation: 'circle-scale 0.3s ease forwards' }} />
-                  <polyline points="2.5,6 5,8.5 9.5,3.5" stroke="#16a34a" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                    style={{ strokeDasharray: 10, strokeDashoffset: 10, animation: 'checkmark-draw 0.4s 0.15s ease forwards' }} />
-                </svg>
-              ) : '✓'} Connected
-            </span>
-          )}
-        </div>
-        <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>{description}</p>
-        {isConnected && connectedLabel && (
-          <p style={{ margin: '3px 0 0', fontSize: '0.7rem', color: 'var(--text-faint)', fontFamily: 'monospace' }}>
-            {connectedLabel}
-          </p>
-        )}
-      </div>
-
-      {/* Action button */}
-      <button
-        type="button"
-        onClick={onConfigure}
-        className={isConnected ? 'btn btn-secondary' : 'btn btn-primary'}
-        style={{ flexShrink: 0, fontSize: '0.8rem', padding: '0.375rem 0.875rem' }}
-      >
-        {isConnected ? 'Configure' : 'Connect'}
-      </button>
-    </div>
+    <IntegrationRow
+      brand={brand}
+      logo={brand ? undefined : <span className="ui-tile ui-tile--lg" aria-hidden>{icon}</span>}
+      name={name}
+      status={isConnected ? { tone: 'success', label: 'Connected', live: pop } : { tone: 'neutral', label: 'Not connected' }}
+      description={description}
+      meta={isConnected && connectedLabel ? <code className="int-code">{connectedLabel}</code> : undefined}
+      actions={
+        <button type="button" onClick={onConfigure} className={`btn btn-sm ${isConnected ? 'btn-secondary' : 'btn-primary'}`}>
+          {isConnected ? 'Manage' : 'Connect'}
+        </button>
+      }
+    />
   )
 }

@@ -1,136 +1,100 @@
-// Connector Settings — /admin/connections/[id]
-// View and edit an existing agency-level connector.
+// Connection settings — /admin/connections/[id]
+// One agency-level connection: its status, its settings, how to reconnect, and the client accounts
+// that use it.
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Connector } from '@/lib/types'
 import { getConnectorDef } from '@/lib/connectors/registry'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
+import BrandLogo from '@/components/ui/BrandLogo'
+import StatusBadge from '@/components/ui/StatusBadge'
+import { connectorStatus } from '@/components/admin/integrations/IntegrationRow'
 import EditConnectorForm from './EditConnectorForm'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ConnectorDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ connected?: string }>
 }) {
   const { id } = await params
+  const sp = await searchParams
   const db = createAdminClient()
 
-  // Explicit column list, NOT select('*'). EditConnectorForm is a client component, so
-  // every column handed to it is serialized into the RSC flight payload inside the page
-  // HTML — and `auth` holds the live credential for each connector: Google Ads
-  // access/refresh/developer tokens, GA4, GSC and GBP refresh tokens, Meta and Ahrefs
-  // keys. Anyone who can render this page, any browser extension, any saved HAR or
-  // support screenshot had them in plain text, including a read-only viewer.
-  //
-  // Nothing is lost by omitting it: the form initialises its credential inputs to EMPTY
-  // strings (it never displays a stored secret), and the one place that did read
-  // auth.developer_token now passes connector_id and lets the server resolve it.
-  const { data } = await db
-    .from('connectors')
-    .select('id, type, label, status, config, last_checked_at, created_at, updated_at')
-    .eq('id', id)
-    .single()
+  // Explicit column list, NOT select('*'). EditConnectorForm is a client component, so every
+  // column handed to it is serialized into the page HTML — and `auth` holds the live credentials.
+  // The form never shows a stored secret, so it doesn't need them.
+  const [{ data }, { data: tokenRow }] = await Promise.all([
+    db.from('connectors')
+      .select('id, type, label, status, config, last_checked_at, created_at, updated_at')
+      .eq('id', id)
+      .single(),
+    // Whether a Google Ads developer token is stored — read here and kept on the server. The old
+    // check read connector.auth, which the select above leaves out, so the warning always showed.
+    db.from('connectors').select('dev_token:auth->>developer_token').eq('id', id).maybeSingle(),
+  ])
   const connector = data as Connector | null
   if (!connector) notFound()
+  const hasDevToken = !!(tokenRow as { dev_token?: string | null } | null)?.dev_token
 
   const def = getConnectorDef(connector.type)
+  const status = connectorStatus(connector.status)
 
-  // Connected client accounts
   const { data: connections } = await db
     .from('client_connections')
-    .select('id, external_id, external_name, status, last_synced_at, client:clients(name)')
+    .select('id, client_id, external_id, external_name, status, last_synced_at, client:clients(name)')
     .eq('connector_id', id)
     .order('created_at')
+  type ConnRow = { id: string; client_id: string; external_id: string; external_name: string | null; status: string; last_synced_at: string | null; client: { name: string } | { name: string }[] | null }
+  const rows = (connections ?? []) as unknown as ConnRow[]
+  const clientName = (c: ConnRow['client']) => (Array.isArray(c) ? c[0]?.name : c?.name) ?? 'Unknown client'
 
   return (
-    <div className="max-w-2xl">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-6 text-sm">
-        <Link href="/admin/connections" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Data Connections
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{def.label}</span>
-      </div>
+    <div style={{ maxWidth: 820 }}>
+      <PageHeader
+        back={{ href: '/admin/connections', label: 'Integrations' }}
+        leading={<BrandLogo type={connector.type} size={24} tile tileSize="xl" />}
+        title={def.label}
+        description={connector.last_checked_at ? `Last checked ${new Date(connector.last_checked_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : def.description}
+        actions={<StatusBadge tone={status.tone} title={status.title}>{status.label}</StatusBadge>}
+      />
 
-      <div className="space-y-5">
-
-        {/* Edit form */}
-        <div className="card p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div
-              className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-              style={{ background: def.color }}
-            >
-              {def.icon}
-            </div>
-            <div>
-              <h1 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {def.label}
-              </h1>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className={`badge ${
-                  connector.status === 'active' ? 'badge-green' :
-                  connector.status === 'error'  ? 'badge-red'   : 'badge-gray'
-                }`}>
-                  {connector.status}
-                </span>
-                {connector.last_checked_at && (
-                  <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                    Last checked {new Date(connector.last_checked_at).toLocaleDateString()}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {connector.type === 'google_ads' &&
-          !(connector.auth as Record<string, unknown>)?.developer_token && (
-          <div
-            className="mb-4 rounded-xl px-4 py-3 text-sm"
-            style={{ background: 'var(--amber-subtle, #fffbeb)', border: '1px solid #fde68a', color: '#92400e' }}
-          >
-            <strong>Developer Token missing.</strong> Paste your Developer Token in the field below
-            and click Save Changes — required for syncing and account discovery.
-          </div>
-        )}
-        <EditConnectorForm connector={connector} />
+      {sp.connected && <div className="ui-notice ui-notice--success" role="status">Connected. Account discovery runs in the background, so new accounts can take a minute to appear.</div>}
+      {connector.type === 'google_ads' && !hasDevToken && (
+        <div className="ui-notice ui-notice--warning" role="status">
+          No developer token is saved, so Google Ads won’t sync or find accounts. Paste it below and save.
         </div>
+      )}
 
-        {/* Connected client accounts */}
-        {connections && connections.length > 0 && (
-          <div className="card p-5">
-            <h2 className="section-title mb-3">Client Accounts Using This Connector</h2>
-            <div className="space-y-2">
-              {(connections as unknown as Array<{
-                id: string
-                external_id: string
-                external_name: string | null
-                status: string
-                last_synced_at: string | null
-                client: { name: string }[] | null
-              }>).map(conn => (
-                <div key={conn.id} className="flex items-center justify-between text-sm">
-                  <div>
-                    <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
-                      {conn.client?.[0]?.name ?? 'Unknown client'}
-                    </span>
-                    <span className="ml-2 text-xs" style={{ color: 'var(--text-faint)' }}>
+      <div className="ui-stack">
+        <Section title="Settings" description="The label and options for this connection. Credentials are never shown once saved; type a new one to replace it.">
+          <EditConnectorForm connector={connector} />
+        </Section>
+
+        {rows.length > 0 && (
+          <Section title="Clients using this connection" description="The accounts assigned to each client." flush>
+            <div>
+              {rows.map(conn => (
+                <div key={conn.id} className="ui-row">
+                  <span className="ui-row-text">
+                    <Link href={`/admin/clients/${conn.client_id}?tab=sources`} className="ui-row-title" style={{ textDecoration: 'none' }}>{clientName(conn.client)}</Link>
+                    <span className="ui-row-sub">
                       {conn.external_name ?? conn.external_id}
+                      {conn.last_synced_at && `, synced ${new Date(conn.last_synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                     </span>
-                  </div>
-                  <span className={`badge ${conn.status === 'active' ? 'badge-green' : 'badge-gray'}`}>
-                    {conn.status}
                   </span>
+                  <StatusBadge tone={conn.status === 'active' ? 'success' : 'neutral'}>{conn.status === 'active' ? 'Active' : conn.status.charAt(0).toUpperCase() + conn.status.slice(1)}</StatusBadge>
                 </div>
               ))}
             </div>
-          </div>
+          </Section>
         )}
-
       </div>
     </div>
   )

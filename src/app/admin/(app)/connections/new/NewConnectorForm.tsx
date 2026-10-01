@@ -1,316 +1,99 @@
 'use client'
 
-// Agency-level connector setup form.
-// Handles Google OAuth (unified — all 4 services at once), Meta OAuth,
-// and direct-credential connectors (Ahrefs).
-//
-// GHL and WordPress are client-level direct connections — configure those
-// inside the individual client page (Admin → Clients → [Client] → Direct Integrations).
+// First-time agency connection for the services that sign in with an account: Google (one sign-in
+// for all four services) and Meta. The sign-in runs in a popup; when it finishes, this page goes
+// back to Integrations, which shows the result. Key-based services (Ahrefs, DataForSEO, SerpApi,
+// Discord, Stripe) connect from their dialogs on the Integrations page, and site connections
+// (WordPress, HighLevel, BigCommerce) from each client's Integrations tab.
 
 import { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { CaretRight } from '@phosphor-icons/react'
 import type { ConnectorType } from '@/lib/types'
+import { useOAuthPopup } from '@/components/admin/integrations/useOAuthPopup'
 
 export default function NewConnectorForm({ type }: { type: ConnectorType | 'google' }) {
-  if (type === 'google')               return <GoogleUnifiedForm />
-  if (type === 'google_ads')           return <GoogleAdsForm />
-  if (type === 'google_analytics')     return <GoogleOAuthForm type="google_analytics"        label="Google Analytics (GA4)" hint="Sign in with the Google account that owns your GA4 properties." />
-  if (type === 'google_search_console')return <GoogleOAuthForm type="google_search_console"   label="Google Search Console"  hint="Sign in with the Google account that has access to your verified sites." />
-  if (type === 'google_business_profile') return <GoogleOAuthForm type="google_business_profile" label="Google Business Profile" hint="Sign in with the Google account that manages your GBP locations." />
-  if (type === 'meta_ads')             return <MetaForm />
-  if (type === 'ahrefs')               return <AhrefsForm />
-  if (type === 'ghl' || type === 'wordpress') {
-    return (
-      <div
-        className="rounded-xl px-4 py-3 text-sm space-y-2"
-        style={{ background: 'var(--yellow-subtle, #fefce8)', border: '1px solid var(--yellow-border, #fde68a)', color: 'var(--text-primary)' }}
-      >
-        <p className="font-medium">Set up this connection at the client level.</p>
-        <p style={{ color: 'var(--text-muted)' }}>
-          {type === 'ghl' ? 'GoHighLevel' : 'WordPress'} connections are client-specific and must be
-          configured inside the individual client page under <strong>Direct Integrations</strong>.
-        </p>
-        <a href="/admin/clients" className="btn btn-secondary text-sm inline-block mt-1">Go to Clients</a>
-      </div>
-    )
-  }
+  if (type === 'google')   return <GoogleUnifiedForm />
+  if (type === 'meta_ads') return <MetaForm />
   return (
-    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-      This connector type is not yet supported.
-    </p>
+    <div className="ui-notice ui-notice--info" style={{ marginBottom: 0 }}>
+      <span>
+        {type === 'ghl' || type === 'wordpress' || type === 'bigcommerce'
+          ? 'Site and CRM connections belong to a client. Open the client, then its Integrations tab.'
+          : 'Connect this from its card on the Integrations page.'}
+      </span>
+      <Link href={type === 'ghl' || type === 'wordpress' || type === 'bigcommerce' ? '/admin/dashboard' : '/admin/connections'} className="btn btn-secondary btn-sm">
+        {type === 'ghl' || type === 'wordpress' || type === 'bigcommerce' ? 'Go to Clients' : 'Go to Integrations'}
+      </Link>
+    </div>
   )
 }
 
-// ─── Unified Google (all 4 services in one OAuth flow) ───────────────────────
+function PopupStatus({ status, error, provider }: { status: string; error: string | null; provider: string }) {
+  if (status === 'waiting') return <p className="ui-row-sub" role="status">Finish signing in to {provider} in the window that opened.</p>
+  if (status === 'failed' && error) return <p className="ui-row-sub" role="alert" style={{ color: 'var(--red-fg)' }}>{error}</p>
+  return null
+}
+
+// ─── Google: all four services in one sign-in ────────────────────────────────
 
 function GoogleUnifiedForm() {
+  const router = useRouter()
   const [developerToken, setDeveloperToken] = useState('')
   const [mccCustomerId,  setMccCustomerId]  = useState('')
   const [showAds,        setShowAds]        = useState(false)
+  const { start, status, error } = useOAuthPopup({ onDone: ok => { if (ok) router.push('/admin/connections?connected=google') } })
 
   function handleConnect() {
     const params = new URLSearchParams()
     if (developerToken.trim()) params.set('developer_token', developerToken.trim())
     if (mccCustomerId.trim())  params.set('mcc_customer_id', mccCustomerId.trim().replace(/-/g, ''))
-    // No connector_type → start route treats this as unified mode
-    window.location.href = `/api/auth/google/start?${params}`
+    // No connector_type: the start route connects all four services.
+    start(`/api/auth/google/start${params.size ? `?${params}` : ''}`)
   }
 
   return (
-    <div className="space-y-4">
-      {/* Services included */}
-      <div
-        className="rounded-xl px-4 py-3 text-sm space-y-2"
-        style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
-      >
-        <p className="font-medium">One Google sign-in activates all four data sources:</p>
-        <ul className="list-none space-y-1 pl-1" style={{ color: 'var(--blue)' }}>
-          <li>· Google Ads — campaign &amp; keyword performance</li>
-          <li>· Google Analytics (GA4) — traffic &amp; conversions</li>
-          <li>· Search Console — organic search data</li>
-          <li>· Business Profile — views, calls &amp; reviews</li>
-        </ul>
-        <p style={{ color: 'var(--blue)', opacity: 0.8 }}>
-          You&apos;ll only need to do this once — we store a refresh token so syncs never expire.
-        </p>
+    <div className="ui-stack">
+      <div className="nc-list" aria-label="What this connects">
+        {[
+          ['Google Ads', 'Campaign and keyword performance'],
+          ['Google Analytics', 'Traffic and conversions'],
+          ['Search Console', 'Organic search queries and pages'],
+          ['Business Profile', 'Views, calls and reviews'],
+        ].map(([name, what]) => (
+          <div key={name} className="nc-item"><strong>{name}</strong><span>{what}</span></div>
+        ))}
       </div>
+      <p className="ui-row-sub">You sign in once; the connection renews itself, so syncs don’t expire.</p>
 
-      {/* Optional Google Ads config */}
-      <div
-        className="rounded-xl overflow-hidden"
-        style={{ border: '1px solid var(--border)' }}
-      >
-        <button
-          type="button"
-          onClick={() => setShowAds(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm focus-ring"
-          style={{
-            background: 'var(--bg-subtle)',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'var(--text-primary)',
-            textAlign: 'left',
-          }}
-        >
-          <span className="font-medium">Google Ads configuration <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>(optional)</span></span>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>{showAds ? '▲' : '▼'}</span>
+      <div className="nc-advanced">
+        <button type="button" onClick={() => setShowAds(v => !v)} aria-expanded={showAds}>
+          <CaretRight size={12} weight="bold" aria-hidden className="nc-caret" />
+          Google Ads details <span>(only if you use Google Ads)</span>
         </button>
-
         {showAds && (
-          <div className="p-4 space-y-3" style={{ borderTop: '1px solid var(--border)' }}>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Required only if you want to sync Google Ads campaign and keyword data.
-              Skip this section if you don&apos;t use Google Ads.
-            </p>
-
-            <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                Developer Token
-              </label>
-              <input
-                className="input"
-                type="password"
-                placeholder="ABcd1234…"
-                value={developerToken}
-                onChange={e => setDeveloperToken(e.target.value)}
-              />
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                Found in Google Ads → Admin → API Center under your MCC account.
-              </p>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                MCC Customer ID
-              </label>
-              <input
-                className="input"
-                type="text"
-                placeholder="1234567890"
-                value={mccCustomerId}
-                onChange={e => setMccCustomerId(e.target.value)}
-              />
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                Your top-level manager account ID. Dashes are stripped automatically.
-              </p>
-            </div>
+          <div className="nc-advanced-body">
+            <label className="nc-field">
+              <span>Developer token</span>
+              <input className="input" type="password" placeholder="ABcd1234…" value={developerToken} onChange={e => setDeveloperToken(e.target.value)} autoComplete="off" />
+              <small>In Google Ads, under Admin, then API Center, on your manager (MCC) account.</small>
+            </label>
+            <label className="nc-field">
+              <span>Manager account ID</span>
+              <input className="input" type="text" inputMode="numeric" placeholder="123-456-7890" value={mccCustomerId} onChange={e => setMccCustomerId(e.target.value)} />
+              <small>Your top-level manager account. Dashes are fine.</small>
+            </label>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="button"
-          onClick={handleConnect}
-          className="btn btn-primary"
-        >
-          Connect with Google Account
+      <PopupStatus status={status} error={error} provider="Google" />
+      <div className="nc-actions">
+        <button type="button" onClick={handleConnect} className="btn btn-primary" disabled={status === 'waiting'}>
+          {status === 'waiting' ? 'Waiting for Google…' : 'Sign in with Google'}
         </button>
-        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
-      </div>
-    </div>
-  )
-}
-
-// ─── Google Ads (requires Developer Token + MCC ID) ─────────────────────────
-
-function GoogleAdsForm() {
-  const [developerToken, setDeveloperToken] = useState('')
-  const [mccCustomerId,  setMccCustomerId]  = useState('')
-
-  function handleConnect() {
-    const params = new URLSearchParams()
-    if (developerToken.trim()) params.set('developer_token', developerToken.trim())
-    if (mccCustomerId.trim())  params.set('mcc_customer_id', mccCustomerId.trim().replace(/-/g, ''))
-    window.location.href = `/api/auth/google/start?${params}`
-  }
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-          Developer Token <span style={{ color: 'var(--red)' }}>*</span>
-        </label>
-        <input
-          className="input"
-          type="password"
-          placeholder="ABcd1234…"
-          value={developerToken}
-          onChange={e => setDeveloperToken(e.target.value)}
-        />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-          Found in Google Ads → Admin → API Center under your MCC account.
-        </p>
-      </div>
-
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-          MCC Customer ID <span style={{ color: 'var(--red)' }}>*</span>
-        </label>
-        <input
-          className="input"
-          type="text"
-          placeholder="1234567890"
-          value={mccCustomerId}
-          onChange={e => setMccCustomerId(e.target.value)}
-        />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-          Your top-level manager account ID. Dashes are stripped automatically.
-        </p>
-      </div>
-
-      <div
-        className="rounded-xl px-4 py-3 text-sm"
-        style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
-      >
-        After entering your credentials above, click the button below to sign in with the
-        Google account that has access to your MCC. You&apos;ll only need to do this once — we
-        store a refresh token so syncs never expire.
-      </div>
-
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="button"
-          onClick={handleConnect}
-          disabled={!developerToken.trim() || !mccCustomerId.trim()}
-          className="btn btn-primary"
-        >
-          Connect with Google Account
-        </button>
-        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
-      </div>
-    </div>
-  )
-}
-
-// ─── Generic Google OAuth (GA4 / GSC / GBP) ─────────────────────────────────
-
-function GoogleOAuthForm({ type, label, hint }: { type: ConnectorType; label: string; hint: string }) {
-  function handleConnect() {
-    window.location.href = `/api/auth/google/start?connector_type=${encodeURIComponent(type)}`
-  }
-
-  return (
-    <div className="space-y-4">
-      <div
-        className="rounded-xl px-4 py-3 text-sm"
-        style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
-      >
-        {hint} You&apos;ll only need to do this once — we store a refresh token so syncs never expire.
-      </div>
-
-      <div className="flex items-center gap-3 pt-1">
-        <button type="button" onClick={handleConnect} className="btn btn-primary">
-          Connect {label} with Google
-        </button>
-        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
-      </div>
-    </div>
-  )
-}
-
-// ─── Ahrefs (API key) ────────────────────────────────────────────────────────
-
-function AhrefsForm() {
-  const [apiKey,  setApiKey]  = useState('')
-  const [saving,  setSaving]  = useState(false)
-  const [errMsg,  setErrMsg]  = useState('')
-
-  async function handleConnect() {
-    if (!apiKey.trim()) return
-    setSaving(true)
-    setErrMsg('')
-    try {
-      const res = await fetch('/api/admin/connectors', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ type: 'ahrefs', label: 'Ahrefs', auth: { api_key: apiKey.trim() } }),
-      })
-      if (!res.ok) {
-        const d = await res.json()
-        throw new Error(d.error || 'Failed to save')
-      }
-      window.location.href = '/admin/connections'
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : 'Something went wrong')
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-          API Key <span style={{ color: 'var(--red)' }}>*</span>
-        </label>
-        <input
-          className="input"
-          type="password"
-          placeholder="ahrefs_api_…"
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-        />
-        <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-          Found in Ahrefs → Account Settings → API. Requires a Standard plan or above.
-        </p>
-      </div>
-
-      {errMsg && (
-        <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
-          {errMsg}
-        </div>
-      )}
-
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="button"
-          onClick={handleConnect}
-          disabled={!apiKey.trim() || saving}
-          className="btn btn-primary"
-        >
-          {saving ? 'Connecting…' : 'Connect Ahrefs'}
-        </button>
-        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
+        <Link href="/admin/connections" className="btn btn-secondary">Cancel</Link>
       </div>
     </div>
   )
@@ -319,22 +102,20 @@ function AhrefsForm() {
 // ─── Meta Ads ─────────────────────────────────────────────────────────────────
 
 function MetaForm() {
+  const router = useRouter()
+  const { start, status, error } = useOAuthPopup({ onDone: ok => { if (ok) router.push('/admin/connections?connected=meta') } })
   return (
-    <div className="space-y-4">
-      <div
-        className="rounded-xl px-4 py-3 text-sm"
-        style={{ background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)', color: 'var(--blue)' }}
-      >
-        Click below to sign in with your Facebook account. Make sure you sign in with the account
-        that has access to your Business Manager and ad accounts. We&apos;ll request{' '}
-        <code>ads_read</code>, <code>ads_management</code>, and <code>business_management</code> permissions.
-      </div>
-
-      <div className="flex items-center gap-3">
-        <a href="/api/auth/meta/start" className="btn btn-primary">
-          Connect with Facebook
-        </a>
-        <a href="/admin/connections" className="btn btn-secondary">Cancel</a>
+    <div className="ui-stack">
+      <p className="ui-row-sub">
+        Sign in with the Facebook account that can see your Business Manager and ad accounts. Meta will ask to allow
+        reading and managing ads and business assets.
+      </p>
+      <PopupStatus status={status} error={error} provider="Meta" />
+      <div className="nc-actions">
+        <button type="button" onClick={() => start('/api/auth/meta/start')} className="btn btn-primary" disabled={status === 'waiting'}>
+          {status === 'waiting' ? 'Waiting for Meta…' : 'Sign in with Facebook'}
+        </button>
+        <Link href="/admin/connections" className="btn btn-secondary">Cancel</Link>
       </div>
     </div>
   )

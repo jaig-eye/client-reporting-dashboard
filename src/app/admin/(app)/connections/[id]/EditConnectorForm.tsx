@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Connector } from '@/lib/types'
+import OAuthConnectButton from '@/components/admin/integrations/OAuthConnectButton'
+import StatusBadge from '@/components/ui/StatusBadge'
 
 // Reconnect buttons — start a fresh OAuth flow while preserving existing config
 function ReconnectSection({ connector }: { connector: Connector }) {
@@ -23,9 +25,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Re-authorize if the connection has expired or you want to switch Google accounts.
         </p>
-        <a href={`/api/auth/google/start?${params}`} className="btn btn-secondary">
-          Reconnect with Google
-        </a>
+        <OAuthConnectButton href={`/api/auth/google/start?${params}`} label="Reconnect with Google" variant="secondary" provider="Google" />
       </div>
     )
   }
@@ -35,7 +35,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
-        <a href="/api/auth/google/start?connector_type=google_analytics" className="btn btn-secondary">Reconnect Google Analytics</a>
+        <OAuthConnectButton href="/api/auth/google/start?connector_type=google_analytics" label="Reconnect Google Analytics" variant="secondary" provider="Google" />
       </div>
     )
   }
@@ -45,7 +45,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
-        <a href="/api/auth/google/start?connector_type=google_search_console" className="btn btn-secondary">Reconnect Search Console</a>
+        <OAuthConnectButton href="/api/auth/google/start?connector_type=google_search_console" label="Reconnect Search Console" variant="secondary" provider="Google" />
       </div>
     )
   }
@@ -55,7 +55,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
-        <a href="/api/auth/google/start?connector_type=google_business_profile" className="btn btn-secondary">Reconnect Business Profile</a>
+        <OAuthConnectButton href="/api/auth/google/start?connector_type=google_business_profile" label="Reconnect Business Profile" variant="secondary" provider="Google" />
       </div>
     )
   }
@@ -69,9 +69,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Re-authorize if the 60-day token has expired or you want to switch accounts.
         </p>
-        <a href="/api/auth/meta/start" className="btn btn-secondary">
-          Reconnect with Facebook
-        </a>
+        <OAuthConnectButton href="/api/auth/meta/start" label="Reconnect with Facebook" variant="secondary" provider="Meta" />
       </div>
     )
   }
@@ -109,24 +107,9 @@ function AhrefsStatusSection({ connector }: { connector: Connector }) {
         <h3 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
           Connection Status
         </h3>
-        {isActive && (
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{ background: 'var(--green-subtle)', color: 'var(--green)', border: '1px solid #bbf7d0' }}>
-            Connected
-          </span>
-        )}
-        {isError && (
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}>
-            Error
-          </span>
-        )}
-        {!isActive && !isError && (
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{ background: 'var(--yellow-subtle, #fefce8)', color: 'var(--text-muted)', border: '1px solid var(--yellow-border, #fde68a)' }}>
-            Pending
-          </span>
-        )}
+        {isActive && <StatusBadge tone="success">Connected</StatusBadge>}
+        {isError && <StatusBadge tone="danger">Error</StatusBadge>}
+        {!isActive && !isError && <StatusBadge tone="warning">Pending</StatusBadge>}
       </div>
       {isError && errMsg && (
         <p className="text-xs mb-3" style={{ color: 'var(--red)' }}>{errMsg}</p>
@@ -264,7 +247,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
         const d = await res.json()
         throw new Error(d.error || 'Failed to delete')
       }
-      window.location.href = '/admin/connections'
+      router.push('/admin/connections')
       router.refresh()
     } catch (err) {
       setStatus('error')
@@ -275,14 +258,12 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
   return (
     <div className="space-y-4">
       {status === 'success' && (
-        <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--green-subtle)', border: '1px solid #bbf7d0', color: 'var(--green)' }}>
+        <div className="ui-notice ui-notice--success" role="status">
           Saved successfully.
         </div>
       )}
       {status === 'error' && errorMsg && (
-        <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+        <div className="ui-notice ui-notice--danger" role="alert">
           {errorMsg}
         </div>
       )}

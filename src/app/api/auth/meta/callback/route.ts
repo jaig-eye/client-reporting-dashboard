@@ -1,14 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { exchangeMetaCode, metaAdsConnector } from '@/lib/connectors/meta-ads'
 import { createAdminClient } from '@/lib/supabase/server'
+import { decodeState, verifyOAuthCallback, finishOAuth, appUrlFrom } from '@/lib/oauthFlow'
 
 export async function GET(request: NextRequest) {
   const code   = request.nextUrl.searchParams.get('code')
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin).replace(/\/$/, '')
+  const appUrl = appUrlFrom(request)
+  const state  = decodeState(request.nextUrl.searchParams.get('state'))
+  const done = (ok: boolean, path: string, error?: string) =>
+    finishOAuth(request, state, { ok, provider: 'meta', path, error })
 
   if (!code) {
-    return NextResponse.redirect(`${appUrl}/admin/connections?error=meta_auth_failed`)
+    return done(false, '/admin/connections?error=meta_auth_failed', 'Meta sign-in was cancelled or denied.')
   }
+
+  // Only the signed-in admin who started this flow may complete it (see lib/oauthFlow).
+  const rejected = await verifyOAuthCallback(request, state)
+  if (rejected) return done(false, '/admin/connections?error=meta_auth_failed', rejected)
 
   try {
     const redirectUri    = `${appUrl}/api/auth/meta/callback`
@@ -50,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     if (connError || !connector) {
       console.error('Meta connector save failed:', connError)
-      return NextResponse.redirect(`${appUrl}/admin/connections?error=meta_save_failed`)
+      return done(false, '/admin/connections?error=meta_save_failed', 'Meta signed in, but the connection couldn’t be saved. Try again.')
     }
 
     // Discover accessible ad accounts and cache them
@@ -70,9 +78,9 @@ export async function GET(request: NextRequest) {
       console.warn('Meta account discovery failed (non-fatal):', e)
     }
 
-    return NextResponse.redirect(`${appUrl}/admin/connections/${connector.id}?connected=meta`)
+    return done(true, `/admin/connections/${connector.id}?connected=meta`)
   } catch (e) {
     console.error('Meta callback error:', e)
-    return NextResponse.redirect(`${appUrl}/admin/connections?error=meta_failed`)
+    return done(false, '/admin/connections?error=meta_failed', 'Meta connection failed. Try again in a minute.')
   }
 }

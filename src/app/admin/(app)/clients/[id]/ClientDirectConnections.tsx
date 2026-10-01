@@ -62,28 +62,31 @@ export default function ClientDirectConnections({
   // ── singleType inline mode (used from parent connector card) ───────────
   if (singleType) {
     if (singleType === 'ghl') {
-      if (ghlConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>GHL is connected. Go to connection settings to update credentials.</p>
+      // Once connected the page refreshes (IntegrationModal) and shows the connected row instead.
+      if (ghlConnected) return null
       return (
         <>
-          <IntegrationCard icon="📡" name="GoHighLevel" description="Connect CRM, contacts, calls, and pipeline data." isConnected={false} onConfigure={() => setGhlOpen(true)} justConnected={ghlJustSaved} />
+          <IntegrationCard brand="ghl" name="HighLevel" description="CRM contacts, calls, forms and pipeline." isConnected={false} onConfigure={() => setGhlOpen(true)} justConnected={ghlJustSaved} />
           {ghlOpen && <GhlModal open={ghlOpen} onClose={() => setGhlOpen(false)} apiKey={ghlApiKey} setApiKey={setGhlApiKey} locId={ghlLocId} setLocId={setGhlLocId} onSave={async () => { await connect('ghl', { apiKey: ghlApiKey, locationId: ghlLocId }); setGhlConnected(true) }} onSaved={() => flashSaved(setGhlJustSaved)} />}
         </>
       )
     }
     if (singleType === 'wordpress') {
-      if (wpConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>WordPress is connected. Go to connection settings to update credentials.</p>
+      // Once connected the page refreshes (IntegrationModal) and shows the connected row instead.
+      if (wpConnected) return null
       return (
         <>
-          <IntegrationCard icon="🟦" name="WordPress" description="Post content directly to the client's WordPress site." isConnected={false} onConfigure={() => setWpOpen(true)} justConnected={wpJustSaved} />
+          <IntegrationCard brand="wordpress" name="WordPress" description="Post content directly to the client's WordPress site." isConnected={false} onConfigure={() => setWpOpen(true)} justConnected={wpJustSaved} />
           {wpOpen && <WpModal open={wpOpen} onClose={() => setWpOpen(false)} siteUrl={wpSiteUrl} setSiteUrl={setWpSiteUrl} username={wpUsername} setUsername={setWpUsername} password={wpPassword} setPassword={setWpPassword} onSave={async () => { await connect('wordpress', { siteUrl: wpSiteUrl, username: wpUsername, appPassword: wpPassword }); setWpConnected(true) }} onSaved={() => flashSaved(setWpJustSaved)} />}
         </>
       )
     }
     if (singleType === 'bigcommerce') {
-      if (bcConnected) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>BigCommerce is connected. Go to connection settings to update credentials.</p>
+      // Once connected the page refreshes (IntegrationModal) and shows the connected row instead.
+      if (bcConnected) return null
       return (
         <>
-          <IntegrationCard icon="🛒" name="BigCommerce" description="Sync store data and publish content to BigCommerce." isConnected={false} onConfigure={() => setBcOpen(true)} justConnected={bcJustSaved} />
+          <IntegrationCard brand="bigcommerce" name="BigCommerce" description="Sync store data and publish content to BigCommerce." isConnected={false} onConfigure={() => setBcOpen(true)} justConnected={bcJustSaved} />
           {bcOpen && <BcModal open={bcOpen} onClose={() => setBcOpen(false)} storeHash={bcStoreHash} setStoreHash={setBcStoreHash} token={bcToken} setToken={setBcToken} onSave={async () => { await connect('bigcommerce', { storeHash: bcStoreHash, accessToken: bcToken }); setBcConnected(true) }} onSaved={() => flashSaved(setBcJustSaved)} />}
         </>
       )
@@ -91,7 +94,7 @@ export default function ClientDirectConnections({
     if (singleType === 'bigcommerce_analytics') {
       return (
         <>
-          <IntegrationCard icon="📦" name="BigCommerce Analytics" description="Fetches order data for daily sales reports and revenue tracking." isConnected={bcaConnected} onConfigure={() => setBcaOpen(true)} justConnected={bcaJustSaved} />
+          <IntegrationCard brand="bigcommerce_analytics" name="BigCommerce Analytics" description="Fetches order data for daily sales reports and revenue tracking." isConnected={bcaConnected} onConfigure={() => setBcaOpen(true)} justConnected={bcaJustSaved} />
           {bcaOpen && <BcModal open={bcaOpen} onClose={() => setBcaOpen(false)} storeHash={bcaStoreHash} setStoreHash={setBcaStoreHash} token={bcaToken} setToken={setBcaToken} isAnalytics onSave={async () => { await connect('bigcommerce', { storeHash: bcaStoreHash, accessToken: bcaToken, role: 'analytics' }); setBcaConnected(true) }} onSaved={() => flashSaved(setBcaJustSaved)} />}
         </>
       )
@@ -102,7 +105,7 @@ export default function ClientDirectConnections({
   return (
     <div className="space-y-3">
       <IntegrationCard
-        icon="📡" name="GoHighLevel (CRM)"
+        brand="ghl" name="GoHighLevel (CRM)"
         description="CRM contacts, calls, forms, and pipeline opportunities."
         isConnected={ghlConnected}
         onConfigure={() => setGhlOpen(true)}
@@ -112,7 +115,7 @@ export default function ClientDirectConnections({
         onSave={async () => { await connect('ghl', { apiKey: ghlApiKey, locationId: ghlLocId }); setGhlConnected(true) }} onSaved={() => flashSaved(setGhlJustSaved)} />
 
       <IntegrationCard
-        icon="🟦" name="WordPress"
+        brand="wordpress" name="WordPress"
         description="Publish blog posts directly to the client's WordPress site."
         isConnected={wpConnected}
         onConfigure={() => setWpOpen(true)}
@@ -122,7 +125,7 @@ export default function ClientDirectConnections({
         onSave={async () => { await connect('wordpress', { siteUrl: wpSiteUrl, username: wpUsername, appPassword: wpPassword }); setWpConnected(true) }} onSaved={() => flashSaved(setWpJustSaved)} />
 
       <IntegrationCard
-        icon="🛒" name="BigCommerce"
+        brand="bigcommerce" name="BigCommerce"
         description="Publish content to the client's BigCommerce blog."
         isConnected={bcConnected}
         onConfigure={() => setBcOpen(true)}
@@ -132,7 +135,7 @@ export default function ClientDirectConnections({
         onSave={async () => { await connect('bigcommerce', { storeHash: bcStoreHash, accessToken: bcToken }); setBcConnected(true) }} onSaved={() => flashSaved(setBcJustSaved)} />
 
       <IntegrationCard
-        icon="📦" name="BigCommerce Analytics"
+        brand="bigcommerce_analytics" name="BigCommerce Analytics"
         description="Fetches order data for daily sales reports and revenue tracking."
         isConnected={bcaConnected}
         onConfigure={() => setBcaOpen(true)}
@@ -152,8 +155,8 @@ function GhlModal({ open, onClose, apiKey, setApiKey, locId, setLocId, isConnect
 }) {
   return (
     <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
-      title="GoHighLevel (CRM)" icon="📡" isConnected={isConnected}
-      saveLabel={isConnected ? 'Reconnect' : 'Connect GHL'}
+      title="HighLevel" brand="ghl" isConnected={isConnected}
+      saveLabel={isConnected ? 'Reconnect' : 'Connect HighLevel'}
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
           <li><strong>Location ID:</strong> In your LaunchLocal / GHL dashboard, the Location ID is in the URL — look for <code>/location/XXXXXXXX</code> and copy that segment.</li>
@@ -185,7 +188,7 @@ function WpModal({ open, onClose, siteUrl, setSiteUrl, username, setUsername, pa
 }) {
   return (
     <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
-      title="WordPress" icon="🟦" isConnected={isConnected}
+      title="WordPress" brand="wordpress" isConnected={isConnected}
       saveLabel={isConnected ? 'Reconnect' : 'Connect WordPress'}
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
@@ -224,14 +227,14 @@ function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isCo
   onSave: () => Promise<void>; onSaved?: () => void
 }) {
   const title     = isAnalytics ? 'BigCommerce Analytics' : 'BigCommerce'
-  const icon      = isAnalytics ? '📦' : '🛒'
+  const brand     = isAnalytics ? 'bigcommerce_analytics' : 'bigcommerce'
   const scopeNote = isAnalytics
     ? <><strong>OAuth Scopes:</strong> set <strong>Orders → Read Only</strong> (required to fetch order data for sales reports).</>
     : <><strong>OAuth Scopes:</strong> set <strong>Content → Modify</strong> (required to publish blog posts).</>
 
   return (
     <IntegrationModal open={open} onClose={onClose} onSaved={onSaved}
-      title={title} icon={icon} isConnected={isConnected}
+      title={title} brand={brand} isConnected={isConnected}
       saveLabel={isConnected ? 'Reconnect' : `Connect ${title}`}
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>

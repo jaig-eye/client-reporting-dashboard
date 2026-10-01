@@ -4,10 +4,12 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import type { Client, Connector } from '@/lib/types'
 import { getConnectorDef, getConnectorAdapter } from '@/lib/connectors/registry'
 import NewConnectionForm from './NewConnectionForm'
+
+import PageHeader from '@/components/ui/PageHeader'
+import BrandLogo from '@/components/ui/BrandLogo'
 
 export const dynamic = 'force-dynamic'
 
@@ -108,45 +110,21 @@ export default async function NewClientConnectionPage({
   }
 
   return (
-    <div className="max-w-lg">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-6 text-sm flex-wrap">
-        <Link href="/admin/clients" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Clients
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <Link href={`/admin/clients/${id}`} style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          {client.name}
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Connect {def.label}</span>
-      </div>
+    <div style={{ maxWidth: 620 }}>
+      <PageHeader
+        back={{ href: `/admin/clients/${id}?tab=sources`, label: client.name }}
+        leading={<BrandLogo type={connector.type} size={24} tile tileSize="xl" />}
+        title={`Assign ${def.label} account`}
+        description={`Pick the account or property that belongs to ${client.name}.`}
+      />
 
-      <div className="card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <div
-            className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-            style={{ background: def.color }}
-          >
-            {def.icon}
-          </div>
-          <div>
-            <h1 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Connect {def.label} for {client.name}
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Assign an ad account or property to this client.
-            </p>
-          </div>
+      {discoveryError && (
+        <div className="ui-notice ui-notice--warning" role="status">
+          Couldn’t refresh the account list ({discoveryError}), so these are the accounts found last time.
         </div>
+      )}
 
-        {discoveryError && (
-          <div className="rounded-xl px-4 py-3 text-sm mb-4"
-            style={{ background: 'var(--amber-subtle, #fffbeb)', border: '1px solid #fde68a', color: '#92400e' }}>
-            Could not refresh account list: {discoveryError}. Showing cached results.
-          </div>
-        )}
-
+      <div className="card" style={{ padding: 20 }}>
         <NewConnectionForm
           clientId={id}
           connectorId={connectorId}

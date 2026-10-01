@@ -1,39 +1,65 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+// The dialog for connecting or managing an integration: its fields, an optional "how to find these"
+// guide, and Connect / Save changes / Disconnect. After a save the page refreshes in place, so
+// every status that depends on it — the badge here, a client's Integrations tab, panels that only
+// show once something is connected — updates without a reload.
+
+import { useState, useEffect, useRef, useId } from 'react'
+import { useRouter } from 'next/navigation'
+import { X, CaretRight, CheckCircle } from '@phosphor-icons/react'
+import BrandLogo from '@/components/ui/BrandLogo'
 
 interface IntegrationModalProps {
   open:          boolean
   onClose:       () => void
-  onSaved?:      () => void        // called after success animation ends
+  onSaved?:      () => void        // called after the success state ends
   title:         string
-  icon:          React.ReactNode
+  /** Legacy icon (emoji or element). Ignored when `brand` is set. */
+  icon?:         React.ReactNode
+  brand?:        string
   howTo?:        React.ReactNode   // collapsible guide
   children:      React.ReactNode   // the fields
   onSave:        () => Promise<void>
   saveLabel?:    string            // default "Connect"
-  isConnected?:  boolean           // true → button says "Save Changes"
+  isConnected?:  boolean           // true → button says "Save changes"
   canDelete?:    boolean
   onDelete?:     () => Promise<void>
 }
 
 export default function IntegrationModal({
-  open, onClose, onSaved, title, icon, howTo, children,
+  open, onClose, onSaved, title, icon, brand, howTo, children,
   onSave, saveLabel, isConnected, canDelete, onDelete,
 }: IntegrationModalProps) {
+  const router = useRouter()
   const [saving,    setSaving]    = useState(false)
   const [deleting,  setDeleting]  = useState(false)
   const [error,     setError]     = useState('')
   const [success,   setSuccess]   = useState(false)
   const [showHowTo, setShowHowTo] = useState(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const panelRef   = useRef<HTMLDivElement>(null)
+  const titleId    = useId()
 
-  // Reset state when modal opens/closes
   useEffect(() => {
     if (!open) {
       setSaving(false); setError(''); setSuccess(false); setShowHowTo(false)
       if (closeTimer.current) clearTimeout(closeTimer.current)
+      return
     }
+    // Focus the first field; Escape closes (unless a save is running); the page behind stays put.
+    const prevFocus = document.activeElement as HTMLElement | null
+    requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>('input, select, textarea, button:not(.int-modal-x)')?.focus())
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onClose() }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+      prevFocus?.focus?.()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   async function handleSave() {
@@ -42,13 +68,14 @@ export default function IntegrationModal({
     try {
       await onSave()
       setSuccess(true)
+      router.refresh()
       closeTimer.current = setTimeout(() => {
         setSuccess(false)
         onClose()
         onSaved?.()
-      }, 1400)
+      }, 1200)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed. Please try again.')
+      setError(err instanceof Error ? err.message : 'Saving failed. Try again.')
     } finally {
       setSaving(false)
     }
@@ -60,9 +87,10 @@ export default function IntegrationModal({
     setError('')
     try {
       await onDelete()
+      router.refresh()
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed.')
+      setError(err instanceof Error ? err.message : 'Disconnecting failed. Try again.')
     } finally {
       setDeleting(false)
     }
@@ -71,138 +99,56 @@ export default function IntegrationModal({
   if (!open) return null
 
   return (
-    <div
-      onClick={e => { if (e.target === e.currentTarget && !saving) onClose() }}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 9999, padding: '1rem',
-      }}
-    >
-      <div
-        style={{
-          background: 'var(--bg-surface)', borderRadius: 14, width: '100%', maxWidth: 440,
-          boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
-          overflow: 'hidden', position: 'relative',
-        }}
-      >
-        {/* ── Success overlay ─────────────────────────────────────── */}
+    <div className="int-modal-scrim" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onClose() }}>
+      <div ref={panelRef} className="int-modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         {success && (
-          <div
-            style={{
-              position: 'absolute', inset: 0, background: 'var(--bg-surface)',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: '0.75rem', zIndex: 10,
-            }}
-          >
-            <div className="integration-success-circle">
-              <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
-                <circle cx="28" cy="28" r="26" stroke="#16a34a" strokeWidth="2.5" fill="#f0fdf4"
-                  style={{ animation: 'circle-scale 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards' }} />
-                <polyline points="16,28 23,35 40,19" stroke="#16a34a" strokeWidth="3"
-                  strokeLinecap="round" strokeLinejoin="round"
-                  style={{ strokeDasharray: 36, strokeDashoffset: 36, animation: 'checkmark-draw 0.4s 0.25s ease forwards' }} />
-              </svg>
-            </div>
-            <span style={{ fontWeight: 600, color: '#16a34a', fontSize: '0.9375rem' }}>
-              {isConnected ? 'Settings saved!' : 'Connected!'}
-            </span>
+          <div className="int-modal-success" role="status">
+            <CheckCircle size={52} weight="fill" aria-hidden />
+            <span>{isConnected ? 'Changes saved' : `${title} connected`}</span>
           </div>
         )}
 
-        {/* ── Header ──────────────────────────────────────────────── */}
-        <div style={{
-          padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: '0.75rem',
-        }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 8, background: 'var(--bg-subtle)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.125rem', flexShrink: 0,
-          }}>
-            {icon}
+        <header className="int-modal-head">
+          {brand ? <BrandLogo type={brand} size={20} tile tileSize="lg" /> : <span className="ui-tile ui-tile--lg" aria-hidden>{icon}</span>}
+          <div className="int-modal-heading">
+            <h2 id={titleId}>{title}</h2>
+            <p>{isConnected ? 'Connected. Change the details below, or disconnect.' : 'Enter the details below to connect.'}</p>
           </div>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>{title}</h2>
-            {isConnected && (
-              <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-muted)' }}>Connected — update credentials below</p>
-            )}
-          </div>
-          <button
-            type="button" onClick={onClose} disabled={saving}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-faint)', lineHeight: 1 }}
-          >×</button>
-        </div>
+          <button type="button" className="int-modal-x" onClick={onClose} disabled={saving} aria-label="Close">
+            <X size={16} aria-hidden />
+          </button>
+        </header>
 
-        {/* ── How-to guide (collapsible) ───────────────────────────── */}
         {howTo && (
-          <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-            <button
-              type="button"
-              onClick={() => setShowHowTo(v => !v)}
-              style={{
-                width: '100%', padding: '0.625rem 1.25rem',
-                background: showHowTo ? 'var(--bg-subtle)' : 'transparent',
-                border: 'none', cursor: 'pointer', textAlign: 'left',
-                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                fontSize: '0.775rem', fontWeight: 600, color: 'var(--text-muted)',
-              }}
-            >
-              <span style={{ transform: showHowTo ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', display: 'inline-block' }}>▶</span>
-              How to find these credentials
+          <div className="int-modal-howto">
+            <button type="button" onClick={() => setShowHowTo(v => !v)} aria-expanded={showHowTo}>
+              <CaretRight size={12} weight="bold" aria-hidden className="int-modal-caret" />
+              Where to find these
             </button>
-            {showHowTo && (
-              <div style={{
-                padding: '0.75rem 1.25rem', background: 'var(--bg-subtle)',
-                fontSize: '0.775rem', color: 'var(--text-muted)', lineHeight: 1.6,
-              }}>
-                {howTo}
-              </div>
-            )}
+            {showHowTo && <div className="int-modal-howto-body">{howTo}</div>}
           </div>
         )}
 
-        {/* ── Fields ──────────────────────────────────────────────── */}
-        <div style={{ padding: '1.125rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+        <div className="int-modal-body">
           {children}
-          {error && (
-            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--red)' }}>{error}</p>
-          )}
+          {error && <p className="int-modal-error" role="alert">{error}</p>}
         </div>
 
-        {/* ── Footer ──────────────────────────────────────────────── */}
-        <div style={{
-          padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)',
-          display: 'flex', gap: '0.5rem', justifyContent: 'space-between', alignItems: 'center',
-        }}>
+        <footer className="int-modal-foot">
           <div>
             {canDelete && isConnected && (
-              <button
-                type="button" onClick={handleDelete} disabled={deleting || saving}
-                className="btn btn-danger"
-                style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
-              >
-                {deleting ? 'Removing…' : 'Disconnect'}
+              <button type="button" onClick={handleDelete} disabled={deleting || saving} className="btn btn-danger btn-sm">
+                {deleting ? 'Disconnecting…' : 'Disconnect'}
               </button>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              type="button" onClick={onClose} disabled={saving}
-              className="btn btn-secondary" style={{ fontSize: '0.8rem' }}
-            >Cancel</button>
-            <button
-              type="button" onClick={handleSave} disabled={saving || success}
-              className="btn btn-primary" style={{ fontSize: '0.8rem', minWidth: 80 }}
-            >
-              {saving ? (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.7s linear infinite', display: 'inline-block' }} />
-                  Saving…
-                </span>
-              ) : saveLabel ?? (isConnected ? 'Save Changes' : 'Connect')}
+          <div className="int-modal-actions">
+            <button type="button" onClick={onClose} disabled={saving} className="btn btn-secondary">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={saving || success} className="btn btn-primary">
+              {saving ? 'Saving…' : saveLabel ?? (isConnected ? 'Save changes' : 'Connect')}
             </button>
           </div>
-        </div>
+        </footer>
       </div>
     </div>
   )

@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { DiscordLogo, StripeLogo, LocalDominatorLogo } from '@/components/ConnectorLogo'
 import IntegrationCard from '@/components/admin/IntegrationCard'
 import IntegrationModal from '@/components/admin/IntegrationModal'
 
@@ -76,11 +75,12 @@ export default function ClientIntegrationCards({
   }
 
   return (
-    <div className="space-y-3">
+    // A fragment, so the rows sit directly in the group card on the Integrations tab.
+    <>
 
       {/* ── Discord ────────────────────────────────────────────── */}
       <IntegrationCard
-        icon={<DiscordLogo size={22} />}
+        brand="discord"
         name="Discord"
         description="Low Ad Fuel balance alerts — fires at $0 and below the per-client alert threshold."
         isConnected={discordConnected}
@@ -93,7 +93,7 @@ export default function ClientIntegrationCards({
         onClose={() => setDiscordOpen(false)}
         onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
         title="Discord Alert Channel"
-        icon={<DiscordLogo size={20} />}
+        brand="discord"
         isConnected={discordConnected}
         canDelete={discordConnected}
         onDelete={async () => {
@@ -127,7 +127,7 @@ export default function ClientIntegrationCards({
 
       {/* ── Stripe ─────────────────────────────────────────────── */}
       <IntegrationCard
-        icon={<StripeLogo size={22} />}
+        brand="stripe"
         name="Stripe"
         description="Auto-log ad fuel payments from Stripe invoices when they arrive via webhook."
         isConnected={stripeConnected}
@@ -140,7 +140,7 @@ export default function ClientIntegrationCards({
         onClose={() => setStripeOpen(false)}
         onSaved={() => { setStripeJustSaved(true); setTimeout(() => setStripeJustSaved(false), 2000) }}
         title="Stripe Customer"
-        icon={<StripeLogo size={20} />}
+        brand="stripe"
         isConnected={stripeConnected}
         canDelete={stripeConnected}
         onDelete={async () => {
@@ -176,10 +176,10 @@ export default function ClientIntegrationCards({
               type="button" onClick={handleStripeSync} disabled={syncing}
               className="btn btn-secondary" style={{ fontSize: '0.775rem', padding: '0.3rem 0.7rem' }}
             >
-              {syncing ? 'Syncing…' : '↻ Sync Payments'}
+              {syncing ? 'Syncing…' : 'Sync payments now'}
             </button>
             {syncMsg && (
-              <span style={{ fontSize: '0.75rem', color: syncMsg.includes('failed') || syncMsg.includes('Error') ? 'var(--red)' : 'var(--green)' }}>
+              <span role="status" style={{ fontSize: '0.75rem', color: syncMsg.includes('failed') || syncMsg.includes('Error') ? 'var(--red-fg)' : 'var(--green-fg)' }}>
                 {syncMsg}
               </span>
             )}
@@ -189,7 +189,7 @@ export default function ClientIntegrationCards({
 
       {/* ── Local Dominator ────────────────────────────────────── */}
       <IntegrationCard
-        icon={<LocalDominatorLogo size={22} />}
+        brand="local_dominator"
         name="Google Maps Ranking"
         description="Embeds the ranking map on the client's dashboard summary and dedicated Google Maps Ranking tab."
         isConnected={ldConnected}
@@ -202,7 +202,7 @@ export default function ClientIntegrationCards({
         onClose={() => setLdOpen(false)}
         onSaved={() => { setLdJustSaved(true); setTimeout(() => setLdJustSaved(false), 2000) }}
         title="Google Maps Ranking (Local Dominator)"
-        icon={<LocalDominatorLogo size={20} />}
+        brand="local_dominator"
         isConnected={ldConnected}
         canDelete={ldConnected}
         onDelete={async () => {
@@ -234,6 +234,6 @@ export default function ClientIntegrationCards({
         </div>
       </IntegrationModal>
 
-    </div>
+    </>
   )
 }

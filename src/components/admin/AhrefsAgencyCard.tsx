@@ -14,7 +14,10 @@ interface Props {
   connectorId?:    string
 }
 
-export default function AhrefsAgencyCard({ initialApiKey, connectorId }: Props) {
+export default function AhrefsAgencyCard({ initialApiKey, connectorId: initialConnectorId }: Props) {
+  // The connector's id, kept once the first save creates it: without it a second save POSTed again
+  // and made a duplicate Ahrefs connector.
+  const [connectorId, setConnectorId] = useState(initialConnectorId)
   const [open,        setOpen]        = useState(false)
   const [apiKey,      setApiKey]      = useState(initialApiKey)
   const [isConnected, setIsConnected] = useState(!!initialApiKey)
@@ -47,13 +50,15 @@ export default function AhrefsAgencyCard({ initialApiKey, connectorId }: Props) 
       const d = await res.json().catch(() => ({}))
       throw new Error((d as { error?: string }).error || 'Save failed')
     }
+    const d = await res.json().catch(() => ({})) as { id?: string }
+    if (d.id && !connectorId) setConnectorId(d.id)
     setIsConnected(!!trimmed)
   }
 
   return (
     <>
       <IntegrationCard
-        icon={<span style={{ fontWeight: 800, fontSize: '1rem', color: '#f59e0b' }}>A</span>}
+        brand="ahrefs"
         name="Ahrefs"
         description="Track Domain Rating, backlinks, and organic traffic for your clients."
         isConnected={isConnected}
@@ -66,7 +71,7 @@ export default function AhrefsAgencyCard({ initialApiKey, connectorId }: Props) 
         onClose={() => setOpen(false)}
         onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
         title="Ahrefs"
-        icon={<span style={{ fontWeight: 800, fontSize: '1rem', color: '#f59e0b' }}>A</span>}
+        brand="ahrefs"
         isConnected={isConnected}
         howTo={
           <div>

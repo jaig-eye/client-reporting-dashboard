@@ -35,7 +35,7 @@ export default function DiscordAgencyCard({ initialBotToken, initialOpsChannelId
   return (
     <>
       <IntegrationCard
-        icon="🤖"
+        brand="discord"
         name="Discord"
         description="Shared bot for all channel notifications. Each client's Channel ID is set in their Integrations tab."
         isConnected={isConnected}
@@ -48,7 +48,7 @@ export default function DiscordAgencyCard({ initialBotToken, initialOpsChannelId
         onClose={() => setOpen(false)}
         onSaved={() => { setJustSaved(true); setTimeout(() => setJustSaved(false), 2000) }}
         title="Discord"
-        icon="🤖"
+        brand="discord"
         isConnected={isConnected}
         howTo={
           <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
