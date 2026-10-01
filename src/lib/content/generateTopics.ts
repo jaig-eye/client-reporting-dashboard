@@ -808,7 +808,7 @@ export async function generateTopicsForClient(
   if (opts?.siloId) {
     const { data: silo, error: siloErr } = await db
       .from('content_silos')
-      .select('id, name, hub_page_url, hub_page_title, central_entity, description, target_keyword, cluster_keywords, target_exists, content_type, inject_internal_links')
+      .select('id, name, hub_page_url, hub_page_title, description, content_type')
       .eq('id', opts.siloId)
       .eq('client_id', clientId)
       .maybeSingle()
@@ -835,80 +835,30 @@ export async function generateTopicsForClient(
         .map((c: { title: string | null; target_keyword: string | null }) => `  - "${c.title}" — keyword: ${c.target_keyword ?? 'n/a'}`)
         .join('\n')
 
-      // Hub-first block: when hub page doesn't exist yet, inject as FIRST topic instruction
-      const hubFirstBlock = (silo.target_exists === false && silo.target_keyword)
-        ? `
-CRITICAL — HUB PAGE PRIORITY:
-The hub/pillar page does not exist yet. The FIRST topic in your response MUST target:
-  keyword: "${silo.target_keyword}"
-  This topic will be used to create the hub page before any cluster articles.
-  Make it a comprehensive, high-authority page — the definitive resource for this entity.
-`
-        : ''
-
-      // Cluster keyword seeding: inject planned keywords the AI should prioritize
-      type ClusterKw = { id?: string; keyword: string; title?: string | null; status: string; priority?: number }
-      const plannedKws = ((silo.cluster_keywords ?? []) as ClusterKw[])
-        .filter(k => k.status === 'planned')
-        .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
-        .slice(0, 12)
-
-      const clusterSeedText = plannedKws.length > 0
-        ? `\nDefined cluster keywords not yet covered (PRIORITIZE topics from this list — generate topics targeting these keywords):\n${plannedKws.map(k => `  - "${k.keyword}"${k.title ? ` (suggested title: "${k.title}")` : ''}`).join('\n')}`
-        : ''
-
-      // Hub-less silos are the common case: a flat set of keywords with no pillar
-      // page. Every silo in production today has hub_page_url NULL, and the
-      // hub-and-spoke prompt below would instruct the model to link to a hub that
-      // does not exist. Walk the keyword queue instead.
+      // Every set is a keyword queue, with or without a main page. The main page only adds
+      // linking: topics are angled to support it, and the writer links each article to it (see the
+      // generate route). A set with no keywords waiting is finished. The hub-and-spoke prompt this
+      // replaces invented topics around the hub for as long as the set stayed active, so a set with
+      // a main page never ended and every set added after it waited forever.
       queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
-      const isKeywordQueue = !silo.hub_page_url && queueKeywords.length > 0
-
-      // An EXHAUSTED hub-less queue is not the hub-and-spoke case. Falling through
-      // to the else branch below emitted `Hub page: "..." at (URL not yet set)`
-      // plus a rule making a link to it mandatory — telling the model to link to a
-      // page that does not exist, while the writer prompt forbids inventing internal
-      // URLs. SiloManager still enables Generate on such a silo because
-      // content_silos.cluster_keywords stays populated after migration 201's
-      // backfill, and the cron path never checks at all, so this is reachable the
-      // moment a four-keyword silo is worked through. Nothing to generate is the
-      // honest answer.
-      if (!silo.hub_page_url && queueKeywords.length === 0) {
-        console.warn(`[generateTopics] silo ${opts.siloId} has no hub page and an empty keyword queue — nothing to generate`)
+      if (queueKeywords.length === 0) {
+        console.warn(`[generateTopics] silo ${opts.siloId} has no keywords waiting — nothing to generate`)
         return {
           topics:     [],
           clientName: '',
           count:      0,
-          error:      'This silo has no hub page and every keyword in its queue has been used. Add more keywords to generate from it.',
+          error:      'Every keyword in this set has been used. Add more keywords to keep it going.',
         }
       }
-
-      if (isKeywordQueue) {
-        siloPromptBlock = buildKeywordQueueBlock(
-          silo.name as string,
-          (silo.description as string | null) ?? null,
-          queueKeywords,
-          existingClusterText,
-          (silo as { inject_internal_links?: boolean }).inject_internal_links !== false,
-          count,
-        )
-      } else {
-      // Hub-and-spoke: the original strategy, unchanged.
-      queueKeywords = []
-      siloPromptBlock = `
-${hubFirstBlock}TOPICAL SILO — HUB + CLUSTER STRATEGY:
-Hub page: "${silo.hub_page_title ?? silo.name}" at ${silo.hub_page_url ?? '(URL not yet set)'}
-Central entity: ${silo.central_entity ?? silo.name}${silo.description ? `\nContext: ${silo.description}` : ''}
-${existingClusterText ? `\nAlready-published cluster articles in this silo (DO NOT duplicate these intents):\n${existingClusterText}` : ''}
-${clusterSeedText}
-
-SILO RULES (override any conflicting instructions above):
-1. Every topic must be a distinct subtopic or attribute of the central entity.
-2. Every article generated from these topics MUST link back to the hub page as a mandatory internal link.
-3. No two topics may target the same search intent — zero cannibalization within the silo.
-4. Prioritize subtopics closest to revenue (transactional/commercial intent first within the silo).
-5. Think: what questions does a searcher ask BEFORE contacting the business? Those cluster topics funnel authority to the hub.`
-      }
+      const hubUrl = (silo.hub_page_url as string | null)?.trim() || null
+      siloPromptBlock = buildKeywordQueueBlock(
+        silo.name as string,
+        (silo.description as string | null) ?? null,
+        queueKeywords,
+        existingClusterText,
+        count,
+        hubUrl ? { url: hubUrl, title: ((silo.hub_page_title as string | null)?.trim() || (silo.name as string)) } : null,
+      )
     }
   }
 

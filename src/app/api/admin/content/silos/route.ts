@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     .select('*')
     .eq('client_id', clientId)
     .neq('status', 'archived')
-    .order('priority', { ascending: true })
+    // The order the topic cron takes them in: oldest first (priority is no longer set anywhere).
     .order('created_at', { ascending: true })
 
   if (contentType && VALID_CONTENT_TYPES.includes(contentType as typeof VALID_CONTENT_TYPES[number])) {

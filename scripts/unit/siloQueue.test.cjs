@@ -19,9 +19,17 @@ test('notes keep their line breaks and lose control characters', () => {
 const kw = (keyword, i) => ({ id: `k${i}`, keyword, keyword_type: 'supporting', intent: null, sort_order: i, used_at: null })
 
 test('queue prompt says what to do when fewer keywords are left than topics wanted', () => {
-  const short = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('hoa landscaping contracts', 0)], '', true, 3)
+  const short = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('hoa landscaping contracts', 0)], '', 3)
   assert.match(short, /needs 3 topics and only 1 keyword is left/)
   assert.match(short, /the other 2 must stay on the subject of "Commercial landscaping"/)
-  const exact = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('a', 0), kw('b', 1)], '', true, 2)
+  const exact = Q.buildKeywordQueueBlock('Commercial landscaping', null, [kw('a', 0), kw('b', 1)], '', 2)
   assert.doesNotMatch(exact, /needs \d+ topics/)
+})
+
+test('queue prompt: a main page is named and supported; without one each article stands alone', () => {
+  const hub = Q.buildKeywordQueueBlock('Lighting', null, [kw('a', 0)], '', 1, { url: 'https://x.com/lighting/', title: 'Landscape lighting' })
+  assert.ok(hub.includes('support the main page "Landscape lighting" (https://x.com/lighting/)'))
+  const flat = Q.buildKeywordQueueBlock('Lighting', null, [kw('a', 0)], '', 1)
+  assert.ok(flat.includes('stands on its own'))
+  assert.ok(!flat.includes('main page "'))
 })

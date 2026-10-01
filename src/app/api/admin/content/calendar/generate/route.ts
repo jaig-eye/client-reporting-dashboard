@@ -125,6 +125,22 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < wanted; i++) openSlots.push(s)
   }
 
+  // A set fills only as many dates as it has keywords waiting. The dates after that are left to
+  // the usual selection rather than stretched into set topics with no keyword behind them.
+  if (silo_id && openSlots.length > 0) {
+    const { count: waiting, error: waitErr } = await db
+      .from('content_silo_keywords')
+      .select('id', { count: 'exact', head: true })
+      .eq('silo_id', silo_id)
+      .eq('selected', true)
+      .is('used_at', null)
+    if (waitErr) return NextResponse.json({ error: `Could not read the set's keywords: ${waitErr.message}` }, { status: 500 })
+    if (!waiting) {
+      return NextResponse.json({ ok: true, queued: false, slots, reason: 'Every keyword in this set has been used.' })
+    }
+    openSlots.splice(waiting)
+  }
+
   if (openSlots.length === 0) {
     return NextResponse.json({
       ok: true, queued: false, slots,

@@ -241,9 +241,10 @@ export function buildKeywordQueueBlock(
   description: string | null,
   keywords: SiloQueueKeyword[],
   alreadyCovered: string,
-  injectInternalLinks: boolean,
   /** Topics the run asks for. When it is more than the keywords left, the rest stay on subject. */
   count: number = keywords.length,
+  /** The set's main page, when it has one. Without it each article stands alone. */
+  hub: { url: string; title: string } | null = null,
 ): string {
   // 'transactional', 'navigational' and 'local' are valid values of the intent
   // column (migration 165) but naming them here tells a BLOG topic generator to
@@ -260,8 +261,12 @@ export function buildKeywordQueueBlock(
   return `
 KEYWORD SET — "${siloName}"${description ? `\nContext: ${description}` : ''}
 
-This is a flat keyword set, NOT a hub-and-spoke silo. There is no pillar page.
-Do not reference, link to, or invent a hub page.
+${hub
+  ? `These articles support the main page "${hub.title}" (${hub.url}). Angle each one as a
+supporting article that answers a question a reader of that page has; every article will
+link to it.`
+  : `Each article stands on its own: there is no main page. Do not reference, link to, or
+invent one.`}
 
 Write ONE topic for each keyword below, in this order, reusing the keyword
 verbatim as that topic's target_keyword:
@@ -277,8 +282,5 @@ RULES:
    queued keyword is one of those, keep it as the SUBJECT of the article and write
    an informational target_keyword for it instead — the queue still matches the
    topic by position, so nothing is lost.
-3. Angle each topic so no two compete for the same search intent.
-4. ${injectInternalLinks
-    ? 'Where it genuinely helps the reader, cross-link to the other articles in this set.'
-    : 'Do NOT add internal links between these articles — linking is disabled for this set.'}`
+3. Angle each topic so no two compete for the same search intent${hub ? ', or with the main page itself' : ''}.`
 }

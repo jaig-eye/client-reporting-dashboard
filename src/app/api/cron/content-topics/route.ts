@@ -229,50 +229,49 @@ export async function GET(request: NextRequest) {
       return d > 0 && d <= leadWindow
     })
 
-    // ── Priority set: the oldest active set with keywords left takes the date ──
+    // ── Priority set: the oldest active set with keywords waiting takes the date ──
     // A person adds a set (a silo) to have those keywords written next, so an active set takes
-    // every new date until its keywords are used, oldest set first. Picked per date rather than
-    // once per run: a set that runs out mid-run hands the next date back to the usual selection.
+    // each new date until its keywords are used, oldest set first. Picked per date rather than
+    // once per run, so a set that runs out mid-run hands the next date back to the usual selection.
     //
-    // A hub-less set with no keywords left is skipped. Picking it made generation refuse ("every
-    // keyword in its queue has been used"), and every date for the client stayed empty for as
-    // long as the set stayed active.
+    // A set with no keywords waiting is skipped, with or without a main page. Picking one made
+    // generation refuse ("every keyword in its queue has been used"), and every date for the
+    // client stayed empty for as long as the set stayed active.
     //
     // service_page and regular_page are generated on demand by the Page Generation Wizard and
     // take no part here. The post-generation loop still processes approved topics of those types.
     void generate_service_pages  // suppress unused-var lint without removing the destructure
     void generate_regular_pages
-    type SiloCandidate = { id: string; target_exists: boolean; target_keyword: string | null; hub_page_url: string | null }
-    const pickSilo = async (): Promise<SiloCandidate | null> => {
+    const pickSilo = async (): Promise<{ id: string; waiting: number } | null> => {
+      // Oldest first. priority is no longer set anywhere, and a legacy value would reorder sets
+      // in a way nobody can see.
       const { data: activeSilos, error: silosErr } = await db
         .from('content_silos')
-        .select('id, target_exists, target_keyword, hub_page_url')
+        .select('id')
         .eq('client_id', client_id)
         .eq('status', 'active')
         .eq('content_type', 'blog')
-        .order('priority',   { ascending: true })
         .order('created_at', { ascending: true })
       if (silosErr) {
         console.warn(`[content-topics cron] silo read failed for ${client_id}, using the usual selection:`, silosErr.message)
         return null
       }
-      const list = (activeSilos ?? []) as SiloCandidate[]
-      const hubless = list.filter(s => !s.hub_page_url).map(s => s.id)
-      const withKeywords = new Set<string>()
-      if (hubless.length > 0) {
-        const { data: left, error: leftErr } = await db
-          .from('content_silo_keywords')
-          .select('silo_id')
-          .in('silo_id', hubless)
-          .eq('selected', true)
-          .is('used_at', null)
-        if (leftErr) {
-          console.warn(`[content-topics cron] silo keyword read failed for ${client_id}, using the usual selection:`, leftErr.message)
-          return null
-        }
-        for (const k of (left ?? []) as { silo_id: string }[]) withKeywords.add(k.silo_id)
+      const ids = ((activeSilos ?? []) as { id: string }[]).map(s => s.id)
+      if (ids.length === 0) return null
+      const { data: left, error: leftErr } = await db
+        .from('content_silo_keywords')
+        .select('silo_id')
+        .in('silo_id', ids)
+        .eq('selected', true)
+        .is('used_at', null)
+      if (leftErr) {
+        console.warn(`[content-topics cron] silo keyword read failed for ${client_id}, using the usual selection:`, leftErr.message)
+        return null
       }
-      return list.find(s => s.hub_page_url || withKeywords.has(s.id)) ?? null
+      const waiting = new Map<string, number>()
+      for (const k of (left ?? []) as { silo_id: string }[]) waiting.set(k.silo_id, (waiting.get(k.silo_id) ?? 0) + 1)
+      const id = ids.find(i => (waiting.get(i) ?? 0) > 0)
+      return id ? { id, waiting: waiting.get(id)! } : null
     }
 
     // ── Slots a human deliberately emptied — never refill them ───────────────
@@ -338,37 +337,32 @@ export async function GET(request: NextRequest) {
       if (needed <= 0) continue
 
       try {
+        // A set never takes more of a date than it has keywords waiting; the rest of the date's
+        // quota comes from the usual selection, so a set's last keyword cannot be stretched into
+        // topics nobody asked for.
         const silo = await pickSilo()
+        const batches: { count: number; siloId?: string }[] = !silo
+          ? [{ count: needed }]
+          : silo.waiting >= needed
+            ? [{ count: needed, siloId: silo.id }]
+            : [{ count: silo.waiting, siloId: silo.id }, { count: needed - silo.waiting }]
         if (silo) console.log(`[content-topics cron] slot ${slot} for ${client_id} comes from silo ${silo.id}`)
-        const result = await generateTopicsForClient(db, client_id, needed, slot, { suppressEmail: true, siloId: silo?.id })
-        // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
-        // saw a refused run. A client could produce nothing every two hours forever and the only
-        // trace was the absence of topics. Say why.
-        if (result.error) {
-          console.error(`[content-topics cron] Topic generation refused for client ${client_id} slot ${slot}: ${result.error}`)
-        }
-        for (const w of result.warnings ?? []) {
-          console.warn(`[content-topics cron] client ${client_id} slot ${slot}: ${w}`)
-        }
-        if (result.topics.length > 0) {
-          const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
-          entry.items.push(...result.topics)
-          topicAccum.set(client_id, entry)
-          topicsGenerated.push(`${client_id}:${slot}`)
-
-          // Flip target_exists=true if we just generated hub topic for this silo
-          const hubKeyword = silo?.target_exists === false ? silo.target_keyword?.toLowerCase() : undefined
-          if (silo && hubKeyword) {
-            const hubTopic = result.topics.find(t =>
-              t.target_keyword?.toLowerCase().includes(hubKeyword) ||
-              hubKeyword.includes((t.target_keyword ?? '').toLowerCase())
-            )
-            if (hubTopic) {
-              await db.from('content_silos').update({ target_exists: true }).eq('id', silo.id)
-              console.log(`[content-topics cron] flipped target_exists=true for silo ${silo.id} (hub topic: "${hubTopic.topic}")`)
-            } else {
-              console.warn(`[content-topics cron] silo ${silo.id} hub not found in generated topics — target_exists not flipped`)
-            }
+        for (const batch of batches) {
+          const result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true, siloId: batch.siloId })
+          // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
+          // saw a refused run. A client could produce nothing every two hours forever and the only
+          // trace was the absence of topics. Say why.
+          if (result.error) {
+            console.error(`[content-topics cron] Topic generation refused for client ${client_id} slot ${slot}: ${result.error}`)
+          }
+          for (const w of result.warnings ?? []) {
+            console.warn(`[content-topics cron] client ${client_id} slot ${slot}: ${w}`)
+          }
+          if (result.topics.length > 0) {
+            const entry = topicAccum.get(client_id) ?? { clientName: result.clientName, items: [] }
+            entry.items.push(...result.topics)
+            topicAccum.set(client_id, entry)
+            topicsGenerated.push(`${client_id}:${slot}`)
           }
         }
       } catch (e) {
