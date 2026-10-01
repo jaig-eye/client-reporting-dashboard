@@ -10,7 +10,15 @@ import { BRAND_GLYPHS } from './brandGlyphs'
 import Tile from './Tile'
 
 /** Official icon files in public/brand, by connector type or service key. */
-const ASSETS: Record<string, string> = {}
+const ASSETS: Record<string, string> = {
+  google_ads:              '/brand/google-ads.png',
+  google_search_console:   '/brand/google-search-console.png',
+  google_business_profile: '/brand/google-business-profile.png',
+  ahrefs:                  '/brand/ahrefs.svg',
+  dataforseo:              '/brand/dataforseo.png',
+  serpapi:                 '/brand/serpapi.svg',
+  local_dominator:         '/brand/local-dominator.webp',
+}
 
 /** Service keys that use a Simple Icons glyph. */
 const GLYPH_FOR: Record<string, keyof typeof BRAND_GLYPHS> = {
