@@ -92,11 +92,16 @@ export async function rankMathUpdateMeta(
       signal: AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, RANKMATH_TIMEOUT_MS))),
     }, '[rank-math]')
 
-    if (res.ok) {
-      await res.body?.cancel().catch(() => {})
-      return 'stored'
-    }
     const body = await res.text().catch(() => '')
+    if (res.ok) {
+      // Rank Math answers JSON. A 200 that is not JSON came from something in front of it — a
+      // security plugin's or host's challenge page — and stored nothing. The caller trusts 'stored'
+      // without reading back, so this is the check that it really was Rank Math that answered.
+      try { JSON.parse(body); return 'stored' } catch {
+        console.warn(`[rank-math] ${siteUrl} updateMeta answered 200 with a non-JSON body: ${body.slice(0, 120)}`)
+        return 'failed'
+      }
+    }
     if (res.status === 404 && wpRestErrorCode(body) === 'rest_no_route') {
       console.log(`[rank-math] ${siteUrl} has no rankmath/v1/updateMeta route — Rank Math is not installed there`)
       return 'absent'

@@ -92,6 +92,14 @@ test('Rank Math updateMeta: body shape and the same User-Agent as other WordPres
     assert.match(s.seen[0].ua, /GoLaunchLocal/)
   } finally { s.server.close() }
 })
+test('Rank Math updateMeta: a 200 that is not JSON (a challenge page) is not a stored write', async () => {
+  const page = await answering(200, '<html>Checking your browser…</html>', 'text/html')
+  const ok   = await answering(200, 'true')
+  try {
+    assert.equal(await rankMathUpdateMeta(page.base, AUTH, 1, { rank_math_title: 'T' }), 'failed')
+    assert.equal(await rankMathUpdateMeta(ok.base, AUTH, 1, { rank_math_title: 'T' }), 'stored')
+  } finally { page.server.close(); ok.server.close() }
+})
 test('Rank Math updateMeta: rest_no_route means Rank Math is absent; any other 404 is a failure', async () => {
   const absent = await answering(404, '{"code":"rest_no_route","message":"No route was found","data":{"status":404}}')
   const other  = await answering(404, '<html>Not Found</html>', 'text/html')

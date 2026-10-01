@@ -60,9 +60,11 @@ const META_WRITE_MIN_MS = 2_000
  * fallback when that write fails. A site without Rank Math at all (its route does not exist) gets
  * neither: there is nothing there to read rank_math_* fields.
  *
- * Then it reads back what REST can see. On most sites Rank Math's keys are not readable over REST
- * at all, and an unreadable key is not a failed one: when an endpoint accepted the write, it
- * stands. Only a readable key with the wrong value, or a write nothing accepted, is reported.
+ * A write Rank Math accepted is done. Its own editor shows the values stored on sites where
+ * WordPress's REST API lists the same keys empty (Lumiere, post 99853, 2026-10-01), so reading
+ * back over REST reported every successful write there as a failure. The read-back now serves
+ * only the XML-RPC fallback: a readable key with the wrong value, or a write nothing accepted, is
+ * reported.
  *
  * Every request is bounded by `deadline` (epoch ms): the route runs this LAST, after everything
  * that matters is recorded, and must answer before maxDuration whatever the client's site does.
@@ -96,42 +98,37 @@ async function reportMetaMisses(
     // No Rank Math on the site: nothing to write the fields for, and nothing to report.
     if (write === 'absent') return
 
-    let via: 'rankmath' | 'xmlrpc' | null = write === 'stored' ? 'rankmath' : null
+    if (write === 'stored') {
+      console.log(`[approve] SEO fields written via rankmath for ${where}`)
+      return
+    }
+
+    // Rank Math refused the write or could not be reached: XML-RPC, which does not consult
+    // show_in_rest, for whatever the read-back shows missing — every field when nothing can be read.
+    let via: 'xmlrpc' | null = null
     let stillMissing: { key: string; sent: string; stored: string; readable: boolean }[]
     /** Why the fallback did not run, when it did not. */
     let fallbackSkipped: string | null = null
+    const everyField = () => Object.entries(fields).map(([key, sent]) => ({ key, sent, stored: '', readable: false }))
 
     if (left() < FULL_META_CHECK_MIN_MS) {
-      // No time for a read-back, or for XML-RPC's two requests. A write Rank Math accepted stands;
-      // one it refused is reported as such, since nothing else could be tried.
-      if (via) {
-        console.log(`[approve] SEO fields written via rankmath for ${where} (read-back skipped: ${Math.round(left() / 1000)}s left)`)
-        return
-      }
-      stillMissing = Object.entries(fields).map(([key, sent]) => ({ key, sent, stored: '', readable: false }))
+      stillMissing = everyField()
       fallbackSkipped = 'not tried — the request was out of time after the push'
     } else {
-      // null: nothing could be read back.
       const read = await verifyPostMeta(args.siteUrl, args.auth, args.wpId, fields, args.postType, left())
-      if (via) {
-        stillMissing = (read ?? []).filter(m => m.readable)
-      } else {
-        // Rank Math refused or could not be reached. XML-RPC, which does not consult show_in_rest,
-        // for whatever the read shows missing — every field, when nothing could be read.
-        const toRepair = read ?? Object.entries(fields).map(([key, sent]) => ({ key, sent, stored: '', readable: false }))
-        stillMissing = toRepair
-        if (toRepair.length > 0) {
-          if (left() < FULL_META_CHECK_MIN_MS) {
-            fallbackSkipped = 'not tried — the request was out of time after the read-back'
-          } else {
-            const repair = Object.fromEntries(toRepair.map(m => [m.key, m.sent]))
-            if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair, left() - META_WRITE_MIN_MS)) {
-              via = 'xmlrpc'
-              stillMissing = left() < META_WRITE_MIN_MS
-                ? []
-                : ((await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType, left())) ?? [])
-                    .filter(m => m.readable)
-            }
+      const toRepair = read ?? everyField()
+      stillMissing = toRepair
+      if (toRepair.length > 0) {
+        if (left() < FULL_META_CHECK_MIN_MS) {
+          fallbackSkipped = 'not tried — the request was out of time after the read-back'
+        } else {
+          const repair = Object.fromEntries(toRepair.map(m => [m.key, m.sent]))
+          if (await xmlrpcSetPostMeta(args.siteUrl, args.auth, args.wpId, repair, left() - META_WRITE_MIN_MS)) {
+            via = 'xmlrpc'
+            stillMissing = left() < META_WRITE_MIN_MS
+              ? []
+              : ((await verifyPostMeta(args.siteUrl, args.auth, args.wpId, repair, args.postType, left())) ?? [])
+                  .filter(m => m.readable)
           }
         }
       }
@@ -164,7 +161,7 @@ async function reportMetaMisses(
         // What was tried, so nobody re-investigates from scratch.
         rest:     'rejected — Rank Math does not register its meta keys with show_in_rest',
         repaired_via: via ?? 'nothing available',
-        rankmath: via === 'rankmath' ? 'accepted the write but the value did not stick' : 'refused the write, or could not be reached',
+        rankmath: 'refused the write, or could not be reached',
         xmlrpc:   via === 'xmlrpc'   ? 'accepted the write but the value did not stick' : (fallbackSkipped ?? 'unavailable (xmlrpc.php disabled or blocked)'),
       },
     })
