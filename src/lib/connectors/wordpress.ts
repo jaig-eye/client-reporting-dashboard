@@ -47,9 +47,9 @@ const WP_TIMEOUT_MS = 15_000
  * BROWSER_BOT_UA matters: sites behind Cloudflare or Wordfence are allow-listed
  * on it, and the four lifecycle functions below originally hand-rolled their
  * fetch without it — so update/delete/unpublish 403'd on exactly the sites where
- * publishing worked.
+ * publishing worked. Exported so the Rank Math writer sends the same thing.
  */
-function wpHeaders(
+export function wpHeaders(
   auth: { username: string; app_password: string },
   json = false,
 ): Record<string, string> {
@@ -259,6 +259,25 @@ export interface WpPostPayload {
   meta?: Record<string, string>
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+}
+
+/**
+ * Decode the HTML entities WordPress's sanitizers produce — the named five plus nbsp, and numeric
+ * references in either base. Anything else is left as written, so an unknown name never turns
+ * into a wrong character.
+ */
+export function decodeHtmlEntities(v: string): string {
+  return v.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, ref: string) => {
+    if (ref[0] === '#') {
+      const code = ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole
+    }
+    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole
+  })
+}
+
 /**
  * Reads back the SEO meta WordPress stored, and says which keys did not stick.
  *
@@ -272,6 +291,9 @@ export interface WpPostPayload {
  *
  * Best-effort by design. A site that refuses `context=edit`, or any network failure, returns null
  * (nothing could be read) rather than failing a publish that already worked.
+ *
+ * `timeoutMs` lets the caller fit the read into whatever time its own request has left; it never
+ * exceeds the usual WordPress timeout.
  */
 export async function verifyPostMeta(
   siteUrl: string,
@@ -280,13 +302,13 @@ export async function verifyPostMeta(
   expected: Record<string, string>,
   // Service-area pages carry the same Rank Math fields and live on a different REST route.
   postType: 'posts' | 'pages' = 'posts',
+  timeoutMs: number = WP_TIMEOUT_MS,
 ): Promise<{ key: string; sent: string; stored: string; readable: boolean }[] | null> {
   try {
-    // The only fetch in this file that had no timeout, and it is awaited twice per push — so an
-    // unresponsive client site hung the approve request AFTER the post was already live.
+    // An unresponsive client site must not hang the approve request AFTER the post is live.
     const res = await fetchWithSiteCredentials(wpApiUrl(siteUrl, `/${postType}/${postId}?context=edit`), {
       headers: wpHeaders(auth),
-      signal:  AbortSignal.timeout(WP_TIMEOUT_MS),
+      signal:  AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, WP_TIMEOUT_MS))),
     })
     if (!res.ok) return null
     const data  = await res.json() as { meta?: Record<string, unknown> }
@@ -294,10 +316,12 @@ export async function verifyPostMeta(
     // No meta object at all means the site doesn't expose it — nothing could be read.
     if (!meta || typeof meta !== 'object') return null
     const wrong: { key: string; sent: string; stored: string; readable: boolean }[] = []
-    // WordPress sanitizes on the way in — sanitize_text_field collapses whitespace — so a title
-    // with a double space comes back legitimately different. Comparing raw would report that as
-    // "not stored", and a report that cries wolf is worse than no report.
-    const comparable = (v: string) => v.replace(/\s+/g, ' ').trim()
+    // WordPress sanitizes on the way in — sanitize_text_field collapses whitespace, and Rank Math
+    // stores its title and description through wp_filter_nohtml_kses, which turns '&' into
+    // '&amp;' — so "Brake & Rotor Repair" comes back legitimately different. Comparing raw would
+    // report that as "not stored", and a report that cries wolf is worse than no report. Both
+    // sides are decoded, so it does not matter which one carries the entity.
+    const comparable = (v: string) => decodeHtmlEntities(v).replace(/\s+/g, ' ').trim()
     for (const [key, sent] of Object.entries(expected)) {
       // A key we deliberately sent empty is not expected to come back.
       if (!sent) continue
@@ -473,9 +497,8 @@ export async function updatePost(
   }
 }
 
-/** Read one post — used by the published_url backfill. */
 /**
- * Read one post or page back.
+ * Read one post or page back — used by the published_url backfill.
  *
  * `kind` matters: a service-area row stores a WordPress PAGE id, and /wp/v2/posts/{pageId}
  * answers 404 for it. Reconcile read every row through /posts and took that 404 as proof the

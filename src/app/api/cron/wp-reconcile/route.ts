@@ -8,16 +8,16 @@
 // been live for two weeks, and 4 rows claiming 'publish' with no permalink at all.
 //
 // This closes that loop. It re-reads every post whose recorded state can no longer be right and
-// writes back WordPress's answer: the real status and, once there is one, the real permalink.
+// writes back WordPress's answer: the real status and, once the post is published, its permalink.
+// Which rows qualify is spelled out at the candidate query below — in short, everything not yet
+// 'publish' with a real permalink, plus recent published rows still holding a '?p=' address.
 //
-// Two states qualify:
-//   · scheduled, and the date has passed — either it published (collect the permalink) or it
-//     missed its slot and is still sitting there, which is worth seeing rather than assuming.
-//   · a stored '?p=' placeholder — WordPress only serves that before a post is public.
-//   · a stored wp-admin URL — an editor link that predates the split between published_url and
-//     platform_edit_url. Current code cannot write one, but rows carrying one are still out there,
-//     and internal-link injection reads published_url: left alone, a client article can end up
-//     linking readers to a login screen.
+// A permalink is stored only for a post WordPress says is published. A scheduled or draft post's
+// link is the '?p=' placeholder; a private or trashed post's link is not one a reader can open.
+//
+// When it stores the first live permalink for a post in a set with a main page, it records the
+// links a person should add by hand (lib/content/siloLinkTasks) — the approve route skips that for
+// a post that was only scheduled when it was pushed.
 //
 // Read-only against WordPress. Nothing is published, unpublished or rescheduled here; a post that
 // genuinely missed its schedule is reported, not forced out, because publishing a week-late post
@@ -27,6 +27,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { verifyCronAuth } from '@/lib/auth'
 import { readPostState, isWpPlaceholderLink, isLinkOnSite, isSameWpSite, wpSiteHost } from '@/lib/connectors/wordpress'
+import { isPublicPermalink } from '@/lib/content/postLinks'
+import { recordSiloLinkTasks } from '@/lib/content/siloLinkTasks'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -41,6 +43,15 @@ const MAX_POSTS_PER_RUN = 200
  * deferred and comes round again next run.
  */
 const TIME_BUDGET_MS = 240_000
+
+/**
+ * How long after its last push a published row with a '?p=' / '?page_id=' address is still asked
+ * about. On a site using pretty permalinks that address is a leftover — a stale placeholder from
+ * the push — and WordPress's answer replaces it. On a site left on plain permalinks it IS the
+ * permalink, WordPress answers with the same address, nothing is written, and the row settles; the
+ * window keeps such rows from being re-read every run for ever.
+ */
+const PLACEHOLDER_RECHECK_DAYS = 30
 
 /**
  * Consecutive unreadable answers from one host before the rest of its posts wait for the next run.
@@ -63,6 +74,9 @@ type PostRow = {
   content_type: string | null
   /** Every push stamps this. A write guarded on it cannot overwrite a push made after the read. */
   last_pushed_at: string | null
+  /** For the link tasks recorded when a post in a set first goes live. */
+  silo_id: string | null
+  target_keyword: string | null
 }
 
 export async function GET(req: NextRequest) {
@@ -73,11 +87,13 @@ export async function GET(req: NextRequest) {
   const startedAt = Date.now()
   const db    = createAdminClient()
   const today = new Date().toISOString().slice(0, 10)
+  // A date, not a timestamp: '.' and ':' are reserved inside a PostgREST or() filter.
+  const placeholderSince = new Date(startedAt - PLACEHOLDER_RECHECK_DAYS * 86_400_000).toISOString().slice(0, 10)
 
   // Candidates: anything whose recorded state cannot still be accurate.
   const { data: rows, error } = await db
     .from('content_posts')
-    .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id, content_type, last_pushed_at')
+    .select('id, client_id, title, wp_post_id, wp_site_url, wp_status, published_url, target_publish_date, connection_id, content_type, last_pushed_at, silo_id, target_keyword')
     .not('wp_post_id', 'is', null)
     // Any post whose recorded state could have moved on without us — not just the overdue ones.
     //
@@ -93,13 +109,18 @@ export async function GET(req: NextRequest) {
     // rows that can never settle and would take a slot under the cap every run, forever:
     //   · 'deleted' — WordPress has nothing left to tell us.
     //   · 'trash'   — the post is in WordPress's bin; it is not coming back on its own schedule.
-    //   · 'publish' with a '?p=' / '?page_id=' link — on a published post that shape IS the
-    //     permalink: the site is on plain permalinks and WordPress will never give another. The
-    //     loop below stores it on the same rule approve uses, and the row settles.
+    //
+    // 'publish' with a '?p=' / '?page_id=' link is asked about too, for PLACEHOLDER_RECHECK_DAYS
+    // after its last push. That shape is the permalink on a site left on plain permalinks — and
+    // there WordPress answers with the same address, nothing is written, and the row settles — but
+    // on a site with pretty permalinks it is a leftover from the push (production had one on a
+    // site whose other posts all carry pretty links), and WordPress's answer replaces it.
     .or(
       `wp_status.is.null,` +
       `and(wp_status.neq.publish,wp_status.neq.deleted,wp_status.neq.trash),` +
-      `and(wp_status.eq.publish,or(published_url.is.null,published_url.like.*wp-admin*))`,
+      `and(wp_status.eq.publish,or(published_url.is.null,published_url.like.*wp-admin*)),` +
+      `and(wp_status.eq.publish,last_pushed_at.gte.${placeholderSince},` +
+        `or(published_url.like.*?p=*,published_url.like.*&p=*,published_url.like.*page_id=*))`,
     )
     // Overdue first. Without an order, PostgREST hands back an arbitrary slice of the
     // candidates, and a row that can never be fixed — a '?p=' placeholder on a post WordPress
@@ -236,6 +257,35 @@ export async function GET(req: NextRequest) {
     return 'written'
   }
 
+  let linkTasksRecorded = 0
+  /**
+   * A post in a set has just been seen live for the first time: give the set's page its address and
+   * record the links a person should add (on the main page, and in the set's previous post).
+   * recordSiloLinkTasks does nothing for a set without a main page, and skips a post the set
+   * already has tasks for. Database only — nothing on the client's site is touched. Never throws:
+   * a failure here costs a checklist entry, not the run.
+   */
+  const recordWentLive = async (p: PostRow, url: string): Promise<void> => {
+    try {
+      const { error: pageErr } = await db.from('content_silo_pages')
+        .update({ target_url: url, updated_at: new Date().toISOString() })
+        .eq('content_post_id', p.id)
+        .eq('silo_id', p.silo_id as string)
+      if (pageErr) console.error(`[cron/wp-reconcile] ${p.id}: set page address not recorded:`, pageErr.message)
+
+      const tasks = await recordSiloLinkTasks(db, {
+        siloId:  p.silo_id as string,
+        postId:  p.id,
+        url,
+        title:   p.title ?? '',
+        keyword: p.target_keyword,
+      })
+      if (tasks.length > 0) linkTasksRecorded += tasks.length
+    } catch (e) {
+      console.error(`[cron/wp-reconcile] ${p.id}: recording silo link tasks failed:`, e)
+    }
+  }
+
   let checked = 0, updated = 0, missedSchedule = 0, unreadable = 0, noCredential = 0
   let skippedBrokenSite = 0, deferred = 0, changedSinceRead = 0
   const noCredentialLogged = new Set<string>()
@@ -307,14 +357,14 @@ export async function GET(req: NextRequest) {
 
       const patch: Record<string, unknown> = {}
       if (live.status && live.status !== post.wp_status) patch.wp_status = live.status
-      if (live.link && live.link !== post.published_url) {
-        if (isWpPlaceholderLink(live.link) && live.status !== 'publish') {
-          // WordPress's link for content that is not public yet. Nothing worth storing; the real
-          // permalink is collected once the post is out. On a PUBLISHED post the same shape is the
-          // permanent URL of a site on plain permalinks, and is stored — the rule approve uses.
-        } else if (!isLinkOnSite(live.link, siteUrl)) {
-          // published_url becomes "View live" and an internal link in other articles, so a
-          // relative, non-http or off-site link must not land there.
+      // Only a PUBLISHED post's link is an address a reader can open. A scheduled or draft post's
+      // is the '?p=' placeholder; a private one's needs a login; a trashed one's is the slug with
+      // '__trashed' appended. None of them belongs in published_url, which becomes "View live" and
+      // an internal link in other articles. On a published post a '?p=' link is the permanent URL
+      // of a site on plain permalinks, and is stored — the rule approve uses.
+      if (live.status === 'publish' && live.link && live.link !== post.published_url) {
+        if (!isLinkOnSite(live.link, siteUrl)) {
+          // A relative, non-http or off-site link must not land there either.
           console.warn(`[cron/wp-reconcile] post ${post.id}: WordPress returned a link that is not an http(s) URL on ${siteUrl} — not stored`)
         } else {
           patch.published_url = live.link
@@ -324,7 +374,17 @@ export async function GET(req: NextRequest) {
       if (Object.keys(patch).length > 0) {
         const w = await writeIfUnchanged(post, patch)
         if (w === 'moved') changedSinceRead++
-        if (w === 'written') { updated++; console.log(`[cron/wp-reconcile] ${post.id}: ${JSON.stringify(patch)}`) }
+        if (w === 'written') {
+          updated++
+          console.log(`[cron/wp-reconcile] ${post.id}: ${JSON.stringify(patch)}`)
+          // The post's first live permalink: the moment it went out, as far as anything here can
+          // tell. A post in a set with a main page gets its hand-linking tasks now — the approve
+          // route records them only for a post that was already live when pushed.
+          const firstLink = typeof patch.published_url === 'string' ? patch.published_url : null
+          if (post.silo_id && firstLink && !isWpPlaceholderLink(firstLink) && isPublicPermalink(firstLink)) {
+            await recordWentLive(post, firstLink)
+          }
+        }
       }
 
       // Still scheduled after its date means WordPress never ran the job — the classic missed
@@ -351,7 +411,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    ok: true, checked, updated, missedSchedule, unreadable, noCredential,
+    ok: true, checked, updated, missedSchedule, unreadable, noCredential, linkTasksRecorded,
     // Left for the next run, not lost: a site that tripped the breaker, posts past the time
     // budget, and rows a push rewrote while this run was reading them.
     skippedBrokenSite, deferred, changedSinceRead,

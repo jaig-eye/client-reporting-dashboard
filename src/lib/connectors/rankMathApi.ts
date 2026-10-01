@@ -14,75 +14,97 @@
 // credential.
 //
 // It also beats the XML-RPC fallback on availability: xmlrpc.php is disabled on a great many
-// hosts, while this endpoint exists on any site running Rank Math — and if we are writing
-// rank_math_* fields at all, Rank Math is running by definition.
+// hosts, while this endpoint exists on any site running Rank Math.
 //
-// ORDER OF ATTEMPTS, once a read-back shows the standard REST push dropped a field:
+// ORDER OF ATTEMPTS, on every push (the standard REST push carries the fields too, and most sites
+// drop them — Rank Math does not register its keys with show_in_rest):
 //
 //   1. this            — Rank Math's own writer, capability-checked, no prerequisites
-//   2. XML-RPC         — wp.editPost custom_fields, when xmlrpc.php is open
+//   2. XML-RPC         — wp.editPost custom_fields, only when this failed for a reason other than
+//                        "Rank Math is not installed", and only when the request has time left
 //   3. report it       — the activity log names both failures rather than a plugin to install
 //
-// Soft-fails throughout: a 404 (older Rank Math), a 401, or any network failure returns false and
-// the caller moves on. It never throws into a publish that already succeeded.
+// WordPress answering 404 `rest_no_route` means no plugin registered this route: Rank Math is not
+// on the site, so there is nothing to write rank_math_* fields FOR. That comes back 'absent' and the
+// caller stops — writing them over XML-RPC would re-save the post for fields nothing reads.
+//
+// Soft-fails throughout: any other 404, a 401/403, or any network failure returns 'failed' and the
+// caller moves on. It never throws into a publish that already succeeded.
 //
 // The request carries the application password in its Authorization header, so it goes through
-// fetchWithSiteCredentials: one redirect within the same site at most, never to another host.
+// fetchWithSiteCredentials: same-site redirects only (at most three hops), never to another host.
+// It sends the same headers as every other WordPress call — BROWSER_BOT_UA included, without
+// which sites behind Cloudflare or Wordfence answer 403.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
+import { fetchWithSiteCredentials, wpHeaders } from '@/lib/connectors/wordpress'
 
-/** Bounds the whole exchange, a followed redirect included. */
+/** Bounds the whole exchange, a followed redirect included, unless the caller asks for less. */
 const RANKMATH_TIMEOUT_MS = 20_000
 
-function authHeader(username: string, appPassword: string): string {
-  return 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64')
+/**
+ * What became of the write.
+ *   stored — Rank Math accepted it.
+ *   absent — the site has no such route: Rank Math is not installed. Nothing else should be tried.
+ *   failed — anything else: refused, broken, unreachable. A fallback may be worth trying.
+ */
+export type RankMathWrite = 'stored' | 'absent' | 'failed'
+
+/** The `code` of a WordPress REST error body, or '' when the body is not one. */
+export function wpRestErrorCode(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const code = (parsed as { code?: unknown }).code
+      return typeof code === 'string' ? code : ''
+    }
+  } catch { /* not JSON */ }
+  return ''
 }
 
 /**
  * Write Rank Math meta through Rank Math's own endpoint.
  *
- * `postType` is Rank Math's object type, which is 'post' for both posts and pages — it keys off
- * objectID, not the WordPress post type.
+ * `objectType` is Rank Math's object type, which is 'post' for both posts and pages — it keys off
+ * objectID, not the WordPress post type. Empty values are never sent: updateMeta DELETES a key
+ * whose value is empty, and a push must not erase a field the client filled in.
  */
 export async function rankMathUpdateMeta(
   siteUrl: string,
   auth: { username: string; app_password: string },
   postId: number,
   meta: Record<string, string>,
-): Promise<boolean> {
+  timeoutMs: number = RANKMATH_TIMEOUT_MS,
+): Promise<RankMathWrite> {
   const entries = Object.entries(meta).filter(([, v]) => typeof v === 'string' && v !== '')
-  if (entries.length === 0) return true
+  if (entries.length === 0) return 'stored'
 
   const url = `${siteUrl.replace(/\/+$/, '')}/wp-json/rankmath/v1/updateMeta`
   try {
     const res = await fetchWithSiteCredentials(url, {
       method:  'POST',
-      headers: {
-        Authorization:  authHeader(auth.username, auth.app_password),
-        'Content-Type': 'application/json',
-      },
+      headers: wpHeaders(auth, true),
       body: JSON.stringify({
         objectType: 'post',
         objectID:   postId,
         meta:       Object.fromEntries(entries),
       }),
-      signal: AbortSignal.timeout(RANKMATH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, RANKMATH_TIMEOUT_MS))),
     }, '[rank-math]')
 
-    if (res.status === 404) {
-      // Rank Math not installed, or a version predating this route.
-      console.warn(`[rank-math] ${siteUrl} has no updateMeta route`)
-      return false
+    if (res.ok) {
+      await res.body?.cancel().catch(() => {})
+      return 'stored'
     }
-    if (!res.ok) {
-      const body = await res.text()
-      console.warn(`[rank-math] ${siteUrl} updateMeta HTTP ${res.status}: ${body.slice(0, 160)}`)
-      return false
+    const body = await res.text().catch(() => '')
+    if (res.status === 404 && wpRestErrorCode(body) === 'rest_no_route') {
+      console.log(`[rank-math] ${siteUrl} has no rankmath/v1/updateMeta route — Rank Math is not installed there`)
+      return 'absent'
     }
-    return true
+    console.warn(`[rank-math] ${siteUrl} updateMeta HTTP ${res.status}: ${body.slice(0, 160)}`)
+    return 'failed'
   } catch (e) {
     console.warn(`[rank-math] ${siteUrl} updateMeta failed:`, String(e).slice(0, 160))
-    return false
+    return 'failed'
   }
 }

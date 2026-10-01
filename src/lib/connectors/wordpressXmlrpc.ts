@@ -17,9 +17,15 @@
 // installed on the client's site.
 //
 // The catch is that xmlrpc.php is disabled on a lot of installs — hosts and security plugins turn
-// it off because it is a brute-force and pingback-DDoS vector. So this is a fallback, not a
-// replacement: the REST push still carries the meta, and this only runs for the fields a read-back
-// proves did not land. Where XML-RPC is blocked too, the caller reports it.
+// it off because it is a brute-force and pingback-DDoS vector. So this is the second resort, after
+// Rank Math's own updateMeta route (lib/connectors/rankMathApi): it runs only when that write
+// failed for a reason other than "Rank Math is not installed", and only for the fields a read-back
+// shows missing (every field, when nothing could be read). Where XML-RPC is blocked too, the
+// caller reports it.
+//
+// wp.editPost re-saves the whole post through wp_update_post. Dates and status carry over
+// unchanged, but save_post hooks fire and the modified date moves — another reason it is a
+// fallback and not the first choice.
 //
 // UPDATE, NOT APPEND
 //
@@ -35,13 +41,17 @@
 //
 // The application password travels in the request BODY here, not a header — so a redirect that
 // fetch follows on its own would carry it to wherever the Location points, and a 307/308 re-sends
-// the body verbatim. Requests go through fetchWithSiteCredentials, which follows one redirect only
-// within the same site and refuses anything else.
+// the body verbatim. Requests go through fetchWithSiteCredentials, which follows same-site
+// redirects only (at most three hops) and refuses anything else.
+//
+// They carry BROWSER_BOT_UA like every other WordPress call: sites behind Cloudflare or Wordfence
+// are allow-listed on it and answer 403 without it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { fetchWithSiteCredentials } from '@/lib/connectors/wordpress'
+import { BROWSER_BOT_UA } from '@/lib/platformBot'
 
-/** Bounds the whole exchange, a followed redirect included. */
+/** Bounds the whole exchange — the read and the write, redirects included — unless the caller asks for less. */
 const XMLRPC_TIMEOUT_MS = 20_000
 
 /** Escape a string for XML text content. Keyword and title values are arbitrary user text. */
@@ -67,13 +77,13 @@ function xmlrpcUrl(siteUrl: string): string {
 }
 
 /** POST a methodCall and return the raw XML body, or null when the endpoint is unusable. */
-async function call(siteUrl: string, xml: string): Promise<string | null> {
+async function call(siteUrl: string, xml: string, signal: AbortSignal): Promise<string | null> {
   try {
     const res = await fetchWithSiteCredentials(xmlrpcUrl(siteUrl), {
       method:  'POST',
-      headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+      headers: { 'Content-Type': 'text/xml; charset=utf-8', 'User-Agent': BROWSER_BOT_UA },
       body:    xml,
-      signal:  AbortSignal.timeout(XMLRPC_TIMEOUT_MS),
+      signal,
     }, '[wp-xmlrpc]')
     // 403/404/405 is the normal shape of "xmlrpc.php is disabled here".
     if (!res.ok) {
@@ -108,6 +118,7 @@ async function existingFieldIds(
   siteUrl: string,
   auth: { username: string; app_password: string },
   postId: number,
+  signal: AbortSignal,
 ): Promise<Map<string, string> | null> {
   const xml =
     `<?xml version="1.0"?><methodCall><methodName>wp.getPost</methodName><params>` +
@@ -118,7 +129,7 @@ async function existingFieldIds(
     `<param><value><array><data><value><string>custom_fields</string></value></data></array></value></param>` +
     `</params></methodCall>`
 
-  const body = await call(siteUrl, xml)
+  const body = await call(siteUrl, xml, signal)
   if (body === null) return null
 
   // Each custom field arrives as its own <struct> carrying id, key and value members. Narrow
@@ -139,17 +150,20 @@ async function existingFieldIds(
  * Write post meta over XML-RPC. Returns true only when WordPress accepted the edit.
  *
  * `meta` is key → value. Existing keys are updated in place; missing ones are created.
+ * `timeoutMs` bounds both requests together, so the caller can fit them into the time it has left.
  */
 export async function xmlrpcSetPostMeta(
   siteUrl: string,
   auth: { username: string; app_password: string },
   postId: number,
   meta: Record<string, string>,
+  timeoutMs: number = XMLRPC_TIMEOUT_MS,
 ): Promise<boolean> {
   const entries = Object.entries(meta).filter(([, v]) => v !== undefined && v !== null)
   if (entries.length === 0) return true
 
-  const ids = await existingFieldIds(siteUrl, auth, postId)
+  const signal = AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, XMLRPC_TIMEOUT_MS)))
+  const ids = await existingFieldIds(siteUrl, auth, postId, signal)
   // null means the endpoint is unusable — no point attempting the write.
   if (ids === null) return false
 
@@ -173,7 +187,7 @@ export async function xmlrpcSetPostMeta(
     `</struct></value></param>` +
     `</params></methodCall>`
 
-  const body = await call(siteUrl, xml)
+  const body = await call(siteUrl, xml, signal)
   if (body === null) return false
   // wp.editPost answers <boolean>1</boolean> on success.
   return /<boolean>\s*1\s*<\/boolean>/.test(body)

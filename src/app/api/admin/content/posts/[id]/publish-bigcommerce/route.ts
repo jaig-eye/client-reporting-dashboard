@@ -29,8 +29,9 @@ export async function POST(
   const { id } = await params
   const db = createAdminClient()
 
-  // silo_id excluded: migration 149 (content_silos) not yet applied in production.
-  // Selecting a non-existent column causes PostgREST to error → "Post not found" 404.
+  // Every column named here must exist in production: selecting one that does not makes PostgREST
+  // error, which reads as "Post not found" 404. silo_id (migration 149) is applied — the approve
+  // route selects it too.
   const { data: post, error: postErr } = await db
     .from('content_posts')
     .select('id, client_id, connection_id, content_type, service_page_url, title, content, seo_title, meta_description, slug, target_keyword, suggested_tags, target_publish_date, bc_post_id, focus_topic, featured_image_url, status, silo_id')
