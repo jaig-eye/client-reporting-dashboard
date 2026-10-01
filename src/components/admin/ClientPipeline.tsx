@@ -75,9 +75,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
 
   const cs = contentSettings ?? {}
   const connectionId     = (cs.connection_id as string | null) ?? firstConnectionId
-  const settingsWeeksAhead = (cs.weeks_ahead as number | null) ?? 6
   const autoGenerate       = cs.auto_generate === true
   const cadence            = cadenceLabel(cs)
+  const publishes          = `Publishes ${cadence.charAt(0).toLowerCase()}${cadence.slice(1)}`
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [topics,      setTopics]      = useState<Topic[]>([])
@@ -413,7 +413,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     ].map(d => (d ?? '').slice(0, 10)).filter(d => d && d >= from).sort()
     return dates.length ? dates[dates.length - 1] : null
   }, [topics, posts])
-  const dateWord = (n: number) => `publish date${n === 1 ? '' : 's'}`
 
   // Nothing live: find out whether this client had a plan whose posts were cleared (deleted, or
   // all rejected), which the card words as regenerating rather than starting.
@@ -482,11 +481,13 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 <span className={`badge ${autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem' }}>{autoGenerate ? 'Running' : 'Paused'}</span>
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                {cadence}.{' '}
+                {publishes}.{' '}
                 {autoGenerate ? (
-                  <>Keeps the next {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} planned{plannedThrough && <>, now through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}. New dates fill in on their own.</>
+                  plannedThrough
+                    ? <>Topics are lined up through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong>, and new ones are added automatically as dates come up.</>
+                    : <>New topics are added automatically as dates come up.</>
                 ) : (
-                  <>Automatic planning is off, so new dates don&apos;t fill in on their own{plannedThrough && <>. Planned through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
+                  <>Automatic planning is off, so no new topics are added{plannedThrough && <>. Topics are lined up through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
                 )}
               </div>
             </div>
@@ -507,8 +508,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {hadPlan
-                  ? <>{cadence}. Its planned posts were cleared. Regenerating fills the next {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} again{autoGenerate ? ', then keeps that many planned on its own' : ''}.</>
-                  : <>{cadence}. Plans the first {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} now{autoGenerate ? ', then keeps that many planned on its own' : ''}.</>}
+                  ? <>{publishes}. Its planned posts were cleared. Regenerating lines up topics for the coming publish dates again{autoGenerate ? ', and new ones are added automatically after that' : ''}.</>
+                  : <>{publishes}. Starting lines up topics for the coming publish dates{autoGenerate ? ', and new ones are added automatically after that' : ''}.</>}
               </div>
             </div>
             <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -685,8 +686,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                   {autoGenerate
-                    ? `New dates fill in on their own, keeping the next ${settingsWeeksAhead} ${dateWord(settingsWeeksAhead)} planned.`
-                    : 'Automatic planning is off, so only these dates are planned.'}
+                    ? 'New topics are added automatically as each publish date comes up.'
+                    : 'Automatic planning is off, so only these dates get topics.'}
                 </dd>
               </dl>
               {onOpenSettings && (
