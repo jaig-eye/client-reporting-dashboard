@@ -58,6 +58,22 @@ export async function DELETE(
 
   const { siloId, keywordId } = params
   const db = createAdminClient()
+
+  // A keyword that has produced a topic or a post is the record of where that article came from,
+  // and the set's "N of M written" count. Rejecting the topic puts it back on the queue; deleting
+  // it is only for keywords still waiting.
+  const { data: kw, error: readErr } = await db
+    .from('content_silo_keywords')
+    .select('used_at, target_post_id')
+    .eq('id', keywordId)
+    .eq('silo_id', siloId)
+    .maybeSingle()
+  if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 })
+  if (!kw) return NextResponse.json({ error: 'Keyword not found' }, { status: 404 })
+  const used = kw as { used_at: string | null; target_post_id: string | null }
+  if (used.used_at || used.target_post_id)
+    return NextResponse.json({ error: 'Already written about, so it stays as the record of that article. Reject the topic to put it back.' }, { status: 409 })
+
   const { error } = await db.from('content_silo_keywords').delete().eq('id', keywordId).eq('silo_id', siloId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

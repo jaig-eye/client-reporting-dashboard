@@ -7,6 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed } from '@/lib/auth'
+import { cleanQueueKeyword, cleanQueueKeywords, cleanSiloNotes } from '@/lib/content/siloQueue'
+import { nextOpenSlot } from '@/lib/content/scheduleSlots'
+
+/** Most keywords one request can add — enough for any real batch, short of an accidental paste of a list. */
+const MAX_KEYWORDS_PER_ADD = 200
 
 type ClusterKeyword = {
   id: string
@@ -110,7 +115,11 @@ export async function GET(request: NextRequest) {
     keywordUnused: queue[s.id]?.unused ?? 0,
   }))
 
-  return NextResponse.json({ silos: result })
+  // When the next one gets written: the first date the topic cron will fill, and when it gets to
+  // it. A failed read leaves it out rather than failing the list.
+  const schedule = await nextOpenSlot(db, clientId).catch(() => null)
+
+  return NextResponse.json({ silos: result, schedule })
 }
 
 export async function POST(request: NextRequest) {
@@ -136,7 +145,8 @@ export async function POST(request: NextRequest) {
     inject_internal_links?: boolean
   }
 
-  if (!body.client_id || !body.name)
+  const name = cleanQueueKeyword(body.name).slice(0, 120)
+  if (!body.client_id || !name)
     return NextResponse.json({ error: 'Missing client_id or name' }, { status: 400 })
 
   if (body.content_type && !VALID_CONTENT_TYPES.includes(body.content_type as typeof VALID_CONTENT_TYPES[number]))
@@ -147,11 +157,11 @@ export async function POST(request: NextRequest) {
     .from('content_silos')
     .insert({
       client_id:        body.client_id,
-      name:             body.name.trim(),
+      name,
       hub_page_url:     body.hub_page_url     ?? null,
       hub_page_title:   body.hub_page_title   ?? null,
       central_entity:   body.central_entity   ?? null,
-      description:      body.description      ?? null,
+      description:      cleanSiloNotes(body.description),
       section:          body.section          ?? 'core',
       content_type:     body.content_type     ?? 'blog',
       target_keyword:   body.target_keyword   ?? null,
@@ -167,11 +177,9 @@ export async function POST(request: NextRequest) {
 
   // Seed the keyword queue. Order is preserved via sort_order — the generator
   // walks it top-down and consumes one keyword per topic.
-  const seed = (body.keywords ?? [])
-    .map(k => k.trim())
-    .filter(Boolean)
-    // De-dupe case-insensitively so "Roof Repair" and "roof repair" are one slot.
-    .filter((k, i, arr) => arr.findIndex(o => o.toLowerCase() === k.toLowerCase()) === i)
+  // Cleaned for quoting in a prompt, and de-duped case-insensitively so "Roof Repair" and
+  // "roof repair" are one slot.
+  const seed = cleanQueueKeywords(Array.isArray(body.keywords) ? body.keywords : []).slice(0, MAX_KEYWORDS_PER_ADD)
 
   if (seed.length > 0) {
     const siloRow = data as { id: string }
@@ -257,6 +265,13 @@ export async function PATCH(request: NextRequest) {
       update[key] = (body as Record<string, unknown>)[key]
     }
   }
+
+  if ('name' in update) {
+    const name = cleanQueueKeyword(update.name).slice(0, 120)
+    if (!name) return NextResponse.json({ error: 'Name cannot be empty' }, { status: 400 })
+    update.name = name
+  }
+  if ('description' in update) update.description = cleanSiloNotes(update.description)
 
   if (Object.keys(update).length === 0)
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
