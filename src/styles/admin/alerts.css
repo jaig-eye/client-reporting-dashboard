@@ -1,0 +1,69 @@
+/* ═════════════════════════════════════════════════════════════════════════════
+   Alerts — /admin/alerts
+   Imported by AlertsPage and the route's loading state. Every class is al- so nothing leaks.
+═════════════════════════════════════════════════════════════════════════════ */
+
+.al-tabs { margin-bottom: 16px; max-width: 100%; }
+
+.al-list { padding: 0; overflow: hidden; }
+
+/* One alert: severity tile, title, the detail, then client, type and time. */
+.al-row { position: relative; align-items: flex-start; padding: 14px 16px; transition: opacity 0.15s, background 0.15s; }
+.al-row > .ui-tile { margin-top: 1px; }
+.al-row .ui-row-text { gap: 3px; }
+.al-row .ui-row-title { gap: 6px 8px; }
+.al-row--new { background: color-mix(in srgb, var(--accent) 5%, var(--bg-surface)); }
+.al-row--busy { opacity: 0.45; pointer-events: none; }
+
+.al-body {
+  margin: 0; font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.al-body strong { font-weight: 600; color: var(--text-primary); }
+.al-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; margin: 1px 0 0; padding: 2px 4px; margin-left: -4px;
+  border: none; border-radius: 5px; background: none; font: inherit; font-size: 0.75rem; font-weight: 600;
+  color: var(--accent); cursor: pointer;
+}
+.al-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+.al-more:focus-visible { outline: none; box-shadow: var(--ring); }
+
+.al-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin-top: 3px; }
+.al-when { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.al-dot { color: var(--text-faint); }
+.al-meta time { font-variant-numeric: tabular-nums; }
+
+/* The client, as a chip that opens their page. */
+.al-client {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 8px 1px 6px; border-radius: var(--radius-pill);
+  background: var(--bg-subtle); box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 0.75rem; font-weight: 600; line-height: 1.6; color: var(--text-secondary); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+a.al-client:hover { background: var(--bg-hover); color: var(--text-primary); }
+a.al-client:focus-visible { outline: none; box-shadow: var(--ring); }
+.al-client svg { flex-shrink: 0; color: var(--text-faint); }
+
+.al-actions { gap: 4px; }
+.al-dismiss {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 36px; height: 36px; margin: -2px -6px -2px -4px;
+  border: none; border-radius: var(--radius); background: none; color: var(--text-faint); cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.al-dismiss:hover { background: var(--bg-hover); color: var(--text-primary); }
+.al-dismiss:focus-visible { outline: none; box-shadow: var(--ring); }
+.al-actions .btn-sm { min-height: 32px; }
+
+@media (max-width: 639px) {
+  .al-row { padding: 14px; }
+  /* Dismiss moves to the top corner; View sits under the text, lined up with it. */
+  .al-row .ui-row-text { padding-right: 26px; }
+  .al-row .al-dismiss { position: absolute; top: 8px; right: 6px; margin: 0; }
+  .al-row .ui-row-actions { padding-left: 44px; justify-content: flex-start; }
+  .al-actions .btn-sm { min-height: 36px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .al-row, .al-client, .al-dismiss { transition: none; }
+}

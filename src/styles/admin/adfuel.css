@@ -1,0 +1,219 @@
+/* ═════════════════════════════════════════════════════════════════════════════
+   Ad Fuel — /admin/ad-fuel
+   Imported by the page and its loading state. Every class is af- so nothing leaks.
+═════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Totals strip (the Clients page's stat strip, rebuilt for this page) ──── */
+
+.af-stats {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; padding: 0; overflow: hidden;
+  margin-bottom: 20px; background: var(--border-subtle);
+}
+.af-stat { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 16px 20px; background: var(--bg-surface); }
+.af-stat-label { font-size: 0.78rem; font-weight: 500; color: var(--text-muted); }
+.af-stat-value {
+  font-size: 1.625rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+.af-stat-sub { font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* Five stats never leave an empty grey cell: three across puts the last two side by side
+   (the last one twice as wide); two across gives the balance its own row. */
+@media (max-width: 1023px) {
+  .af-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .af-stat:last-child { grid-column: span 2; }
+}
+@media (max-width: 639px) {
+  .af-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .af-stat:first-child { grid-column: 1 / -1; }
+  .af-stat:last-child { grid-column: auto; }
+  .af-stat { padding: 14px 16px; }
+  .af-stat-value { font-size: 1.375rem; }
+}
+
+/* Money tones. On a span, so they beat the table cell's own colour; after .af-strong so a
+   bold figure keeps its tone. */
+.af-strong { color: var(--text-primary); font-weight: 600; }
+.af-muted { color: var(--text-muted); }
+.af-faint { color: var(--text-faint); }
+.af-pos  { color: var(--green-fg); }
+.af-neg  { color: var(--red-fg); }
+.af-warn { color: var(--amber-fg); }
+.af-money { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.af-small { font-size: 0.75rem; }
+.af-proj { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 500; white-space: nowrap; }
+
+/* ── Sections that hold a table or row list ─────────────────────────────── */
+
+.af-sec .ui-section { overflow: hidden; }
+.af-sec .ui-section-actions .input { width: auto; }
+.af-pad { padding: 0 20px 14px; }
+.af-pad .ui-notice { margin-bottom: 0; }
+.af-pad .ui-notice + .ui-notice { margin-top: 8px; }
+@media (max-width: 639px) { .af-pad { padding: 0 16px 14px; } }
+
+.af-filter { min-width: 190px; min-height: 36px; padding-top: 0.375rem; padding-bottom: 0.375rem; font-size: 0.8125rem; }
+@media (max-width: 639px) {
+  .af-sec .ui-section-actions { width: 100%; }
+  .af-filter { flex: 1 1 100%; }
+  /* 36px tap targets on a phone. */
+  .af-sec .ui-section-actions .btn-sm, .af-selbar .btn-sm { min-height: 36px; }
+}
+
+/* Laptop shows the table; a phone shows one row per item. */
+.af-list { display: none; border-top: 1px solid var(--border-subtle); }
+@media (max-width: 767px) {
+  .af-table-wrap { display: none; }
+  .af-list { display: block; }
+}
+.af-refreshing { opacity: 0.55; transition: opacity 0.15s; }
+@media (prefers-reduced-motion: reduce) { .af-refreshing { transition: none; } }
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+.ui-table.af-table th, .ui-table.af-table td { padding-left: 12px; padding-right: 12px; }
+.ui-table.af-table th:first-child, .ui-table.af-table td:first-child { padding-left: 20px; }
+.ui-table.af-table th:last-child, .ui-table.af-table td:last-child { padding-right: 20px; }
+.ui-table.af-table .af-col-check { padding-right: 0; }
+.af-table td { white-space: nowrap; vertical-align: middle; }
+.af-table th.af-c, .af-table td.af-c { text-align: center; }
+.af-table .af-note { display: block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-table .af-tags { flex-wrap: nowrap; }
+.af-table tbody tr { transition: background 0.12s; }
+.af-table tbody tr:hover { background: var(--bg-hover); }
+.af-table tbody tr.af-tr-edit { cursor: pointer; }
+.af-table tbody tr.af-tr--pending { background: var(--bg-subtle); }
+.af-table tbody tr.af-tr--checked { background: var(--accent-soft); }
+.af-table .af-col-check { width: 44px; padding-right: 0; text-align: center; }
+.af-table .af-col-act { width: 52px; padding: 4px 10px; text-align: right; }
+
+.af-sort {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px; margin: -2px -4px; border: none; border-radius: 5px;
+  background: none; font: inherit; color: inherit; cursor: pointer; white-space: nowrap;
+}
+.af-sort:hover, .af-sort--on { color: var(--text-primary); }
+.af-sort:focus-visible { outline: none; box-shadow: var(--ring); }
+.af-sort-idle { opacity: 0.45; }
+
+.af-client {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px; margin: -2px -4px; border: none; border-radius: 5px;
+  background: none; font: inherit; font-weight: 600; color: var(--text-primary); cursor: pointer; text-align: left;
+}
+.af-client:hover .af-client-name { text-decoration: underline; text-underline-offset: 3px; }
+.af-client:focus-visible { outline: none; box-shadow: var(--ring); }
+.af-robot { display: inline-flex; color: var(--accent); }
+.af-robot--paused { color: var(--red-fg); }
+
+/* Checkboxes: a 16px box inside a bigger hit area. */
+.af-checkbox { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.af-checkbox:disabled { cursor: not-allowed; }
+.af-check {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin: -6px 0;
+  border-radius: var(--radius-sm); cursor: pointer; flex-shrink: 0;
+}
+.af-check:has(input:focus-visible) { box-shadow: var(--ring); }
+.af-check:has(input:focus-visible) input { outline: none; }
+.af-check-ph { display: inline-flex; width: 32px; justify-content: center; color: var(--text-faint); flex-shrink: 0; }
+
+.af-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0;
+  border: none; border-radius: var(--radius-sm); background: none; color: var(--text-faint); cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.af-iconbtn:hover { background: var(--red-subtle); color: var(--red-fg); }
+.af-iconbtn--plain:hover { background: var(--bg-hover); color: var(--text-primary); }
+.af-iconbtn:focus-visible { outline: none; box-shadow: var(--ring); }
+
+/* Selected ledger entries. */
+.af-selbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px;
+  background: var(--accent-soft); border-top: 1px solid var(--accent-border);
+  font-size: 0.8125rem; color: var(--text-primary);
+}
+.af-selbar-count { margin-right: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ── Phone rows ─────────────────────────────────────────────────────────── */
+
+.af-list-row {
+  width: 100%; border: none; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+  flex-wrap: nowrap !important; align-items: flex-start;
+}
+.af-list-row + .af-list-row { border-top: 1px solid var(--border-subtle); }
+button.af-list-row:hover { background: var(--bg-hover); }
+button.af-list-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.af-list-row--pending { background: var(--bg-subtle); }
+.af-list-row--checked { background: var(--accent-soft); }
+.af-list-end { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; text-align: right; }
+.af-list-amount { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.af-list-head { display: none; align-items: center; gap: 8px; padding: 6px 14px; font-size: 0.8125rem; color: var(--text-muted); border-top: 1px solid var(--border-subtle); cursor: pointer; }
+@media (max-width: 767px) { .af-list-head { display: flex; } }
+.af-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.af-list .af-tags { margin-top: 6px; }
+.af-list .af-check { width: 36px; height: 36px; margin: -6px -4px -6px -8px; }
+.af-list .af-check-ph { width: 36px; margin: 0 -4px 0 -8px; line-height: 24px; }
+.af-led-title { justify-content: space-between; align-items: flex-start; flex-wrap: nowrap !important; }
+.af-led-name { min-width: 0; overflow-wrap: anywhere; }
+.af-list .af-iconbtn { width: 36px; height: 36px; margin: -6px -6px -6px 0; }
+.af-note-sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ── Settings tab ───────────────────────────────────────────────────────── */
+
+.af-settings { align-items: start; }
+.af-cols { display: flex; flex-direction: column; gap: 6px; }
+.af-col-row { display: flex; align-items: center; gap: 6px; }
+.af-col-row .input { padding: 0.375rem 0.625rem; font-size: 0.8125rem; }
+.af-col-row--off .input { color: var(--text-muted); background: var(--bg-subtle); }
+
+/* ── Forms ──────────────────────────────────────────────────────────────── */
+
+.af-form { display: flex; flex-direction: column; gap: 16px; }
+.af-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
+@media (max-width: 519px) { .af-form-grid { grid-template-columns: minmax(0, 1fr); } }
+.af-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.af-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+.af-opt { font-weight: 400; color: var(--text-faint); }
+.af-help { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
+.af-inline { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.af-inline .af-field { flex: 0 1 220px; }
+.af-form-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.af-msg { display: inline-flex; align-items: center; gap: 5px; font-size: 0.8125rem; font-weight: 500; }
+.af-msg--ok  { color: var(--green-fg); }
+.af-msg--err { color: var(--red-fg); }
+
+.af-group { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.af-group-title { margin: 0; font-size: 0.8125rem; font-weight: 650; color: var(--text-primary); }
+.af-group .ui-notice { margin-bottom: 0; }
+.af-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.af-toggle .af-checkbox { margin-top: 2px; }
+.af-toggle:has(input:focus-visible) .af-checkbox { outline: none; box-shadow: var(--ring); border-radius: 3px; }
+.af-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 0.8125rem; line-height: 1.4; color: var(--text-primary); }
+.af-toggle-sub { font-size: 0.75rem; color: var(--text-muted); }
+.af-toggle--nested { margin-left: 26px; }
+
+/* ── Modals ─────────────────────────────────────────────────────────────── */
+
+.af-scrim {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: var(--scrim); animation: af-fade 0.15s ease-out;
+}
+.af-modal {
+  display: flex; flex-direction: column; width: 100%; max-width: 440px; max-height: calc(100dvh - 32px); overflow: hidden;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  animation: af-pop 0.18s var(--ease-out);
+}
+.af-modal--wide { max-width: 520px; }
+.af-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 14px 20px; border-bottom: 1px solid var(--border-subtle); }
+.af-modal-title { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); }
+.af-modal-sub { margin: 2px 0 0; font-size: 0.8125rem; color: var(--text-muted); }
+.af-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 20px; }
+.af-modal-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 12px 20px; border-top: 1px solid var(--border-subtle); }
+.af-modal-body .ui-notice { margin-bottom: 0; }
+@keyframes af-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes af-pop  { from { opacity: 0; transform: translateY(6px) scale(0.985); } to { opacity: 1; transform: none; } }
+
+.af-spin { animation: af-spin 0.9s linear infinite; }
+@keyframes af-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .af-scrim, .af-modal, .af-spin { animation: none; }
+  .af-table tbody tr { transition: none; }
+}

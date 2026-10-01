@@ -1,7 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Robot } from '@phosphor-icons/react'
+import '@/styles/admin/adfuel.css'
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import {
+  Robot, ArrowsClockwise, DownloadSimple, UploadSimple, Plus, Trash, X, CaretUp, CaretDown, ArrowsDownUp,
+  Gauge, Receipt, GearSix, Check, Info, Pause, Buildings,
+} from '@phosphor-icons/react'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
+import EmptyState from '@/components/ui/EmptyState'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import { PillTabs } from '@/components/ui/PillTabs'
+import { Sk, SkTable, SkRows } from '@/components/ui/Skeleton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,29 +69,34 @@ interface ColConfig {
   visible: boolean
 }
 
+type Tab = 'dashboard' | 'ledger' | 'settings'
+
 // ─── Column definitions ───────────────────────────────────────────────────────
 
 const DEFAULT_COLS: ColConfig[] = [
-  { key: 'client',       label: 'Client',              visible: true  },
-  { key: 'googleAcct',   label: 'G Acct',              visible: false },
-  { key: 'fbAcct',       label: 'FB Acct',             visible: false },
-  { key: 'crmId',        label: 'CRM ID',              visible: false },
-  { key: 'afBalance',         label: 'Ad Fuel Balance',     visible: true  },
-  { key: 'rawBalance',        label: 'Raw Balance',         visible: true  },
-  { key: 'afPurchased',       label: 'Ad Fuel Purchased',   visible: true  },
-  { key: 'afSpend',      label: 'Ad Fuel Spend',       visible: true  },
-  { key: 'rawPurchased', label: 'Raw Purchased',       visible: false },
-  { key: 'rawSpend',     label: 'Raw Spend',           visible: false },
-  { key: 'googleRaw',    label: 'Google Raw',          visible: true  },
-  { key: 'fbRaw',        label: 'Facebook Raw',        visible: true  },
-  { key: 'billDay',      label: 'Bill Day',            visible: true  },
-  { key: 'budget',       label: 'Budget',              visible: true  },
-  { key: 'afSinceBill',  label: 'Ad Fuel Since Bill',  visible: true  },
-  { key: 'avgDaily',       label: 'Avg Daily',           visible: true  },
-  { key: 'pace',           label: 'Pace',                visible: true  },
-  { key: 'rawDailyBudget', label: 'Raw Daily Budget',    visible: false },
-  { key: 'afDailyBudget',  label: 'AF Daily Budget',     visible: false },
+  { key: 'client',         label: 'Client',             visible: true  },
+  { key: 'googleAcct',     label: 'Google account',     visible: false },
+  { key: 'fbAcct',         label: 'Facebook account',   visible: false },
+  { key: 'crmId',          label: 'CRM ID',             visible: false },
+  { key: 'afBalance',      label: 'Ad Fuel balance',    visible: true  },
+  { key: 'rawBalance',     label: 'Raw balance',        visible: true  },
+  { key: 'afPurchased',    label: 'Ad Fuel purchased',  visible: true  },
+  { key: 'afSpend',        label: 'Ad Fuel spend',      visible: true  },
+  { key: 'rawPurchased',   label: 'Raw purchased',      visible: false },
+  { key: 'rawSpend',       label: 'Raw spend',          visible: false },
+  { key: 'googleRaw',      label: 'Google raw',         visible: true  },
+  { key: 'fbRaw',          label: 'Facebook raw',       visible: true  },
+  { key: 'billDay',        label: 'Bill day',           visible: true  },
+  { key: 'budget',         label: 'Budget',             visible: true  },
+  { key: 'afSinceBill',    label: 'Ad Fuel since bill', visible: true  },
+  { key: 'avgDaily',       label: 'Avg daily',          visible: true  },
+  { key: 'pace',           label: 'Pace',               visible: true  },
+  { key: 'rawDailyBudget', label: 'Raw daily budget',   visible: false },
+  { key: 'afDailyBudget',  label: 'AF daily budget',    visible: false },
 ]
+
+/** Columns that hold text rather than money, so they sit left. */
+const LEFT_COLS = new Set(['client', 'googleAcct', 'fbAcct', 'crmId', 'pace', 'autoPause'])
 
 const LS_KEY = 'adfuel_col_config'
 
@@ -89,7 +104,8 @@ const LS_KEY = 'adfuel_col_config'
 
 function fmt$(n: number | null | undefined, decimals = 2): string {
   if (n == null) return '—'
-  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+  const v = Number(n)
+  return (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
 }
 
 function fmtPct(n: number | null | undefined): string {
@@ -101,10 +117,34 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-const PACE_STYLE: Record<string, { bg: string; color: string }> = {
-  'On Pace':       { bg: '#dcfce7', color: '#166534' },
-  'Underspending': { bg: '#fef3c7', color: '#92400e' },
-  'Overspending':  { bg: '#fee2e2', color: '#991b1b' },
+function fmtDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const PACE: Record<string, { tone: StatusTone; label: string }> = {
+  'On Pace':       { tone: 'success', label: 'On pace' },
+  'Underspending': { tone: 'warning', label: 'Underspending' },
+  'Overspending':  { tone: 'danger',  label: 'Overspending' },
+}
+
+function PaceBadge({ pace }: { pace: string }) {
+  const p = PACE[pace] ?? { tone: 'neutral' as const, label: pace }
+  return <StatusBadge tone={p.tone}>{p.label}</StatusBadge>
+}
+
+/** Red below zero, amber under the client's alert threshold, green otherwise. */
+function balanceTone(row: DashRow): string {
+  if (row.afBalance < 0) return 'af-neg'
+  if (row.adFuelAlertThreshold != null && row.afBalance < row.adFuelAlertThreshold) return 'af-warn'
+  return row.afBalance === 0 ? '' : 'af-pos'
+}
+
+function balanceTitle(row: DashRow): string | undefined {
+  if (row.afBalance >= 0 && row.adFuelAlertThreshold != null && row.afBalance < row.adFuelAlertThreshold) {
+    return `Below the ${fmt$(row.adFuelAlertThreshold, 0)} alert threshold`
+  }
+  return undefined
 }
 
 const ENTRY_TYPES = ['MRR', 'One-Time', 'ACH', 'Catch Up', 'Other']
@@ -148,103 +188,120 @@ function loadCols(): ColConfig[] {
 
 // ─── Cell renderer ────────────────────────────────────────────────────────────
 
-function renderCell(key: string, row: DashRow): React.ReactNode {
+function Dash() {
+  return <span className="af-faint">—</span>
+}
+
+function AutoPauseIcon({ row }: { row: DashRow }) {
+  if (!row.autoPauseAds) return null
+  const text = row.campaignsPausedAt ? 'Auto-pause on, campaigns paused now' : 'Auto-pause on'
+  return (
+    <span className={`af-robot${row.campaignsPausedAt ? ' af-robot--paused' : ''}`} title={text}>
+      <Robot size={14} weight="fill" aria-hidden />
+      <span className="sr-only">{text}</span>
+    </span>
+  )
+}
+
+function renderCell(key: string, row: DashRow, onEdit: (row: DashRow) => void): ReactNode {
+  const num = (v: ReactNode, cls = '') => <td key={key} className={`ui-r af-money${cls ? ` ${cls}` : ''}`}>{v}</td>
   switch (key) {
-    case 'client':       return (
-      <td key={key} style={{ fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
-          {row.clientName}
-          {row.autoPauseAds && (
-            <span title={row.campaignsPausedAt ? 'Auto-pause active — currently paused' : 'Auto-pause enabled'}>
-              <Robot size={13} weight="fill" color={row.campaignsPausedAt ? '#dc2626' : '#6366f1'} />
-            </span>
-          )}
-        </span>
+    case 'client': return (
+      <td key={key}>
+        <button
+          type="button"
+          className="af-client"
+          onClick={e => { e.stopPropagation(); onEdit(row) }}
+          title="Edit billing, alerts and auto-pause"
+        >
+          <span className="af-client-name">{row.clientName}</span>
+          <AutoPauseIcon row={row} />
+        </button>
       </td>
     )
-    case 'googleAcct':   return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.googleAccountId ?? '—'}</td>
-    case 'fbAcct':       return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.facebookAccountId ?? '—'}</td>
-    case 'crmId':        return <td key={key} style={{ color: 'var(--text-faint)', fontSize: '0.7rem' }}>{row.crmId ?? '—'}</td>
+    case 'googleAcct':   return <td key={key} className="af-faint af-small">{row.googleAccountId ?? '—'}</td>
+    case 'fbAcct':       return <td key={key} className="af-faint af-small">{row.facebookAccountId ?? '—'}</td>
+    case 'crmId':        return <td key={key} className="af-faint af-small">{row.crmId ?? '—'}</td>
     case 'afBalance': {
       const pendingAch       = row.pendingAch ?? 0
       const projectedBalance = row.afBalance + pendingAch
-      return (
-        <td key={key} style={{ textAlign: 'right', fontWeight: 600, color: row.afBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
-          {fmt$(row.afBalance)}
+      return num(
+        <>
+          <span className={`af-strong ${balanceTone(row)}`} title={balanceTitle(row)}>{fmt$(row.afBalance)}</span>
           {pendingAch > 0 && (
-            <div style={{ fontSize: '0.72rem', fontWeight: 400, marginTop: 1 }}>
-              <span style={{ color: projectedBalance >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                ({fmt$(projectedBalance)} projected)
-              </span>
-            </div>
+            <span className={`af-proj ${projectedBalance >= 0 ? 'af-pos' : 'af-neg'}`} title="Projected once pending ACH payments clear">
+              {fmt$(projectedBalance)} after ACH
+            </span>
           )}
-        </td>
+        </>,
       )
     }
-    case 'rawBalance':        return <td key={key} style={{ textAlign: 'right', color: row.rawBalance >= 0 ? 'var(--text-muted)' : 'var(--red)' }}>{fmt$(row.rawBalance)}</td>
-    case 'afPurchased':       return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afPurchased)}</td>
-    case 'afSpend':      return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.afSpend)}</td>
-    case 'rawPurchased': return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawPurchased)}</td>
-    case 'rawSpend':     return <td key={key} style={{ textAlign: 'right' }}>{fmt$(row.rawSpend)}</td>
-    case 'googleRaw':    return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.googleRaw)}</td>
-    case 'fbRaw':        return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.facebookRaw)}</td>
-    case 'billDay':      return <td key={key} style={{ textAlign: 'center', color: row.billDay ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.billDay ?? '—'}</td>
-    case 'budget':       return <td key={key} style={{ textAlign: 'right', color: row.monthlyBudget ? 'var(--text-primary)' : 'var(--text-faint)' }}>{row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : '—'}</td>
-    case 'afSinceBill':  return <td key={key} style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(row.afSinceBill)}</td>
-    case 'avgDaily':         return <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{fmt$(row.avgDailyAf)}</td>
-    case 'rawDailyBudget':   return (
-      <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}
-          title="Current total daily budget across all active campaigns (Google + Meta) — not date-filtered">
-        {row.rawDailyBudget > 0 ? fmt$(row.rawDailyBudget) : '—'}
+    case 'rawBalance':   return num(<span className={row.rawBalance >= 0 ? 'af-muted' : 'af-neg'}>{fmt$(row.rawBalance)}</span>)
+    case 'afPurchased':  return num(fmt$(row.afPurchased), 'ui-strong')
+    case 'afSpend':      return num(fmt$(row.afSpend), 'ui-strong')
+    case 'rawPurchased': return num(fmt$(row.rawPurchased))
+    case 'rawSpend':     return num(fmt$(row.rawSpend))
+    case 'googleRaw':    return num(<span className="af-muted">{fmt$(row.googleRaw)}</span>)
+    case 'fbRaw':        return num(<span className="af-muted">{fmt$(row.facebookRaw)}</span>)
+    case 'billDay':      return num(row.billDay ?? <Dash />, row.billDay ? 'ui-strong' : '')
+    case 'budget':       return num(row.monthlyBudget ? fmt$(row.monthlyBudget, 0) : <Dash />, row.monthlyBudget ? 'ui-strong' : '')
+    case 'afSinceBill':  return num(<span className="af-strong">{fmt$(row.afSinceBill)}</span>)
+    case 'avgDaily':     return num(<span className="af-muted">{fmt$(row.avgDailyAf)}</span>)
+    case 'rawDailyBudget': return (
+      <td key={key} className="ui-r af-money af-muted"
+          title="Current total daily budget across all active campaigns (Google + Meta), not date-filtered">
+        {row.rawDailyBudget > 0 ? fmt$(row.rawDailyBudget) : <Dash />}
       </td>
     )
-    case 'afDailyBudget':    return (
-      <td key={key} style={{ textAlign: 'right', color: 'var(--text-muted)' }}
-          title="Ad Fuel equivalent of raw daily budget (raw ÷ client split) — not date-filtered">
-        {row.afDailyBudget > 0 ? fmt$(row.afDailyBudget) : '—'}
+    case 'afDailyBudget': return (
+      <td key={key} className="ui-r af-money af-muted"
+          title="Ad Fuel equivalent of the raw daily budget (raw ÷ client split), not date-filtered">
+        {row.afDailyBudget > 0 ? fmt$(row.afDailyBudget) : <Dash />}
       </td>
     )
-    case 'pace': return (
-      <td key={key}>
-        {row.pace ? (
-          <span style={{
-            display: 'inline-block', padding: '2px 7px', borderRadius: 999,
-            fontSize: '0.65rem', fontWeight: 700,
-            background: (PACE_STYLE[row.pace] ?? { bg: '#f3f4f6' }).bg,
-            color: (PACE_STYLE[row.pace] ?? { color: '#374151' }).color,
-          }}>
-            {row.pace}
-          </span>
-        ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
-      </td>
-    )
+    case 'pace': return <td key={key}>{row.pace ? <PaceBadge pace={row.pace} /> : <Dash />}</td>
     case 'autoPause': return (
       <td key={key}>
-        {row.campaignsPausedAt ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fee2e2', color: '#dc2626' }}>
-            ⏸ PAUSED
-          </span>
-        ) : row.autoPauseAds ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#16a34a' }}>
-            ✓ Auto
-          </span>
-        ) : (
-          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-        )}
+        {row.campaignsPausedAt ? <StatusBadge tone="danger">Paused</StatusBadge>
+          : row.autoPauseAds   ? <StatusBadge tone="success">Auto</StatusBadge>
+          : <Dash />}
       </td>
     )
     default: return <td key={key} />
   }
 }
 
+/** One phone line for a client: where the billing cycle stands. */
+function cycleLine(row: DashRow): string {
+  const parts: string[] = []
+  if (row.afSinceBill != null) parts.push(`${fmt$(row.afSinceBill, 0)}${row.monthlyBudget ? ` of ${fmt$(row.monthlyBudget, 0)}` : ''} since bill`)
+  if (row.avgDailyAf != null) parts.push(`${fmt$(row.avgDailyAf, 0)} a day`)
+  if (row.billDay) parts.push(`bills on day ${row.billDay}`)
+  if (!parts.length) return 'No bill day set'
+  const line = parts.join(' · ')
+  return line.charAt(0).toUpperCase() + line.slice(1)
+}
+
+function LedgerTags({ e }: { e: LedgerEntry }) {
+  if (!e.ach_status && !e.type) return <Dash />
+  return (
+    <span className="af-tags">
+      {e.ach_status === 'pending' && <StatusBadge tone="warning">ACH pending</StatusBadge>}
+      {e.ach_status === 'cleared' && <StatusBadge tone="success">ACH cleared</StatusBadge>}
+      {e.type && <StatusBadge tone="neutral" dot={false}>{e.type}</StatusBadge>}
+    </span>
+  )
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function AdFuelPage() {
-  const [tab, setTab] = useState<'dashboard' | 'ledger' | 'settings'>('dashboard')
+  const [tab, setTab] = useState<Tab>('dashboard')
 
   const [rows,          setRows]          = useState<DashRow[]>([])
   const [cutoffDate,    setCutoffDate]    = useState('2025-01-01')
-  const [loading,       setLoading]       = useState(false)
+  // Starts true so the first paint is the skeleton, not an empty table.
+  const [loading,       setLoading]       = useState(true)
   const [pendingAch,    setPendingAch]    = useState<Record<string, number>>({})
   const [syncingStripe, setSyncingStripe] = useState(false)
   const [stripeMsg,     setStripeMsg]     = useState('')
@@ -342,6 +399,7 @@ export default function AdFuelPage() {
   // Ledger state
   const [ledger,        setLedger]        = useState<LedgerEntry[]>([])
   const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [ledgerLoaded,  setLedgerLoaded]  = useState(false)
   const [filterClient,  setFilterClient]  = useState('')
   const [showAddModal,  setShowAddModal]  = useState(false)
   const [importStatus,  setImportStatus]  = useState<{ inserted: number; skipped: number; errors: string[] } | null>(null)
@@ -384,11 +442,23 @@ export default function AdFuelPage() {
       const url = filterClient ? `/api/admin/ad-fuel/ledger?client_id=${filterClient}` : '/api/admin/ad-fuel/ledger'
       const res = await fetch(url)
       if (res.ok) setLedger(await res.json())
-    } finally { setLedgerLoading(false) }
+    } finally { setLedgerLoading(false); setLedgerLoaded(true) }
   }, [filterClient])
 
   useEffect(() => { fetchDashboard() }, [fetchDashboard])
   useEffect(() => { if (tab === 'ledger') fetchLedger() }, [tab, fetchLedger])
+
+  // Escape closes whichever dialog is open.
+  useEffect(() => {
+    if (!clientEditModal && !showAddModal) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setClientEditModal(null)
+      setShowAddModal(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [clientEditModal, showAddModal])
 
   // Populate settings form when a client is selected in settings tab
   useEffect(() => {
@@ -439,7 +509,7 @@ export default function AdFuelPage() {
 
   // ── Add ledger entry ────────────────────────────────────────────────────────
   async function submitAdd() {
-    if (!addForm.client_id || !addForm.amount_af) { setAddError('Client and Amount are required'); return }
+    if (!addForm.client_id || !addForm.amount_af) { setAddError('Choose a client and enter an amount.'); return }
     setAddError('')
     const res = await fetch('/api/admin/ad-fuel/ledger', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -490,11 +560,16 @@ export default function AdFuelPage() {
     fetchDashboard()
   }
 
+  // Pending ACH rows have no checkbox and bulk delete only removes confirmed entries, so
+  // "select all" takes the confirmed ones only (it used to count the pending rows too).
+  const selectable = ledger.filter(e => !e.is_ach_pending)
+  const allSelected = selectable.length > 0 && selectedIds.size === selectable.length
+
   function toggleSelectAll() {
-    if (selectedIds.size === ledger.length && ledger.length > 0) {
+    if (allSelected) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(ledger.map(e => e.id)))
+      setSelectedIds(new Set(selectable.map(e => e.id)))
     }
   }
 
@@ -568,573 +643,687 @@ export default function AdFuelPage() {
       })
     : rowsWithPending
 
+  // Totals for the strip — sums of the rows above, nothing recalculated.
+  const totalBalance   = rowsWithPending.reduce((s, r) => s + r.afBalance, 0)
+  const totalPending   = rowsWithPending.reduce((s, r) => s + (r.pendingAch ?? 0), 0)
+  const totalPurchased = rows.reduce((s, r) => s + r.afPurchased, 0)
+  const totalSpent     = rows.reduce((s, r) => s + r.afSpend, 0)
+  const overdrawn      = rows.filter(r => r.afBalance < 0).length
+  const lowBalance     = rows.filter(r => r.afBalance >= 0 && r.adFuelAlertThreshold != null && r.afBalance < r.adFuelAlertThreshold).length
+  const overspending   = rows.filter(r => r.pace === 'Overspending').length
+  const cutoffLabel    = fmtDay(cutoffDate)
+
+  const firstDashLoad   = loading && rows.length === 0
+  const firstLedgerLoad = !ledgerLoaded || (ledgerLoading && ledger.length === 0)
+  const stripeFailed    = /failed|error/i.test(stripeMsg)
+  const clientName      = (id: string) => rows.find(r => r.clientId === id)?.clientName ?? id.slice(0, 8)
+
+  const statValue = (v: ReactNode) => (firstDashLoad ? <Sk w={92} h={24} r={6} /> : v)
+
+  function SortHead({ col }: { col: ColConfig }) {
+    const on = sortCol === col.key && sortDir != null
+    return (
+      <th className={LEFT_COLS.has(col.key) ? undefined : 'ui-r'} aria-sort={on ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button type="button" className={`af-sort${on ? ' af-sort--on' : ''}`} onClick={() => handleSortClick(col.key)}>
+          {col.label}
+          {on ? (sortDir === 'asc' ? <CaretUp size={11} weight="bold" aria-hidden /> : <CaretDown size={11} weight="bold" aria-hidden />)
+              : <ArrowsDownUp size={11} className="af-sort-idle" aria-hidden />}
+        </button>
+      </th>
+    )
+  }
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Ad Fuel</h1>
-      </div>
-
-      {/* Tabs */}
-      <div style={{
-        display: 'flex', gap: 2, marginBottom: '1.5rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto', scrollbarWidth: 'none',
-      }}>
-        {(['dashboard', 'ledger', 'settings'] as const).map(t => (
+      <PageHeader
+        title="Ad Fuel"
+        description="Each client's prepaid ad budget: what they've bought, what's been spent and what's left."
+        actions={
           <button
-            key={t}
             type="button"
-            onClick={() => setTab(t)}
-            style={{
-              padding: '0.5rem 1rem', border: 'none', background: 'transparent',
-              fontSize: '0.8125rem', fontWeight: tab === t ? 600 : 400,
-              color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: tab === t ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
-              cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: -1,
-              transition: 'color 0.15s',
-            }}
+            onClick={syncStripeInvoices}
+            disabled={syncingStripe}
+            className="btn btn-secondary"
+            title="Check Stripe for new or unrecorded ACH invoices"
           >
-            {t === 'dashboard' ? 'Dashboard' : t === 'ledger' ? 'Ledger' : 'Settings'}
+            <ArrowsClockwise size={15} weight="bold" className={syncingStripe ? 'af-spin' : undefined} aria-hidden />
+            {syncingStripe ? 'Syncing…' : 'Sync Stripe'}
           </button>
-        ))}
+        }
+      />
+
+      {stripeMsg && (
+        <div className={`ui-notice ui-notice--${stripeFailed ? 'danger' : 'info'}`} role="status">
+          <span>{stripeMsg}</span>
+          <button type="button" className="af-iconbtn af-iconbtn--plain" onClick={() => setStripeMsg('')} aria-label="Dismiss message">
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 20 }}>
+        <PillTabs
+          label="Ad Fuel sections"
+          idPrefix="af"
+          activeId={tab}
+          onSelect={id => setTab(id as Tab)}
+          items={[
+            { id: 'dashboard', label: 'Dashboard', icon: <Gauge size={15} /> },
+            { id: 'ledger',    label: 'Ledger',    icon: <Receipt size={15} /> },
+            { id: 'settings',  label: 'Settings',  icon: <GearSix size={15} /> },
+          ]}
+        />
       </div>
 
       {/* ── DASHBOARD TAB ────────────────────────────────────────────────────── */}
       {tab === 'dashboard' && (
-        <>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', justifyContent: 'flex-end' }}>
-            <button onClick={exportCSV} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>Export CSV</button>
-            <button
-              onClick={syncStripeInvoices}
-              disabled={syncingStripe}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem' }}
-              title="Check Stripe for new or unrecorded ACH invoices"
-            >
-              {syncingStripe ? 'Syncing…' : '↻ Sync Stripe'}
-            </button>
-            {stripeMsg && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stripeMsg}</span>}
-          </div>
-
-          {loading ? (
-            <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
-          ) : (
-            <div className="card overflow-hidden" style={{ padding: 0 }}>
-              <div style={{ overflowX: 'auto' }}>
-                <table className="data-table" style={{ minWidth: 800 }}>
-                  <thead>
-                    <tr>
-                      {visibleCols.map(col => (
-                        <th
-                          key={col.key}
-                          onClick={() => handleSortClick(col.key)}
-                          style={{
-                            textAlign: col.key === 'client' ? 'left' : undefined,
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {col.label}
-                          {sortCol === col.key && (
-                            <span style={{ marginLeft: 4, opacity: 0.5, fontSize: '0.65rem' }}>
-                              {sortDir === 'asc' ? '▲' : '▼'}
-                            </span>
-                          )}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayRows.length === 0 && (
-                      <tr><td colSpan={visibleCols.length} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No clients found.</td></tr>
-                    )}
-                    {displayRows.map(row => (
-                      <tr
-                        key={row.clientId}
-                        onClick={() => openClientEdit(row)}
-                        style={{ cursor: 'pointer' }}
-                        title="Click to edit bill day, budget, and Ad Fuel cut"
-                      >
-                        {visibleCols.map(col => renderCell(col.key, row))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        <div role="tabpanel" id="af-panel-dashboard" aria-labelledby="af-tab-dashboard" className="af-sec">
+          <section className="card af-stats" aria-label="Totals">
+            <div className="af-stat">
+              <span className="af-stat-label">Ad Fuel balance</span>
+              <span className={`af-stat-value${totalBalance < 0 ? ' af-neg' : ''}`}>{statValue(fmt$(totalBalance, 0))}</span>
+              {!firstDashLoad && totalPending > 0 && (
+                <span className="af-stat-sub">{fmt$(totalBalance + totalPending, 0)} after pending ACH</span>
+              )}
             </div>
-          )}
-        </>
+            <div className="af-stat">
+              <span className="af-stat-label">Purchased</span>
+              <span className="af-stat-value">{statValue(fmt$(totalPurchased, 0))}</span>
+              <span className="af-stat-sub">Since {cutoffLabel}</span>
+            </div>
+            <div className="af-stat">
+              <span className="af-stat-label">Spent</span>
+              <span className="af-stat-value">{statValue(fmt$(totalSpent, 0))}</span>
+              <span className="af-stat-sub">Since {cutoffLabel}</span>
+            </div>
+            <div className="af-stat">
+              <span className="af-stat-label">Below zero</span>
+              <span className={`af-stat-value${overdrawn > 0 ? ' af-neg' : ''}`}>{statValue(overdrawn)}</span>
+              {!firstDashLoad && (
+                <span className={`af-stat-sub${lowBalance > 0 ? ' af-warn' : ''}`}>
+                  {lowBalance > 0 ? `${lowBalance} more under their alert threshold` : `of ${rows.length} client${rows.length === 1 ? '' : 's'}`}
+                </span>
+              )}
+            </div>
+            <div className="af-stat">
+              <span className="af-stat-label">Overspending</span>
+              <span className={`af-stat-value${overspending > 0 ? ' af-warn' : ''}`}>{statValue(overspending)}</span>
+              <span className="af-stat-sub">This billing cycle</span>
+            </div>
+          </section>
+
+          <Section
+            title="Balances"
+            description={`Totals since ${cutoffLabel}. Select a client to change their bill day, budget, alerts or auto-pause.`}
+            actions={
+              <button type="button" onClick={exportCSV} className="btn btn-secondary btn-sm" disabled={rows.length === 0}>
+                <DownloadSimple size={14} weight="bold" aria-hidden />Export CSV
+              </button>
+            }
+            flush
+          >
+            {firstDashLoad ? (
+              <div aria-busy="true" aria-label="Loading balances">
+                <div className="af-table-wrap"><SkTable rows={5} cols={8} /></div>
+                <div className="af-list"><SkRows rows={5} tile={false} /></div>
+              </div>
+            ) : displayRows.length === 0 ? (
+              <EmptyState icon={<Buildings size={20} />} title="No clients yet">
+                Clients show here with their Ad Fuel balance once they&apos;re added.
+              </EmptyState>
+            ) : (
+              <div className={loading ? 'af-refreshing' : undefined} aria-busy={loading}>
+                {/* Laptop: the configurable table. */}
+                <div className="af-table-wrap ui-scroll-x">
+                  <table className="ui-table af-table">
+                    <thead>
+                      <tr>{visibleCols.map(col => <SortHead key={col.key} col={col} />)}</tr>
+                    </thead>
+                    <tbody>
+                      {displayRows.map(row => (
+                        <tr key={row.clientId} className="af-tr-edit" onClick={() => openClientEdit(row)}>
+                          {visibleCols.map(col => renderCell(col.key, row, openClientEdit))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Phone: one row per client, balance on the right. */}
+                <div className="af-list">
+                  {displayRows.map(row => {
+                    const pending = row.pendingAch ?? 0
+                    const projected = row.afBalance + pending
+                    return (
+                      <button key={row.clientId} type="button" className="ui-row af-list-row" onClick={() => openClientEdit(row)}>
+                        <span className="ui-row-text">
+                          <span className="ui-row-title">{row.clientName}<AutoPauseIcon row={row} /></span>
+                          <span className="ui-row-sub">{cycleLine(row)}</span>
+                        </span>
+                        <span className="af-list-end">
+                          <span className={`af-list-amount ${balanceTone(row)}`} title={balanceTitle(row)}>{fmt$(row.afBalance)}</span>
+                          {pending > 0 && <span className={`af-proj ${projected >= 0 ? 'af-pos' : 'af-neg'}`}>{fmt$(projected)} after ACH</span>}
+                          {row.pace && <PaceBadge pace={row.pace} />}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </Section>
+        </div>
       )}
 
       {/* ── LEDGER TAB ───────────────────────────────────────────────────────── */}
       {tab === 'ledger' && (
-        <>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
-            <button onClick={() => { setShowAddModal(true); setAddError('') }} className="btn btn-primary" style={{ fontSize: '0.8125rem' }}>
-              + Add Entry
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-              Import CSV
-            </button>
-            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
-
-            <select
-              value={filterClient}
-              onChange={e => setFilterClient(e.target.value)}
-              className="input"
-              style={{ fontSize: '0.8125rem', padding: '0.3rem 0.6rem', minWidth: 180 }}
-            >
-              <option value="">All clients</option>
-              {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
-            </select>
-
+        <div role="tabpanel" id="af-panel-ledger" aria-labelledby="af-tab-ledger" className="af-sec">
+          <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
+          <Section
+            title="Ledger"
+            description="Payments and adjustments, newest first. Pending ACH payments from Stripe are shaded until they clear."
+            flush
+            actions={<>
+              <select
+                value={filterClient}
+                onChange={e => setFilterClient(e.target.value)}
+                className="input af-filter"
+                aria-label="Show entries for"
+              >
+                <option value="">All clients</option>
+                {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
+              </select>
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary btn-sm">
+                <UploadSimple size={14} weight="bold" aria-hidden />Import CSV
+              </button>
+              <button type="button" onClick={() => { setShowAddModal(true); setAddError('') }} className="btn btn-primary btn-sm">
+                <Plus size={14} weight="bold" aria-hidden />Add entry
+              </button>
+            </>}
+          >
             {importStatus && (
-              <div style={{
-                padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
-                background: importStatus.errors.length ? '#fee2e2' : '#dcfce7',
-                color: importStatus.errors.length ? '#991b1b' : '#166534',
-                maxWidth: 600,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="af-pad">
+                <div className={`ui-notice ui-notice--${importStatus.errors.length ? 'danger' : 'success'}`} role="status">
                   <span>
                     Imported {importStatus.inserted} entr{importStatus.inserted === 1 ? 'y' : 'ies'}
                     {importStatus.skipped > 0 ? `, skipped ${importStatus.skipped}` : ''}
-                    {importStatus.errors.length > 0 && (
-                      <>
-                        {' — '}
-                        <button
-                          onClick={() => setImportErrorsExpanded(v => !v)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700, fontSize: '0.75rem', padding: 0, textDecoration: 'underline' }}
-                        >
-                          {importStatus.errors.length} error{importStatus.errors.length === 1 ? '' : 's'} {importErrorsExpanded ? '▲' : '▼'}
-                        </button>
-                      </>
-                    )}
+                    {importStatus.errors.length > 0 && <>, {importStatus.errors.length} error{importStatus.errors.length === 1 ? '' : 's'}</>}
                   </span>
-                  <button onClick={() => { setImportStatus(null); setImportErrorsExpanded(false) }} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: 'inherit' }}>✕</button>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {importStatus.errors.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setImportErrorsExpanded(v => !v)}
+                        aria-expanded={importErrorsExpanded}
+                      >
+                        {importErrorsExpanded ? 'Hide errors' : 'Show errors'}
+                        {importErrorsExpanded ? <CaretUp size={12} weight="bold" aria-hidden /> : <CaretDown size={12} weight="bold" aria-hidden />}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="af-iconbtn af-iconbtn--plain"
+                      onClick={() => { setImportStatus(null); setImportErrorsExpanded(false) }}
+                      aria-label="Dismiss import result"
+                    >
+                      <X size={14} aria-hidden />
+                    </button>
+                  </span>
+                  {importErrorsExpanded && importStatus.errors.length > 0 && (
+                    <ul style={{ flexBasis: '100%', margin: 0, padding: '0 0 0 1.25rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflowY: 'auto', fontSize: '0.75rem' }}>
+                      {importStatus.errors.map((e, i) => <li key={i}>{e}</li>)}
+                    </ul>
+                  )}
                 </div>
-                {importErrorsExpanded && importStatus.errors.length > 0 && (
-                  <ul style={{ margin: '0.5rem 0 0', padding: '0 0 0 1.25rem', display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
-                    {importStatus.errors.map((e, i) => <li key={i} style={{ fontSize: '0.7rem' }}>{e}</li>)}
-                  </ul>
-                )}
               </div>
             )}
-          </div>
 
-          {selectedIds.size > 0 && (
-            <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
-              <button
-                onClick={bulkDelete}
-                disabled={bulkDeleting}
-                className="btn btn-danger"
-                style={{ fontSize: '0.8125rem' }}
-              >
-                {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
-              </button>
-              <button onClick={() => setSelectedIds(new Set())} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                Clear selection
-              </button>
-            </div>
-          )}
+            {selectedIds.size > 0 && (
+              <div className="af-selbar">
+                <span className="af-selbar-count">{selectedIds.size} selected</span>
+                <button type="button" onClick={() => setSelectedIds(new Set())} className="btn btn-ghost btn-sm">
+                  Clear selection
+                </button>
+                <button type="button" onClick={bulkDelete} disabled={bulkDeleting} className="btn btn-danger btn-sm">
+                  <Trash size={14} aria-hidden />
+                  {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
+                </button>
+              </div>
+            )}
 
-          {ledgerLoading ? (
-            <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading…</p>
-          ) : (
-            <div className="card overflow-hidden" style={{ padding: 0 }}>
-              <div style={{ overflowX: 'auto' }}>
-              <table className="data-table" style={{ minWidth: 900 }}>
-                <thead>
-                  <tr>
-                    <th style={{ width: 32, textAlign: 'center' }}>
+            {firstLedgerLoad ? (
+              <div aria-busy="true" aria-label="Loading ledger">
+                <div className="af-table-wrap"><SkTable rows={7} cols={8} /></div>
+                <div className="af-list"><SkRows rows={6} tile={false} /></div>
+              </div>
+            ) : ledger.length === 0 ? (
+              <EmptyState icon={<Receipt size={20} />} title={filterClient ? 'No entries for this client' : 'No ledger entries yet'}>
+                Add a payment by hand, import a CSV of past payments, or sync Stripe for pending ACH invoices.
+              </EmptyState>
+            ) : (
+              <div className={ledgerLoading ? 'af-refreshing' : undefined} aria-busy={ledgerLoading}>
+                {/* Laptop: the table. */}
+                <div className="af-table-wrap ui-scroll-x">
+                  <table className="ui-table af-table">
+                    <thead>
+                      <tr>
+                        <th className="af-col-check">
+                          <label className="af-check">
+                            <input
+                              type="checkbox"
+                              className="af-checkbox"
+                              checked={allSelected}
+                              ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && !allSelected }}
+                              onChange={toggleSelectAll}
+                              disabled={selectable.length === 0}
+                              aria-label="Select all entries"
+                            />
+                          </label>
+                        </th>
+                        <th>Payment date</th>
+                        <th>Client</th>
+                        <th className="ui-r">Amount (Ad Fuel)</th>
+                        <th className="ui-r" title="Split override">Split</th>
+                        <th>Invoice ID</th>
+                        <th>Type</th>
+                        <th>Notes</th>
+                        <th className="af-col-act"><span className="sr-only">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledger.map(e => {
+                        const checked = selectedIds.has(e.id)
+                        const name    = clientName(e.client_id)
+                        return (
+                          <tr key={e.id} className={e.is_ach_pending ? 'af-tr--pending' : checked ? 'af-tr--checked' : undefined}>
+                            <td className="af-col-check">
+                              {e.is_ach_pending
+                                ? <span className="af-check-ph" title="Pending ACH, managed by the Stripe sync">—</span>
+                                : (
+                                  <label className="af-check">
+                                    <input type="checkbox" className="af-checkbox" checked={checked} onChange={() => toggleSelect(e.id)} aria-label={`Select ${name} entry`} />
+                                  </label>
+                                )}
+                            </td>
+                            {/* The invoice date only shows when it differs from the payment date. */}
+                            <td className="af-money">
+                              {e.is_ach_pending ? <span className="af-muted">Pending</span> : (e.date_of_payment ?? '—')}
+                              {e.invoice_date && e.invoice_date !== e.date_of_payment && (
+                                <span className="af-proj af-faint">Invoiced {e.invoice_date}</span>
+                              )}
+                            </td>
+                            <td className="ui-strong">{name}</td>
+                            <td className="ui-r af-money"><span className={`af-strong ${e.amount_af >= 0 ? 'af-pos' : 'af-neg'}`}>{fmt$(e.amount_af)}</span></td>
+                            <td className="ui-r af-money af-muted">{e.split_override != null ? fmtPct(e.split_override) : '—'}</td>
+                            <td className="af-muted">{e.invoice_id ?? '—'}</td>
+                            <td><LedgerTags e={e} /></td>
+                            {/* Who added it sits under the note, so the table fits a laptop without scrolling. */}
+                            <td className="af-muted" title={e.note ?? undefined}>
+                              <span className="af-note">{e.note ?? '—'}</span>
+                              {e.created_by && <span className="af-proj af-faint">Added by {e.created_by}</span>}
+                            </td>
+                            <td className="af-col-act">
+                              <button
+                                type="button"
+                                className="af-iconbtn"
+                                onClick={() => deleteEntry(e.id, e.is_ach_pending)}
+                                aria-label={e.is_ach_pending ? `Remove pending ACH entry for ${name}` : `Delete ${name} entry`}
+                                title={e.is_ach_pending ? 'Remove pending ACH entry' : 'Delete entry'}
+                              >
+                                <Trash size={15} aria-hidden />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Phone: one row per entry. */}
+                {selectable.length > 0 && (
+                  <label className="af-list-head">
+                    <span className="af-check">
                       <input
                         type="checkbox"
-                        checked={ledger.length > 0 && selectedIds.size === ledger.length}
-                        ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < ledger.length }}
+                        className="af-checkbox"
+                        checked={allSelected}
+                        ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && !allSelected }}
                         onChange={toggleSelectAll}
                       />
-                    </th>
-                    <th>Payment Date</th>
-                    <th>Invoice Date</th>
-                    <th style={{ textAlign: 'left' }}>Client</th>
-                    <th>Amount (Ad Fuel)</th>
-                    <th>Split Override</th>
-                    <th>Invoice ID</th>
-                    <th>Type</th>
-                    <th style={{ textAlign: 'left' }}>Notes</th>
-                    <th>Added By</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ledger.length === 0 && (
-                    <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '2rem' }}>No ledger entries yet.</td></tr>
-                  )}
+                    </span>
+                    Select all
+                  </label>
+                )}
+                <div className="af-list">
                   {ledger.map(e => {
-                    const client  = rows.find(r => r.clientId === e.client_id)
                     const checked = selectedIds.has(e.id)
+                    const name    = clientName(e.client_id)
+                    const meta    = [
+                      e.is_ach_pending ? 'Pending' : `Paid ${e.date_of_payment ?? '—'}`,
+                      e.invoice_date && e.invoice_date !== e.date_of_payment ? `invoiced ${e.invoice_date}` : null,
+                      e.invoice_id,
+                      e.split_override != null ? `${fmtPct(e.split_override)} split` : null,
+                      e.created_by ? `by ${e.created_by}` : null,
+                    ].filter(Boolean).join(' · ')
                     return (
-                      <tr key={e.id} style={{ background: e.is_ach_pending ? 'var(--bg-subtle)' : checked ? 'var(--bg-subtle)' : undefined }}>
-                        <td style={{ textAlign: 'center' }}>
-                          {e.is_ach_pending
-                            ? <span title="Pending ACH — managed by cron" style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                            : <input type="checkbox" checked={checked} onChange={() => toggleSelect(e.id)} />
-                          }
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          {e.is_ach_pending
-                            ? <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Pending</span>
-                            : (e.date_of_payment ?? '—')
-                          }
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap', color: e.invoice_date && e.invoice_date !== e.date_of_payment ? 'var(--text-muted)' : 'var(--text-faint)', fontSize: '0.8rem' }}>
-                          {e.invoice_date ?? '—'}
-                        </td>
-                        <td style={{ fontWeight: 600 }}>{client?.clientName ?? e.client_id.slice(0, 8)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: e.amount_af >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt$(e.amount_af)}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{e.split_override != null ? fmtPct(e.split_override) : '—'}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{e.invoice_id ?? '—'}</td>
-                        <td>
-                          {e.ach_status === 'pending' && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#fef3c7', color: '#92400e', marginRight: 3 }}>
-                              ACH Pending
-                            </span>
+                      <div key={e.id} className={`ui-row af-list-row${e.is_ach_pending ? ' af-list-row--pending' : checked ? ' af-list-row--checked' : ''}`}>
+                        {e.is_ach_pending
+                          ? <span className="af-check-ph" title="Pending ACH, managed by the Stripe sync">—</span>
+                          : (
+                            <label className="af-check">
+                              <input type="checkbox" className="af-checkbox" checked={checked} onChange={() => toggleSelect(e.id)} aria-label={`Select ${name} entry`} />
+                            </label>
                           )}
-                          {e.ach_status === 'cleared' && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dcfce7', color: '#166534', marginRight: 3 }}>
-                              ACH Cleared
-                            </span>
-                          )}
-                          {e.type && (
-                            <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>
-                              {e.type}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ color: 'var(--text-muted)', maxWidth: 200 }}>
-                          <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.note ?? '—'}</span>
-                        </td>
-                        <td style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>{e.created_by ?? '—'}</td>
-                        <td>
-                          <button
-                            onClick={() => deleteEntry(e.id, e.is_ach_pending)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.875rem', padding: '0.15rem 0.4rem' }}
-                            title={e.is_ach_pending ? 'Remove pending ACH entry' : 'Delete entry'}
-                          >✕</button>
-                        </td>
-                      </tr>
+                        <span className="ui-row-text">
+                          <span className="ui-row-title af-led-title">
+                            <span className="af-led-name">{name}</span>
+                            <span className={`af-list-amount ${e.amount_af >= 0 ? 'af-pos' : 'af-neg'}`}>{fmt$(e.amount_af)}</span>
+                          </span>
+                          <span className="ui-row-sub">{meta}</span>
+                          {e.note && <span className="ui-row-sub af-note-sub">{e.note}</span>}
+                          {(e.ach_status || e.type) && <LedgerTags e={e} />}
+                        </span>
+                        <button
+                          type="button"
+                          className="af-iconbtn"
+                          onClick={() => deleteEntry(e.id, e.is_ach_pending)}
+                          aria-label={e.is_ach_pending ? `Remove pending ACH entry for ${name}` : `Delete ${name} entry`}
+                        >
+                          <Trash size={16} aria-hidden />
+                        </button>
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
+                </div>
               </div>
-            </div>
-          )}
-        </>
+            )}
+          </Section>
+        </div>
       )}
 
       {/* ── SETTINGS TAB ─────────────────────────────────────────────────────── */}
       {tab === 'settings' && (
-        <div style={{ maxWidth: 900 }}>
-          <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-            Lifetime totals run from the data cutoff date. Balance, purchased, and raw spend are all-time figures. Billing cycle columns (Since Bill, Avg Daily, Pace) always reflect the current cycle. Click any row on the Dashboard tab to edit a client&apos;s settings.
-          </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-
-          {/* Column visibility + rename */}
-          <div className="card" style={{ padding: '1.25rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700 }}>Column Visibility</h3>
-              <button
-                onClick={() => saveCols(DEFAULT_COLS)}
-                className="btn btn-secondary"
-                style={{ fontSize: '0.7rem', padding: '0.2rem 0.6rem' }}
-              >
-                Reset defaults
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {cols.map((col, i) => (
-                <div key={col.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={col.visible}
-                    disabled={col.key === 'client'}
-                    onChange={e => {
-                      const next = cols.map((c, j) => j === i ? { ...c, visible: e.target.checked } : c)
-                      saveCols(next)
-                    }}
-                    style={{ flexShrink: 0 }}
-                  />
-                  <input
-                    type="text"
-                    value={col.label}
-                    onChange={e => {
-                      const next = cols.map((c, j) => j === i ? { ...c, label: e.target.value } : c)
-                      saveCols(next)
-                    }}
-                    className="input"
-                    style={{ flex: 1, fontSize: '0.8rem', padding: '0.2rem 0.5rem', opacity: col.visible ? 1 : 0.45 }}
-                  />
-                </div>
-              ))}
-            </div>
+        <div role="tabpanel" id="af-panel-settings" aria-labelledby="af-tab-settings">
+          <div className="ui-notice ui-notice--info">
+            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'flex-start' }}>
+              <Info size={16} style={{ flexShrink: 0, marginTop: 1, color: 'var(--accent)' }} aria-hidden />
+              <span>
+                Balance, purchased and spend totals run from the data cutoff date. Since bill, avg daily and pace always cover
+                the current billing cycle. You can also edit a client from the Dashboard tab by selecting their row.
+              </span>
+            </span>
           </div>
 
-          {/* Client manual values editor */}
-          <div className="card" style={{ padding: '1.25rem' }}>
-            <h3 style={{ margin: '0 0 1rem', fontSize: '0.9375rem', fontWeight: 700 }}>Client Settings</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.875rem', marginTop: 0 }}>
-              Set billing cycle and Ad Fuel configuration per client.
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Client</label>
-                <select
-                  value={settingsClientId}
-                  onChange={e => setSettingsClientId(e.target.value)}
-                  className="input"
-                  style={{ width: '100%' }}
-                >
-                  <option value="">Select a client…</option>
-                  {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
-                </select>
-              </div>
-
-              {settingsClientId && (
-                <>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
-                      <input
-                        type="number" min={1} max={31} placeholder="e.g. 1"
-                        value={settingsForm.billDay}
-                        onChange={e => setSettingsForm(f => ({ ...f, billDay: e.target.value }))}
-                        className="input" style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Historic Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
-                      <input
-                        type="number" min={1} max={31} placeholder="e.g. 21"
-                        value={settingsForm.historicBillDay}
-                        onChange={e => setSettingsForm(f => ({ ...f, historicBillDay: e.target.value }))}
-                        className="input" style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Monthly Budget ($)</label>
-                      <input
-                        type="number" min={0} placeholder="e.g. 5000"
-                        value={settingsForm.monthlyBudget}
-                        onChange={e => setSettingsForm(f => ({ ...f, monthlyBudget: e.target.value }))}
-                        className="input" style={{ width: '100%' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-                        Alert Threshold ($) <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>optional</span>
-                      </label>
-                      <input
-                        type="number" min={0} placeholder="e.g. 200"
-                        value={settingsForm.adFuelAlertThreshold}
-                        onChange={e => setSettingsForm(f => ({ ...f, adFuelAlertThreshold: e.target.value }))}
-                        className="input" style={{ width: '100%' }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <button
-                      onClick={saveSettingsClient}
-                      disabled={settingsSaving}
-                      className="btn btn-primary"
-                      style={{ fontSize: '0.8125rem' }}
+          <div className="ui-grid-2 af-settings">
+            <div className="ui-stack">
+              <Section title="Client billing" description="Bill day, budget and low-balance alert for one client.">
+                <div className="af-form">
+                  <div className="af-field">
+                    <label className="af-label" htmlFor="af-set-client">Client</label>
+                    <select
+                      id="af-set-client"
+                      value={settingsClientId}
+                      onChange={e => setSettingsClientId(e.target.value)}
+                      className="input"
                     >
-                      {settingsSaving ? 'Saving…' : 'Save'}
-                    </button>
-                    {settingsSaveMsg && (
-                      <span style={{ fontSize: '0.8rem', color: settingsSaveMsg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
-                        {settingsSaveMsg}
-                      </span>
-                    )}
+                      <option value="">Select a client…</option>
+                      {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
+                    </select>
                   </div>
-                </>
-              )}
-            </div>
-          </div>
 
-          {/* Ad Fuel global settings */}
-          <div className="card" style={{ padding: '1.25rem', gridColumn: '1 / -1' }}>
-            <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9375rem', fontWeight: 700 }}>Ad Fuel Settings</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.875rem', marginTop: 0 }}>
-              Agency-wide settings for Ad Fuel calculations.
-            </p>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-                  Data Cutoff Date
-                  <span style={{ fontWeight: 400, color: 'var(--text-faint)', marginLeft: 6 }}>
-                    Spend and purchased totals exclude data before this date
-                  </span>
-                </label>
-                <input
-                  type="date"
-                  value={cutoffInput}
-                  onChange={e => setCutoffInput(e.target.value)}
-                  className="input"
-                  style={{ fontSize: '0.875rem' }}
-                />
-              </div>
-              <button
-                onClick={saveCutoffDate}
-                disabled={cutoffSaving}
-                className="btn btn-primary"
-                style={{ fontSize: '0.8125rem' }}
-              >
-                {cutoffSaving ? 'Saving…' : 'Save'}
-              </button>
-              {cutoffMsg && (
-                <span style={{ fontSize: '0.8rem', color: cutoffMsg === 'Saved!' ? 'var(--green)' : 'var(--red)' }}>
-                  {cutoffMsg}
-                </span>
-              )}
+                  {settingsClientId && (
+                    <>
+                      <div className="af-form-grid">
+                        <div className="af-field">
+                          <label className="af-label" htmlFor="af-set-bill">Bill day <span className="af-opt">1–31</span></label>
+                          <input
+                            id="af-set-bill"
+                            type="number" min={1} max={31} placeholder="e.g. 1"
+                            value={settingsForm.billDay}
+                            onChange={e => setSettingsForm(f => ({ ...f, billDay: e.target.value }))}
+                            className="input"
+                          />
+                        </div>
+                        <div className="af-field">
+                          <label className="af-label" htmlFor="af-set-hist">Historic bill day <span className="af-opt">1–31</span></label>
+                          <input
+                            id="af-set-hist"
+                            type="number" min={1} max={31} placeholder="e.g. 21"
+                            value={settingsForm.historicBillDay}
+                            onChange={e => setSettingsForm(f => ({ ...f, historicBillDay: e.target.value }))}
+                            className="input"
+                          />
+                        </div>
+                        <div className="af-field">
+                          <label className="af-label" htmlFor="af-set-budget">Monthly budget ($)</label>
+                          <input
+                            id="af-set-budget"
+                            type="number" min={0} placeholder="e.g. 5000"
+                            value={settingsForm.monthlyBudget}
+                            onChange={e => setSettingsForm(f => ({ ...f, monthlyBudget: e.target.value }))}
+                            className="input"
+                          />
+                        </div>
+                        <div className="af-field">
+                          <label className="af-label" htmlFor="af-set-alert">Alert threshold ($) <span className="af-opt">optional</span></label>
+                          <input
+                            id="af-set-alert"
+                            type="number" min={0} placeholder="e.g. 200"
+                            value={settingsForm.adFuelAlertThreshold}
+                            onChange={e => setSettingsForm(f => ({ ...f, adFuelAlertThreshold: e.target.value }))}
+                            className="input"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="af-form-actions">
+                        <button type="button" onClick={saveSettingsClient} disabled={settingsSaving} className="btn btn-primary">
+                          {settingsSaving ? 'Saving…' : 'Save client settings'}
+                        </button>
+                        <SaveMsg msg={settingsSaveMsg} />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </Section>
+
+              <Section title="Data cutoff" description="Spend and purchased totals leave out everything before this date. Applies to every client.">
+                <div className="af-inline">
+                  <div className="af-field">
+                    <label className="af-label" htmlFor="af-cutoff">Cutoff date</label>
+                    <input
+                      id="af-cutoff"
+                      type="date"
+                      value={cutoffInput}
+                      onChange={e => setCutoffInput(e.target.value)}
+                      className="input"
+                    />
+                  </div>
+                  <button type="button" onClick={saveCutoffDate} disabled={cutoffSaving} className="btn btn-primary">
+                    {cutoffSaving ? 'Saving…' : 'Save cutoff date'}
+                  </button>
+                  <SaveMsg msg={cutoffMsg} />
+                </div>
+              </Section>
             </div>
+
+            <Section
+              title="Dashboard columns"
+              description="Choose which columns the Dashboard shows and what they're called. Saved in this browser."
+              actions={
+                <button type="button" onClick={() => saveCols(DEFAULT_COLS)} className="btn btn-secondary btn-sm">
+                  Reset to defaults
+                </button>
+              }
+            >
+              <div className="af-cols">
+                {cols.map((col, i) => (
+                  <div key={col.key} className={`af-col-row${col.visible ? '' : ' af-col-row--off'}`}>
+                    <label className="af-check" title={col.key === 'client' ? 'Always shown' : col.visible ? 'Hide column' : 'Show column'}>
+                      <input
+                        type="checkbox"
+                        className="af-checkbox"
+                        checked={col.visible}
+                        disabled={col.key === 'client'}
+                        onChange={e => {
+                          const next = cols.map((c, j) => j === i ? { ...c, visible: e.target.checked } : c)
+                          saveCols(next)
+                        }}
+                        aria-label={`Show the ${col.label} column`}
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      value={col.label}
+                      onChange={e => {
+                        const next = cols.map((c, j) => j === i ? { ...c, label: e.target.value } : c)
+                        saveCols(next)
+                      }}
+                      className="input"
+                      aria-label={`Name of the ${DEFAULT_COLS.find(d => d.key === col.key)?.label ?? col.key} column`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </Section>
           </div>
         </div>
-      </div>
       )}
 
       {/* ── CLIENT EDIT MODAL (click row on dashboard) ───────────────────────── */}
       {clientEditModal && (
-        <div
-          onClick={() => setClientEditModal(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}
-        >
+        <div className="af-scrim" onClick={() => setClientEditModal(null)}>
           <div
+            className="af-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="af-edit-title"
             onClick={e => e.stopPropagation()}
-            style={{ background: 'var(--bg-surface)', borderRadius: 12, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}
           >
-            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="af-modal-head">
               <div>
-                <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>{clientEditModal.clientName}</h2>
-                <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ad Fuel billing settings</p>
+                <h2 className="af-modal-title" id="af-edit-title">{clientEditModal.clientName}</h2>
+                <p className="af-modal-sub">Ad Fuel billing, alerts and auto-pause</p>
               </div>
-              <button onClick={() => setClientEditModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-faint)' }}>×</button>
+              <button type="button" className="af-iconbtn af-iconbtn--plain" onClick={() => setClientEditModal(null)} aria-label="Close">
+                <X size={16} aria-hidden />
+              </button>
             </div>
 
-            <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
+            <div className="af-modal-body af-form">
+              <div className="af-form-grid">
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-edit-bill">Bill day <span className="af-opt">1–31</span></label>
                   <input
+                    id="af-edit-bill"
                     type="number" min={1} max={31} placeholder="e.g. 1"
                     value={clientEditForm.billDay}
                     onChange={e => setClientEditForm(f => ({ ...f, billDay: e.target.value }))}
-                    className="input" style={{ width: '100%' }}
+                    className="input"
                     autoFocus
                   />
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Historic Bill Day <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(1–31)</span></label>
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-edit-hist">Historic bill day <span className="af-opt">1–31</span></label>
                   <input
+                    id="af-edit-hist"
                     type="number" min={1} max={31} placeholder="e.g. 21"
                     value={clientEditForm.historicBillDay}
                     onChange={e => setClientEditForm(f => ({ ...f, historicBillDay: e.target.value }))}
-                    className="input" style={{ width: '100%' }}
+                    className="input"
                   />
                 </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Budget / Cycle ($)</label>
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-edit-budget">Budget per cycle ($)</label>
                   <input
+                    id="af-edit-budget"
                     type="number" min={0} placeholder="e.g. 5000"
                     value={clientEditForm.monthlyBudget}
                     onChange={e => setClientEditForm(f => ({ ...f, monthlyBudget: e.target.value }))}
-                    className="input" style={{ width: '100%' }}
+                    className="input"
                   />
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>
-                    Alert Threshold ($) <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>optional</span>
-                  </label>
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-edit-alert">Alert threshold ($) <span className="af-opt">optional</span></label>
                   <input
+                    id="af-edit-alert"
                     type="number" min={0} placeholder="e.g. 200"
                     value={clientEditForm.adFuelAlertThreshold}
                     onChange={e => setClientEditForm(f => ({ ...f, adFuelAlertThreshold: e.target.value }))}
-                    className="input" style={{ width: '100%' }}
+                    className="input"
                   />
                 </div>
               </div>
 
-              {/* ── Alert Mute ──────────────────────────────────────── */}
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.875rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer' }}>
+              {/* ── Alert mute ──────────────────────────────────────── */}
+              <div className="af-group">
+                <label className="af-toggle">
                   <input
                     type="checkbox"
+                    className="af-checkbox"
                     checked={clientEditForm.adFuelAlertMuted}
                     onChange={e => setClientEditForm(f => ({ ...f, adFuelAlertMuted: e.target.checked }))}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.8125rem' }}>
+                  <span className="af-toggle-text">
                     Mute low-balance Discord alerts
-                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>No alerts will be sent for this client regardless of balance</span>
+                    <span className="af-toggle-sub">No alerts are sent for this client, whatever the balance.</span>
                   </span>
                 </label>
               </div>
 
-              {/* ── Auto-Pause Settings ─────────────────────────────── */}
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-                <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Auto-Pause Campaigns</p>
+              {/* ── Auto-pause ──────────────────────────────────────── */}
+              <div className="af-group">
+                <h3 className="af-group-title">Auto-pause campaigns</h3>
 
                 {clientEditModal?.campaignsPausedAt && (
-                  <div style={{ padding: '0.5rem 0.75rem', borderRadius: 6, background: '#fee2e2', fontSize: '0.75rem', color: '#dc2626', fontWeight: 500 }}>
-                    ⏸ Campaigns paused since {new Date(clientEditModal.campaignsPausedAt).toLocaleDateString()}
+                  <div className="ui-notice ui-notice--danger">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Pause size={14} weight="fill" aria-hidden />
+                      Campaigns paused since {new Date(clientEditModal.campaignsPausedAt).toLocaleDateString()}
+                    </span>
                   </div>
                 )}
 
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer' }}>
+                <label className="af-toggle">
                   <input
                     type="checkbox"
+                    className="af-checkbox"
                     checked={clientEditForm.autoPauseAds}
                     onChange={e => setClientEditForm(f => ({ ...f, autoPauseAds: e.target.checked, autoResumeAds: e.target.checked ? f.autoResumeAds : false }))}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.8125rem' }}>
-                    Auto-pause when balance goes negative
-                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>Pauses all active Google &amp; Meta campaigns</span>
+                  <span className="af-toggle-text">
+                    Pause campaigns when the balance goes below zero
+                    <span className="af-toggle-sub">Pauses every active Google and Meta campaign.</span>
                   </span>
                 </label>
 
                 {clientEditForm.autoPauseAds && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', cursor: 'pointer', marginLeft: '1.5rem' }}>
+                  <label className="af-toggle af-toggle--nested">
                     <input
                       type="checkbox"
+                      className="af-checkbox"
                       checked={clientEditForm.autoResumeAds}
                       onChange={e => setClientEditForm(f => ({ ...f, autoResumeAds: e.target.checked }))}
-                      style={{ width: 16, height: 16, cursor: 'pointer' }}
                     />
-                    <span style={{ fontSize: '0.8125rem' }}>
-                      Auto-resume when balance goes positive
-                      <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-faint)' }}>Re-enables paused campaigns automatically</span>
+                    <span className="af-toggle-text">
+                      Resume them when the balance is back above zero
+                      <span className="af-toggle-sub">Turns the paused campaigns back on automatically.</span>
                     </span>
                   </label>
                 )}
               </div>
 
-              {clientEditError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{clientEditError}</p>}
+              {clientEditError && <div className="ui-notice ui-notice--danger" role="alert">{clientEditError}</div>}
             </div>
 
-            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button onClick={() => setClientEditModal(null)} className="btn btn-secondary">Cancel</button>
-              <button onClick={saveClientEdit} disabled={clientEditSaving} className="btn btn-primary">
-                {clientEditSaving ? 'Saving…' : 'Save'}
+            <div className="af-modal-foot">
+              <button type="button" onClick={() => setClientEditModal(null)} className="btn btn-secondary">Cancel</button>
+              <button type="button" onClick={saveClientEdit} disabled={clientEditSaving} className="btn btn-primary">
+                {clientEditSaving ? 'Saving…' : 'Save changes'}
               </button>
             </div>
           </div>
@@ -1143,77 +1332,91 @@ export default function AdFuelPage() {
 
       {/* ── ADD ENTRY MODAL ───────────────────────────────────────────────────── */}
       {showAddModal && (
-        <div
-          onClick={() => setShowAddModal(false)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}
-        >
+        <div className="af-scrim" onClick={() => setShowAddModal(false)}>
           <div
+            className="af-modal af-modal--wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="af-add-title"
             onClick={e => e.stopPropagation()}
-            style={{ background: 'var(--bg-surface)', borderRadius: 12, width: '100%', maxWidth: 500, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}
           >
-            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Add Ledger Entry</h2>
-              <button onClick={() => setShowAddModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-faint)' }}>×</button>
+            <div className="af-modal-head">
+              <div>
+                <h2 className="af-modal-title" id="af-add-title">Add ledger entry</h2>
+                <p className="af-modal-sub">A payment or adjustment, in Ad Fuel dollars.</p>
+              </div>
+              <button type="button" className="af-iconbtn af-iconbtn--plain" onClick={() => setShowAddModal(false)} aria-label="Close">
+                <X size={16} aria-hidden />
+              </button>
             </div>
 
-            <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Client *</label>
-                <select value={addForm.client_id} onChange={e => setAddForm(f => ({ ...f, client_id: e.target.value }))} className="input" style={{ width: '100%' }}>
+            <div className="af-modal-body af-form">
+              <div className="af-field">
+                <label className="af-label" htmlFor="af-add-client">Client</label>
+                <select id="af-add-client" value={addForm.client_id} onChange={e => setAddForm(f => ({ ...f, client_id: e.target.value }))} className="input" autoFocus>
                   <option value="">Select a client…</option>
                   {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
                 </select>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Date of Payment *</label>
-                  <input type="date" value={addForm.date_of_payment} onChange={e => setAddForm(f => ({ ...f, date_of_payment: e.target.value }))} className="input" style={{ width: '100%' }} />
+              <div className="af-form-grid">
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-add-date">Date of payment</label>
+                  <input id="af-add-date" type="date" value={addForm.date_of_payment} onChange={e => setAddForm(f => ({ ...f, date_of_payment: e.target.value }))} className="input" />
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Ad Fuel Amount ($) *</label>
-                  <input type="number" placeholder="0.00" value={addForm.amount_af} onChange={e => setAddForm(f => ({ ...f, amount_af: e.target.value }))} className="input" style={{ width: '100%' }} />
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-add-amount">Ad Fuel amount ($)</label>
+                  <input id="af-add-amount" type="number" placeholder="0.00" value={addForm.amount_af} onChange={e => setAddForm(f => ({ ...f, amount_af: e.target.value }))} className="input" />
                 </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Type</label>
-                  <select value={addForm.type} onChange={e => setAddForm(f => ({ ...f, type: e.target.value }))} className="input" style={{ width: '100%' }}>
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-add-type">Type</label>
+                  <select id="af-add-type" value={addForm.type} onChange={e => setAddForm(f => ({ ...f, type: e.target.value }))} className="input">
                     {ENTRY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Split % Override <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional)</span></label>
-                  <input type="number" placeholder="client default" min={0} max={100} value={addForm.split_override} onChange={e => setAddForm(f => ({ ...f, split_override: e.target.value }))} className="input" style={{ width: '100%' }} />
+                <div className="af-field">
+                  <label className="af-label" htmlFor="af-add-split">Split override (%) <span className="af-opt">optional</span></label>
+                  <input id="af-add-split" type="number" placeholder="Client default" min={0} max={100} value={addForm.split_override} onChange={e => setAddForm(f => ({ ...f, split_override: e.target.value }))} className="input" />
                 </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Invoice ID <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional)</span></label>
-                <input type="text" placeholder="INV-001" value={addForm.invoice_id} onChange={e => setAddForm(f => ({ ...f, invoice_id: e.target.value }))} className="input" style={{ width: '100%' }} />
+              <div className="af-field">
+                <label className="af-label" htmlFor="af-add-invoice">Invoice ID <span className="af-opt">optional</span></label>
+                <input id="af-add-invoice" type="text" placeholder="INV-001" value={addForm.invoice_id} onChange={e => setAddForm(f => ({ ...f, invoice_id: e.target.value }))} className="input" />
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Notes <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>(optional)</span></label>
-                <input type="text" placeholder="e.g. 2025 Catchup Ad Fuel Submission" value={addForm.note} onChange={e => setAddForm(f => ({ ...f, note: e.target.value }))} className="input" style={{ width: '100%' }} />
+              <div className="af-field">
+                <label className="af-label" htmlFor="af-add-note">Notes <span className="af-opt">optional</span></label>
+                <input id="af-add-note" type="text" placeholder="e.g. 2025 catch-up Ad Fuel submission" value={addForm.note} onChange={e => setAddForm(f => ({ ...f, note: e.target.value }))} className="input" />
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Added By</label>
-                <input type="text" placeholder="Your name" value={addForm.created_by} onChange={e => setAddForm(f => ({ ...f, created_by: e.target.value }))} className="input" style={{ width: '100%' }} />
+              <div className="af-field">
+                <label className="af-label" htmlFor="af-add-by">Added by</label>
+                <input id="af-add-by" type="text" placeholder="Your name" value={addForm.created_by} onChange={e => setAddForm(f => ({ ...f, created_by: e.target.value }))} className="input" />
               </div>
 
-              {addError && <p style={{ color: 'var(--red)', fontSize: '0.8rem', margin: 0 }}>{addError}</p>}
+              {addError && <div className="ui-notice ui-notice--danger" role="alert">{addError}</div>}
             </div>
 
-            <div style={{ padding: '0.875rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowAddModal(false)} className="btn btn-secondary">Cancel</button>
-              <button onClick={submitAdd} className="btn btn-primary">Add Entry</button>
+            <div className="af-modal-foot">
+              <button type="button" onClick={() => setShowAddModal(false)} className="btn btn-secondary">Cancel</button>
+              <button type="button" onClick={submitAdd} className="btn btn-primary">Add entry</button>
             </div>
           </div>
         </div>
       )}
     </div>
+  )
+}
+
+/** "Saved!" / "Save failed" after a settings save. */
+function SaveMsg({ msg }: { msg: string }) {
+  if (!msg) return null
+  const ok = msg === 'Saved!'
+  return (
+    <span className={`af-msg ${ok ? 'af-msg--ok' : 'af-msg--err'}`} role="status">
+      {ok && <Check size={14} weight="bold" aria-hidden />}
+      {ok ? 'Saved' : msg}
+    </span>
   )
 }
