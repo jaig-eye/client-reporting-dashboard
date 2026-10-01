@@ -4,6 +4,7 @@ import LivePostActionModal, { type LiveMode } from '@/components/admin/LivePostA
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
 import RegenerateDialog from './RegenerateDialog'
@@ -454,13 +455,13 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           {/* Month navigation */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 24 }}>
             {prevUrl ? (
-              <a href={prevUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>← Prev Month</a>
+              <Link href={prevUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>← Prev Month</Link>
             ) : (
               <span style={{ display: 'inline-block', width: 100 }} />
             )}
             <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>{displayMonth}</span>
             {nextUrl ? (
-              <a href={nextUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>Next Month →</a>
+              <Link href={nextUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>Next Month →</Link>
             ) : (
               <span style={{ display: 'inline-block', width: 100 }} />
             )}

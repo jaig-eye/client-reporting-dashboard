@@ -15,6 +15,7 @@ import { nextOpenSlot }         from '@/lib/content/scheduleSlots'
 import { openLinkCount }        from '@/components/admin/priorityTopics'
 import ContentClientsOverview  from '@/components/admin/ContentClientsOverview'
 import { getClientsOverview }  from '@/lib/content/clientsOverviewData'
+import ContentViews, { type ContentView } from '@/components/admin/ContentViews'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,9 +30,19 @@ export default async function ContentPage({
 
   const params      = await searchParams
   // Monthly Review is the default landing view; Calendar and Priority topics are secondary views.
-  const activeView  = params.view ?? 'review'
+  const activeView: ContentView = (['overview', 'review', 'calendar', 'silos'] as const)
+    .find(v => v === params.view) ?? 'review'
 
   const db = createAdminClient()
+
+  // Review's own read starts now, alongside the shared one below rather than after it.
+  const reviewDataP = activeView === 'review'
+    ? getMonthlyReviewData(
+        db,
+        typeof params.month === 'string' ? params.month : null,
+        mp => `/admin/content?view=review&month=${mp}`,
+      )
+    : Promise.resolve(null)
 
   // One parallel read (typing must stay intact — adding to this array breaks TS tuple inference)
   const [
@@ -41,27 +52,21 @@ export default async function ContentPage({
     silosRes,
   ] = await Promise.all([
     db.from('clients').select('id, name, logo_url').order('name'),
-    db.from('content_posts')
+    activeView !== 'calendar' ? null : db.from('content_posts')
       .select('id, client_id, status, target_keyword, title, word_count, generated_at, published_url, target_publish_date, wp_post_id, wp_site_url, topic_rationale, content_type')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(300),
-    db.from('content_topics')
+    activeView !== 'calendar' ? null : db.from('content_topics')
       .select('id, client_id, topic, target_keyword, target_publish_date, status, rationale, keyword_opportunity, ranking_strategy, audience_intent, why_now, competition_level, generation_error, suggested_title, search_volume, keyword_difficulty, created_at, post_id, cluster_group, content_type, city, state_abbr, service_name')
       .order('target_publish_date', { ascending: true, nullsFirst: false })
       .limit(500),
     // Oldest first — the order the topic run takes them — so "Next up" here is the set that really
     // goes next. pending_links is the hand-linking checklist for sets with a main page.
-    db.from('content_silos').select('id, client_id, name, hub_page_url, hub_page_title, content_type, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
+    activeView !== 'silos' ? null : db.from('content_silos').select('id, client_id, name, hub_page_url, hub_page_title, content_type, pending_links').neq('status', 'archived').order('created_at', { ascending: true }),
   ])
 
   // Monthly-review window data — only fetched when the Review view is active.
-  const reviewData = activeView === 'review'
-    ? await getMonthlyReviewData(
-        db,
-        typeof params.month === 'string' ? params.month : null,
-        mp => `/admin/content?view=review&month=${mp}`,
-      )
-    : null
+  const reviewData = await reviewDataP
 
   const allClientRows = (allClientsRes.data ?? []) as { id: string; name: string; logo_url: string | null }[]
   const allClientsMap = new Map(allClientRows.map(c => [c.id, c.name]))
@@ -70,7 +75,7 @@ export default async function ContentPage({
 
   // Build calendar items
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const postItems = ((postsRes.data ?? []) as Record<string, any>[]).map(p => ({
+  const postItems = ((postsRes?.data ?? []) as Record<string, any>[]).map(p => ({
     id:                 String(p.id),
     type:               'post' as const,
     contentType:        (p as Record<string, unknown>).content_type ? String((p as Record<string, unknown>).content_type) : 'blog',
@@ -98,7 +103,7 @@ export default async function ContentPage({
   }))
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const topicItems = ((scheduledTopicsRes.data ?? []) as Record<string, any>[]).map(t => ({
+  const topicItems = ((scheduledTopicsRes?.data ?? []) as Record<string, any>[]).map(t => ({
     id:                 String(t.id),
     type:               'topic' as const,
     contentType:        (t as Record<string, unknown>).content_type ? String((t as Record<string, unknown>).content_type) : 'blog',
@@ -132,14 +137,14 @@ export default async function ContentPage({
   const calendarItems: CalendarItem[] = [
     ...topicItems.filter(t => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const postId = ((scheduledTopicsRes.data ?? []) as Record<string, any>[]).find(r => String(r.id) === t.id)?.post_id
+      const postId = ((scheduledTopicsRes?.data ?? []) as Record<string, any>[]).find(r => String(r.id) === t.id)?.post_id
       return !postId || !postIdSet.has(String(postId))
     }),
     ...postItems,
   ]
 
   // Priority topics (content_silos): read in full only when that view is open.
-  const silos = (silosRes.data ?? []) as SiloRow[]
+  const silos = (silosRes?.data ?? []) as SiloRow[]
   const overviewClients = activeView === 'silos'
     ? await priorityOverview(db, silos, allClientsMap)
     : []
@@ -151,59 +156,17 @@ export default async function ContentPage({
 
   // The view's id stays "silos" so existing links keep working; its name follows the Pipeline's.
   // Clients leads the switcher, but Review stays the landing view.
-  const views = [
-    { id: 'overview', label: 'Clients' },
-    { id: 'review',   label: 'Review' },
-    { id: 'calendar', label: 'Calendar' },
-    { id: 'silos',    label: 'Priority topics' },
-  ]
-
   return (
     <div>
-      {/* Header: title + gear settings on the left, view switcher on the right */}
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h1 className="page-title" style={{ margin: 0 }}>Content</h1>
-        <a
-          href="/admin/content/settings"
-          title="Content settings"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8125rem', color: 'var(--text-muted)', textDecoration: 'none', padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)' }}
-        >
-          ⚙ Settings
-        </a>
-
-        <div style={{ flex: 1 }} />
-
-        {/* View switcher */}
-        {/* Four views: labels stay on one line, and on a phone the row scrolls rather than wraps. */}
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-subtle)', borderRadius: 8, padding: 3, maxWidth: '100%', overflowX: 'auto' }}>
-          {views.map(v => (
-            <a
-              key={v.id}
-              href={`?view=${v.id}`}
-              style={{
-                display:        'inline-block',
-                padding:        '5px 12px',
-                whiteSpace:     'nowrap',
-                borderRadius:   6,
-                fontSize:       '0.8125rem',
-                fontWeight:     activeView === v.id ? 600 : 400,
-                color:          activeView === v.id ? '#fff' : 'var(--text-muted)',
-                background:     activeView === v.id ? 'var(--blue, #2563eb)' : 'transparent',
-                textDecoration: 'none',
-              }}
-            >
-              {v.label}
-            </a>
-          ))}
-        </div>
-      </div>
-
+      <ContentViews active={activeView}>
       {activeView === 'overview' && clientsOverview && (
         <ContentClientsOverview rows={clientsOverview.rows} error={clientsOverview.error} />
       )}
 
       {activeView === 'review' && reviewData && (
         <MonthlyReviewSession
+          // A new month is a new session: its posts are state seeded from these props.
+          key={reviewData.month}
           posts={reviewData.posts}
           allSites={reviewData.allSites}
           month={reviewData.month}
@@ -220,7 +183,7 @@ export default async function ContentPage({
       {activeView === 'silos' && (
         <PriorityTopicsOverview clients={overviewClients} />
       )}
-
+      </ContentViews>
     </div>
   )
 }
