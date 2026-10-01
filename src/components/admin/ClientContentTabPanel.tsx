@@ -211,6 +211,7 @@ export default function ClientContentTabPanel({
               aiConfigured={aiConfigured}
               isActive={activeTab === 'pipeline'}
               contentSettings={contentSettings}
+              onOpenSettings={() => handleTabChange('settings')}
             />
           </div>
         )}

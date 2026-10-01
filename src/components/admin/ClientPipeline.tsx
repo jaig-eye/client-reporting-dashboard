@@ -23,6 +23,8 @@ interface Props {
   aiConfigured:    boolean
   isActive?:       boolean
   contentSettings?: Record<string, unknown> | null
+  /** Switch the Content tab to Settings, where the schedule a running plan follows is edited. */
+  onOpenSettings?: () => void
 }
 
 const FREQ_LABEL: Record<string, string> = {
@@ -32,15 +34,47 @@ const FREQ_LABEL: Record<string, string> = {
 
 function today(): string { return new Date().toISOString().slice(0, 10) }
 
-export default function ClientPipeline({ clientId, clientName, sites, aiConfigured, isActive = true, contentSettings }: Props) {
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
+}
+
+/** "Weekly on Mondays", "Monthly on the 15th" — the schedule in Content settings, in words. */
+function cadenceLabel(cs: Record<string, unknown>): string {
+  const freq = (cs.schedule_frequency as string | null) ?? 'weekly'
+  const day  = DAY_NAMES[(cs.schedule_day_of_week as number | null) ?? 1] ?? 'Monday'
+  const perDate = Math.min(10, Math.max(1, Number(cs.posts_per_run ?? 1) || 1))
+  const start = cs.schedule_start_date as string | null
+  const monthlyDay = (cs.monthly_publish_day as number | null)
+    ?? (start ? new Date(start + 'T00:00:00Z').getUTCDate() : null)
+  const base =
+    freq === 'daily'         ? 'Every day'
+    : freq === 'weekly'      ? `Weekly on ${day}s`
+    : freq === 'biweekly'    ? `Every two weeks on ${day}s`
+    : freq === 'monthly_first' ? 'Monthly on the 1st'
+    : freq === 'monthly_mid'   ? 'Monthly on the 15th'
+    : freq === 'monthly_end'   ? 'Monthly on the 28th'
+    : freq === 'monthly'       ? (monthlyDay ? `Monthly on the ${ordinal(monthlyDay)}` : 'Monthly')
+    : (FREQ_LABEL[freq] ?? freq)
+  return perDate > 1 ? `${base}, ${perDate} posts each date` : base
+}
+
+/** "Mon, Oct 5" */
+function fmtShort(iso: string): string {
+  return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+export default function ClientPipeline({ clientId, clientName, sites, aiConfigured, isActive = true, contentSettings, onOpenSettings }: Props) {
   const clientSites = sites.filter(s => s.clientId === clientId)
   const firstConnectionId = clientSites[0]?.connectionId ?? null
 
   const cs = contentSettings ?? {}
   const connectionId     = (cs.connection_id as string | null) ?? firstConnectionId
-  const scheduleFrequency = (cs.schedule_frequency as string | null) ?? null
   const settingsWeeksAhead = (cs.weeks_ahead as number | null) ?? 6
-  const settingsStartDate  = (cs.schedule_start_date as string | null) ?? today()
+  const autoGenerate       = cs.auto_generate === true
+  const cadence            = cadenceLabel(cs)
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [topics,      setTopics]      = useState<Topic[]>([])
@@ -61,8 +95,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   const [calendarModalOpen, setCalendarModalOpen] = useState(false)
-  const [modalStartDate,    setModalStartDate]    = useState(settingsStartDate)
-  const [modalWeeks,        setModalWeeks]        = useState(settingsWeeksAhead)
+  // The dates starting the plan would fill, asked of the server (dry run) when the modal opens.
+  const [plan,              setPlan]              = useState<{ dates: string[]; posts: number } | null>(null)
+  const [planError,         setPlanError]         = useState<string | null>(null)
   const [generating,        setGenerating]        = useState(false)
   const [showNewPost,       setShowNewPost]       = useState(false)
 
@@ -224,12 +259,26 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     finally { setPurgeLoading(p => ({ ...p, [id]: false })) }
   }
 
+  async function openPlan() {
+    setCalendarModalOpen(true); setPlan(null); setPlanError(null)
+    const res = await fetch('/api/admin/content/calendar/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, dry_run: true }),
+    }).catch(() => null)
+    const data = (res ? await res.json().catch(() => ({})) : {}) as { dates?: string[]; slots?: string[]; error?: string }
+    if (!res?.ok) { setPlanError(data.error ?? 'Couldn’t work out the dates. Try again.'); return }
+    setPlan({ dates: data.dates ?? [], posts: (data.slots ?? []).length })
+  }
+
+  // The schedule in Content settings decides the dates: its start date, cadence and how far ahead.
+  // Sending none of them here is deliberate — the modal used to take a start date and a week
+  // count, which let a plan be started on dates the cron would never keep up.
   async function generateCalendar(e: React.FormEvent) {
     e.preventDefault()
     setGenerating(true)
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, start_date: modalStartDate, weeks_ahead: modalWeeks }),
+      body: JSON.stringify({ client_id: clientId }),
     })
     const data = await res.json()
     setGenerating(false)
@@ -335,8 +384,20 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     return { topicIdToPost, allItems, groups, publishedItems, recentKeys, archivedKeys, rejectedCount, archivedCount, filterGroupItems }
   }, [topics, posts, showRejected])
 
-  const freqSummary = scheduleFrequency ? `${FREQ_LABEL[scheduleFrequency] ?? scheduleFrequency} · 1 topic/slot` : '1 topic/slot'
-  const willCreate  = Math.min(modalWeeks, 50)
+  // A plan is under way once the client has any topic or post that wasn't turned down. From then
+  // on the cron keeps its dates filled from Content settings, so the card says it is running
+  // rather than offering to start it again — a second "plan" only re-asked for dates that were
+  // already taken, from a start date that no longer meant anything.
+  const planStarted = topics.some(t => t.status !== 'rejected') || posts.length > 0
+  const plannedThrough = useMemo(() => {
+    const from = today()
+    const dates = [
+      ...topics.filter(t => t.status !== 'rejected').map(t => t.target_publish_date),
+      ...posts.map(p => p.target_publish_date),
+    ].map(d => (d ?? '').slice(0, 10)).filter(d => d && d >= from).sort()
+    return dates.length ? dates[dates.length - 1] : null
+  }, [topics, posts])
+  const dateWord = (n: number) => `publish date${n === 1 ? '' : 's'}`
 
   // Shared card-props builder for a RowItem
   const cardProps = (item: RowItem) => {
@@ -381,15 +442,37 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
 
       {/* ── AI Content Plan + New Post controls ────────────────────────────── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        {aiConfigured ? (
-          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--accent, #2563eb)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>AI Content Plan</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Generate 1 topic per {(FREQ_LABEL[scheduleFrequency ?? 'weekly'] ?? 'weekly').toLowerCase()} slot for your next {settingsWeeksAhead} publish date{settingsWeeksAhead > 1 ? 's' : ''}
+        {aiConfigured && dataLoading ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
+        ) : aiConfigured && planStarted ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: `3px solid ${autoGenerate ? 'var(--green)' : 'var(--amber)'}`, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>Content plan</span>
+                <span className={`badge ${autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem' }}>{autoGenerate ? 'Running' : 'Paused'}</span>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {cadence}.{' '}
+                {autoGenerate ? (
+                  <>Keeps the next {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} planned{plannedThrough && <>, now through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}. New dates fill in on their own.</>
+                ) : (
+                  <>Automatic planning is off, so new dates don&apos;t fill in on their own{plannedThrough && <>. Planned through <strong style={{ color: 'var(--text-primary)' }}>{fmtShort(plannedThrough)}</strong></>}.</>
+                )}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => setCalendarModalOpen(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Generate Plan</button>
+            {onOpenSettings && (
+              <button className="btn btn-secondary btn-sm" onClick={onOpenSettings} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Change in Content settings</button>
+            )}
+          </div>
+        ) : aiConfigured ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--blue)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>Start the content plan</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {cadence}. Plans the first {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} now{autoGenerate ? ', then keeps that many planned on its own' : ''}.
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={openPlan} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Start plan</button>
           </div>
         ) : (
           <div style={{ flex: 1, padding: '10px 14px', fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
@@ -436,7 +519,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         {dataLoading ? (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
         ) : model.allItems.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>No topics yet — click &quot;Generate Plan&quot; to create your first content calendar.</p>
+          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>No topics yet. Start the plan above to fill the first publish dates.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {model.recentKeys.map(dateKey => {
@@ -534,27 +617,45 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }} onClick={() => setCalendarModalOpen(false)}>
           <div style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
-              <span className="font-semibold text-sm">Generate SEO Content Calendar</span>
+              <span className="font-semibold text-sm">Start the content plan</span>
               <button type="button" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
             </div>
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Start Date</label>
-                  <input className="input" type="date" style={{ width: '100%' }} value={modalStartDate} onChange={e => setModalStartDate(e.target.value)} required />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Weeks Ahead</label>
-                  <input className="input" type="number" min={1} max={24} style={{ width: '100%' }} value={modalWeeks} onChange={e => setModalWeeks(Number(e.target.value))} required />
-                </div>
-                <div style={{ borderRadius: '0.375rem', padding: '0.625rem 0.875rem', background: 'var(--blue-subtle)', border: '1px solid var(--blue-border)' }}>
-                  <p className="text-xs" style={{ color: 'var(--blue)', marginBottom: '0.25rem' }}><strong>Using:</strong> {freqSummary}</p>
-                  <p className="text-xs" style={{ color: 'var(--blue)' }}><strong>Will create:</strong> {willCreate} topic{willCreate !== 1 ? 's' : ''}</p>
-                </div>
-              </div>
+              <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                The plan follows this client&apos;s schedule in Content settings.
+              </p>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
+                <dt style={{ color: 'var(--text-faint)' }}>Cadence</dt>
+                <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
+                <dt style={{ color: 'var(--text-faint)' }}>Plans now</dt>
+                <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
+                  {planError
+                    ? planError
+                    : !plan
+                      ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
+                      : plan.dates.length === 0
+                        ? 'Nothing: every date in the window already has a topic.'
+                        : plan.dates.map(fmtShort).join(' · ')}
+                </dd>
+                <dt style={{ color: 'var(--text-faint)' }}>After that</dt>
+                <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                  {autoGenerate
+                    ? `New dates fill in on their own, keeping the next ${settingsWeeksAhead} ${dateWord(settingsWeeksAhead)} planned.`
+                    : 'Automatic planning is off, so only these dates are planned.'}
+                </dd>
+              </dl>
+              {onOpenSettings && (
+                <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                  To change the start date, cadence or how far ahead it plans, edit{' '}
+                  <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>
+                  {' '}first.
+                </p>
+              )}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={generating}>{generating ? 'Generating…' : 'Generate →'}</button>
+                <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
+                  {generating ? 'Starting…' : plan && plan.posts > 0 ? `Plan ${plan.posts} post${plan.posts === 1 ? '' : 's'}` : 'Start plan'}
+                </button>
               </div>
             </form>
           </div>

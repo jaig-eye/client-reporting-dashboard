@@ -3,8 +3,9 @@
 // Reads posts_per_run and schedule_frequency from the client's saved schedule —
 // the modal only sends start_date and weeks_ahead.
 //
-// Body: { client_id, start_date?, weeks_ahead }
-// Returns: { queued: true, slots: string[] } — or { queued: false, slots, reason } when all slots occupied
+// Body: { client_id, start_date?, weeks_ahead, dry_run? }
+// Returns: { queued: true, slots: string[] } — or { queued: false, slots, reason } when all slots occupied.
+// dry_run returns { dry_run: true, slots, dates } — the dates it would plan — and changes nothing.
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -34,6 +35,8 @@ export async function POST(request: NextRequest) {
      * here; the cron never clears a suppression.
      */
     reopen_suppressed?: boolean
+    /** Say which dates would be planned, and plan nothing. For the plan's confirmation. */
+    dry_run?: boolean
   }
   const { client_id, start_date, weeks_ahead: weeksAheadParam, silo_id, content_type } = body
 
@@ -109,7 +112,7 @@ export async function POST(request: NextRequest) {
 
   // An explicit reopen clears the suppressions for the requested window first, so the slots
   // below are genuinely open rather than being skipped again on the next run.
-  if (body.reopen_suppressed && suppressedDates.size > 0) {
+  if (body.reopen_suppressed && !body.dry_run && suppressedDates.size > 0) {
     await Promise.all(
       Array.from(suppressedDates).map(d => unsuppressSlot(db, client_id, d)),
     )
@@ -139,6 +142,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, queued: false, slots, reason: 'Every keyword in this set has been used.' })
     }
     openSlots.splice(waiting)
+  }
+
+  if (body.dry_run) {
+    return NextResponse.json({ ok: true, dry_run: true, slots: openSlots, dates: Array.from(new Set(openSlots)) })
   }
 
   if (openSlots.length === 0) {
