@@ -1,9 +1,19 @@
 'use client'
 
+// The Emails page: client email campaigns, filtered by status and client, each opening in a detail
+// sheet to review, score and manage. Emails waiting for review carry an amber edge, and their
+// count shows on the Pending review tab.
+
+import '@/styles/admin/emails.css'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { EnvelopeSimple, Plus, FunnelSimple, CheckCircle, XCircle, Clock, Warning } from '@phosphor-icons/react'
+import { EnvelopeSimple, Plus } from '@phosphor-icons/react'
+import PageHeader from '@/components/ui/PageHeader'
+import StatusBadge from '@/components/ui/StatusBadge'
+import EmptyState from '@/components/ui/EmptyState'
+import { PillTabs } from '@/components/ui/PillTabs'
+import { SkRows } from '@/components/ui/Skeleton'
 import EmailUploadModal  from './EmailUploadModal'
-import EmailDetailModal  from './EmailDetailModal'
+import EmailDetailModal, { EmailStatusBadge, fmtEmailDate } from './EmailDetailModal'
 
 export interface EmailClient {
   id:   string
@@ -41,35 +51,11 @@ interface EmailCampaign {
 
 const STATUS_FILTERS = [
   { key: 'all',            label: 'All' },
-  { key: 'pending_review', label: 'Pending Review' },
+  { key: 'pending_review', label: 'Pending review' },
   { key: 'approved',       label: 'Approved' },
   { key: 'rejected',       label: 'Rejected' },
   { key: 'draft',          label: 'Drafts' },
 ]
-
-function StatusBadge({ status }: { status: EmailCampaign['status'] }) {
-  const map = {
-    pending_review: { label: 'Pending Review', color: 'var(--yellow, #ca8a04)', bg: 'rgba(234,179,8,0.1)', icon: <Clock size={11} /> },
-    approved:       { label: 'Approved',       color: 'var(--green)',           bg: 'rgba(34,197,94,0.1)',  icon: <CheckCircle size={11} /> },
-    rejected:       { label: 'Rejected',       color: 'var(--red)',             bg: 'rgba(239,68,68,0.1)',  icon: <XCircle size={11} /> },
-    draft:          { label: 'Draft',          color: 'var(--text-faint)',      bg: 'var(--bg-subtle)',     icon: <Warning size={11} /> },
-  }[status]
-
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '2px 7px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600,
-      color: map.color, background: map.bg,
-    }}>
-      {map.icon}{map.label}
-    </span>
-  )
-}
-
-function relDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
 
 interface Props {
   clients: EmailClient[]
@@ -78,6 +64,7 @@ interface Props {
 export default function EmailsClientShell({ clients }: Props) {
   const [emails,       setEmails]       = useState<EmailCampaign[]>([])
   const [loading,      setLoading]      = useState(true)
+  const [loadError,    setLoadError]    = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [clientFilter, setClientFilter] = useState('all')
   const [showUpload,   setShowUpload]   = useState(false)
@@ -98,6 +85,7 @@ export default function EmailsClientShell({ clients }: Props) {
 
   const loadEmails = useCallback(() => {
     setLoading(true)
+    setLoadError(false)
     const params = new URLSearchParams()
     if (statusFilter !== 'all') params.set('status', statusFilter)
     if (clientFilter !== 'all') params.set('client_id', clientFilter)
@@ -105,7 +93,7 @@ export default function EmailsClientShell({ clients }: Props) {
     fetch(`/api/admin/emails?${params}`)
       .then(r => r.ok ? r.json() : Promise.reject(r))
       .then((d: { emails: EmailCampaign[] }) => setEmails(d.emails))
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [statusFilter, clientFilter])
 
@@ -127,139 +115,98 @@ export default function EmailsClientShell({ clients }: Props) {
   }
 
   const pendingCount = emails.filter(e => e.status === 'pending_review').length
+  const filtered = statusFilter !== 'all' || clientFilter !== 'all'
 
   return (
     <div>
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: '1.25rem' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <EnvelopeSimple size={20} style={{ color: 'var(--blue)' }} aria-hidden />
-            <h1 className="page-title" style={{ margin: 0 }}>Emails</h1>
-            <span style={{
-              fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-              background: 'var(--blue)', color: '#fff',
-              padding: '2px 6px', borderRadius: 4, verticalAlign: 'middle',
-            }}>BETA</span>
-            {pendingCount > 0 && (
-              <span style={{
-                background: 'var(--red)', color: '#fff', borderRadius: 999,
-                fontSize: '0.6rem', fontWeight: 700, padding: '1px 7px',
-              }}>
-                {pendingCount} to review
-              </span>
-            )}
-          </div>
-          <p className="page-subtitle">Upload, review, and approve client email campaigns.</p>
-        </div>
-        <button
-          onClick={() => setShowUpload(true)}
-          className="btn btn-primary"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        >
-          <Plus size={15} aria-hidden /> Add Email
-        </button>
-      </div>
+      <PageHeader
+        title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>Emails <StatusBadge tone="info" dot={false}>Beta</StatusBadge></span>}
+        description="Upload client email campaigns, review them before they go out, and record how they performed."
+        actions={
+          <button type="button" onClick={() => setShowUpload(true)} className="btn btn-primary">
+            <Plus size={15} weight="bold" aria-hidden />Add email
+          </button>
+        }
+      />
 
       {/* Filters */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-        <FunnelSimple size={15} style={{ color: 'var(--text-faint)' }} aria-hidden />
-        <div style={{ display: 'flex', gap: 4 }}>
-          {STATUS_FILTERS.map(f => (
-            <button
-              key={f.key}
-              onClick={() => setStatusFilter(f.key)}
-              style={{
-                padding: '0.25rem 0.65rem', fontSize: '0.72rem', fontWeight: 600,
-                borderRadius: 999, border: '1px solid',
-                borderColor: statusFilter === f.key ? 'var(--blue)' : 'var(--border)',
-                background:  statusFilter === f.key ? 'var(--blue)' : 'transparent',
-                color:       statusFilter === f.key ? '#fff' : 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <select
-          value={clientFilter}
-          onChange={e => setClientFilter(e.target.value)}
-          style={{
-            padding: '0.25rem 0.5rem', fontSize: '0.72rem', borderRadius: 6,
-            border: '1px solid var(--border)', background: 'var(--bg-subtle)',
-            color: 'var(--text)', cursor: 'pointer',
-          }}
-        >
-          <option value="all">All Clients</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+      <div className="em-toolbar">
+        <PillTabs
+          label="Filter by status"
+          activeId={statusFilter}
+          onSelect={setStatusFilter}
+          items={STATUS_FILTERS.map(f => ({
+            id: f.key,
+            label: f.label,
+            ...(f.key === 'pending_review' ? { count: pendingCount, alert: true } : {}),
+          }))}
+        />
+        <label className="em-client">
+          <span className="sr-only">Filter by client</span>
+          <select className="input" value={clientFilter} onChange={e => setClientFilter(e.target.value)}>
+            <option value="all">All clients</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
       </div>
+
+      {loadError && (
+        <div className="ui-notice ui-notice--danger" role="alert">
+          <span>The emails couldn’t load.</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={loadEmails}>Try again</button>
+        </div>
+      )}
 
       {/* List */}
-      {loading && (
-        <p style={{ color: 'var(--text-faint)', fontSize: '0.8rem' }}>Loading…</p>
-      )}
-      {!loading && emails.length === 0 && (
-        <div style={{
-          textAlign: 'center', padding: '3rem 1rem',
-          border: '2px dashed var(--border)', borderRadius: 10,
-        }}>
-          <EnvelopeSimple size={36} style={{ color: 'var(--text-faint)', marginBottom: 8 }} aria-hidden />
-          <p style={{ color: 'var(--text-faint)', fontSize: '0.85rem', margin: 0 }}>No emails yet. Click <strong>Add Email</strong> to upload the first one.</p>
+      {loading ? (
+        <div className="card em-list" aria-busy="true" aria-label="Loading emails"><SkRows rows={4} /></div>
+      ) : emails.length === 0 ? (
+        !loadError && (
+          <div className="card">
+            <EmptyState
+              icon={<EnvelopeSimple size={20} />}
+              title={filtered ? 'No emails match these filters' : 'No emails yet'}
+              actions={filtered
+                ? <button type="button" className="btn btn-secondary" onClick={() => { setStatusFilter('all'); setClientFilter('all') }}>Show all emails</button>
+                : <button type="button" className="btn btn-primary" onClick={() => setShowUpload(true)}><Plus size={15} weight="bold" aria-hidden />Add email</button>}
+            >
+              {filtered
+                ? 'Try another status or client.'
+                : 'Add a client email campaign to send it for review and track how it did.'}
+            </EmptyState>
+          </div>
+        )
+      ) : (
+        <div className="card em-list">
+          {emails.map(email => {
+            const date = fmtEmailDate(email.sent_at ?? email.created_at)
+            return (
+              <button
+                key={email.id}
+                type="button"
+                className={`em-row${email.status === 'pending_review' ? ' em-row--pending' : ''}`}
+                onClick={() => setDetailEmail(email)}
+              >
+                <span className="em-thumb" aria-hidden>
+                  {email.preview_image_url
+                    ? <img src={email.preview_image_url} alt="" />
+                    : <EnvelopeSimple size={18} />}
+                </span>
+                <span className="em-row-text">
+                  <span className="em-row-title">{email.title}</span>
+                  <span className="em-row-sub">{email.clients?.name ?? '—'}{email.goal ? ` · ${email.goal}` : ''}</span>
+                  <span className="em-row-meta">
+                    <EmailStatusBadge status={email.status} />
+                    <span className="em-row-date">{date}</span>
+                  </span>
+                </span>
+                <span className="em-row-date em-wide">{date}</span>
+                <span className="em-row-status em-wide"><EmailStatusBadge status={email.status} /></span>
+              </button>
+            )
+          })}
         </div>
       )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {emails.map(email => (
-          <div
-            key={email.id}
-            onClick={() => setDetailEmail(email)}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'auto 1fr auto auto',
-              gap: '0.75rem',
-              alignItems: 'center',
-              padding: '0.75rem 1rem',
-              background: email.status === 'pending_review' ? 'rgba(234,179,8,0.04)' : 'var(--bg-subtle)',
-              border: `1px solid ${email.status === 'pending_review' ? 'rgba(234,179,8,0.55)' : 'var(--border)'}`,
-              borderRadius: 8,
-              cursor: 'pointer',
-              transition: 'border-color 0.15s',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = email.status === 'pending_review' ? '#ca8a04' : 'var(--blue)')}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = email.status === 'pending_review' ? 'rgba(234,179,8,0.55)' : 'var(--border)')}
-          >
-            {/* Preview thumbnail */}
-            <div style={{
-              width: 52, height: 38, borderRadius: 4, overflow: 'hidden',
-              background: 'var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              {email.preview_image_url
-                ? <img src={email.preview_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <EnvelopeSimple size={18} style={{ color: 'var(--text-faint)' }} aria-hidden />}
-            </div>
-
-            {/* Main info */}
-            <div style={{ minWidth: 0 }}>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.85rem', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {email.title}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-faint)' }}>
-                {email.clients?.name ?? '—'}{email.goal ? ` · ${email.goal}` : ''}
-              </p>
-            </div>
-
-            {/* Date */}
-            <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
-              {relDate(email.sent_at ?? email.created_at)}
-            </p>
-
-            {/* Status */}
-            <StatusBadge status={email.status} />
-          </div>
-        ))}
-      </div>
 
       {/* Modals */}
       {showUpload && (

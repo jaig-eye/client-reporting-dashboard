@@ -1,8 +1,19 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+// Client → Billing: this client's Ad Fuel cut, its Stripe invoices and its Ad Fuel ledger.
+// The invoice and ledger rows are exported for the Overview tab, which shows the latest five of
+// each, so a line never looks different in the two places.
 
-interface Invoice {
+import '@/styles/admin/client-overview.css'
+import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import { ArrowSquareOut, Receipt, GasPump } from '@phosphor-icons/react'
+import Section from '@/components/ui/Section'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import Tile from '@/components/ui/Tile'
+import { Sk, SkTable } from '@/components/ui/Skeleton'
+
+export interface Invoice {
   id:          string
   number:      string | null
   date:        number
@@ -12,7 +23,7 @@ interface Invoice {
   hosted_url:  string | null
 }
 
-interface LedgerEntry {
+export interface LedgerEntry {
   id:              string
   date_of_payment: string | null
   invoice_date:    string | null
@@ -20,35 +31,118 @@ interface LedgerEntry {
   type:            string | null
   note:            string | null
   ach_status:      string | null
-  invoice_id:      string | null
+  invoice_id?:     string | null
   created_at:      string
 }
 
-function fmt$(n: number): string {
+// ─── formatting ───────────────────────────────────────────────────────────────
+
+/** Dollars and cents, unsigned. */
+export function fmtMoney(n: number): string {
   return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-function fmtDate(ts: number): string {
+/** A ledger amount with its sign. Debits used to show without a minus, told apart by colour only. */
+export function fmtSigned(n: number): string {
+  return (n >= 0 ? '+' : '−') + fmtMoney(n)
+}
+
+function fmtInvoiceDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function fmtShort(dateStr: string | null): string {
+function fmtDay(dateStr: string | null): string {
   if (!dateStr) return '—'
-  return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
-function StatusBadge({ status }: { status: string | null }) {
+function ledgerDay(e: LedgerEntry): string {
+  return fmtDay(e.date_of_payment ?? e.invoice_date ?? e.created_at.slice(0, 10))
+}
+
+const INVOICE_STATUS: Record<string, { label: string; tone: StatusTone }> = {
+  paid:          { label: 'Paid',          tone: 'success' },
+  open:          { label: 'Open',          tone: 'info' },
+  void:          { label: 'Void',          tone: 'neutral' },
+  draft:         { label: 'Draft',         tone: 'neutral' },
+  uncollectible: { label: 'Uncollectible', tone: 'danger' },
+}
+
+export function InvoiceStatus({ status }: { status: string | null }) {
   const s = status ?? ''
-  const style = s === 'paid' ? { bg: '#dcfce7', color: '#166534' }
-    : s === 'open'   ? { bg: '#dbeafe', color: '#1e40af' }
-    : s === 'void'   ? { bg: '#f3f4f6', color: '#6b7280' }
-    : { bg: '#fef3c7', color: '#92400e' }
+  const d = INVOICE_STATUS[s] ?? { label: s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown', tone: 'warning' as const }
+  return <StatusBadge tone={d.tone}>{d.label}</StatusBadge>
+}
+
+function AchStatus({ status }: { status: string | null }) {
+  if (status === 'pending') return <StatusBadge tone="warning">Pending</StatusBadge>
+  if (status) return <StatusBadge tone="success">Cleared</StatusBadge>
+  return null
+}
+
+// ─── rows (shared with the Overview tab) ─────────────────────────────────────
+
+export function InvoiceRow({ inv }: { inv: Invoice }) {
+  const title = inv.description || (inv.number ? `Invoice ${inv.number}` : 'Invoice')
   return (
-    <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: style.bg, color: style.color }}>
-      {s || 'unknown'}
-    </span>
+    <div className="ui-row co-money-row">
+      <Tile size="sm"><Receipt size={15} /></Tile>
+      <span className="ui-row-text">
+        <span className="ui-row-title"><span className="co-ellipsis">{title}</span></span>
+        <span className="ui-row-sub">
+          {fmtInvoiceDate(inv.date)}
+          {inv.number && inv.description && <span className="co-dot">{inv.number}</span>}
+        </span>
+      </span>
+      <span className="ui-row-actions">
+        <span className="ui-hide-sm"><InvoiceStatus status={inv.status} /></span>
+        <span className="co-amount">{fmtMoney(inv.amount)}</span>
+        {inv.hosted_url && (
+          <a href={inv.hosted_url} target="_blank" rel="noopener noreferrer" className="co-iconbtn" aria-label={`Open ${title} in Stripe (new tab)`} title="Open in Stripe">
+            <ArrowSquareOut size={15} aria-hidden />
+          </a>
+        )}
+      </span>
+    </div>
   )
 }
+
+/** showAch: the cleared/pending badge on every line (the Billing tab); otherwise only pending shows. */
+export function LedgerRow({ entry, showAch }: { entry: LedgerEntry; showAch?: boolean }) {
+  const pending = entry.ach_status === 'pending'
+  const credit  = entry.amount_af >= 0
+  return (
+    <div className="ui-row co-money-row">
+      <Tile size="sm" tone={credit ? 'green' : 'red'}><GasPump size={15} /></Tile>
+      <span className="ui-row-text">
+        <span className="ui-row-title">
+          <span className="co-ellipsis">{entry.note || entry.type || 'Ad Fuel entry'}</span>
+        </span>
+        <span className="ui-row-sub" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {ledgerDay(entry)}
+          {entry.type && <StatusBadge dot={false}>{entry.type}</StatusBadge>}
+          {showAch ? <AchStatus status={entry.ach_status} /> : pending && <StatusBadge tone="warning">Pending ACH</StatusBadge>}
+        </span>
+      </span>
+      <span className="ui-row-actions">
+        <span className={`co-amount ${credit ? 'co-pos' : 'co-neg'}${pending ? ' co-pending-amt' : ''}`}>{fmtSigned(entry.amount_af)}</span>
+      </span>
+    </div>
+  )
+}
+
+function SectionSk({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="card ui-section" aria-hidden>
+      <div className="ui-section-head">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}><Sk w={150} h={14} /><Sk w="55%" h={11} /></div>
+      </div>
+      <div className="ui-section-body">{children}</div>
+    </div>
+  )
+}
+
+// ─── tab ──────────────────────────────────────────────────────────────────────
 
 export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientId: string; adFuelCut: number | null; globalCut: number }) {
   const [loading,  setLoading]  = useState(true)
@@ -63,14 +157,15 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
 
   const load = useCallback(async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await fetch(`/api/admin/clients/${clientId}/billing`)
-      if (!res.ok) throw new Error('Failed to load billing data')
+      if (!res.ok) throw new Error('Billing couldn’t load.')
       const data = await res.json()
       setInvoices(data.invoices ?? [])
       setLedger(data.ledger ?? [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error loading billing data')
+      setError(err instanceof Error ? err.message : 'Billing couldn’t load.')
     } finally {
       setLoading(false)
     }
@@ -94,152 +189,157 @@ export default function BillingTab({ clientId, adFuelCut, globalCut }: { clientI
       setCutMsg('Saved')
       setTimeout(() => setCutMsg(''), 2000)
     } catch {
-      setCutMsg('Error saving')
+      setCutMsg('Couldn’t save')
     } finally {
       setCutSaving(false)
     }
   }
 
+  const globalPct = (globalCut * 100).toFixed(1)
+
   if (loading) {
-    return <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>Loading billing data…</p>
+    return (
+      <div className="ui-stack co-billing" aria-busy="true" aria-label="Loading billing">
+        <SectionSk><div style={{ display: 'flex', gap: 10 }}><Sk w={132} h={36} r={8} /><Sk w={90} h={32} r={6} /></div></SectionSk>
+        <SectionSk><SkTable rows={2} cols={5} /></SectionSk>
+        <SectionSk><SkTable rows={5} cols={5} /></SectionSk>
+      </div>
+    )
   }
 
   if (error) {
-    return <p style={{ color: 'var(--red)', fontSize: '0.875rem' }}>{error}</p>
+    return (
+      <div className="co-billing">
+        <div className="ui-notice ui-notice--danger" role="alert">
+          <span>{error}</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => load()}>Try again</button>
+        </div>
+      </div>
+    )
   }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: 900 }}>
+  const integrationsHref = `/admin/clients/${clientId}?tab=sources`
 
-      {/* Ad Fuel Cut config */}
-      <div className="card p-5">
-        <h2 className="section-title mb-1">Ad Fuel Cut</h2>
-        <p className="section-desc mb-3">Per-client margin override. Ad Fuel Spend = raw spend ÷ (1 − cut). Global default: {(globalCut * 100).toFixed(1)}%.</p>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
+  return (
+    <div className="ui-stack co-billing co-scope">
+
+      <Section
+        title="Ad Fuel cut"
+        description={<>This client’s margin. Ad Fuel spend = raw spend ÷ (1 − cut). Leave it blank to use the agency default of {globalPct}%.</>}
+      >
+        <div className="co-cut">
+          <label className="co-cut-input">
+            <span className="sr-only">Ad Fuel cut, percent</span>
             <input
               type="number" min="0" max="99" step="0.1"
               value={cutValue}
               onChange={e => setCutValue(e.target.value)}
-              placeholder={`${(globalCut * 100).toFixed(1)} (global)`}
+              placeholder={`${globalPct} (default)`}
               className="input"
-              style={{ width: 110 }}
             />
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>%</span>
-          </div>
-          <button onClick={() => saveCut()} disabled={cutSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
-            {cutSaving ? 'Saving…' : 'Save'}
+            <span aria-hidden>%</span>
+          </label>
+          <button type="button" onClick={() => saveCut()} disabled={cutSaving} className="btn btn-primary btn-sm">
+            {cutSaving ? 'Saving…' : 'Save cut'}
           </button>
           {cutValue !== '' && (
             <button
+              type="button"
               onClick={() => { setCutValue(''); saveCut(null) }}
-              className="btn btn-secondary"
-              style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
+              disabled={cutSaving}
+              className="btn btn-secondary btn-sm"
             >
-              Reset to global
+              Use agency default
             </button>
           )}
-          {cutMsg && <span style={{ fontSize: '0.75rem', color: cutMsg === 'Saved' ? 'var(--green)' : 'var(--red)' }}>{cutMsg}</span>}
+          <span role="status" className={`co-status ${cutMsg === 'Saved' ? 'co-status--ok' : 'co-status--err'}`}>{cutMsg}</span>
         </div>
-      </div>
+      </Section>
 
-      {/* Stripe invoices */}
-      <div className="card p-5">
-        <h2 className="section-title mb-3">Stripe Invoice History</h2>
+      <Section title="Stripe invoices" description="Every invoice on the client’s Stripe customer, newest first." flush>
         {invoices.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-            No Stripe invoices found. Set a Stripe Customer ID in Integrations to link billing.
+          <p className="co-empty">
+            No Stripe invoices. Add the client’s Stripe customer ID under <Link href={integrationsHref}>Integrations</Link> to link billing.
           </p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table w-full text-sm">
-              <thead>
-                <tr>
-                  <th className="text-left">Date</th>
-                  <th className="text-left">Invoice #</th>
-                  <th className="text-left">Description</th>
-                  <th className="text-right">Amount</th>
-                  <th className="text-center">Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map(inv => (
-                  <tr key={inv.id}>
-                    <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtDate(inv.date)}</td>
-                    <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{inv.number ?? '—'}</td>
-                    <td style={{ color: 'var(--text-primary)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {inv.description ?? '—'}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt$(inv.amount)}</td>
-                    <td style={{ textAlign: 'center' }}><StatusBadge status={inv.status} /></td>
-                    <td>
-                      {inv.hosted_url && (
-                        <a href={inv.hosted_url} target="_blank" rel="noopener noreferrer"
-                           className="text-xs" style={{ color: 'var(--blue)' }}>View →</a>
-                      )}
-                    </td>
+          <>
+            <div className="ui-scroll-x ui-hide-sm">
+              <table className="ui-table co-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Invoice</th>
+                    <th>Description</th>
+                    <th className="ui-r">Amount</th>
+                    <th>Status</th>
+                    <th aria-label="Link" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Ad Fuel ledger */}
-      <div className="card p-5">
-        <h2 className="section-title mb-3">Ad Fuel Ledger</h2>
-        {ledger.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No ledger entries yet.</p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table w-full text-sm">
-              <thead>
-                <tr>
-                  <th className="text-left">Date</th>
-                  <th className="text-left">Type</th>
-                  <th className="text-left">Note</th>
-                  <th className="text-right">Amount</th>
-                  <th className="text-center">ACH</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledger.map(entry => {
-                  const isPending = entry.ach_status === 'pending'
-                  return (
-                    <tr key={entry.id} style={{ opacity: isPending ? 0.5 : 1 }}>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
-                        {fmtShort(entry.date_of_payment ?? entry.invoice_date ?? entry.created_at.slice(0, 10))}
-                      </td>
-                      <td>
-                        {entry.type && (
-                          <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
-                            {entry.type}
-                          </span>
+                </thead>
+                <tbody>
+                  {invoices.map(inv => (
+                    <tr key={inv.id}>
+                      <td className="co-num">{fmtInvoiceDate(inv.date)}</td>
+                      <td className="co-num">{inv.number ?? '—'}</td>
+                      <td className="ui-strong co-table-desc" title={inv.description ?? undefined}>{inv.description ?? '—'}</td>
+                      <td className="ui-r ui-strong co-num">{fmtMoney(inv.amount)}</td>
+                      <td><InvoiceStatus status={inv.status} /></td>
+                      <td className="ui-r">
+                        {inv.hosted_url && (
+                          <a href={inv.hosted_url} target="_blank" rel="noopener noreferrer">
+                            View<ArrowSquareOut size={12} aria-label="opens in a new tab" />
+                          </a>
                         )}
                       </td>
-                      <td style={{ color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {entry.note ?? '—'}
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: entry.amount_af >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                        {entry.amount_af >= 0 ? '+' : ''}{fmt$(entry.amount_af)}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        {isPending ? (
-                          <span style={{ fontSize: '0.65rem', color: '#d97706', fontWeight: 600 }}>Pending</span>
-                        ) : entry.ach_status ? (
-                          <span style={{ fontSize: '0.65rem', color: 'var(--green)', fontWeight: 600 }}>Cleared</span>
-                        ) : null}
-                      </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="ui-only-sm">
+              {invoices.map(inv => <InvoiceRow key={inv.id} inv={inv} />)}
+            </div>
+          </>
         )}
-      </div>
+      </Section>
+
+      <Section title="Ad Fuel ledger" description="Payments in and charges out. Pending ACH payments count once they clear." flush>
+        {ledger.length === 0 ? (
+          <p className="co-empty">No ledger entries yet.</p>
+        ) : (
+          <>
+            <div className="ui-scroll-x ui-hide-sm">
+              <table className="ui-table co-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Note</th>
+                    <th className="ui-r">Amount</th>
+                    <th>ACH</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map(entry => {
+                    const isPending = entry.ach_status === 'pending'
+                    return (
+                      <tr key={entry.id} className={isPending ? 'co-pending' : undefined}>
+                        <td className="co-num">{ledgerDay(entry)}</td>
+                        <td>{entry.type ? <StatusBadge dot={false}>{entry.type}</StatusBadge> : '—'}</td>
+                        <td className="co-table-desc" title={entry.note ?? undefined}>{entry.note ?? '—'}</td>
+                        <td className={`ui-r co-num co-amount ${entry.amount_af >= 0 ? 'co-pos' : 'co-neg'}`}>{fmtSigned(entry.amount_af)}</td>
+                        <td className="co-keep"><AchStatus status={entry.ach_status} /></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="ui-only-sm">
+              {ledger.map(entry => <LedgerRow key={entry.id} entry={entry} showAch />)}
+            </div>
+          </>
+        )}
+      </Section>
     </div>
   )
 }

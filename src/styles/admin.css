@@ -169,6 +169,9 @@
 .adm .btn { border-radius: var(--radius); }
 .adm .btn:focus-visible { outline: none; box-shadow: var(--ring); }
 .adm .btn-sm { border-radius: var(--radius-sm); }
+@media (max-width: 639px) { .adm .btn-sm { min-height: 36px; } }
+/* The shared focus ring used --accent-subtle, a fixed light tint that turns white in dark mode. */
+.adm .input:focus, .adm .input:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
 .adm .btn-danger { border-color: var(--red-border); }
 .adm .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 16%, transparent); }
 .adm .badge { border-radius: var(--radius-pill); padding: 0.125rem 0.55rem; }
@@ -456,6 +459,10 @@
 .ui-section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ui-section-body { padding: 16px 20px 20px; }
 .ui-section--flush .ui-section-body { padding: 12px 0 0; }
+/* Rows and tables in a flush section line up with its 20px title. */
+.ui-section--flush .ui-row { padding-left: 20px; padding-right: 20px; }
+.ui-section--flush .ui-table th:first-child, .ui-section--flush .ui-table td:first-child { padding-left: 20px; }
+.ui-section--flush .ui-table th:last-child, .ui-section--flush .ui-table td:last-child { padding-right: 20px; }
 .ui-section--flush .ui-section-body > .ui-row:first-child { border-top: 1px solid var(--border-subtle); }
 @media (max-width: 639px) {
   .ui-section-head { padding: 16px 16px 0; }

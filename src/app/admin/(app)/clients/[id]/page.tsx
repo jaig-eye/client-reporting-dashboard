@@ -162,8 +162,6 @@ export default async function ClientDetailPage({
       .map(c => [c.connector.type, c] as [string, typeof c])
   )
   if (contentBcConn) connByType.set('bigcommerce', contentBcConn)
-  const dashUrl        = `${appUrl}/api/auth/access?token=${client.dashboard_token}`
-  const adsLibraryUrl  = appUrl ? `${appUrl}/share/ads?token=${client.dashboard_token}` : null
 
   function tabUrl(tab: string) {
     return `/admin/clients/${id}?tab=${tab}`
@@ -210,8 +208,6 @@ export default async function ClientDetailPage({
           agencyStaleDays={agencySettings?.contact_stale_days ?? 14}
           adminUsers={adminUsers}
           contacts={contacts}
-          dashUrl={dashUrl}
-          adsLibraryUrl={adsLibraryUrl}
         />
       )}
 

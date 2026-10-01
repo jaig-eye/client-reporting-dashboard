@@ -1,6 +1,10 @@
 'use client'
 
+// The client's logo: upload a file, paste an image URL, or remove it. Saves straight away (it
+// PATCHes logo_url itself), and tells the business-info form through onUpload.
+
 import { useRef, useState } from 'react'
+import { UploadSimple, Check } from '@phosphor-icons/react'
 
 export default function ClientLogoUpload({
   clientId,
@@ -70,30 +74,21 @@ export default function ClientLogoUpload({
   }
 
   return (
-    <div className="space-y-3">
-      {/* Preview */}
-      <div className="flex items-center gap-3">
-        {logoUrl ? (
-          <img src={logoUrl} alt="Client logo" className="h-12 max-w-[120px] object-contain rounded" style={{ border: '1px solid var(--border)' }} />
-        ) : (
-          <div
-            className="h-12 w-12 rounded-lg flex items-center justify-center text-xs font-medium flex-shrink-0"
-            style={{ background: 'var(--bg-subtle)', color: 'var(--text-faint)', border: '1px solid var(--border)' }}
-          >
-            No logo
-          </div>
-        )}
-
-        <div className="flex gap-2 flex-wrap">
+    <div className="co-logo">
+      <div className="co-logo-top">
+        <span className="co-logo-preview">
+          {logoUrl ? <img src={logoUrl} alt="Client logo" /> : 'No logo'}
+        </span>
+        <div className="co-actions">
           {/* File upload — uses ref-based trigger for reliable cross-browser support */}
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="btn btn-secondary"
-            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+            className="btn btn-secondary btn-sm"
           >
-            {uploading ? 'Uploading…' : logoUrl ? 'Replace' : 'Upload file'}
+            <UploadSimple size={14} aria-hidden />
+            {uploading ? 'Uploading…' : logoUrl ? 'Replace logo' : 'Upload logo'}
           </button>
           <input
             ref={fileRef}
@@ -103,47 +98,39 @@ export default function ClientLogoUpload({
             onChange={handleUpload}
           />
           {logoUrl && (
-            <button
-              type="button"
-              onClick={removeLogo}
-              className="btn btn-secondary"
-              style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-            >
+            <button type="button" onClick={removeLogo} className="btn btn-ghost btn-sm">
               Remove
             </button>
           )}
+          {saved && <span className="co-saved" role="status"><Check size={13} weight="bold" aria-hidden />Logo saved</span>}
         </div>
       </div>
 
       {/* URL paste alternative (works without Vercel Blob) */}
-      <div className="flex gap-2">
+      <div className="co-logo-url">
         <input
           type="url"
           value={urlInput}
           onChange={e => setUrlInput(e.target.value)}
-          placeholder="Or paste image URL…"
-          className="input flex-1"
-          style={{ fontSize: '0.8rem' }}
+          placeholder="Or paste an image URL"
+          aria-label="Logo image URL"
+          className="input"
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleSaveUrl() } }}
         />
         <button
           type="button"
           onClick={handleSaveUrl}
           disabled={!urlInput.trim()}
-          className="btn btn-secondary"
-          style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
+          className="btn btn-secondary btn-sm"
         >
-          Save URL
+          Use URL
         </button>
       </div>
 
-      {error && (
-        <div className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}>
-          {error}
-        </div>
-      )}
-      {saved && <p className="text-xs" style={{ color: 'var(--green)' }}>Logo saved ✓</p>}
-      <p className="text-xs" style={{ color: 'var(--text-faint)' }}>JPG, PNG, SVG — max 4 MB. File upload requires Vercel Blob (BLOB_READ_WRITE_TOKEN).</p>
+      {error && <div className="ui-notice ui-notice--danger" role="alert">{error}</div>}
+      <p className="co-hint" style={{ marginTop: 0 }}>
+        JPG, PNG or SVG, up to 4 MB. Uploading a file needs Vercel Blob (BLOB_READ_WRITE_TOKEN); a pasted URL always works.
+      </p>
     </div>
   )
 }

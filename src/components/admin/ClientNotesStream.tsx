@@ -1,7 +1,11 @@
 'use client'
 
+// Client → Overview → Notes: everything worth remembering about a client (calls, logins,
+// decisions), filterable by kind and searchable. A note opens in a dialog to read in full, edit,
+// pin or delete. Rendered as its own Section so the search and Add note sit in the section header.
+
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { PushPin, Trash, PencilSimple, X, MagnifyingGlass } from '@phosphor-icons/react'
+import { PushPin, Trash, PencilSimple, X, MagnifyingGlass, Plus } from '@phosphor-icons/react'
 import {
   NOTE_TEMPLATES,
   NOTE_TEMPLATE_LIST,
@@ -11,6 +15,9 @@ import {
 } from '@/lib/note-templates'
 import { NoteTemplateFields, NoteFieldsReadout, NoteCategoryChip } from './NoteTemplateFields'
 import { NoteSecretInput, NoteSecretReveal } from './NoteSecretField'
+import Section from '@/components/ui/Section'
+import { PillTabs } from '@/components/ui/PillTabs'
+import { Sk } from '@/components/ui/Skeleton'
 
 interface NoteUser {
   name:       string
@@ -53,17 +60,9 @@ function Avatar({ name, avatarUrl }: { name: string | null; avatarUrl: string | 
   const initials = name
     ? name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
     : '?'
-  if (avatarUrl) {
-    return <img src={avatarUrl} alt={name ?? ''} style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-  }
   return (
-    <span style={{
-      width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-      background: 'var(--blue)', color: '#fff',
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: '0.55rem', fontWeight: 700, lineHeight: 1,
-    }}>
-      {initials}
+    <span className="co-avatar co-avatar--sm" aria-hidden>
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : initials}
     </span>
   )
 }
@@ -73,6 +72,41 @@ function sortNotes(arr: Note[]): Note[] {
     if (a.pinned !== b.pinned) return b.pinned ? 1 : -1
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Dialog focus: move focus in on open, keep Tab inside, Escape calls onEscape, give focus back to
+ * whatever opened it on close, and stop the page scrolling underneath.
+ */
+function useDialogFocus(open: boolean, ref: React.RefObject<HTMLElement>, onEscape: () => void) {
+  const escRef = useRef(onEscape)
+  useEffect(() => { escRef.current = onEscape })
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement as HTMLElement | null
+    const root = ref.current
+    root?.focus()
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); escRef.current(); return }
+      if (e.key !== 'Tab' || !root) return
+      const f = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.getClientRects().length > 0)
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && (active === first || active === root)) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+      if (opener && document.contains(opener)) opener.focus()
+    }
+  }, [open, ref])
 }
 
 export default function ClientNotesStream({
@@ -299,320 +333,255 @@ export default function ClientNotesStream({
     })
   }, [notes, search, activeCatFilter])
 
-  // ── Shared styles ────────────────────────────────────────────────────────
-  const inp: React.CSSProperties = {
-    width: '100%', padding: '0.4rem 0.6rem', boxSizing: 'border-box',
-    background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text-primary)', fontFamily: 'inherit',
-  }
-
   const expandedTemplate = expanded ? templateFor(expanded.category) : null
 
+  const dialogRef = useRef<HTMLDivElement>(null)
+  function closeExpanded() { setExpanded(null); setEditing(false) }
+  // Escape steps back out of editing first, then closes.
+  useDialogFocus(!!expanded, dialogRef, () => {
+    if (editing) { setEditing(false); setSaveError(null) } else closeExpanded()
+  })
+
   return (
-    <div>
-      {/* Title row + search + add button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.6rem' }}>
-        <h2 className="section-title" style={{ flex: 1, margin: 0 }}>Notes</h2>
-        <div style={{ position: 'relative' }}>
-          <MagnifyingGlass size={12} style={{ position: 'absolute', left: 7, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }} aria-hidden />
+    <Section
+      title="Notes"
+      description="Calls, logins, decisions: anything worth remembering about this client."
+      actions={<>
+        <label className="co-search">
+          <MagnifyingGlass size={14} aria-hidden />
+          <span className="sr-only">Search notes</span>
           <input
             type="search"
+            className="input"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search..."
-            style={{ ...inp, paddingLeft: 24, width: 130, fontSize: '0.72rem' }}
+            placeholder="Search notes"
           />
-        </div>
+        </label>
         <button
+          type="button"
           onClick={() => { setAddingNote(v => !v); resetDraft(); setSaveError(null) }}
-          className="btn btn-secondary"
-          style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+          className="btn btn-secondary btn-sm"
+          aria-expanded={addingNote}
         >
-          + Add Note
+          <Plus size={14} weight="bold" aria-hidden />Add note
         </button>
-      </div>
+      </>}
+    >
+      <div className="co-notes-tools">
+        {/* Category filter — only categories this client actually has */}
+        {presentCategories.length > 1 && (
+          <PillTabs
+            label="Filter notes by kind"
+            activeId={activeCatFilter}
+            onSelect={id => setCatFilter(id !== 'all' && isNoteCategory(id) ? id : 'all')}
+            items={[
+              { id: 'all', label: 'All', count: notes.length },
+              ...presentCategories.map(({ template: t, count }) => ({ id: t.key, label: t.label, count })),
+            ]}
+          />
+        )}
 
-      {/* Category filter chips — only categories this client actually has */}
-      {presentCategories.length > 1 && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: '0.6rem' }}>
-          <button
-            onClick={() => setCatFilter('all')}
-            style={{
-              padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
-              fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
-              background: activeCatFilter === 'all' ? 'var(--text-primary)' : 'transparent',
-              color:      activeCatFilter === 'all' ? 'var(--bg-surface)' : 'var(--text-muted)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            All {notes.length}
-          </button>
-          {presentCategories.map(({ template: t, count }) => {
-            const on = activeCatFilter === t.key
-            return (
-              <button
-                key={t.key}
-                onClick={() => setCatFilter(on ? 'all' : t.key)}
-                style={{
-                  padding: '0.1rem 0.45rem', borderRadius: 999, cursor: 'pointer',
-                  fontSize: '0.63rem', fontWeight: 600, lineHeight: 1.5,
-                  background: on ? t.color : `${t.color}14`,
-                  color:      on ? '#fff' : t.color,
-                  border: `1px solid ${t.color}${on ? '' : '40'}`,
+        {/* Add note form */}
+        {addingNote && (
+          <div className="co-subform">
+            <div>
+              <label className="co-label" htmlFor={`note-kind-${clientId}`}>Kind of note</label>
+              <select
+                id={`note-kind-${clientId}`}
+                className="input"
+                value={draftCategory}
+                onChange={e => {
+                  const next = e.target.value as NoteCategory
+                  setDraftCategory(next)
+                  setDraftFields({})   // answers belong to the template that declared them
                 }}
               >
-                {t.label} {count}
+                {NOTE_TEMPLATE_LIST.map(t => (
+                  <option key={t.key} value={t.key}>{t.label}</option>
+                ))}
+              </select>
+              <p className="co-hint">{draftTemplate.hint}</p>
+            </div>
+
+            <NoteTemplateFields
+              template={draftTemplate}
+              values={draftFields}
+              onChange={(k, v) => setDraftFields(prev => ({ ...prev, [k]: v }))}
+            />
+
+            {draftTemplate.hasSecret && (
+              <NoteSecretInput
+                hasSecret={false}
+                value={draftSecret}
+                onChange={setDraftSecret}
+              />
+            )}
+
+            <input
+              className="input"
+              value={draftTitle}
+              onChange={e => setDraftTitle(e.target.value)}
+              placeholder="Title (optional)"
+              aria-label="Title"
+            />
+            <textarea
+              ref={textareaRef}
+              className="input"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void addNote() }
+              }}
+              placeholder={`${draftTemplate.bodyLabel}…`}
+              aria-label={draftTemplate.bodyLabel}
+              rows={3}
+              autoFocus
+              style={{ resize: 'vertical' }}
+            />
+            {saveError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{saveError}</div>}
+
+            <div className="co-actions co-actions--end">
+              {draftTemplate.stampsContact && (
+                <span className="co-hint" style={{ margin: '0 auto 0 0' }}>Saving this updates Last contacted</span>
+              )}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAddingNote(false); resetDraft() }}>
+                Cancel
               </button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void addNote()} disabled={!canSaveDraft || saving}>
+                {saving ? 'Saving…' : 'Save note'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Notes list */}
+      {loading ? (
+        <div className="co-notes-sk" aria-busy="true" aria-label="Loading notes">
+          <Sk h={62} /><Sk h={62} />
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className="co-hint" style={{ margin: 0 }}>
+          {search.trim() || activeCatFilter !== 'all' ? 'No notes match this filter.' : 'No notes yet.'}
+        </p>
+      ) : (
+        <div className="co-notes">
+          {filtered.map(note => {
+            const t = templateFor(note.category)
+            const fieldCount = Object.values(note.fields ?? {}).filter(v => String(v).trim() !== '').length
+            const tinted = note.category !== 'general'
+            return (
+              <div
+                key={note.id}
+                className={`co-note${note.pinned ? ' co-note--pinned' : ''}`}
+                data-cat={tinted ? note.category : undefined}
+                style={tinted ? { ['--cat' as string]: t.color } : undefined}
+                onClick={() => openNote(note)}
+              >
+                <Avatar name={note.users?.name ?? null} avatarUrl={note.users?.avatar_url ?? null} />
+                {/* The card opens on a click anywhere; this button is its keyboard and screen-reader handle. */}
+                <button type="button" className="co-note-open">
+                  {note.title && <span className="co-note-title">{note.title}</span>}
+                  {note.content
+                    ? <span className="co-note-body">{note.content}</span>
+                    : fieldCount > 0 && <span className="co-note-fields">{fieldCount} field{fieldCount === 1 ? '' : 's'} filled in</span>}
+                  <span className="co-note-meta">
+                    {tinted && <NoteCategoryChip template={t} />}
+                    <span>{note.users?.name ?? 'Admin'}, {relativeTime(note.created_at)}</span>
+                    {note.updated_at && <span>· edited by {note.editor?.name ?? 'Admin'} {relativeTime(note.updated_at)}</span>}
+                    {note.pinned && <span className="co-warn">· pinned</span>}
+                  </span>
+                </button>
+                <div className="co-note-actions" onClick={e => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="co-iconbtn"
+                    onClick={() => void togglePin(note)}
+                    aria-pressed={note.pinned}
+                    aria-label={note.pinned ? 'Unpin note' : 'Pin note to the top'}
+                    title={note.pinned ? 'Unpin' : 'Pin to the top'}
+                  >
+                    <PushPin size={15} weight={note.pinned ? 'fill' : 'regular'} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="co-iconbtn co-iconbtn--danger"
+                    onClick={() => void deleteNote(note.id)}
+                    aria-label="Delete note"
+                    title="Delete note"
+                  >
+                    <Trash size={15} aria-hidden />
+                  </button>
+                </div>
+              </div>
             )
           })}
         </div>
       )}
 
-      {/* Add note form */}
-      {addingNote && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: '0.75rem' }}>
-          {/* Category picker */}
-          <div>
-            <select
-              value={draftCategory}
-              onChange={e => {
-                const next = e.target.value as NoteCategory
-                setDraftCategory(next)
-                setDraftFields({})   // answers belong to the template that declared them
-              }}
-              style={{ ...inp, fontSize: '0.78rem', cursor: 'pointer' }}
-            >
-              {NOTE_TEMPLATE_LIST.map(t => (
-                <option key={t.key} value={t.key}>{t.label}</option>
-              ))}
-            </select>
-            <p style={{ margin: '3px 0 0', fontSize: '0.63rem', color: 'var(--text-faint)' }}>
-              {draftTemplate.hint}
-            </p>
-          </div>
-
-          <NoteTemplateFields
-            template={draftTemplate}
-            values={draftFields}
-            onChange={(k, v) => setDraftFields(prev => ({ ...prev, [k]: v }))}
-          />
-
-          {draftTemplate.hasSecret && (
-            <NoteSecretInput
-              hasSecret={false}
-              value={draftSecret}
-              onChange={setDraftSecret}
-            />
-          )}
-
-          <input
-            value={draftTitle}
-            onChange={e => setDraftTitle(e.target.value)}
-            placeholder="Title (optional)"
-            style={{ ...inp, fontSize: '0.78rem' }}
-          />
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void addNote() }
-            }}
-            placeholder={`${draftTemplate.bodyLabel}...`}
-            rows={2}
-            autoFocus
-            style={{ ...inp, resize: 'vertical' }}
-          />
-          {saveError && (
-            <div style={{
-              padding: '6px 9px', borderRadius: 5,
-              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
-              fontSize: '0.7rem', color: 'var(--red)', lineHeight: 1.5,
-            }}>
-              {saveError}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-            {draftTemplate.stampsContact && (
-              <span style={{ marginRight: 'auto', fontSize: '0.63rem', color: 'var(--text-faint)' }}>
-                Updates Last contacted
-              </span>
-            )}
-            <button
-              onClick={() => { setAddingNote(false); resetDraft() }}
-              style={{ padding: '0.25rem 0.6rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => void addNote()}
-              disabled={!canSaveDraft || saving}
-              style={{
-                padding: '0.25rem 0.75rem',
-                background: 'var(--blue)', color: '#fff', border: 'none',
-                borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-                opacity: !canSaveDraft || saving ? 0.5 : 1,
-              }}
-            >
-              {saving ? 'Saving...' : 'Save Note'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Notes list */}
-      {loading && <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>Loading...</p>}
-      {!loading && filtered.length === 0 && (
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          {search.trim() || activeCatFilter !== 'all' ? 'No notes match this filter.' : 'No notes yet.'}
-        </p>
-      )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: '14.5rem', overflowY: 'auto', paddingRight: 2 }}>
-        {filtered.map(note => {
-          const t = templateFor(note.category)
-          const fieldCount = Object.values(note.fields ?? {}).filter(v => String(v).trim() !== '').length
-          return (
-            <div
-              key={note.id}
-              onClick={() => openNote(note)}
-              style={{
-                padding: '0.5rem 0.625rem',
-                background: note.pinned ? 'var(--yellow-subtle, rgba(234,179,8,0.08))' : 'var(--bg-subtle)',
-                border: `1px solid ${note.pinned ? 'rgba(234,179,8,0.25)' : 'var(--border)'}`,
-                borderLeft: note.category !== 'general' ? `2px solid ${t.color}` : undefined,
-                borderRadius: 6,
-                cursor: 'pointer',
-              }}
-            >
-              {/* Note header */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
-                <Avatar name={note.users?.name ?? null} avatarUrl={note.users?.avatar_url ?? null} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {note.title && (
-                    <p style={{ margin: 0, fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {note.title}
-                    </p>
-                  )}
-                  {note.content
-                    ? (
-                      <p style={{
-                        margin: 0, fontSize: '0.78rem', color: 'var(--text-primary)',
-                        overflow: 'hidden',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}>
-                        {note.content}
-                      </p>
-                    )
-                    : fieldCount > 0 && (
-                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-faint)', fontStyle: 'italic' }}>
-                        {fieldCount} field{fieldCount === 1 ? '' : 's'} filled in
-                      </p>
-                    )}
-                </div>
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: 1, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                  <button onClick={() => void togglePin(note)} title={note.pinned ? 'Unpin' : 'Pin'}
-                    style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: note.pinned ? 'var(--yellow, #ca8a04)' : 'var(--text-faint)', borderRadius: 4 }}>
-                    <PushPin size={11} weight={note.pinned ? 'fill' : 'regular'} aria-hidden />
-                  </button>
-                  <button onClick={() => void deleteNote(note.id)} title="Delete"
-                    style={{ padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', borderRadius: 4 }}>
-                    <Trash size={11} aria-hidden />
-                  </button>
-                </div>
-              </div>
-
-              {/* Meta line */}
-              <div style={{ fontSize: '0.62rem', color: 'var(--text-faint)', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                {note.category !== 'general' && <NoteCategoryChip template={t} />}
-                <span>{note.users?.name ?? 'Admin'} · {relativeTime(note.created_at)}</span>
-                {note.updated_at && (
-                  <span>· Edited by {note.editor?.name ?? 'Admin'} {relativeTime(note.updated_at)}</span>
-                )}
-                {note.pinned && <span style={{ color: 'var(--yellow, #ca8a04)' }}>· pinned</span>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Expanded note popup */}
+      {/* Expanded note */}
       {expanded && expandedTemplate && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1100,
-            background: 'rgba(0,0,0,0.55)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '1rem',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) { setExpanded(null); setEditing(false) } }}
-        >
-          <div style={{
-            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
-            width: '100%', maxWidth: 520, maxHeight: '80vh',
-            display: 'flex', flexDirection: 'column',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-          }}>
-            {/* Popup header */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ marginBottom: 4 }}>
-                  <NoteCategoryChip template={expandedTemplate} size="md" />
-                </div>
+        <div className="co-scrim" onClick={e => { if (e.target === e.currentTarget) closeExpanded() }}>
+          <div
+            ref={dialogRef}
+            className="co-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={expanded.title ?? `${expandedTemplate.label} note`}
+            tabIndex={-1}
+          >
+            <div className="co-dialog-head">
+              <div className="co-dialog-head-text">
+                <NoteCategoryChip template={expandedTemplate} size="md" />
                 {editing ? (
                   <input
+                    className="input"
                     value={editTitle}
                     onChange={e => setEditTitle(e.target.value)}
                     placeholder="Title (optional)"
-                    style={{
-                      width: '100%', background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-                      borderRadius: 5, padding: '0.3rem 0.5rem', fontSize: '0.9rem', fontWeight: 600,
-                      color: 'var(--text-primary)', fontFamily: 'inherit', boxSizing: 'border-box',
-                    }}
+                    aria-label="Title"
+                    style={{ fontWeight: 600 }}
                   />
                 ) : (
-                  <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>
-                    {expanded.title ?? '(no title)'}
-                  </p>
+                  <h2 className={`co-dialog-title${expanded.title ? '' : ' co-dialog-title--empty'}`}>
+                    {expanded.title ?? 'Untitled note'}
+                  </h2>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+              <div className="co-dialog-tools">
                 {!editing && (
-                  <button onClick={startEdit} title="Edit note"
-                    style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 5 }}>
-                    <PencilSimple size={15} aria-hidden />
+                  <button type="button" className="co-iconbtn" onClick={startEdit} aria-label="Edit note" title="Edit note">
+                    <PencilSimple size={16} aria-hidden />
                   </button>
                 )}
-                <button onClick={() => void togglePin(expanded)} title={expanded.pinned ? 'Unpin' : 'Pin'}
-                  style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: expanded.pinned ? 'var(--yellow, #ca8a04)' : 'var(--text-muted)', borderRadius: 5 }}>
-                  <PushPin size={15} weight={expanded.pinned ? 'fill' : 'regular'} aria-hidden />
+                <button
+                  type="button"
+                  className="co-iconbtn"
+                  onClick={() => void togglePin(expanded)}
+                  aria-pressed={expanded.pinned}
+                  aria-label={expanded.pinned ? 'Unpin note' : 'Pin note to the top'}
+                  title={expanded.pinned ? 'Unpin' : 'Pin to the top'}
+                >
+                  <PushPin size={16} weight={expanded.pinned ? 'fill' : 'regular'} aria-hidden />
                 </button>
-                <button onClick={() => { setExpanded(null); setEditing(false) }} title="Close"
-                  style={{ padding: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 5 }}>
-                  <X size={15} aria-hidden />
+                <button type="button" className="co-iconbtn" onClick={closeExpanded} aria-label="Close" title="Close">
+                  <X size={16} aria-hidden />
                 </button>
               </div>
             </div>
 
-            {/* Popup body */}
-            <div style={{ flex: 1, overflow: 'auto', padding: '0.875rem 1rem' }}>
+            <div className="co-dialog-body">
               {editing ? (
                 <>
-                  <div style={{ marginBottom: 8 }}>
-                    <NoteTemplateFields
-                      template={expandedTemplate}
-                      values={editFields}
-                      onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
-                    />
-                  </div>
+                  <NoteTemplateFields
+                    template={expandedTemplate}
+                    values={editFields}
+                    onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
+                  />
 
                   {expandedTemplate.hasSecret && (
-                    <div style={{ marginBottom: 8 }}>
+                    <div>
                       <NoteSecretInput
                         hasSecret={!!expanded.has_secret && !editSecretClear}
                         value={editSecret}
@@ -620,22 +589,16 @@ export default function ClientNotesStream({
                         onClear={() => { setEditSecret(''); setEditSecretClear(true) }}
                       />
                       {editSecretClear && (
-                        <p style={{ fontSize: '0.66rem', color: 'var(--red)', margin: '4px 0 0' }}>
-                          The stored password will be removed when you save.
-                        </p>
+                        <p className="co-hint co-neg">The stored password will be removed when you save.</p>
                       )}
                     </div>
                   )}
                   <textarea
+                    className="input"
                     value={editContent}
                     onChange={e => setEditContent(e.target.value)}
+                    aria-label={expandedTemplate.bodyLabel}
                     rows={8}
-                    style={{
-                      width: '100%', resize: 'vertical', background: 'var(--bg-subtle)',
-                      border: '1px solid var(--border)', borderRadius: 6,
-                      padding: '0.5rem 0.625rem', fontSize: '0.85rem', color: 'var(--text-primary)',
-                      fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: 1.6,
-                    }}
                   />
                 </>
               ) : (
@@ -648,60 +611,35 @@ export default function ClientNotesStream({
                     hasSecret={!!expanded.has_secret}
                   />
                   <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
-                  {expanded.content && (
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>
-                      {expanded.content}
-                    </p>
-                  )}
+                  {expanded.content && <p className="co-dialog-content">{expanded.content}</p>}
                 </>
               )}
             </div>
 
-            {/* Popup footer */}
-            <div style={{ padding: '0.625rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ fontSize: '0.67rem', color: 'var(--text-faint)', minWidth: 0 }}>
-                <span>Posted by {expanded.users?.name ?? 'Admin'} · {relativeTime(expanded.created_at)}</span>
-                {expanded.updated_at && (
-                  <span> · Edited by {expanded.editor?.name ?? 'Admin'} {relativeTime(expanded.updated_at)}</span>
-                )}
-              </div>
+            <div className="co-dialog-foot">
+              {editing && saveError && <div className="ui-notice ui-notice--danger" role="alert">{saveError}</div>}
+              <span className="co-dialog-meta">
+                Posted by {expanded.users?.name ?? 'Admin'}, {relativeTime(expanded.created_at)}
+                {expanded.updated_at && <> · edited by {expanded.editor?.name ?? 'Admin'} {relativeTime(expanded.updated_at)}</>}
+              </span>
               {editing ? (
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-                  {saveError && (
-                    <span style={{
-                      padding: '4px 8px', borderRadius: 5, maxWidth: 280,
-                      background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
-                      fontSize: '0.66rem', color: 'var(--red)', lineHeight: 1.4,
-                    }}>
-                      {saveError}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => { setEditing(false); setSaveError(null) }}
-                    style={{ padding: '0.3rem 0.7rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)' }}
-                  >
+                <div className="co-actions">
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEditing(false); setSaveError(null) }}>
                     Cancel
                   </button>
-                  <button
-                    onClick={() => void saveEdit(expanded)}
-                    disabled={editSaving}
-                    style={{ padding: '0.3rem 0.7rem', background: 'var(--blue)', color: '#fff', border: 'none', borderRadius: 5, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', opacity: editSaving ? 0.6 : 1 }}
-                  >
-                    {editSaving ? 'Saving...' : 'Save'}
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveEdit(expanded)} disabled={editSaving}>
+                    {editSaving ? 'Saving…' : 'Save changes'}
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => void deleteNote(expanded.id)}
-                  style={{ padding: '0.3rem 0.6rem', background: 'none', border: '1px solid var(--border)', borderRadius: 5, fontSize: '0.72rem', cursor: 'pointer', color: 'var(--red)', flexShrink: 0 }}
-                >
-                  Delete
+                <button type="button" className="btn btn-ghost btn-sm co-danger-text" onClick={() => void deleteNote(expanded.id)}>
+                  <Trash size={14} aria-hidden />Delete note
                 </button>
               )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </Section>
   )
 }

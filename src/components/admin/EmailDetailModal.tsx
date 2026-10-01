@@ -1,7 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, FloppyDisk, UserCircle } from '@phosphor-icons/react'
+// One email campaign, in a sheet from the right: the preview on the left; details, performance,
+// review and delete on the right. Under 900px the two columns stack and the sheet scrolls as one.
+// Also home to the pieces the other email files share: the status badge, the date format and
+// the dialog focus hook.
+
+import '@/styles/admin/emails.css'
+import { useState, useEffect, useRef } from 'react'
+import { X, CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, EnvelopeSimple } from '@phosphor-icons/react'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 
 interface EmailCampaign {
   id:                string
@@ -39,21 +46,73 @@ interface Props {
   onDeleted:  () => void
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  pending_review: 'var(--yellow, #ca8a04)',
-  approved:       'var(--green)',
-  rejected:       'var(--red)',
-  draft:          'var(--text-faint)',
+// ─── shared pieces ────────────────────────────────────────────────────────────
+
+const STATUS_META: Record<EmailCampaign['status'], { label: string; tone: StatusTone }> = {
+  pending_review: { label: 'Pending review', tone: 'warning' },
+  approved:       { label: 'Approved',       tone: 'success' },
+  rejected:       { label: 'Rejected',       tone: 'danger' },
+  draft:          { label: 'Draft',          tone: 'neutral' },
+}
+
+export function EmailStatusBadge({ status }: { status: EmailCampaign['status'] }) {
+  const m = STATUS_META[status] ?? { label: status, tone: 'neutral' as const }
+  return <StatusBadge tone={m.tone}>{m.label}</StatusBadge>
+}
+
+/**
+ * "Sep 20, 2026". A date-only value (sent_at is a plain date) is read as that calendar day: parsed
+ * as UTC midnight and shown in local time, it used to come out a day early anywhere west of UTC.
+ */
+export function fmtEmailDate(iso: string | null): string {
+  if (!iso) return '—'
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso)
+  return new Date(dateOnly ? `${iso}T00:00:00Z` : iso).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', ...(dateOnly ? { timeZone: 'UTC' } : {}),
+  })
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Dialog focus: focus moves into the dialog (the [data-autofocus] element, or the dialog itself),
+ * Tab stays inside, Escape calls onEscape, focus returns to whatever opened it on close, and the
+ * page behind stops scrolling.
+ */
+export function useDialogFocus(ref: React.RefObject<HTMLElement>, onEscape: () => void) {
+  const escRef = useRef(onEscape)
+  useEffect(() => { escRef.current = onEscape })
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    const root = ref.current
+    const first = root?.querySelector<HTMLElement>('[data-autofocus]') ?? root
+    first?.focus()
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); escRef.current(); return }
+      if (e.key !== 'Tab' || !root) return
+      const f = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.getClientRects().length > 0)
+      if (!f.length) return
+      const firstEl = f[0], last = f[f.length - 1]
+      const active = document.activeElement
+      if (e.shiftKey && (active === firstEl || active === root)) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); firstEl.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+      if (opener && document.contains(opener)) opener.focus()
+    }
+  }, [ref])
 }
 
 function fmt(n: number | null, suffix = ''): string {
   return n != null ? `${n}${suffix}` : '—'
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
+// ─── the sheet ────────────────────────────────────────────────────────────────
 
 export default function EmailDetailModal({ email: initial, onClose, onUpdated, onDeleted }: Props) {
   const [email,         setEmail]         = useState(initial)
@@ -87,7 +146,7 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
       setEmail(updated)
       onUpdated(updated)
     } catch {
-      setError('Failed to reassign.')
+      setError('Couldn’t reassign the email. Try again.')
     } finally {
       setAssignSaving(false)
     }
@@ -101,9 +160,17 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
   const [revenue,      setRevenue]        = useState(email.revenue?.toString() ?? '')
   const [savingStats,  setSavingStats]    = useState(false)
 
+  const sheetRef = useRef<HTMLDivElement>(null)
+  // Escape backs out of a pending delete or a stats edit before it closes the sheet.
+  useDialogFocus(sheetRef, () => {
+    if (confirmDelete) setConfirmDelete(false)
+    else if (editingStats) setEditingStats(false)
+    else onClose()
+  })
+
   async function review(action: 'approve' | 'reject') {
     if (action === 'reject' && !reviewNotes.trim()) {
-      setError('Add review notes before rejecting.')
+      setError('Add a note saying what to change before rejecting.')
       return
     }
     setReviewing(true)
@@ -120,7 +187,7 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
       setEmail(merged)
       onUpdated(merged)
     } catch {
-      setError('Review action failed.')
+      setError('The review didn’t go through. Try again.')
     } finally {
       setReviewing(false)
     }
@@ -145,7 +212,7 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
       onUpdated(updated)
       setEditingStats(false)
     } catch {
-      setError('Failed to save stats.')
+      setError('Couldn’t save the performance numbers. Try again.')
     } finally {
       setSavingStats(false)
     }
@@ -157,255 +224,189 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
     onDeleted()
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '0.35rem 0.5rem', boxSizing: 'border-box',
-    background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 5, fontSize: '0.78rem', color: 'var(--text)', fontFamily: 'inherit',
-  }
+  const meta = [
+    email.clients?.name ?? '—',
+    email.sent_at ? `sent ${fmtEmailDate(email.sent_at)}` : null,
+    email.submitter ? `uploaded by ${email.submitter.name}` : null,
+  ].filter(Boolean).join(', ')
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'stretch',
-    }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{
-        marginLeft: 'auto', width: '100%', maxWidth: 900,
-        background: 'var(--bg-surface)', borderLeft: '1px solid var(--border)',
-        display: 'flex', flexDirection: 'column', overflowY: 'auto',
-      }}>
+    <div className="em-scrim" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div ref={sheetRef} className="em-sheet em-scope" role="dialog" aria-modal="true" aria-labelledby="em-detail-title" tabIndex={-1}>
         {/* Header */}
-        <div style={{
-          display: 'flex', alignItems: 'flex-start', gap: 12,
-          padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', flexShrink: 0,
-        }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{
-                fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px',
-                borderRadius: 999, background: 'transparent',
-                border: `1px solid ${STATUS_COLORS[email.status]}`,
-                color: STATUS_COLORS[email.status],
-              }}>
-                {email.status.replace('_', ' ').toUpperCase()}
-              </span>
+        <div className="em-head">
+          <div className="em-head-text">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+              <EmailStatusBadge status={email.status} />
               {email.reviewed_at && (
-                <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>
-                  Reviewed by {email.reviewer?.name ?? 'Admin'} · {fmtDate(email.reviewed_at)}
+                <span className="em-reviewed">
+                  Reviewed by {email.reviewer?.name ?? 'an admin'}, {fmtEmailDate(email.reviewed_at)}
                 </span>
               )}
             </div>
-            <h2 style={{ margin: '4px 0 2px', fontSize: '1.05rem', fontWeight: 700 }}>{email.title}</h2>
-            <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-              {email.clients?.name ?? '—'}
-              {email.sent_at ? ` · Sent ${fmtDate(email.sent_at)}` : ''}
-              {email.submitter ? ` · Uploaded by ${email.submitter.name}` : ''}
-            </p>
+            <h2 className="em-title" id="em-detail-title">{email.title}</h2>
+            <p className="em-sub">{meta}</p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, flexShrink: 0 }}>
+          <button type="button" className="em-iconbtn" onClick={onClose} aria-label="Close" title="Close">
             <X size={18} aria-hidden />
           </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', flex: 1, minHeight: 0 }}>
-          {/* Left — preview */}
-          <div style={{ padding: '1.25rem', borderRight: '1px solid var(--border)', overflowY: 'auto' }}>
+        <div className="em-detail">
+          {/* Preview */}
+          <div className="em-preview">
             {email.preview_image_url && (
-              <img
-                src={email.preview_image_url}
-                alt="Email preview"
-                style={{ width: '100%', borderRadius: 6, border: '1px solid var(--border)', display: 'block' }}
-              />
+              <img src={email.preview_image_url} alt={`Preview of ${email.title}`} />
             )}
             {!email.preview_image_url && email.html_content && (
-              <iframe
-                srcDoc={email.html_content}
-                sandbox=""
-                style={{ width: '100%', height: 600, border: '1px solid var(--border)', borderRadius: 6 }}
-                title="Email HTML preview"
-              />
+              <iframe srcDoc={email.html_content} sandbox="" className="em-frame" title="Email HTML preview" />
             )}
             {!email.preview_image_url && !email.html_content && email.preview_url && (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-faint)' }}>
-                <a href={email.preview_url} target="_blank" rel="noopener noreferrer"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--blue)', fontSize: '0.85rem', fontWeight: 600 }}>
-                  <ArrowSquareOut size={16} /> Open external preview
+              <div className="em-preview-empty">
+                <EnvelopeSimple size={28} aria-hidden />
+                <a href={email.preview_url} target="_blank" rel="noopener noreferrer">
+                  Open the external preview<ArrowSquareOut size={14} aria-label="opens in a new tab" />
                 </a>
               </div>
             )}
             {!email.preview_image_url && !email.html_content && !email.preview_url && (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-faint)', fontSize: '0.8rem' }}>
-                No preview available.
+              <div className="em-preview-empty">
+                <EnvelopeSimple size={28} aria-hidden />
+                No preview yet. Add an image, HTML or a preview link when uploading.
               </div>
             )}
           </div>
 
-          {/* Right — metadata + review */}
-          <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto' }}>
-            {/* Details */}
-            <div>
-              <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 8px' }}>Details</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* Details, performance, review */}
+          <div className="em-side">
+            <section>
+              <h3 className="em-group-title" style={{ marginBottom: 10 }}>Details</h3>
+              <dl className="em-meta">
                 {email.subject_line && (
-                  <div>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>Subject line</span>
-                    <p style={{ margin: 0, fontSize: '0.8rem', fontStyle: 'italic' }}>&ldquo;{email.subject_line}&rdquo;</p>
-                  </div>
+                  <div><dt>Subject line</dt><dd>&ldquo;{email.subject_line}&rdquo;</dd></div>
                 )}
                 {email.goal && (
-                  <div>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>Goal</span>
-                    <p style={{ margin: 0, fontSize: '0.8rem' }}>{email.goal}</p>
-                  </div>
+                  <div><dt>Goal</dt><dd>{email.goal}</dd></div>
                 )}
                 {email.utm_campaign && (
-                  <div>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>UTM Campaign</span>
-                    <p style={{ margin: 0, fontSize: '0.78rem', fontFamily: 'monospace' }}>{email.utm_campaign}</p>
-                  </div>
+                  <div><dt>UTM campaign</dt><dd className="em-mono">{email.utm_campaign}</dd></div>
                 )}
                 <div>
-                  <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                    <UserCircle size={11} aria-hidden /> Assigned to
-                  </span>
-                  <select
-                    value={email.assigned_to ?? ''}
-                    onChange={e => void reassign(e.target.value || null)}
-                    disabled={assignSaving}
-                    style={{
-                      width: '100%', padding: '0.3rem 0.5rem', borderRadius: 5,
-                      border: '1px solid var(--border)', background: 'var(--bg-subtle)',
-                      fontSize: '0.78rem', color: 'var(--text)', fontFamily: 'inherit',
-                    }}
-                  >
-                    <option value="">Unassigned</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  <dt><label htmlFor="em-assignee">Assigned to</label></dt>
+                  <dd style={{ marginTop: 4 }}>
+                    <select
+                      id="em-assignee"
+                      className="input"
+                      value={email.assigned_to ?? ''}
+                      onChange={e => void reassign(e.target.value || null)}
+                      disabled={assignSaving}
+                      style={{ fontSize: '0.8125rem' }}
+                    >
+                      <option value="">Unassigned</option>
+                      {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                  </dd>
                 </div>
-              </div>
-            </div>
+              </dl>
+            </section>
 
             {/* Performance stats */}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: 0 }}>Performance</p>
-                <button
-                  onClick={() => setEditingStats(!editingStats)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 2 }}
-                >
-                  <PencilSimple size={13} aria-hidden />
-                </button>
+            <section>
+              <div className="em-group-head">
+                <h3 className="em-group-title">Performance</h3>
+                {!editingStats && (
+                  <button type="button" className="em-linkbtn" onClick={() => setEditingStats(true)}>
+                    <PencilSimple size={13} aria-hidden />Edit
+                  </button>
+                )}
               </div>
               {editingStats ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div className="em-form" style={{ gap: 12 }}>
+                  <div className="em-stats">
                     {[
-                      { label: 'Open Rate (%)', val: openRate,    set: setOpenRate,    type: 'number' },
-                      { label: 'Click Rate (%)', val: clickRate,   set: setClickRate,   type: 'number' },
-                      { label: 'Conversions',    val: conversions, set: setConversions, type: 'number' },
-                      { label: 'Revenue ($)',    val: revenue,     set: setRevenue,     type: 'number' },
+                      { id: 'open',  label: 'Open rate (%)',  val: openRate,    set: setOpenRate },
+                      { id: 'click', label: 'Click rate (%)', val: clickRate,   set: setClickRate },
+                      { id: 'conv',  label: 'Conversions',    val: conversions, set: setConversions },
+                      { id: 'rev',   label: 'Revenue ($)',    val: revenue,     set: setRevenue },
                     ].map(f => (
-                      <div key={f.label}>
-                        <label style={{ fontSize: '0.62rem', color: 'var(--text-faint)', display: 'block', marginBottom: 2 }}>{f.label}</label>
-                        <input type={f.type} value={f.val} onChange={e => f.set(e.target.value)} style={inputStyle} />
+                      <div key={f.id} className="em-field">
+                        <label className="em-label" htmlFor={`em-stat-${f.id}`}>{f.label}</label>
+                        <input id={`em-stat-${f.id}`} className="input" type="number" value={f.val} onChange={e => f.set(e.target.value)} />
                       </div>
                     ))}
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => setEditingStats(false)} style={{ flex: 1, padding: '0.35rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>Cancel</button>
-                    <button onClick={() => void saveStats()} disabled={savingStats} style={{ flex: 1, padding: '0.35rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: 5, border: 'none', background: 'var(--blue)', color: '#fff', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                      <FloppyDisk size={12} /> {savingStats ? 'Saving…' : 'Save'}
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingStats(false)}>Cancel</button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveStats()} disabled={savingStats}>
+                      {savingStats ? 'Saving…' : 'Save performance'}
                     </button>
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div className="em-stats">
                   {[
-                    { label: 'Open Rate',   value: fmt(email.open_rate,  '%') },
-                    { label: 'Click Rate',  value: fmt(email.click_rate, '%') },
+                    { label: 'Open rate',   value: fmt(email.open_rate,  '%') },
+                    { label: 'Click rate',  value: fmt(email.click_rate, '%') },
                     { label: 'Conversions', value: fmt(email.conversions) },
                     { label: 'Revenue',     value: email.revenue != null ? `$${email.revenue.toLocaleString()}` : '—' },
                   ].map(s => (
-                    <div key={s.label} style={{ background: 'var(--bg-subtle)', borderRadius: 6, padding: '0.5rem 0.6rem' }}>
-                      <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--text-faint)' }}>{s.label}</p>
-                      <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700 }}>{s.value}</p>
+                    <div key={s.label} className="em-stat">
+                      <span className="em-stat-label">{s.label}</span>
+                      <span className="em-stat-value">{s.value}</span>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
+            </section>
 
             {/* Reviewer notes (existing) */}
             {email.reviewer_notes && (
-              <div>
-                <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 6px' }}>Reviewer Notes</p>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text)', background: 'var(--bg-subtle)', padding: '0.5rem 0.625rem', borderRadius: 6, borderLeft: '3px solid var(--border)' }}>
-                  {email.reviewer_notes}
-                </p>
-              </div>
+              <section>
+                <h3 className="em-group-title" style={{ marginBottom: 8 }}>Reviewer notes</h3>
+                <p className="em-quote">{email.reviewer_notes}</p>
+              </section>
             )}
 
             {/* Review actions */}
             {email.status === 'pending_review' && (
-              <div>
-                <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 8px' }}>Review</p>
+              <section className="em-review">
+                <label className="em-group-title" htmlFor="em-review-notes" style={{ display: 'block', marginBottom: 4 }}>Review</label>
+                <p className="em-hint" style={{ margin: '0 0 10px' }}>Approve it as is, or reject it with a note saying what to change.</p>
                 <textarea
+                  id="em-review-notes"
+                  className="input"
                   value={reviewNotes}
                   onChange={e => setReviewNotes(e.target.value)}
-                  placeholder="Add notes (required to reject)…"
+                  placeholder="Notes for the uploader (needed to reject)"
                   rows={3}
-                  style={{
-                    ...inputStyle, resize: 'vertical', marginBottom: 8,
-                    display: 'block',
-                  }}
                 />
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    onClick={() => void review('reject')}
-                    disabled={reviewing}
-                    style={{
-                      flex: 1, padding: '0.45rem', borderRadius: 6, border: '1px solid var(--red)',
-                      background: 'transparent', color: 'var(--red)', fontWeight: 600, fontSize: '0.78rem',
-                      cursor: reviewing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                    }}
-                  >
-                    <XCircle size={14} /> Reject
+                <div className="em-review-actions">
+                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void review('reject')} disabled={reviewing}>
+                    <XCircle size={15} aria-hidden />Reject
                   </button>
-                  <button
-                    onClick={() => void review('approve')}
-                    disabled={reviewing}
-                    style={{
-                      flex: 1, padding: '0.45rem', borderRadius: 6, border: 'none',
-                      background: 'var(--green)', color: '#fff', fontWeight: 600, fontSize: '0.78rem',
-                      cursor: reviewing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                    }}
-                  >
-                    <CheckCircle size={14} /> Approve
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void review('approve')} disabled={reviewing}>
+                    <CheckCircle size={15} aria-hidden />{reviewing ? 'Saving…' : 'Approve'}
                   </button>
                 </div>
-              </div>
+              </section>
             )}
 
-            {error && (
-              <p style={{ fontSize: '0.78rem', color: 'var(--red)', margin: 0 }}>{error}</p>
-            )}
+            {error && <div className="ui-notice ui-notice--danger" role="alert">{error}</div>}
 
             {/* Delete */}
-            <div style={{ marginTop: 'auto', paddingTop: '0.5rem', borderTop: '1px solid var(--border)' }}>
+            <div className="em-delete">
               {!confirmDelete ? (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.35rem 0.6rem', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', fontSize: '0.72rem', cursor: 'pointer' }}
-                >
-                  <Trash size={13} /> Delete email
+                <button type="button" className="btn btn-ghost btn-sm em-danger-text" onClick={() => setConfirmDelete(true)}>
+                  <Trash size={14} aria-hidden />Delete email
                 </button>
               ) : (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Sure?</span>
-                  <button onClick={() => setConfirmDelete(false)} style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => void deleteEmail()} disabled={deleting} style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', borderRadius: 5, border: 'none', background: 'var(--red)', color: '#fff', fontWeight: 600, cursor: deleting ? 'wait' : 'pointer' }}>
+                <>
+                  <span className="em-delete-q" role="alert">Delete this email for good?</span>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(false)} autoFocus>Keep it</button>
+                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteEmail()} disabled={deleting}>
                     {deleting ? 'Deleting…' : 'Delete'}
                   </button>
-                </div>
+                </>
               )}
             </div>
           </div>

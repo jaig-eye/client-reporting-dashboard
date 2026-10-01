@@ -1,11 +1,24 @@
 'use client'
 
+// Client → Overview, the tab a client page opens on. Main column: business info, contacts,
+// relationship, notes, and the latest invoices and Ad Fuel lines. Rail: the numbers at a glance and
+// the account manager. On a tablet or phone the rail stacks first.
+//
+// The dashboard and ad library links that used to sit in the rail live in the page header's ⋯
+// menu now (with copy buttons), so they are not repeated here.
+
+import '@/styles/admin/client-overview.css'
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import CopyButton from '@/components/CopyButton'
+import Link from 'next/link'
+import { PencilSimple, Plus, Trash, ArrowSquareOut, CaretRight } from '@phosphor-icons/react'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
+import Section from '@/components/ui/Section'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import { Sk, SkRows } from '@/components/ui/Skeleton'
 import ClientLogoUpload from './ClientLogoUpload'
 import ClientRelationshipCard from './ClientRelationshipCard'
+import { InvoiceRow, LedgerRow, fmtMoney, type Invoice, type LedgerEntry } from './BillingTab'
 import type { ClientTemperature } from '@/lib/types'
 
 interface AdminUser {
@@ -31,27 +44,6 @@ interface Stats {
   contentPipelineCount: number
 }
 
-interface Invoice {
-  id:          string
-  number:      string | null
-  date:        number
-  amount:      number
-  status:      string | null
-  description: string | null
-  hosted_url:  string | null
-}
-
-interface LedgerEntry {
-  id:              string
-  date_of_payment: string | null
-  invoice_date:    string | null
-  amount_af:       number
-  type:            string | null
-  note:            string | null
-  ach_status:      string | null
-  created_at:      string
-}
-
 interface Props {
   clientId:         string
   name:             string
@@ -66,8 +58,10 @@ interface Props {
   agencyStaleDays:  number
   adminUsers:       AdminUser[]
   contacts:         Contact[]
-  dashUrl:          string
-  adsLibraryUrl:    string | null
+  /** No longer used: the header's ⋯ menu carries the dashboard link. page.tsx still passes it. */
+  dashUrl?:         string
+  /** No longer used: the header's ⋯ menu carries the ad library link. page.tsx still passes it. */
+  adsLibraryUrl?:   string | null
 }
 
 function fmt$(n: number | null): string {
@@ -79,29 +73,23 @@ function fmt$(n: number | null): string {
   return n < 0 ? '-' + formatted : formatted
 }
 
-function fmtNum(n: number | null): string {
-  if (n == null) return '—'
-  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
-}
-
-function fmtInvoiceDate(ts: number): string {
-  return new Date(ts * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function fmtLedgerDate(s: string | null): string {
-  if (!s) return '—'
-  return new Date(s + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
 function normalizeUrl(url: string): string {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
+}
+
+const ROLE: Record<string, { label: string; tone: StatusTone }> = {
+  primary: { label: 'Primary', tone: 'info' },
+  billing: { label: 'Billing', tone: 'warning' },
 }
 
 export default function OverviewTab({
   clientId, name, address, phone, website, logoUrl,
   accountManagerId, adminUsers, contacts: initialContacts,
   temperature, lastContactedAt, contactStaleDays, agencyStaleDays,
-  dashUrl, adsLibraryUrl,
 }: Props) {
   const router = useRouter()
 
@@ -149,6 +137,12 @@ export default function OverviewTab({
     } finally {
       setBizSaving(false)
     }
+  }
+
+  function cancelBiz() {
+    setEditingBiz(false)
+    setBizError('')
+    setBizForm({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
   }
 
   // ── Account manager ───────────────────────────────────────────────────────
@@ -220,14 +214,6 @@ export default function OverviewTab({
     }
   }
 
-  const roleLabel = (r: string) =>
-    r === 'primary' ? 'Primary' : r === 'billing' ? 'Billing' : 'Contact'
-
-  const roleColor = (r: string) =>
-    r === 'primary' ? { bg: '#dbeafe', color: '#1d4ed8' }
-    : r === 'billing' ? { bg: '#fef3c7', color: '#92400e' }
-    : { bg: 'var(--bg-subtle)', color: 'var(--text-muted)' }
-
   // ── Billing data (invoices + ledger) ─────────────────────────────────────
   const [invoices,       setInvoices]       = useState<Invoice[]>([])
   const [billingLedger,  setBillingLedger]  = useState<LedgerEntry[]>([])
@@ -247,173 +233,177 @@ export default function OverviewTab({
 
   useEffect(() => { loadBilling() }, [loadBilling])
 
+  const billingHref = `/admin/clients/${clientId}?tab=billing`
+
+  // ── At a glance ───────────────────────────────────────────────────────────
+  const afBalance = stats?.adFuelBalance ?? null
+  const afTone = afBalance == null ? 'co-faint' : afBalance < 0 ? 'co-neg' : afBalance < 200 ? 'co-warn' : 'co-pos'
+  const projected = stats != null && (stats.pendingAch ?? 0) > 0 ? (stats.adFuelBalance ?? 0) + stats.pendingAch : null
+  const uptime = stats?.siteUptime7d ?? null
+  const uptimeTone = uptime == null ? 'co-faint' : uptime >= 99 ? 'co-pos' : uptime >= 95 ? 'co-warn' : 'co-neg'
+  const pipeline = stats?.contentPipelineCount ?? 0
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.5rem', alignItems: 'start' }}>
+    <div className="ui-grid-side co-scope">
 
-      {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* ── Main column ──────────────────────────────────────────────── */}
+      <div className="ui-stack">
 
-        {/* Business info card */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title">Business Info</h2>
-            {!editingBiz && (
-              <button
-                onClick={() => setEditingBiz(true)}
-                className="btn btn-secondary"
-                style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-              >
-                Edit
-              </button>
-            )}
-          </div>
-
+        <Section
+          title="Business info"
+          description={editingBiz ? 'The name, address and links shown on the client’s dashboard and reports.' : undefined}
+          actions={!editingBiz && (
+            <button type="button" onClick={() => setEditingBiz(true)} className="btn btn-secondary btn-sm">
+              <PencilSimple size={14} aria-hidden />Edit
+            </button>
+          )}
+        >
           {editingBiz ? (
-            <form onSubmit={saveBiz} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {bizError && <p style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{bizError}</p>}
-              {([
-                { key: 'name',    label: 'Business Name', required: true  },
-                { key: 'address', label: 'Address',       required: false },
-                { key: 'phone',   label: 'Phone',         required: false },
-                { key: 'website', label: 'Website',       required: false },
-              ] as const).map(f => (
-                <div key={f.key}>
-                  <label className="text-xs font-medium block mb-1" style={{ color: 'var(--text-muted)' }}>{f.label}</label>
-                  <input
-                    className="input"
-                    value={bizForm[f.key]}
-                    onChange={e => setBizForm(v => ({ ...v, [f.key]: e.target.value }))}
-                    required={f.required}
-                    placeholder={f.label}
-                  />
-                </div>
-              ))}
-              <div className="flex items-center gap-2">
-                <button type="submit" disabled={bizSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
-                  {bizSaving ? 'Saving…' : 'Save'}
+            <form onSubmit={saveBiz} className="ui-stack" style={{ gap: 14 }}>
+              {bizError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{bizError}</div>}
+              <div className="co-fields">
+                {([
+                  { key: 'name',    label: 'Business name', required: true,  type: 'text' },
+                  { key: 'phone',   label: 'Phone',         required: false, type: 'tel'  },
+                  { key: 'address', label: 'Address',       required: false, type: 'text' },
+                  { key: 'website', label: 'Website',       required: false, type: 'text' },
+                ] as const).map(f => (
+                  <div key={f.key} className="co-field">
+                    <label className="co-label" htmlFor={`biz-${f.key}`}>{f.label}</label>
+                    <input
+                      id={`biz-${f.key}`}
+                      className="input"
+                      type={f.type}
+                      value={bizForm[f.key]}
+                      onChange={e => setBizForm(v => ({ ...v, [f.key]: e.target.value }))}
+                      required={f.required}
+                      placeholder={f.key === 'website' ? 'example.com' : undefined}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <p className="co-label">Logo</p>
+                <ClientLogoUpload
+                  clientId={clientId}
+                  currentLogoUrl={displayLogoUrl}
+                  onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
+                />
+              </div>
+
+              <div className="co-divider" />
+              <div className="co-actions">
+                <button type="submit" disabled={bizSaving} className="btn btn-primary btn-sm">
+                  {bizSaving ? 'Saving…' : 'Save changes'}
                 </button>
-                <button type="button" className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
-                  onClick={() => { setEditingBiz(false); setBizForm({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' }) }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={cancelBiz}>
                   Cancel
                 </button>
               </div>
             </form>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-              {displayLogoUrl && (
-                <img src={displayLogoUrl} alt={name} style={{ maxHeight: 48, maxWidth: 140, objectFit: 'contain', marginBottom: '0.25rem' }} />
-              )}
-              <InfoRow label="Business Name" value={name} bold />
-              <InfoRow label="Address"  value={address} />
-              <InfoRow label="Phone"    value={phone} />
-              <InfoRow label="Website"  value={website} link />
-            </div>
+            <>
+              {displayLogoUrl && <img src={displayLogoUrl} alt={`${name} logo`} className="co-biz-logo" />}
+              <dl className="co-facts">
+                <Fact label="Business name" value={name} strong />
+                <Fact label="Phone" value={phone} />
+                <Fact label="Address" value={address} />
+                <Fact label="Website" value={website} href={website ? normalizeUrl(website) : undefined} />
+              </dl>
+            </>
           )}
+        </Section>
 
-          {/* Logo upload — only visible in edit mode */}
-          {editingBiz && (
-            <div style={{ marginTop: '1rem', paddingTop: '0.875rem', borderTop: '1px solid var(--border)' }}>
-              <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Client Logo</p>
-              <ClientLogoUpload
-                clientId={clientId}
-                currentLogoUrl={displayLogoUrl}
-                onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
-              />
-            </div>
+        <Section
+          title="Contacts"
+          description="Who we talk to at the client, and who gets the bills."
+          flush
+          actions={!addingContact && (
+            <button type="button" onClick={() => setAddingContact(true)} className="btn btn-secondary btn-sm">
+              <Plus size={14} weight="bold" aria-hidden />Add contact
+            </button>
           )}
-        </div>
-
-        {/* Contacts card */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title">Contacts</h2>
-            {!addingContact && (
-              <button
-                onClick={() => setAddingContact(true)}
-                className="btn btn-secondary"
-                style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}
-              >
-                + Add
-              </button>
-            )}
-          </div>
-
+        >
           {contacts.length === 0 && !addingContact && (
-            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No contacts added yet.</p>
+            <p className="co-empty">No contacts yet. Add the client’s main contact and whoever pays the invoices.</p>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {contacts.map(contact => {
-              const rc = roleColor(contact.role)
-              return (
-                <div
-                  key={contact.id}
-                  className="flex items-start justify-between gap-3 rounded-lg px-3 py-2.5"
-                  style={{ background: 'var(--bg-subtle)' }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{contact.name}</span>
-                      <span style={{
-                        fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999,
-                        background: rc.bg, color: rc.color, textTransform: 'uppercase', letterSpacing: '0.04em',
-                      }}>
-                        {roleLabel(contact.role)}
-                      </span>
-                    </div>
-                    {contact.email && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{contact.email}</p>}
-                    {contact.phone && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{contact.phone}</p>}
-                  </div>
+          {contacts.map(contact => {
+            const role = ROLE[contact.role]
+            return (
+              <div key={contact.id} className="ui-row co-money-row">
+                <span className="co-avatar" aria-hidden>{initials(contact.name)}</span>
+                <span className="ui-row-text">
+                  <span className="ui-row-title">
+                    {contact.name}
+                    {role
+                      ? <StatusBadge tone={role.tone} dot={false}>{role.label}</StatusBadge>
+                      : <StatusBadge dot={false}>Contact</StatusBadge>}
+                  </span>
+                  {(contact.email || contact.phone) && (
+                    <span className="ui-row-sub co-row-sub">
+                      {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
+                      {contact.email && contact.phone && <span className="co-dot" aria-hidden />}
+                      {contact.phone && <span className="co-nowrap">{contact.phone}</span>}
+                    </span>
+                  )}
+                </span>
+                <span className="ui-row-actions">
                   <button
+                    type="button"
                     onClick={() => deleteContact(contact.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.75rem', padding: '0.125rem 0.25rem', flexShrink: 0 }}
+                    className="co-iconbtn co-iconbtn--danger"
+                    aria-label={`Remove ${contact.name}`}
                     title="Remove contact"
                   >
-                    ✕
+                    <Trash size={15} aria-hidden />
                   </button>
-                </div>
-              )
-            })}
-          </div>
+                </span>
+              </div>
+            )
+          })}
 
           {addingContact && (
-            <form onSubmit={addContact} style={{ marginTop: contacts.length > 0 ? '0.75rem' : 0, display: 'flex', flexDirection: 'column', gap: '0.625rem', padding: '0.875rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-              <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>New Contact</p>
-              {contactError && <p style={{ color: 'var(--red)', fontSize: '0.7rem' }}>{contactError}</p>}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <div>
-                  <label className="text-xs block mb-0.5" style={{ color: 'var(--text-muted)' }}>Name *</label>
-                  <input className="input" value={contactForm.name} onChange={e => setContactForm(v => ({ ...v, name: e.target.value }))} required placeholder="Full name" />
+            <div className="co-section-pad" style={{ paddingTop: contacts.length > 0 ? 12 : 0 }}>
+              <form onSubmit={addContact} className="co-subform">
+                <p className="co-subform-title">New contact</p>
+                {contactError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{contactError}</div>}
+                <div className="co-fields">
+                  <div className="co-field">
+                    <label className="co-label" htmlFor="contact-name">Name</label>
+                    <input id="contact-name" className="input" value={contactForm.name} onChange={e => setContactForm(v => ({ ...v, name: e.target.value }))} required placeholder="Full name" autoFocus />
+                  </div>
+                  <div className="co-field">
+                    <label className="co-label" htmlFor="contact-role">Role</label>
+                    <select id="contact-role" className="input" value={contactForm.role} onChange={e => setContactForm(v => ({ ...v, role: e.target.value }))}>
+                      <option value="contact">Contact</option>
+                      <option value="primary">Primary</option>
+                      <option value="billing">Billing</option>
+                    </select>
+                  </div>
+                  <div className="co-field">
+                    <label className="co-label" htmlFor="contact-email">Email</label>
+                    <input id="contact-email" className="input" type="email" value={contactForm.email} onChange={e => setContactForm(v => ({ ...v, email: e.target.value }))} placeholder="name@example.com" />
+                  </div>
+                  <div className="co-field">
+                    <label className="co-label" htmlFor="contact-phone">Phone</label>
+                    <input id="contact-phone" className="input" type="tel" value={contactForm.phone} onChange={e => setContactForm(v => ({ ...v, phone: e.target.value }))} placeholder="(555) 555-5555" />
+                  </div>
                 </div>
-                <div>
-                  <label className="text-xs block mb-0.5" style={{ color: 'var(--text-muted)' }}>Role</label>
-                  <select className="input" value={contactForm.role} onChange={e => setContactForm(v => ({ ...v, role: e.target.value }))}>
-                    <option value="contact">Contact</option>
-                    <option value="primary">Primary</option>
-                    <option value="billing">Billing</option>
-                  </select>
+                <div className="co-actions">
+                  <button type="submit" disabled={contactSaving} className="btn btn-primary btn-sm">
+                    {contactSaving ? 'Adding…' : 'Add contact'}
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => { setAddingContact(false); setContactError(''); setContactForm({ name: '', email: '', phone: '', role: 'contact' }) }}>
+                    Cancel
+                  </button>
                 </div>
-                <div>
-                  <label className="text-xs block mb-0.5" style={{ color: 'var(--text-muted)' }}>Email</label>
-                  <input className="input" type="email" value={contactForm.email} onChange={e => setContactForm(v => ({ ...v, email: e.target.value }))} placeholder="email@example.com" />
-                </div>
-                <div>
-                  <label className="text-xs block mb-0.5" style={{ color: 'var(--text-muted)' }}>Phone</label>
-                  <input className="input" value={contactForm.phone} onChange={e => setContactForm(v => ({ ...v, phone: e.target.value }))} placeholder="(555) 555-5555" />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button type="submit" disabled={contactSaving} className="btn btn-primary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}>
-                  {contactSaving ? 'Adding…' : 'Add Contact'}
-                </button>
-                <button type="button" className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem' }}
-                  onClick={() => { setAddingContact(false); setContactError(''); setContactForm({ name: '', email: '', phone: '', role: 'contact' }) }}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+              </form>
+            </div>
           )}
-        </div>
+        </Section>
 
         {/* Relationship: attention level + last contact */}
         <ClientRelationshipCard
@@ -424,252 +414,118 @@ export default function OverviewTab({
           agencyStaleDays={agencyStaleDays}
         />
 
-        {/* Notes card */}
-        <div className="card p-5">
-          <ClientNotesStream
-            clientId={clientId}
-            // A contact-log note stamps last_contacted_at server-side; refresh so
-            // the Relationship card above reflects it without a manual reload.
-            onContactLogged={() => router.refresh()}
-          />
-        </div>
+        <ClientNotesStream
+          clientId={clientId}
+          // A contact-log note stamps last_contacted_at server-side; refresh so
+          // the Relationship card above reflects it without a manual reload.
+          onContactLogged={() => router.refresh()}
+        />
 
-        {/* Stripe invoice history */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title">Invoice History</h2>
-            <a
-              href={`/admin/clients/${clientId}?tab=billing`}
-              className="text-xs"
-              style={{ color: 'var(--blue)' }}
-            >
-              View all →
-            </a>
-          </div>
-
+        <Section
+          title="Invoices"
+          description="The latest Stripe invoices."
+          flush
+          actions={<Link href={billingHref} className="co-link">All billing<CaretRight size={12} weight="bold" aria-hidden /></Link>}
+        >
           {billingLoading ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+            <SkRows rows={2} />
           ) : invoices.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>
-              No Stripe invoices. Set a Stripe Customer ID in Integrations to link billing.
+            <p className="co-empty">
+              No Stripe invoices. Add the client’s Stripe customer ID under <Link href={`/admin/clients/${clientId}?tab=sources`}>Integrations</Link> to link billing.
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-              {invoices.slice(0, 5).map(inv => (
-                <div
-                  key={inv.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
-                    padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--bg-subtle)',
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {fmtInvoiceDate(inv.date)}
-                      </span>
-                      <InvoiceStatusBadge status={inv.status} />
-                    </div>
-                    {inv.description && (
-                      <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {inv.description}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                      ${inv.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    {inv.hosted_url && (
-                      <a href={inv.hosted_url} target="_blank" rel="noopener noreferrer"
-                         className="text-xs" style={{ color: 'var(--blue)' }}>↗</a>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            invoices.slice(0, 5).map(inv => <InvoiceRow key={inv.id} inv={inv} />)
           )}
-        </div>
+        </Section>
 
-        {/* Ad Fuel ledger (recent entries) */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title">Ad Fuel Ledger</h2>
-            <a
-              href={`/admin/clients/${clientId}?tab=billing`}
-              className="text-xs"
-              style={{ color: 'var(--blue)' }}
-            >
-              View all →
-            </a>
-          </div>
-
+        <Section
+          title="Ad Fuel ledger"
+          description="The latest payments in and charges out."
+          flush
+          actions={<Link href={billingHref} className="co-link">Full ledger<CaretRight size={12} weight="bold" aria-hidden /></Link>}
+        >
           {billingLoading ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>Loading…</p>
+            <SkRows rows={3} />
           ) : billingLedger.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No ledger entries yet.</p>
+            <p className="co-empty">No ledger entries yet.</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-              {billingLedger.slice(0, 5).map(entry => {
-                const isPending = entry.ach_status === 'pending'
-                const dateStr = entry.date_of_payment ?? entry.invoice_date ?? entry.created_at.slice(0, 10)
-                return (
-                  <div
-                    key={entry.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem',
-                      padding: '0.5rem 0.75rem', borderRadius: 8, background: 'var(--bg-subtle)',
-                      opacity: isPending ? 0.6 : 1,
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {fmtLedgerDate(dateStr)}
-                        </span>
-                        {entry.type && (
-                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
-                            {entry.type}
-                          </span>
-                        )}
-                        {isPending && (
-                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fef3c7', color: '#92400e' }}>
-                            Pending
-                          </span>
-                        )}
-                      </div>
-                      {entry.note && (
-                        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {entry.note}
-                        </p>
-                      )}
-                    </div>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: entry.amount_af >= 0 ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
-                      {entry.amount_af >= 0 ? '+' : ''}${Math.abs(entry.amount_af).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
+            billingLedger.slice(0, 5).map(entry => <LedgerRow key={entry.id} entry={entry} />)
           )}
-        </div>
+        </Section>
       </div>
 
-      {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* ── Rail ─────────────────────────────────────────────────────── */}
+      <div className="ui-stack co-rail">
 
-        {/* Key stats */}
-        <div className="card p-5">
-          <h2 className="section-title mb-3">At a Glance</h2>
-          {statsLoading ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              {[0,1,2,3].map(i => (
-                <div key={i} style={{ height: 56, borderRadius: 8, background: 'var(--bg-subtle)', animation: 'pulse 1.5s ease-in-out infinite' }} />
-              ))}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <div>
-                <StatTile
-                  label="Ad Fuel Balance"
-                  value={stats?.adFuelBalance != null
-                    ? `${stats.adFuelBalance < 0 ? '-' : ''}$${Math.abs(stats.adFuelBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : '—'}
-                  valueColor={stats?.adFuelBalance != null && stats.adFuelBalance < 0 ? 'var(--red)' : stats?.adFuelBalance != null && stats.adFuelBalance < 200 ? '#d97706' : 'var(--green)'}
-                />
-                {stats != null && (stats.pendingAch ?? 0) > 0 && (() => {
-                  const proj = (stats.adFuelBalance ?? 0) + stats.pendingAch
-                  return (
-                    <p style={{ fontSize: '0.7rem', marginTop: 2, color: proj >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {proj >= 0 ? '' : '-'}${Math.abs(proj).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} projected
-                    </p>
-                  )
-                })()}
-              </div>
-              <StatTile
-                label="MTD Spend (raw)"
-                value={fmt$(stats?.mtdSpend ?? null)}
-              />
-              <StatTile
-                label="Site Uptime (7d)"
-                value={stats?.siteUptime7d != null ? `${stats.siteUptime7d.toFixed(1)}%` : '—'}
-                valueColor={stats?.siteUptime7d == null ? 'var(--text-faint)' : stats.siteUptime7d >= 99 ? 'var(--green)' : stats.siteUptime7d >= 95 ? '#d97706' : 'var(--red)'}
-              />
-              <StatTile
-                label="Content Pipeline"
-                value={String(stats?.contentPipelineCount ?? 0)}
-                valueColor={(stats?.contentPipelineCount ?? 0) > 0 ? 'var(--blue)' : 'var(--text-muted)'}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Account manager */}
-        <div className="card p-5">
-          <h2 className="section-title mb-3">Account Manager</h2>
-          {currentMgr ? (
-            <div className="flex items-center gap-3 mb-3">
-              {currentMgr.avatar_url ? (
-                <img src={currentMgr.avatar_url} alt={currentMgr.name} style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-              ) : (
-                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--blue)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0 }}>
-                  {currentMgr.name.slice(0, 2).toUpperCase()}
-                </div>
+        <Section title="At a glance">
+          <div className="co-stats" aria-busy={statsLoading || undefined}>
+            <Link href={billingHref} className="co-stat">
+              <span className="co-stat-label">Ad Fuel balance<CaretRight size={10} weight="bold" aria-hidden /></span>
+              {statsLoading ? <Sk w="80%" h={22} r={6} /> : (
+                <>
+                  <span className={`co-stat-value ${afTone}`}>
+                    {afBalance != null ? `${afBalance < 0 ? '−' : ''}${fmtMoney(afBalance)}` : '—'}
+                  </span>
+                  {projected != null && (
+                    <span className={`co-stat-sub ${projected >= 0 ? 'co-pos' : 'co-neg'}`}>
+                      {projected < 0 ? '−' : ''}{fmtMoney(projected)} after pending ACH
+                    </span>
+                  )}
+                </>
               )}
-              <div>
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{currentMgr.name}</p>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{currentMgr.email}</p>
-              </div>
+            </Link>
+            <div className="co-stat">
+              <span className="co-stat-label">Spend this month</span>
+              {statsLoading ? <Sk w="60%" h={22} r={6} /> : (
+                <>
+                  <span className="co-stat-value">{fmt$(stats?.mtdSpend ?? null)}</span>
+                  <span className="co-stat-sub co-muted">Raw, before Ad Fuel</span>
+                </>
+              )}
+            </div>
+            <Link href="/admin/sites" className="co-stat">
+              <span className="co-stat-label">Site uptime, 7 days<CaretRight size={10} weight="bold" aria-hidden /></span>
+              {statsLoading ? <Sk w="60%" h={22} r={6} /> : (
+                <span className={`co-stat-value ${uptimeTone}`}>{uptime != null ? `${uptime.toFixed(1)}%` : '—'}</span>
+              )}
+            </Link>
+            <Link href={`/admin/clients/${clientId}?tab=content`} className="co-stat">
+              <span className="co-stat-label">Content pipeline<CaretRight size={10} weight="bold" aria-hidden /></span>
+              {statsLoading ? <Sk w="40%" h={22} r={6} /> : (
+                <span className={`co-stat-value ${pipeline > 0 ? 'co-accent' : 'co-muted'}`}>{pipeline}</span>
+              )}
+            </Link>
+          </div>
+        </Section>
+
+        <Section title="Account manager" description="Who looks after this client day to day.">
+          {currentMgr ? (
+            <div className="co-person">
+              <span className="co-avatar co-avatar--lg" aria-hidden>
+                {currentMgr.avatar_url ? <img src={currentMgr.avatar_url} alt="" /> : initials(currentMgr.name)}
+              </span>
+              <span className="co-person-text">
+                <span className="co-person-name">{currentMgr.name}</span>
+                <span className="co-person-sub">{currentMgr.email}</span>
+              </span>
             </div>
           ) : (
-            <p className="text-sm mb-3" style={{ color: 'var(--text-faint)' }}>Unassigned</p>
+            <p className="co-hint" style={{ margin: '0 0 12px' }}>No one assigned yet.</p>
           )}
+          <label className="sr-only" htmlFor="account-manager">Account manager</label>
           <select
-            className="input w-full"
+            id="account-manager"
+            className="input co-select"
             value={mgr ?? ''}
             onChange={e => saveManager(e.target.value || null)}
             disabled={mgrSaving}
-            style={{ fontSize: '0.8125rem' }}
           >
-            <option value="">— Unassigned —</option>
+            <option value="">Unassigned</option>
             {adminUsers.map(u => (
               <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
             ))}
           </select>
-        </div>
-
-        {/* Dashboard link */}
-        <div className="card p-5">
-          <h2 className="section-title mb-1">Dashboard Link</h2>
-          <p className="section-desc mb-3">Share with the client to access their reporting dashboard.</p>
-          <div
-            className="flex items-center gap-2 rounded-lg px-3 py-2.5"
-            style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
-          >
-            <span className="text-xs font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>
-              {dashUrl}
-            </span>
-            <CopyButton text={dashUrl} />
-          </div>
-        </div>
-
-        {/* Ad Library link */}
-        {adsLibraryUrl && (
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Ad Library Link</h2>
-            <p className="section-desc mb-3">Direct link to this client&apos;s ad creative library.</p>
-            <div
-              className="flex items-center gap-2 rounded-lg px-3 py-2.5"
-              style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
-            >
-              <span className="text-xs font-mono truncate flex-1" style={{ color: 'var(--text-muted)' }}>
-                {adsLibraryUrl}
-              </span>
-              <CopyButton text={adsLibraryUrl} />
-            </div>
-          </div>
-        )}
-
+        </Section>
       </div>
     </div>
   )
@@ -677,49 +533,17 @@ export default function OverviewTab({
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function InfoRow({ label, value, bold, link }: { label: string; value: string | null; bold?: boolean; link?: boolean }) {
-  if (!value) return (
-    <div>
-      <p className="text-xs" style={{ color: 'var(--text-faint)' }}>{label}</p>
-      <p className="text-sm" style={{ color: 'var(--text-faint)' }}>—</p>
-    </div>
-  )
+function Fact({ label, value, strong, href }: { label: string; value: string | null; strong?: boolean; href?: string }) {
   return (
-    <div>
-      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      {link ? (
-        <a href={normalizeUrl(value)} target="_blank" rel="noopener noreferrer" className="text-sm" style={{ color: 'var(--blue)' }}>
-          {value}
-        </a>
+    <div className="co-fact">
+      <dt>{label}</dt>
+      {!value ? (
+        <dd className="co-fact-empty">Not set</dd>
+      ) : href ? (
+        <dd><a href={href} target="_blank" rel="noopener noreferrer">{value}<ArrowSquareOut size={12} aria-label="opens in a new tab" /></a></dd>
       ) : (
-        <p className={`text-sm ${bold ? 'font-semibold' : ''}`} style={{ color: 'var(--text-primary)' }}>{value}</p>
+        <dd style={strong ? { fontWeight: 600 } : undefined}>{value}</dd>
       )}
     </div>
-  )
-}
-
-function StatTile({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div style={{ padding: '0.75rem', borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)' }}>
-      <p style={{ fontSize: '0.625rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', fontWeight: 600, marginBottom: '0.25rem' }}>
-        {label}
-      </p>
-      <p style={{ fontSize: '1.125rem', fontWeight: 700, color: valueColor ?? 'var(--text-primary)', lineHeight: 1.2 }}>
-        {value}
-      </p>
-    </div>
-  )
-}
-
-function InvoiceStatusBadge({ status }: { status: string | null }) {
-  const s = status ?? ''
-  const style = s === 'paid' ? { bg: '#dcfce7', color: '#166534' }
-    : s === 'open'   ? { bg: '#dbeafe', color: '#1e40af' }
-    : s === 'void'   ? { bg: '#f3f4f6', color: '#6b7280' }
-    : { bg: '#fef3c7', color: '#92400e' }
-  return (
-    <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: style.bg, color: style.color }}>
-      {s || 'unknown'}
-    </span>
   )
 }

@@ -2,12 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Section from '@/components/ui/Section'
+import StatusBadge from '@/components/ui/StatusBadge'
 import type { ClientTemperature } from '@/lib/types'
 
-const TEMPERATURES: { key: ClientTemperature; label: string; color: string; hint: string }[] = [
-  { key: 'low',    label: 'Low',    color: '#22c55e', hint: 'Ticking along, light touch' },
-  { key: 'medium', label: 'Medium', color: '#f59e0b', hint: 'Needs regular attention' },
-  { key: 'high',   label: 'High',   color: '#ef4444', hint: 'Hands-on this week' },
+// Colour comes from the stylesheet (data-level), only on the chosen level.
+const TEMPERATURES: { key: ClientTemperature; label: string; hint: string }[] = [
+  { key: 'low',    label: 'Low',    hint: 'Ticking along, light touch' },
+  { key: 'medium', label: 'Medium', hint: 'Needs regular attention' },
+  { key: 'high',   label: 'High',   hint: 'Hands-on this week' },
 ]
 
 function daysSince(iso: string): number {
@@ -134,143 +137,117 @@ export default function ClientRelationshipCard({
     void patch({ contact_stale_days: value }, () => setPendingOverride(null))
   }
 
-  return (
-    <div className="card p-5">
-      <h2 className="section-title mb-1">
-        Relationship
-        <span style={{
-          fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-          background: 'var(--blue)', color: '#fff',
-          padding: '1px 4px', borderRadius: 3,
-          marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
-        }}>BETA</span>
-      </h2>
-      <p className="section-desc mb-3">Attention level and when we last spoke.</p>
+  const level = temp ? TEMPERATURES.find(t => t.key === temp) : null
 
+  return (
+    <Section
+      title={<span className="co-title">Relationship <StatusBadge tone="info" dot={false}>Beta</StatusBadge></span>}
+      description="How much attention the client needs, and when we last spoke."
+    >
       {/* Temperature ------------------------------------------------------- */}
-      {/* Marked BETA and rendered in neutral tones until a level is chosen.
+      {/* Marked Beta and rendered in neutral tones until a level is chosen.
           The control is fully functional, but today it only labels the client
           and orders the weekly check-in digest — it does not yet change what is
           monitored or when anything alerts. Colouring the unselected options
           would promise more than it currently does. */}
-      {/* The BETA pill lives on the card heading now, so it is not repeated here. */}
-      <p style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 5px' }}>
-        Attention needed
-      </p>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-        {TEMPERATURES.map(t => {
-          const on = temp === t.key
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTemperature(on ? null : t.key)}
-              disabled={saving}
-              title={t.hint}
-              style={{
-                flex: 1, padding: '0.35rem 0.25rem', borderRadius: 6, cursor: 'pointer',
-                fontSize: '0.75rem', fontWeight: 600,
-                // Colour only on the chosen level, so the card still reads at a
-                // glance without the whole row implying active monitoring.
-                background: on ? t.color : 'var(--bg-subtle)',
-                color:      on ? '#fff'  : 'var(--text-muted)',
-                border: `1px solid ${on ? t.color : 'var(--border)'}`,
-              }}
-            >
-              {t.label}
-            </button>
-          )
-        })}
+      <div className="co-block">
+        <p className="co-label" id={`attention-${clientId}`}>Attention needed</p>
+        <div className="co-levels" role="group" aria-labelledby={`attention-${clientId}`}>
+          {TEMPERATURES.map(t => {
+            const on = temp === t.key
+            return (
+              <button
+                key={t.key}
+                type="button"
+                className="co-level"
+                data-level={t.key}
+                aria-pressed={on}
+                onClick={() => setTemperature(on ? null : t.key)}
+                disabled={saving}
+                title={on ? `${t.hint}. Click again to clear.` : t.hint}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="co-level-hint">{level ? level.hint : 'Not set yet. Pick a level.'}</p>
+        <p className="co-hint">
+          For now this is a label: it flags the client here and puts high-attention accounts at the
+          top of the weekly check-in digest. It doesn’t change what’s monitored or when anything
+          alerts yet.
+        </p>
       </div>
-      <p style={{ fontSize: '0.66rem', color: 'var(--text-faint)', margin: '0 0 0.35rem', minHeight: '1em' }}>
-        {temp ? TEMPERATURES.find(t => t.key === temp)?.hint : 'Not triaged - click to set'}
-      </p>
-      <p style={{ fontSize: '0.63rem', color: 'var(--text-faint)', margin: '0 0 1rem', lineHeight: 1.5 }}>
-        For now this is a label: it flags the client here and puts high-attention
-        accounts at the top of the weekly check-in digest. It does not change what
-        gets monitored or when anything alerts — that comes in a later update.
-      </p>
 
       {/* Last contacted ---------------------------------------------------- */}
-      <p style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-faint)', margin: '0 0 5px' }}>
-        Last contacted
-      </p>
-
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
-        padding: '0.5rem 0.625rem', borderRadius: 6,
-        background: isStale ? 'rgba(239,68,68,0.08)' : 'var(--bg-subtle)',
-        border: `1px solid ${isStale ? 'rgba(239,68,68,0.28)' : 'var(--border)'}`,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {contact ? (
-            <>
-              <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 600, color: isStale ? '#ef4444' : 'var(--text-primary)' }}>
-                {elapsed === 0 ? 'Today' : `${elapsed} day${elapsed === 1 ? '' : 's'} ago`}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.66rem', color: 'var(--text-faint)' }}>
-                {formatDate(contact)}
-                {isStale && ` - past the ${threshold}-day mark`}
-              </p>
-            </>
-          ) : (
-            <>
-              <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 600, color: '#ef4444' }}>Never logged</p>
-              <p style={{ margin: 0, fontSize: '0.66rem', color: 'var(--text-faint)' }}>
-                Log a Contact note, or set the date directly
-              </p>
-            </>
-          )}
+      <div className="co-block">
+        <p className="co-label">Last contacted</p>
+        <div className={`co-contact${isStale ? ' co-contact--stale' : ''}`}>
+          <div className="co-contact-text">
+            {contact ? (
+              <>
+                <span className="co-contact-main">
+                  {elapsed === 0 ? 'Today' : `${elapsed} day${elapsed === 1 ? '' : 's'} ago`}
+                </span>
+                <span className="co-contact-sub">
+                  {formatDate(contact)}
+                  {isStale && `, past the ${threshold}-day mark`}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="co-contact-main">Never logged</span>
+                <span className="co-contact-sub">Log a contact note, or set the date here</span>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={logContactNow}
+            disabled={saving}
+            className="btn btn-secondary btn-sm"
+            style={{ flexShrink: 0 }}
+          >
+            Mark today
+          </button>
         </div>
-        <button
-          onClick={logContactNow}
-          disabled={saving}
-          className="btn btn-secondary"
-          style={{ padding: '0.22rem 0.55rem', fontSize: '0.72rem', whiteSpace: 'nowrap', flexShrink: 0 }}
-        >
-          Mark today
-        </button>
+
+        {editingDate ? (
+          // Commit on blur / Enter only. A per-keystroke onChange fires while the
+          // year is still being typed ("0002-.."), saving a nonsense date and
+          // unmounting the field after the first digit.
+          <input
+            type="date"
+            autoFocus
+            aria-label="Last contacted date"
+            defaultValue={contact ? dateInputValue(contact) : ''}
+            onBlur={e => { if (e.target.value) setContactDate(e.target.value); else setEditingDate(false) }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+              if (e.key === 'Escape') { e.preventDefault(); setEditingDate(false) }
+            }}
+            className="input co-contact-date"
+          />
+        ) : (
+          <div className="co-contact-more">
+            <button type="button" className="co-linkbtn" onClick={() => setEditingDate(true)}>
+              Set a different date
+            </button>
+          </div>
+        )}
       </div>
 
-      {editingDate ? (
-        // Commit on blur / Enter only. A per-keystroke onChange fires while the
-        // year is still being typed ("0002-.."), saving a nonsense date and
-        // unmounting the field after the first digit.
-        <input
-          type="date"
-          autoFocus
-          defaultValue={contact ? dateInputValue(contact) : ''}
-          onBlur={e => { if (e.target.value) setContactDate(e.target.value); else setEditingDate(false) }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
-            if (e.key === 'Escape') { e.preventDefault(); setEditingDate(false) }
-          }}
-          className="input w-full"
-          style={{ fontSize: '0.75rem', marginBottom: 6 }}
-        />
-      ) : (
-        <button
-          onClick={() => setEditingDate(true)}
-          style={{
-            background: 'none', border: 'none', padding: 0, marginBottom: 8,
-            fontSize: '0.68rem', color: 'var(--blue)', cursor: 'pointer', textAlign: 'left',
-          }}
-        >
-          Set a different date
-        </button>
-      )}
-
       {/* Per-client staleness override ------------------------------------- */}
-      <label style={{ display: 'block' }}>
-        <span style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-          Alert after
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+      <div className="co-block">
+        <label className="co-label" htmlFor={`stale-${clientId}`}>Alert after</label>
+        <div className="co-threshold">
           <input
+            id={`stale-${clientId}`}
             type="number"
             min={1}
             max={365}
             value={override}
-            placeholder={`Global: ${agencyStaleDays}`}
+            placeholder={`Default: ${agencyStaleDays}`}
             // Typing updates the overlay so the field stays editable; only blur
             // commits. The threshold above is derived from the same value, so the
             // "past the N-day mark" banner tracks what is on screen.
@@ -278,22 +255,18 @@ export default function ClientRelationshipCard({
             onBlur={e => saveOverride(e.target.value)}
             disabled={saving}
             className="input"
-            style={{ fontSize: '0.75rem', width: 110 }}
           />
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>days without contact</span>
+          <span className="co-threshold-unit">days without contact</span>
           {override !== '' && (
-            <button
-              onClick={() => saveOverride('')}
-              style={{ marginLeft: 'auto', background: 'none', border: 'none', padding: 0, fontSize: '0.66rem', color: 'var(--blue)', cursor: 'pointer' }}
-            >
-              Reset to global
+            // Not disabled while saving: clicking it blurs the field first, which starts a save,
+            // and a disabled button would then swallow the click.
+            <button type="button" className="co-linkbtn" onClick={() => saveOverride('')}>
+              Use agency default
             </button>
           )}
         </div>
-      </label>
-      <p style={{ fontSize: '0.63rem', color: 'var(--text-faint)', margin: '5px 0 0' }}>
-        Leave blank to follow the agency default ({agencyStaleDays} days).
-      </p>
-    </div>
+        <p className="co-hint">Leave blank to follow the agency default ({agencyStaleDays} days).</p>
+      </div>
+    </Section>
   )
 }

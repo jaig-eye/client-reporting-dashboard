@@ -1,7 +1,12 @@
 'use client'
 
+// A client's email schedule: on or off, how many emails a week, who writes them, and how many days
+// before the Friday due date the Discord reminder goes out.
+
+import '@/styles/admin/emails.css'
 import { useState, useEffect } from 'react'
-import { CalendarBlank, User, Bell } from '@phosphor-icons/react'
+import { CalendarBlank, Check } from '@phosphor-icons/react'
+import { Sk } from '@/components/ui/Skeleton'
 
 interface AdminUser {
   id:         string
@@ -78,110 +83,86 @@ export default function EmailSchedulePanel({ clientId }: Props) {
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save schedule. Please try again.')
+      setSaveError(err instanceof Error ? err.message : 'Couldn’t save the schedule. Try again.')
     } finally {
       setSaving(false)
     }
   }
 
-  const labelStyle: React.CSSProperties = {
-    fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4,
+  if (loading) {
+    return (
+      <div className="em-sched" aria-busy="true" aria-label="Loading the email schedule">
+        <Sk w={160} h={14} />
+        <Sk w={96} h={36} r={8} />
+        <Sk h={36} r={8} />
+      </div>
+    )
   }
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '0.4rem 0.6rem', boxSizing: 'border-box',
-    background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-    borderRadius: 6, fontSize: '0.8rem', color: 'var(--text)', fontFamily: 'inherit',
-  }
-
-  if (loading) return <p style={{ fontSize: '0.78rem', color: 'var(--text-faint)' }}>Loading schedule…</p>
 
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1rem' }}>
-        <CalendarBlank size={16} style={{ color: 'var(--blue)' }} aria-hidden />
-        <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-          Email Schedule
-        </p>
-        {/* Active toggle */}
-        <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          <span>{isActive ? 'Active' : 'Inactive'}</span>
-          <span style={{ position: 'relative', display: 'inline-block', width: 32, height: 18 }}>
-            <input
-              type="checkbox"
-              checked={isActive}
-              onChange={e => { setIsActive(e.target.checked); setSaveError(null) }}
-              style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
-            />
-            <span style={{
-              position: 'absolute', inset: 0, borderRadius: 999,
-              background: isActive ? 'var(--blue)' : 'var(--border)', transition: 'background 0.2s',
-            }} />
-            <span style={{
-              position: 'absolute', top: 2, left: isActive ? 16 : 2, width: 14, height: 14,
-              borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
-            }} />
-          </span>
+    <div className="em-sched">
+      <div className="em-sched-head">
+        <h3 className="em-sched-title"><CalendarBlank size={16} aria-hidden />Email schedule</h3>
+        <label className="em-switch">
+          <span>{isActive ? 'On' : 'Off'}</span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={isActive}
+            aria-checked={isActive}
+            aria-label="Email schedule on"
+            onChange={e => { setIsActive(e.target.checked); setSaveError(null) }}
+          />
+          <span className="em-switch-track" aria-hidden />
         </label>
       </div>
 
       {isActive && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <label style={labelStyle}>Emails per week</label>
+        <>
+          <div className="em-field">
+            <label className="em-label" htmlFor={`em-sched-per-${clientId}`}>Emails per week</label>
             <input
+              id={`em-sched-per-${clientId}`}
+              className="input"
               type="number" min="1" max="7"
               value={emailsPerWeek}
               onChange={e => setEmailsPerWeek(Math.max(1, parseInt(e.target.value) || 1))}
-              style={{ ...inputStyle, width: 80 }}
             />
           </div>
 
-          <div>
-            <label style={labelStyle}><User size={11} style={{ marginRight: 4 }} aria-hidden />Assigned to</label>
-            <select value={assignedUserId} onChange={e => setAssignedUserId(e.target.value)} style={inputStyle}>
+          <div className="em-field">
+            <label className="em-label" htmlFor={`em-sched-user-${clientId}`}>Assigned to</label>
+            <select id={`em-sched-user-${clientId}`} className="input" value={assignedUserId} onChange={e => setAssignedUserId(e.target.value)}>
               <option value="">Unassigned</option>
               {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
 
-          <div>
-            <label style={labelStyle}><Bell size={11} style={{ marginRight: 4 }} aria-hidden />Reminder (days before due)</label>
+          <div className="em-field">
+            <label className="em-label" htmlFor={`em-sched-rem-${clientId}`}>Reminder, days before it’s due</label>
             <input
+              id={`em-sched-rem-${clientId}`}
+              className="input"
               type="number" min="0" max="14"
               value={reminderDaysBefore}
               onChange={e => setReminderDaysBefore(Math.max(0, parseInt(e.target.value) || 0))}
-              style={{ ...inputStyle, width: 80 }}
             />
-            <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
-              Discord reminder fires this many days before the weekly due date (Friday).
-            </p>
+            <p className="em-hint">The Discord reminder goes out this many days before the weekly due date (Friday).</p>
           </div>
-        </div>
+        </>
       )}
 
-      <button
-        onClick={() => void save()}
-        disabled={saving}
-        style={{
-          marginTop: 14, padding: '0.4rem 1rem',
-          background: saving ? 'var(--border)' : saved ? 'var(--green)' : 'var(--blue)',
-          color: '#fff', border: 'none', borderRadius: 6,
-          fontSize: '0.78rem', fontWeight: 600, cursor: saving ? 'wait' : 'pointer',
-          transition: 'background 0.2s',
-        }}
-      >
-        {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save Schedule'}
-      </button>
+      <div className="em-sched-save">
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => void save()} disabled={saving}>
+          {saving ? 'Saving…' : 'Save schedule'}
+        </button>
+        {saved && <span className="em-ok" role="status"><Check size={13} weight="bold" aria-hidden />Saved</span>}
+        {!schedule && !saveError && !saved && (
+          <span className="em-hint" style={{ margin: 0 }}>No schedule yet. Saving creates one.</span>
+        )}
+      </div>
 
-      {saveError && (
-        <p style={{ margin: '6px 0 0', fontSize: '0.72rem', color: 'var(--red)' }}>{saveError}</p>
-      )}
-
-      {!schedule && !saveError && (
-        <p style={{ margin: '6px 0 0', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
-          No schedule set yet. Save to create one.
-        </p>
-      )}
+      {saveError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{saveError}</div>}
     </div>
   )
 }
