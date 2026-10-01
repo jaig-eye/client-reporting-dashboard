@@ -105,7 +105,7 @@ export async function POST(
     .eq('silo_id', siloId)
   if (exErr) return NextResponse.json({ error: exErr.message }, { status: 500 })
   const held = (existing ?? []) as { keyword: string; sort_order: number | null }[]
-  const have = new Set(held.map(k => k.keyword.trim().toLowerCase()))
+  const have = new Set(held.map(k => cleanQueueKeyword(k.keyword).toLowerCase()))
   const nextOrder = held.reduce((m, k) => Math.max(m, k.sort_order ?? 0), -1) + 1
 
   if (Array.isArray(body.keywords)) {
