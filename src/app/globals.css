@@ -1206,7 +1206,9 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .pt-tag-label { font-weight: 600; color: var(--text-primary); }
 .pt-tag-sep { color: var(--text-faint); }
 .pt-tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pt-tag-kw { color: var(--text-muted); overflow-wrap: anywhere; }
+/* One line, cut short rather than wrapped: in a squeezed card column a wrapping keyword stacked one
+   letter per line. The whole thing is in the tag's title. */
+.pt-tag-kw { min-width: 0; max-width: 100%; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pt-tag--sm { font-size: 0.6875rem; }
 
 @container (max-width: 520px) {

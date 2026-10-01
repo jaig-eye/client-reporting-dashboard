@@ -129,6 +129,9 @@ function SetCard({ set, clientId, isNext, next, slot }: {
   else if (isNext && st.nextKeyword) {
     const date = slot && slot !== 'error' ? ` · for ${fmtPublishDay(slot.date)}` : ''
     line = `Next: “${st.nextKeyword}”${date}`
+  } else if (next && isHub(next)) {
+    // A main-page set never runs out, so "once it runs out" would never come true.
+    line = `Next: “${st.nextKeyword ?? '—'}”. Waiting behind “${next.name}”, which plans around a main page and doesn’t run out.`
   } else line = `Next: “${st.nextKeyword ?? '—'}”, once “${next?.name ?? 'the set ahead'}” runs out.`
 
   return (
