@@ -1,186 +1,129 @@
 'use client'
 
+// The admin's navigation. Two groups: Operations (the daily work) and Agency (integrations, usage,
+// and the Settings hub — agency settings, users, system and logs, your profile — which opens in
+// place). On phones and tablets AdminShell turns this into a drawer.
+
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Buildings,
-  PlugsConnected,
-  NotePencil,
-  UsersThree,
-  GearSix,
-  HardDrives,
-  RocketLaunch,
-  Bell,
-  GlobeSimple,
-  EnvelopeSimple,
+  Buildings, NotePencil, EnvelopeSimple, RocketLaunch, GlobeSimple, Bell,
+  PlugsConnected, ChartLineUp, GearSix, CaretRight, SlidersHorizontal, UsersThree, HardDrives, UserCircle,
 } from '@phosphor-icons/react'
 import UserMenu from './UserMenu'
 
-interface NavItem {
-  href: string
-  label: string
-  icon: React.ReactNode
-  matchPrefix?: boolean
-  alertsKey?: boolean
-  beta?: boolean
+interface NavLink {
+  href:   string
+  label:  string
+  icon:   ReactNode
+  /** Other path prefixes that count as this item (a client's page belongs to Clients). */
+  also?:  string[]
+  /** Paths under href that belong to another item. */
+  except?: string[]
+  count?: 'alerts'
+  beta?:  boolean
 }
 
-interface NavSection {
-  title: string
-  items: NavItem[]
-}
+const ICON = 18
 
-const NAV_SECTIONS: NavSection[] = [
-  {
-    title: 'Operations',
-    items: [
-      { href: '/admin/dashboard', label: 'Clients',  icon: <Buildings size={16} aria-hidden />,     matchPrefix: true },
-      { href: '/admin/content',   label: 'Content',  icon: <NotePencil size={16} aria-hidden />,    matchPrefix: true },
-      { href: '/admin/emails',    label: 'Emails',   icon: <EnvelopeSimple size={16} aria-hidden />, matchPrefix: true, beta: true },
-      { href: '/admin/ad-fuel',   label: 'Ad Fuel',  icon: <RocketLaunch size={16} aria-hidden />,  matchPrefix: true },
-    ],
-  },
-  {
-    title: 'Our Tools',
-    items: [
-      { href: '/admin/sites', label: 'Site Monitoring', icon: <GlobeSimple size={16} aria-hidden />, matchPrefix: true },
-    ],
-  },
-  {
-    title: 'Admin',
-    items: [
-      { href: '/admin/connections', label: 'Integrations',    icon: <PlugsConnected size={16} aria-hidden />, matchPrefix: true },
-      { href: '/admin/users',       label: 'Users',           icon: <UsersThree size={16} aria-hidden />,     matchPrefix: true },
-      { href: '/admin/alerts',      label: 'Alerts',          icon: <Bell size={16} aria-hidden />,           matchPrefix: true, alertsKey: true },
-      { href: '/admin/settings',    label: 'Agency Settings', icon: <GearSix size={16} aria-hidden />,        matchPrefix: true },
-      { href: '/admin/system',      label: 'System',          icon: <HardDrives size={16} aria-hidden />,     matchPrefix: true },
-    ],
-  },
+const OPERATIONS: NavLink[] = [
+  { href: '/admin/dashboard', label: 'Clients', icon: <Buildings size={ICON} />, also: ['/admin/clients'] },
+  { href: '/admin/content',   label: 'Content', icon: <NotePencil size={ICON} /> },
+  { href: '/admin/emails',    label: 'Emails',  icon: <EnvelopeSimple size={ICON} />, beta: true },
+  { href: '/admin/ad-fuel',   label: 'Ad Fuel', icon: <RocketLaunch size={ICON} /> },
+  { href: '/admin/sites',     label: 'Sites',   icon: <GlobeSimple size={ICON} /> },
+  { href: '/admin/alerts',    label: 'Alerts',  icon: <Bell size={ICON} />, count: 'alerts' },
 ]
 
-interface SidebarProps {
-  agencyName: string
-  agencyLogoUrl?: string
-  appVersion: string
-  userName: string
-  userEmail: string
-  userAvatarUrl?: string
-  isSuperAdmin?: boolean
+const AGENCY: NavLink[] = [
+  { href: '/admin/connections', label: 'Integrations', icon: <PlugsConnected size={ICON} /> },
+  { href: '/admin/usage',       label: 'Usage',        icon: <ChartLineUp size={ICON} /> },
+]
+
+const SETTINGS: NavLink[] = [
+  { href: '/admin/settings', label: 'Agency settings', icon: <SlidersHorizontal size={16} />, also: ['/admin/categories', '/admin/metric-mapping'] },
+  { href: '/admin/users',    label: 'Users',           icon: <UsersThree size={16} />, except: ['/admin/users/me'] },
+  { href: '/admin/system',   label: 'System & logs',   icon: <HardDrives size={16} /> },
+  { href: '/admin/users/me', label: 'My profile',      icon: <UserCircle size={16} /> },
+]
+
+function matches(pathname: string, item: NavLink): boolean {
+  const under = (p: string) => pathname === p || pathname.startsWith(p + '/')
+  if (item.except?.some(under)) return false
+  return under(item.href) || (item.also ?? []).some(under)
+}
+
+export interface SidebarProps {
+  agencyName:       string
+  agencyLogoUrl?:   string
+  userName:         string
+  userEmail:        string
+  userAvatarUrl?:   string
+  isSuperAdmin?:    boolean
   unreadAlertCount?: number
+  id?:              string
 }
 
 export default function Sidebar({
-  agencyName,
-  agencyLogoUrl,
-  appVersion,
-  userName,
-  userEmail,
-  userAvatarUrl,
-  isSuperAdmin = false,
-  unreadAlertCount = 0,
+  agencyName, agencyLogoUrl, userName, userEmail, userAvatarUrl, isSuperAdmin = false, unreadAlertCount = 0, id,
 }: SidebarProps) {
-  const pathname = usePathname()
+  const pathname = usePathname() ?? ''
+  const inSettings = SETTINGS.some(s => matches(pathname, s))
+  const [settingsOpen, setSettingsOpen] = useState(inSettings)
+  // Arriving on a settings page opens the group; leaving it doesn't close what someone opened.
+  useEffect(() => { if (inSettings) setSettingsOpen(true) }, [inSettings])
 
-  function isActive(item: NavItem): boolean {
-    if (item.matchPrefix === false) {
-      return pathname === item.href
-    }
-    return pathname === item.href || pathname.startsWith(item.href + '/')
+  const item = (n: NavLink) => {
+    const on = matches(pathname, n)
+    const count = n.count === 'alerts' ? unreadAlertCount : 0
+    return (
+      <Link key={n.href} href={n.href} className="adm-nav-item" aria-current={on ? 'page' : undefined}>
+        <span className="adm-nav-icon" aria-hidden>{n.icon}</span>
+        <span className="adm-nav-label">{n.label}</span>
+        {n.beta && <span className="adm-nav-beta">Beta</span>}
+        {count > 0 && <span className="adm-nav-count" aria-label={`${count} unread`}>{count > 99 ? '99+' : count}</span>}
+      </Link>
+    )
   }
 
   return (
-    <aside
-      className="flex flex-col h-screen sticky top-0"
-      style={{
-        width: 'var(--sidebar-width)',
-        background: 'var(--sidebar-bg)',
-        borderRight: '1px solid var(--border)',
-        flexShrink: 0,
-      }}
-    >
-      {/* Agency branding */}
-      <div style={{ padding: '1.25rem 1rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="mb-0.5">
-          {agencyLogoUrl ? (
-            <img src={agencyLogoUrl} alt={agencyName} style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 48, objectFit: 'contain', objectPosition: 'left' }} />
-          ) : (
-            <div
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
-              style={{ background: 'var(--blue)', flexShrink: 0 }}
-            >
-              {agencyName.slice(0, 1).toUpperCase()}
-            </div>
-          )}
-        </div>
-        <p className="text-xs" style={{ color: 'var(--text-faint)', marginTop: 2 }}>
-          v{appVersion}
-        </p>
+    <aside className="adm-sidebar" id={id} aria-label="Admin navigation">
+      <div className="adm-brand">
+        {agencyLogoUrl
+          ? <img src={agencyLogoUrl} alt={agencyName} />
+          : <><span className="adm-brand-mark" aria-hidden>{agencyName.slice(0, 1).toUpperCase()}</span><span className="adm-brand-name">{agencyName}</span></>}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto" style={{ padding: '0.625rem 0.5rem' }}>
-        {NAV_SECTIONS.map((section, si) => (
-          <div key={section.title} style={{ marginTop: si === 0 ? 0 : '1rem' }}>
-            <p style={{
-              fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.08em',
-              textTransform: 'uppercase', color: 'var(--text-muted)',
-              padding: '0 0.5rem', margin: '0 0 0.25rem',
-            }}>
-              {section.title}
-            </p>
-            <div className="space-y-0.5">
-              {section.items.map(item => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={isActive(item) ? 'page' : undefined}
-                  className={`nav-item focus-ring ${isActive(item) ? 'active' : ''}`}
-                  style={{ display: 'flex', alignItems: 'center' }}
-                >
-                  <span className="flex items-center flex-shrink-0" style={{ width: '1rem', justifyContent: 'center' }}>
-                    {item.icon}
-                  </span>
-                  {item.label}
-                  {item.beta && (
-                    <span style={{
-                      fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.05em',
-                      background: 'var(--blue)', color: '#fff',
-                      padding: '1px 4px', borderRadius: 3,
-                      marginLeft: 5, verticalAlign: 'middle', lineHeight: 1.4,
-                    }}>
-                      BETA
-                    </span>
-                  )}
-                  {item.alertsKey && unreadAlertCount > 0 && (
-                    <span
-                      style={{
-                        marginLeft:     'auto',
-                        minWidth:       18,
-                        height:         18,
-                        background:     'var(--red)',
-                        color:          '#fff',
-                        borderRadius:   9,
-                        fontSize:       '0.625rem',
-                        fontWeight:     700,
-                        display:        'flex',
-                        alignItems:     'center',
-                        justifyContent: 'center',
-                        padding:        '0 5px',
-                        animation:      'badge-pop 0.2s ease',
-                      }}
-                    >
-                      {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
-                    </span>
-                  )}
-                </Link>
-              ))}
-            </div>
+      <nav className="adm-nav">
+        <div className="adm-nav-section">
+          <p className="adm-nav-title">Operations</p>
+          <div className="adm-nav-list">{OPERATIONS.map(item)}</div>
+        </div>
+
+        <div className="adm-nav-section">
+          <p className="adm-nav-title">Agency</p>
+          <div className="adm-nav-list">
+            {AGENCY.map(item)}
+            <button
+              type="button"
+              className="adm-nav-item"
+              aria-expanded={settingsOpen}
+              aria-controls="adm-settings-nav"
+              onClick={() => setSettingsOpen(o => !o)}
+            >
+              <span className="adm-nav-icon" aria-hidden><GearSix size={ICON} /></span>
+              <span className="adm-nav-label">Settings</span>
+              <CaretRight size={12} weight="bold" className="adm-nav-caret" aria-hidden />
+            </button>
+            {settingsOpen && (
+              <div className="adm-nav-sub" id="adm-settings-nav">{SETTINGS.map(item)}</div>
+            )}
           </div>
-        ))}
+        </div>
       </nav>
 
-      {/* Account row + three-dot menu */}
-      <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="adm-account">
         <UserMenu
           userName={userName}
           userEmail={userEmail}

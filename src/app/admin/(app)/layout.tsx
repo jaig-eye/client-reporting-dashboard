@@ -1,26 +1,30 @@
-// Admin Layout — sidebar shell for all protected /admin/* pages
+// Admin Layout — the frame (sidebar, or top bar + drawer on small screens) for every protected
+// /admin/* page.
 
 export const dynamic = 'force-dynamic'
 
+import '@/styles/admin.css'
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import Sidebar from '@/components/admin/Sidebar'
-import NavigationRefresher from '@/components/admin/NavigationRefresher'
+import { getAgencySettings } from '@/lib/agency-settings'
+import AdminShell from '@/components/admin/AdminShell'
 import ThemeProvider from '@/components/ThemeProvider'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import PaymentNotifier from '@/components/admin/PaymentNotifier'
+import ThemeScript from '@/components/admin/ThemeScript'
+
+// Agency settings come from the cached reader (tagged 'agency-settings', busted when settings are
+// saved): the layout used to query them twice per page, once here and once for the metadata.
+type Branding = { agency_name?: string; agency_logo_url?: string | null; favicon_url?: string | null; brand_primary?: string | null; payment_sound_url?: string | null }
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
-    const db = createAdminClient()
-    const { data } = await db.from('agency_settings').select('favicon_url, agency_name').single()
-    const faviconUrl  = (data as Record<string, unknown> | null)?.favicon_url as string | null
-    const agencyName  = (data as Record<string, unknown> | null)?.agency_name  as string | null
+    const s = (await getAgencySettings()) as unknown as Branding
     return {
-      title:   agencyName ? `${agencyName} Admin` : 'Agency Admin',
-      ...(faviconUrl ? { icons: { icon: faviconUrl } } : {}),
+      title: s.agency_name ? `${s.agency_name} Admin` : 'Agency Admin',
+      ...(s.favicon_url ? { icons: { icon: s.favicon_url } } : {}),
     }
   } catch {
     return { title: 'Agency Admin' }
@@ -48,9 +52,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const userId = adminSession.userId ?? null
 
-  // Resolve current user, agency settings, and unread alert count concurrently
-  const [settingsResult, sessionUserResult, alertCountResult] = await Promise.all([
-    db.from('agency_settings').select('agency_name, agency_logo_url, app_version, brand_primary, payment_sound_url').single(),
+  const [settings, sessionUserResult, alertCountResult] = await Promise.all([
+    getAgencySettings() as unknown as Promise<Branding>,
     userId
       ? db.from('users').select('name, email, avatar_url, theme, accent_color').eq('id', userId).single()
       : Promise.resolve({ data: null }),
@@ -60,37 +63,29 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       .is('dismissed_at', null),
   ])
 
-  const settings         = settingsResult.data    ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0', brand_primary: null, payment_sound_url: null }
-  const sessionUser      = sessionUserResult.data
+  const sessionUser      = sessionUserResult.data as Record<string, unknown> | null
   const unreadAlertCount = alertCountResult.count ?? 0
 
-  const userName   = sessionUser?.name   ?? 'Super Admin'
-  const userEmail  = sessionUser?.email  ?? 'Master account'
-  const avatarUrl  = (sessionUser as Record<string, unknown> | null)?.avatar_url as string | undefined
-
-  const brandPrimary  = (settings as Record<string, unknown>).brand_primary as string | null ?? '#2563eb'
-  const initialMode   = ((sessionUser as Record<string, unknown> | null)?.theme as ThemeMode | null) ?? 'light'
-  const initialAccent = ((sessionUser as Record<string, unknown> | null)?.accent_color as string | null) ?? brandPrimary
+  const brandPrimary  = settings.brand_primary ?? '#2563eb'
+  const initialMode   = (sessionUser?.theme as ThemeMode | null) ?? 'light'
+  const initialAccent = (sessionUser?.accent_color as string | null) ?? brandPrimary
 
   return (
     <ThemeProvider initialMode={initialMode} initialAccent={initialAccent}>
-      <div className="flex min-h-screen" style={{ background: 'var(--bg-base)' }}>
-        <Sidebar
-          agencyName={settings.agency_name}
-          agencyLogoUrl={settings.agency_logo_url ?? undefined}
-          appVersion={(settings as Record<string, unknown>).app_version as string ?? '2.0.0'}
-          userName={userName}
-          userEmail={userEmail}
-          userAvatarUrl={avatarUrl}
-          isSuperAdmin={adminSession?.isSuperAdmin === true}
-          unreadAlertCount={unreadAlertCount}
-        />
-        <NavigationRefresher />
-        <PaymentNotifier soundUrl={(settings as Record<string, unknown>).payment_sound_url as string | null} />
-        <div className="flex-1 min-w-0">
-          <main className="p-8">{children}</main>
-        </div>
-      </div>
+      {/* Sets the theme before the first paint, so dark mode no longer flashes light on a reload. */}
+      <ThemeScript mode={initialMode} accent={initialAccent} />
+      <PaymentNotifier soundUrl={settings.payment_sound_url ?? null} />
+      <AdminShell
+        agencyName={settings.agency_name ?? 'My Agency'}
+        agencyLogoUrl={settings.agency_logo_url ?? undefined}
+        userName={(sessionUser?.name as string | undefined) ?? 'Super Admin'}
+        userEmail={(sessionUser?.email as string | undefined) ?? 'Master account'}
+        userAvatarUrl={(sessionUser?.avatar_url as string | undefined) ?? undefined}
+        isSuperAdmin={adminSession.isSuperAdmin === true}
+        unreadAlertCount={unreadAlertCount}
+      >
+        {children}
+      </AdminShell>
     </ThemeProvider>
   )
 }

@@ -1,9 +1,11 @@
-// Admin Preview Layout — sidebar shell for /admin/preview/* pages.
-// Full-width main area (no max-w-5xl constraint) so dashboard content renders properly.
+// Admin Preview Layout — the admin frame around /admin/preview/* (the client dashboard as a client
+// sees it). Flush: no padding or width cap, so the dashboard uses the full page.
 
+import '@/styles/admin.css'
 import { getAdminSession } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import Sidebar from '@/components/admin/Sidebar'
+import { getAgencySettings } from '@/lib/agency-settings'
+import AdminShell from '@/components/admin/AdminShell'
 import NavigationRefresher from '@/components/admin/NavigationRefresher'
 
 export default async function PreviewLayout({ children }: { children: React.ReactNode }) {
@@ -17,32 +19,29 @@ export default async function PreviewLayout({ children }: { children: React.Reac
   const adminSession = await getAdminSession()
   const userId = adminSession?.userId ?? null
 
-  const [settingsResult, sessionUserResult] = await Promise.all([
-    db.from('agency_settings').select('agency_name, agency_logo_url, app_version').single(),
+  const [settings, sessionUserResult] = await Promise.all([
+    getAgencySettings() as unknown as Promise<{ agency_name?: string; agency_logo_url?: string | null }>,
     userId
       ? db.from('users').select('name, email, avatar_url').eq('id', userId).single()
       : Promise.resolve({ data: null }),
   ])
 
-  const settings    = settingsResult.data ?? { agency_name: 'My Agency', agency_logo_url: null, app_version: '2.0.0' }
   const sessionUser = sessionUserResult.data
 
   return (
-    <div className="flex min-h-screen" style={{ background: 'var(--bg-base)' }}>
-      <Sidebar
-        agencyName={settings.agency_name}
-        agencyLogoUrl={settings.agency_logo_url ?? undefined}
-        appVersion={(settings as Record<string, unknown>).app_version as string ?? '2.0.0'}
-        userName={sessionUser?.name   ?? 'Super Admin'}
-        userEmail={sessionUser?.email ?? 'Master account'}
-        userAvatarUrl={sessionUser?.avatar_url ?? undefined}
-        isSuperAdmin={adminSession?.isSuperAdmin === true}
-      />
+    <AdminShell
+      flush
+      agencyName={settings.agency_name ?? 'My Agency'}
+      agencyLogoUrl={settings.agency_logo_url ?? undefined}
+      userName={sessionUser?.name   ?? 'Super Admin'}
+      userEmail={sessionUser?.email ?? 'Master account'}
+      userAvatarUrl={sessionUser?.avatar_url ?? undefined}
+      isSuperAdmin={adminSession?.isSuperAdmin === true}
+    >
+      {/* The preview is the client dashboard, which reloads its data per page the way the real
+          one does. */}
       <NavigationRefresher />
-      {/* Full-width — no max-w or padding so dashboard content uses full viewport */}
-      <div className="flex-1 min-w-0 overflow-auto">
-        {children}
-      </div>
-    </div>
+      {children}
+    </AdminShell>
   )
 }
