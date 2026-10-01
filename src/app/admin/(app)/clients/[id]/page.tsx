@@ -64,7 +64,6 @@ export default async function ClientDetailPage({
   const activeTab     = TABS.find(t => t.id === sp.tab)?.id ?? 'overview'
   const initialSubTab = sp.subtab ?? 'pipeline'
   const db = createAdminClient()
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL!
 
   // Always-needed data
   const [clientRes, connectionsRes, connectorsRes, recentJobsRes, settingsRes, discoveredRes, coverageRes, pauseLogRes] = await Promise.all([
