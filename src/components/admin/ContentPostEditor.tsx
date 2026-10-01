@@ -2059,7 +2059,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 aria-label="Regenerate this post"
                 onClick={() => (onMonthlyRegenerate ? onMonthlyRegenerate() : setRegenDialogOpen(true))}
                 className="btn btn-sm"
-                disabled={saving || approving || regenerating || fullRegenerating}
+                disabled={saving || approving || regenInProgress}
                 style={{ padding: '4px 8px', display: 'inline-flex', alignItems: 'center' }}
               >
                 <ArrowClockwise size={13} weight="bold" />
@@ -2142,7 +2142,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 aria-label="Regenerate this post"
                 onClick={() => setRegenDialogOpen(true)}
                 className="btn btn-secondary"
-                disabled={saving || approving || regenerating || fullRegenerating}
+                disabled={saving || approving || regenInProgress}
                 style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
                 <ArrowClockwise size={14} weight="bold" />

@@ -22,6 +22,9 @@ const MAX_ROWS = 50_000
 /** Ids per `in` filter: it rides in the URL, so this keeps it short. */
 const CHUNK = 200
 /** How far back a failure still counts as recent. */
+/** When "SEO fields not stored" became trustworthy (an accepted Rank Math write is no longer re-judged). */
+const SEO_EVENTS_TRUSTED_FROM = '2026-10-02'
+
 const RECENT_DAYS = 14
 
 const log = (what: string, message: string) => console.error(`[content/overview] ${what} read failed:`, message)
@@ -68,7 +71,7 @@ type SettingsRow = {
 type Embedded<T> = T | T[] | null
 type ConnRow = {
   id: string; client_id: string; external_id: string | null; external_name: string | null; status: string | null
-  connector: Embedded<{ type: string; status: string | null; config: Record<string, unknown> | null }>
+  connector: Embedded<{ type: string; status: string | null; role: string | null }>
 }
 type TopicRow = { client_id: string; target_publish_date: string; status: string }
 type SuppressionRow = { client_id: string; target_publish_date: string }
@@ -77,6 +80,7 @@ type PostRow = {
   published_at: string | null; target_publish_date: string | null
   auto_push_error: string | null; auto_pushed_at: string | null; last_pushed_at: string | null
   image_generation_error: string | null; generated_at: string | null
+  wp_post_id: number | null; bc_post_id: number | null; featured_image_url: string | null
 }
 type ActivityRow = { client_id: string | null; resource_id: string | null }
 
@@ -92,6 +96,9 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
   const now      = new Date()
   const today    = now.toISOString().slice(0, 10)
   const sinceDay = new Date(now.getTime() - RECENT_DAYS * 86_400_000).toISOString().slice(0, 10)
+  // "SEO fields not stored" events logged before the fix that trusts an accepted Rank Math write
+  // were false alarms (the fields were saved), so they are not read.
+  const seoSince = sinceDay > SEO_EVENTS_TRUSTED_FROM ? sinceDay : SEO_EVENTS_TRUSTED_FROM
 
   // Everything that doesn't depend on another read, at once.
   const [settings, conns, topics, suppressions, posts, activity, silos] = await Promise.all([
@@ -101,7 +108,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       .range(f, t))),
     // Every status, not only active ones: a connection that stopped working is what the column is for.
     safe('connections', () => readAll<ConnRow>('connections', (f, t) => db.from('client_connections')
-      .select('id, client_id, external_id, external_name, status, connector:connectors!inner(type, status, config)')
+      .select('id, client_id, external_id, external_name, status, connector:connectors!inner(type, status, role:config->>role)')
       .in('connector.type', ['wordpress', 'bigcommerce', 'dataforseo'])
       .order('id', { ascending: true }).range(f, t))),
     // The statuses that hold a date, as the planner counts them; rejected ones are set aside below.
@@ -116,13 +123,13 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       .order('id', { ascending: true }).range(f, t))),
     // Posts in review, everything published (for the latest date) and recent failures — one read.
     safe('posts', () => readAll<PostRow>('posts', (f, t) => db.from('content_posts')
-      .select('id, client_id, status, wp_status, archived_at, published_at, target_publish_date, auto_push_error, auto_pushed_at, last_pushed_at, image_generation_error, generated_at')
+      .select('id, client_id, status, wp_status, archived_at, published_at, target_publish_date, auto_push_error, auto_pushed_at, last_pushed_at, image_generation_error, generated_at, wp_post_id, bc_post_id, featured_image_url')
       .or(`status.eq.for_review,wp_status.eq.publish,and(auto_push_error.not.is.null,auto_pushed_at.gte.${sinceDay}),and(image_generation_error.not.is.null,generated_at.gte.${sinceDay})`)
       .order('id', { ascending: true }).range(f, t))),
     safe('activity', () => readAll<ActivityRow>('activity', (f, t) => db.from('activity_log')
       .select('client_id, resource_id')
       .eq('action', 'seo_meta_not_stored')
-      .gte('created_at', sinceDay)
+      .gte('created_at', seoSince)
       .order('id', { ascending: true }).range(f, t))),
     // Active blog sets — the ones the planner takes keywords from.
     safe('sets', () => readAll<{ id: string; client_id: string }>('sets', (f, t) => db.from('content_silos')
@@ -159,7 +166,11 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
   const group = <T extends { client_id: string | null }>(rows: T[] | null) => {
     if (!rows) return null
     const m = new Map<string, T[]>()
-    for (const r of rows) if (r.client_id) m.set(r.client_id, [...(m.get(r.client_id) ?? []), r])
+    for (const r of rows) {
+      if (!r.client_id) continue
+      const list = m.get(r.client_id)
+      if (list) list.push(r); else m.set(r.client_id, [r])
+    }
     return m
   }
   const connsBy = group(conns)
@@ -202,7 +213,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       // A BigCommerce connection kept for analytics only is not where posts go.
       const content = mine.filter(c => {
         const conn = one(c.connector)
-        return conn?.type === 'wordpress' || (conn?.type === 'bigcommerce' && conn.config?.role !== 'analytics')
+        return conn?.type === 'wordpress' || (conn?.type === 'bigcommerce' && conn.role !== 'analytics')
       })
       const chosen = content.find(c => c.id === cs.connection_id) ?? content.find(isActive) ?? content[0] ?? null
       if (chosen) {
@@ -214,7 +225,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
           mode:     type === 'wordpress' ? (cs.wp_publish_mode === 'draft_only' ? 'Draft only' : 'Scheduled draft') : null,
         }
       } else site = 'none'
-      const dfsConn = mine.some(c => one(c.connector)?.type === 'dataforseo' && isActive(c) && (c.external_id ?? '').trim())
+      const dfsConn = mine.some(c => one(c.connector)?.type === 'dataforseo' && (c.status ?? 'active') === 'active' && !!(c.external_id ?? '').trim())
       dfs = { connected: dfsConn, researchedAt: cs.last_keyword_research_at ? cs.last_keyword_research_at.slice(0, 10) : null }
     }
 
@@ -253,7 +264,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       review = { count: inReview.length, overdue: inReview.filter(p => p.target_publish_date && p.target_publish_date < today).length }
       // Archived posts are still live on the site, so they count here.
       const last = mine
-        .filter(p => p.wp_status === 'publish')
+        .filter(p => p.wp_status === 'publish' && p.status !== 'rejected')
         .map(p => (p.published_at ?? p.target_publish_date ?? '').slice(0, 10))
         .filter(Boolean)
         .sort()
@@ -262,10 +273,13 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
         date: last,
         daysAgo: last ? Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(last + 'T00:00:00Z')) / 86_400_000) : null,
       }
-      // A failed automatic push stays recorded after someone publishes by hand; a later push clears it.
+      // A failed automatic push counts while the post is still not on a site. auto_push_error was never
+      // cleared on a later success, so a retry that worked kept the flag for two weeks.
       pushErrors = current.filter(p => p.auto_push_error && p.auto_pushed_at && p.auto_pushed_at.slice(0, 10) >= sinceDay
-        && !(p.last_pushed_at && p.last_pushed_at > p.auto_pushed_at)).length
-      imageErrors = current.filter(p => p.image_generation_error && p.generated_at && p.generated_at.slice(0, 10) >= sinceDay).length
+        && !p.wp_post_id && !p.bc_post_id).length
+      // An image error counts while the post still has no image: an upload does not clear the error.
+      imageErrors = current.filter(p => p.image_generation_error && !p.featured_image_url
+        && p.generated_at && p.generated_at.slice(0, 10) >= sinceDay).length
     }
 
     const facts: OverviewFacts = {

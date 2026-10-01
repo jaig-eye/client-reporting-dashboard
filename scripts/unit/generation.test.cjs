@@ -85,6 +85,11 @@ test('a set never takes more slots than it has keywords, even when a date wants 
   assert.deepEqual(Q.splitSlotsBySets(['d1'], []), [{ slot: 'd1', siloId: null }])
 })
 
+test('a set that runs out partway through a date leaves the rest of it to the usual selection, as the cron does', () => {
+  const plan = Q.splitSlotsBySets(['d1', 'd1', 'd2', 'd2'], [{ id: 'a', waiting: 1 }, { id: 'b', waiting: 5 }])
+  assert.deepEqual(plan.map(p => p.siloId), ['a', null, 'b', 'b'])
+})
+
 // A query-builder stand-in for waitingSets: the silo list, then one head count per silo.
 function setsDb({ silos, waiting, silosError = null, countError = null }) {
   return {

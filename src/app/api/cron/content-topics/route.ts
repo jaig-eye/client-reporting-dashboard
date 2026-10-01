@@ -680,7 +680,7 @@ export async function GET(request: NextRequest) {
           })
           if (approveRes.ok) {
             await db.from('content_posts')
-              .update({ auto_pushed_at: new Date().toISOString() })
+              .update({ auto_pushed_at: new Date().toISOString(), auto_push_error: null })
               .eq('id', post.id)
             pushResults.push({ title: post.title, ok: true })
           } else {
@@ -1179,7 +1179,7 @@ export async function GET(request: NextRequest) {
             })
             if (approveRes.ok) {
               await db.from('content_posts')
-                .update({ auto_pushed_at: new Date().toISOString() })
+                .update({ auto_pushed_at: new Date().toISOString(), auto_push_error: null })
                 .eq('id', post.id)
               saPushResults.push({ title: post.title, ok: true })
               saPushed.push(post.id)

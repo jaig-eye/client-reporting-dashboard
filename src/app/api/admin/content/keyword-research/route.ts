@@ -290,6 +290,17 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // Claim the hour before anything is bought. The ledger otherwise shows a run only once its first
+  // paid call returns, which can take a minute, and two presses inside that gap both ran. A zero-cost
+  // row adds nothing to spend; only a client that can buy research gets one.
+  if (await hasDfsConnection(clientId)) {
+    const { error: markErr } = await createAdminClient().from('dataforseo_usage').insert({
+      client_id: clientId, operation: 'keyword_discovery', units: 0, cost: 0,
+      date: new Date().toISOString().slice(0, 10),
+    })
+    if (markErr) console.warn('[keyword-research] could not record the run start:', markErr.message)
+  }
+
   // A forced run is "look again with what I have told you now". Discovery only ever adds
   // unknown keywords, so without clearing the pool first the operator would change the seeds,
   // pay again, and see the same list. Tracked, claimed, chosen and dismissed rows survive the reset.

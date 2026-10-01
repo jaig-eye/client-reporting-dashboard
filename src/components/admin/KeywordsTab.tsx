@@ -91,6 +91,8 @@ export default function KeywordsTab({ clientId, isActive, epoch, sites = NO_SITE
   const [confirmResearch, setConfirmResearch] = useState(false)
   const [researchNotice,  setResearchNotice]  = useState<Notice | null>(null)
   const [dirty,   setDirty]   = useState(false)
+  // Unsaved picks close the "look now" confirmation, so saving them can't reopen it unasked.
+  useEffect(() => { if (dirty) setConfirmResearch(false) }, [dirty])
 
   const [refreshing,  setRefreshing]  = useState(false)
   const [refreshNote, setRefreshNote] = useState<{ text: string; error: boolean } | null>(null)

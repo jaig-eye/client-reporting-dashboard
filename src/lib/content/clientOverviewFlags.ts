@@ -133,7 +133,7 @@ export function overviewFlags(f: OverviewFacts): OverviewFlag[] {
     flags.push({
       key: 'paused_with_plan', level: 'info', label: `Paused, ${f.plannedFuture} planned`,
       tip: `Automation is paused, but ${plural(f.plannedFuture!, 'topic')} ${f.plannedFuture === 1 ? 'is' : 'are'} still planned for future dates. ` +
-        'Nothing will write or publish them automatically. Write them from the Pipeline, or turn automation back on.',
+        'No new topics are added and unwritten ones won\u2019t be written automatically; posts already scheduled on the site still publish. Turn automation back on, or clear them from the Pipeline.',
     })
   }
 

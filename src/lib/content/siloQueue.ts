@@ -297,15 +297,23 @@ export async function waitingSets(
  *
  * `slots` holds one entry per post wanted, in date order, so a date wanting two posts appears twice
  * and a set with one keyword left takes one of them — the same split the topic cron makes date by
- * date. A set never takes more slots than it has keywords waiting.
+ * date. A set never takes more slots than it has keywords waiting, and a set that runs out partway
+ * through a date leaves the rest of that date to the usual selection, as the cron does; the next
+ * set starts on the next date.
  */
 export function splitSlotsBySets(slots: string[], sets: WaitingSet[]): { slot: string; siloId: string | null }[] {
   const out: { slot: string; siloId: string | null }[] = []
-  let i = 0
-  for (const set of sets) {
-    for (let k = 0; k < set.waiting && i < slots.length; k++) out.push({ slot: slots[i++], siloId: set.id })
+  let si = 0
+  let left = sets[0]?.waiting ?? 0
+  let ranOutOn: string | null = null
+  for (const slot of slots) {
+    if (slot === ranOutOn) { out.push({ slot, siloId: null }); continue }
+    while (si < sets.length && left <= 0) { si++; left = sets[si]?.waiting ?? 0 }
+    if (si >= sets.length) { out.push({ slot, siloId: null }); continue }
+    out.push({ slot, siloId: sets[si].id })
+    left--
+    if (left === 0) ranOutOn = slot
   }
-  while (i < slots.length) out.push({ slot: slots[i++], siloId: null })
   return out
 }
 

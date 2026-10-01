@@ -256,17 +256,17 @@ export async function POST(
   // rewrites the same keyword at a fresh angle: asking the set for a topic would claim its NEXT
   // keyword instead, so the post changed subject while the original stayed marked written, and
   // the set's last post could not be regenerated at all ("every keyword has been used").
-  let setKeyword: { id: string; keyword: string } | null = null
+  let setKeyword: { id: string; keyword: string; target_topic_id: string | null } | null = null
 
   waitUntil((async () => {
     try {
       if (post.silo_keyword_id) {
         const { data: kw } = await db
           .from('content_silo_keywords')
-          .select('id, keyword')
+          .select('id, keyword, target_topic_id')
           .eq('id', String(post.silo_keyword_id))
           .maybeSingle()
-        setKeyword = (kw as { id: string; keyword: string } | null) ?? null
+        setKeyword = (kw as { id: string; keyword: string; target_topic_id: string | null } | null) ?? null
       }
 
       // 1. Generate a fresh topic — generateTopicsForClient builds its own avoid list
@@ -610,13 +610,14 @@ ${lengthInstruction(budget)}`
         if (newTopicId) {
           await db.from('content_topics').update({ post_id: null, status: 'rejected' }).eq('id', newTopicId)
         }
-        if (setKeyword && post.topic_id) {
-          await db.from('content_silo_keywords').update({ target_topic_id: post.topic_id }).eq('id', setKeyword.id)
+        // Back to the topic it pointed at before — read up front, since most posts record no topic_id.
+        if (setKeyword) {
+          await db.from('content_silo_keywords').update({ target_topic_id: setKeyword.target_topic_id }).eq('id', setKeyword.id)
         }
         // Put back every topic step 2 retired, each with the status it had.
         for (const t of superseded) {
           await db.from('content_topics')
-            .update({ post_id: postId, status: t.status === 'rejected' ? 'approved' : t.status })
+            .update({ post_id: postId, status: t.status })
             .eq('id', t.id)
         }
       }

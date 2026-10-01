@@ -12,7 +12,7 @@ export function logActivity(
     ip?:          string
     meta?:        Record<string, unknown>
   }
-): void {
+): Promise<void> {
   const userName = session?.isSuperAdmin
     ? 'Super Admin'
     : (session?.name ?? 'System')
@@ -20,7 +20,9 @@ export function logActivity(
   const meta: Record<string, unknown> = { ...(opts?.meta ?? {}) }
   if (opts?.ip) meta.ip = opts.ip
 
-  void Promise.resolve(
+  // Fire-and-forget for most callers; a caller about to return can await it, so the row is not lost
+  // when the function is frozen after the response.
+  return Promise.resolve(
     createAdminClient()
       .from('activity_log')
       .insert({
@@ -33,5 +35,5 @@ export function logActivity(
         client_name:   opts?.clientName  ?? null,
         meta,
       })
-  ).catch(() => {})
+  ).then(() => undefined, () => undefined)
 }

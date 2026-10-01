@@ -137,7 +137,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         ) : <span className="cco-none">Never</span>}
       </td>
 
-      <td className="cco-num">{r.length ? `${r.length.toLocaleString('en-US')}` : <Unknown />}</td>
+      <td className="cco-num">{r.length ? `${r.length.toLocaleString('en-US')}` : <span title="No length set, so posts use the default">1,500 (default)</span>}</td>
 
       <td>
         {r.dfs === null ? <Unknown /> : r.dfs.connected ? (

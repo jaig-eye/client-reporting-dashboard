@@ -149,7 +149,9 @@ async function reportMetaMisses(
         ? `${via} accepted the write without it taking effect.`
         : `Rank Math's updateMeta refused the write; XML-RPC ${fallbackSkipped ?? 'was unavailable'}.`),
     )
-    logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
+    // Awaited: this runs last, and an unawaited insert can be lost when the function is frozen
+    // after the response — this row is what the Clients overview's SEO flag reads.
+    await logActivity(await getAdminSession(), 'seo_meta_not_stored', 'content_post', {
       resourceId: args.postRowId,
       clientId:   args.clientId || undefined,
       meta: {
@@ -990,7 +992,7 @@ export async function POST(
 
     // What WordPress now holds, written whatever else is happening to the row. Losing wp_post_id
     // here means the next push publishes the article a second time on the client's site.
-    const { error: recordErr } = await db.from('content_posts').update({
+    const recordFields = {
       wp_post_id:        result.id,
       wp_site_url:       siteUrl,
       // WordPress's answer wins, always. It used to win only for republishes and service
@@ -1003,9 +1005,18 @@ export async function POST(
       platform_edit_url: wpEditUrl,
       last_pushed_at:    new Date().toISOString(),
       admin_approved_at: new Date().toISOString(),
-    }).eq('id', id)
+    }
+    let { error: recordErr } = await db.from('content_posts').update(recordFields).eq('id', id)
+    // One retry: the post is live on the site, and a lost wp_post_id means the next push publishes
+    // it a second time.
+    if (recordErr) ({ error: recordErr } = await db.from('content_posts').update(recordFields).eq('id', id))
     if (recordErr) {
-      console.error(`[approve] post ${id} is on ${siteUrl} as wp ${result.id}, but recording that failed:`, recordErr.message)
+      console.error(`[approve] post ${id} is on ${siteUrl} as wp ${result.id}, but recording that failed twice:`, recordErr.message)
+      // Not marked pushed: a row reading 'draft_saved' with no wp_post_id is never picked up again, and
+      // the next manual approve would create a second copy on the site. Say what happened instead.
+      return NextResponse.json({
+        error: `Sent to WordPress as post ${result.id}, but saving that here failed. Check the post on the site before pushing again, or it will be published twice.`,
+      }, { status: 500 })
     }
 
     // The lifecycle status, in its own write so it can step aside for a regenerate. A

@@ -1727,6 +1727,8 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
   // which React refuses — and this component is rendered with hasDfs false and then true as the
   // connection check resolves, so it would have hit exactly that.
   const [confirming, setConfirming] = useState(false)
+  // Unsaved picks close the "look again" confirmation, so saving them can't reopen it unasked.
+  useEffect(() => { if (picksDirty) setConfirming(false) }, [picksDirty])
   const place = research?.researchLocation ? research.researchLocation.split(',')[0] : null
   // Built once per pool, not per render: the panel reconciles its ticks against this list, and
   // a fresh array on every keystroke in the seeds box is what used to wipe them.
