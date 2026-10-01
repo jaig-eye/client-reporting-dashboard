@@ -5,7 +5,9 @@
 //
 // Body: { client_id, start_date?, weeks_ahead, dry_run? }
 // Returns: { queued: true, slots: string[] } — or { queued: false, slots, reason } when all slots occupied.
-// dry_run returns { dry_run: true, slots, dates } — the dates it would plan — and changes nothing.
+// dry_run returns { dry_run: true, slots, dates, cleared } — the dates it would plan, and which of
+// them were cleared — and changes nothing. regenerate fills dates a person cleared (deleted, or
+// whose topics were all rejected) as well as empty ones.
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -37,6 +39,13 @@ export async function POST(request: NextRequest) {
     reopen_suppressed?: boolean
     /** Say which dates would be planned, and plan nothing. For the plan's confirmation. */
     dry_run?: boolean
+    /**
+     * "Regenerate the plan": a person cleared posts they didn't want and asks for the dates to be
+     * filled again. Reopens deleted dates (as reopen_suppressed does) and treats a date whose
+     * topics were all rejected as open. The rejected topics stay, so their subjects are still
+     * avoided.
+     */
+    regenerate?: boolean
   }
   const { client_id, start_date, weeks_ahead: weeksAheadParam, silo_id, content_type } = body
 
@@ -83,15 +92,20 @@ export async function POST(request: NextRequest) {
   // when the wizard fires twice — and above 1 it lets a date fill up to its quota.
   const { data: existingTopics, error: existingErr } = await db
     .from('content_topics')
-    .select('target_publish_date')
+    .select('target_publish_date, status')
     .eq('client_id', client_id)
     .in('target_publish_date', slots)
   // A failed read reads as "every slot is empty" and would generate a full quota on top of what the
   // dates already hold. The cron path already refuses in this case; this path now does too.
   if (existingErr) return NextResponse.json({ error: `Could not read existing topics: ${existingErr.message}` }, { status: 500 })
 
+  // A rejected topic holds its date — rejection is a full stop, as in the cron — except when a
+  // person asks to regenerate the plan.
+  const regenerate   = body.regenerate === true
   const topicsOnDate = new Map<string, number>()
-  for (const t of (existingTopics ?? []) as { target_publish_date: string }[]) {
+  const rejectedOnDate = new Set<string>()
+  for (const t of (existingTopics ?? []) as { target_publish_date: string; status: string }[]) {
+    if (regenerate && t.status === 'rejected') { rejectedOnDate.add(t.target_publish_date); continue }
     topicsOnDate.set(t.target_publish_date, (topicsOnDate.get(t.target_publish_date) ?? 0) + 1)
   }
 
@@ -110,12 +124,21 @@ export async function POST(request: NextRequest) {
     ((sup ?? []) as { target_publish_date: string }[]).map(s => s.target_publish_date),
   )
 
+  // The dates a person cleared, which a regenerate fills again: deleted (suppressed), or holding
+  // only rejected topics.
+  const cleared = regenerate
+    ? slots.filter(d => suppressedDates.has(d) || (rejectedOnDate.has(d) && !topicsOnDate.has(d)))
+    : []
+
   // An explicit reopen clears the suppressions for the requested window first, so the slots
-  // below are genuinely open rather than being skipped again on the next run.
-  if (body.reopen_suppressed && !body.dry_run && suppressedDates.size > 0) {
-    await Promise.all(
-      Array.from(suppressedDates).map(d => unsuppressSlot(db, client_id, d)),
-    )
+  // below are genuinely open rather than being skipped again on the next run. A dry run only
+  // reports them as open.
+  if ((body.reopen_suppressed || regenerate) && suppressedDates.size > 0) {
+    if (!body.dry_run) {
+      await Promise.all(
+        Array.from(suppressedDates).map(d => unsuppressSlot(db, client_id, d)),
+      )
+    }
     suppressedDates.clear()
   }
 
@@ -145,7 +168,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.dry_run) {
-    return NextResponse.json({ ok: true, dry_run: true, slots: openSlots, dates: Array.from(new Set(openSlots)) })
+    const dates = Array.from(new Set(openSlots))
+    return NextResponse.json({ ok: true, dry_run: true, slots: openSlots, dates, cleared: cleared.filter(d => dates.includes(d)) })
   }
 
   if (openSlots.length === 0) {
@@ -180,12 +204,15 @@ export async function POST(request: NextRequest) {
       // Re-check open slots — a concurrent request may have queued its own job between
       // our sync check above and when this background task actually starts.
       const wantedDates = Array.from(new Set(openSlots))
-      const { data: nowFilled, error: filledErr } = await db
+      let filledQuery = db
         .from('content_topics')
         .select('target_publish_date')
         .eq('client_id', client_id)
         .in('target_publish_date', wantedDates)
         .not('target_publish_date', 'is', null)
+      // Same rule as the count above: on a regenerate, rejected topics don't hold their date.
+      if (regenerate) filledQuery = filledQuery.neq('status', 'rejected')
+      const { data: nowFilled, error: filledErr } = await filledQuery
       if (filledErr) {
         console.error(`[calendar/generate] re-check of open slots failed for ${client_id}, not generating:`, filledErr.message)
         return

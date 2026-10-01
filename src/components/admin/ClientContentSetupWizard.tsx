@@ -687,8 +687,9 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
         // No start_date. saveSettings above deliberately keeps existingStartDate so a re-run
         // does not move a client's publish anchor — and calendar/generate gives an explicit
         // start_date precedence over the saved one, so passing today undid that immediately and
-        // re-anchored the whole series off-cadence.
-        body: JSON.stringify({ client_id: clientId }),
+        // re-anchored the whole series off-cadence. regenerate: a client whose earlier posts were
+        // cleared gets those dates filled too, instead of a silent "nothing to generate".
+        body: JSON.stringify({ client_id: clientId, regenerate: true }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string }

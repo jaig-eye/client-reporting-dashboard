@@ -61,6 +61,9 @@ function cadenceLabel(cs: Record<string, unknown>): string {
   return perDate > 1 ? `${base}, ${perDate} posts each date` : base
 }
 
+/** What starting or regenerating the plan would do: the dates, the posts, and which dates were cleared. */
+type PlanPreview = { dates: string[]; posts: number; cleared: string[] }
+
 /** "Mon, Oct 5" */
 function fmtShort(iso: string): string {
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
@@ -96,7 +99,12 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
 
   const [calendarModalOpen, setCalendarModalOpen] = useState(false)
   // The dates starting the plan would fill, asked of the server (dry run) when the modal opens.
-  const [plan,              setPlan]              = useState<{ dates: string[]; posts: number } | null>(null)
+  const [plan,              setPlan]              = useState<PlanPreview | null>(null)
+  const [planMode,          setPlanMode]          = useState<'start' | 'regenerate'>('start')
+  // For a client with nothing live: whether it had a plan whose dates were cleared, so the card
+  // offers to regenerate it rather than start one. Null until checked.
+  const [idlePreview,       setIdlePreview]       = useState<PlanPreview | null>(null)
+  const [idleChecked,       setIdleChecked]       = useState(false)
   const [planError,         setPlanError]         = useState<string | null>(null)
   const [generating,        setGenerating]        = useState(false)
   const [showNewPost,       setShowNewPost]       = useState(false)
@@ -259,15 +267,23 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     finally { setPurgeLoading(p => ({ ...p, [id]: false })) }
   }
 
-  async function openPlan() {
-    setCalendarModalOpen(true); setPlan(null); setPlanError(null)
+  // Always asked as a regenerate: for a new client there is nothing cleared, so it is the same as
+  // starting; for one whose posts were cleared it is what fills those dates again.
+  const fetchPlanPreview = useCallback(async (): Promise<PlanPreview | { error: string }> => {
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId, dry_run: true }),
+      body: JSON.stringify({ client_id: clientId, dry_run: true, regenerate: true }),
     }).catch(() => null)
-    const data = (res ? await res.json().catch(() => ({})) : {}) as { dates?: string[]; slots?: string[]; error?: string }
-    if (!res?.ok) { setPlanError(data.error ?? 'Couldn’t work out the dates. Try again.'); return }
-    setPlan({ dates: data.dates ?? [], posts: (data.slots ?? []).length })
+    const data = (res ? await res.json().catch(() => ({})) : {}) as { dates?: string[]; slots?: string[]; cleared?: string[]; error?: string }
+    if (!res?.ok) return { error: data.error ?? 'Couldn’t work out the dates. Try again.' }
+    return { dates: data.dates ?? [], posts: (data.slots ?? []).length, cleared: data.cleared ?? [] }
+  }, [clientId])
+
+  async function openPlan(mode: 'start' | 'regenerate') {
+    setPlanMode(mode); setCalendarModalOpen(true); setPlan(null); setPlanError(null)
+    const r = await fetchPlanPreview()
+    if ('error' in r) setPlanError(r.error)
+    else setPlan(r)
   }
 
   // The schedule in Content settings decides the dates: its start date, cadence and how far ahead.
@@ -278,7 +294,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     setGenerating(true)
     const res = await fetch('/api/admin/content/calendar/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: clientId }),
+      body: JSON.stringify({ client_id: clientId, regenerate: true }),
     })
     const data = await res.json()
     setGenerating(false)
@@ -399,6 +415,20 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   }, [topics, posts])
   const dateWord = (n: number) => `publish date${n === 1 ? '' : 's'}`
 
+  // Nothing live: find out whether this client had a plan whose posts were cleared (deleted, or
+  // all rejected), which the card words as regenerating rather than starting.
+  useEffect(() => {
+    if (!aiConfigured || dataLoading || planStarted) return
+    let cancelled = false
+    fetchPlanPreview().then(r => {
+      if (cancelled) return
+      if (!('error' in r)) setIdlePreview(r)
+      setIdleChecked(true)
+    })
+    return () => { cancelled = true }
+  }, [aiConfigured, dataLoading, planStarted, fetchPlanPreview])
+  const hadPlan = topics.length > 0 || (idlePreview?.cleared.length ?? 0) > 0
+
   // Shared card-props builder for a RowItem
   const cardProps = (item: RowItem) => {
     const id = item.data.id
@@ -460,19 +490,30 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 )}
               </div>
             </div>
-            {onOpenSettings && (
-              <button className="btn btn-secondary btn-sm" onClick={onOpenSettings} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Change in Content settings</button>
-            )}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => openPlan('regenerate')} style={{ whiteSpace: 'nowrap' }}>Regenerate plan</button>
+              {onOpenSettings && (
+                <button className="btn btn-secondary btn-sm" onClick={onOpenSettings} style={{ whiteSpace: 'nowrap' }}>Change in Content settings</button>
+              )}
+            </div>
           </div>
+        ) : aiConfigured && !idleChecked && topics.length === 0 ? (
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
         ) : aiConfigured ? (
           <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--blue)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>Start the content plan</div>
+              <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>
+                {hadPlan ? 'Regenerate the content plan' : 'Start the content plan'}
+              </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                {cadence}. Plans the first {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} now{autoGenerate ? ', then keeps that many planned on its own' : ''}.
+                {hadPlan
+                  ? <>{cadence}. Its planned posts were cleared. Regenerating fills the next {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} again{autoGenerate ? ', then keeps that many planned on its own' : ''}.</>
+                  : <>{cadence}. Plans the first {settingsWeeksAhead} {dateWord(settingsWeeksAhead)} now{autoGenerate ? ', then keeps that many planned on its own' : ''}.</>}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={openPlan} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Start plan</button>
+            <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {hadPlan ? 'Regenerate plan' : 'Start plan'}
+            </button>
           </div>
         ) : (
           <div style={{ flex: 1, padding: '10px 14px', fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
@@ -617,25 +658,29 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }} onClick={() => setCalendarModalOpen(false)}>
           <div style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
-              <span className="font-semibold text-sm">Start the content plan</span>
+              <span className="font-semibold text-sm">{planMode === 'regenerate' ? 'Regenerate the content plan' : 'Start the content plan'}</span>
               <button type="button" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
             </div>
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
               <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                The plan follows this client&apos;s schedule in Content settings.
+                {planMode === 'regenerate'
+                  ? <>Fills the open dates in the planning window again, including dates whose posts you deleted or rejected. Topics and posts already planned are kept. It follows this client&apos;s schedule in Content settings.</>
+                  : <>The plan follows this client&apos;s schedule in Content settings.</>}
               </p>
               <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
                 <dt style={{ color: 'var(--text-faint)' }}>Cadence</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
-                <dt style={{ color: 'var(--text-faint)' }}>Plans now</dt>
+                <dt style={{ color: 'var(--text-faint)' }}>{planMode === 'regenerate' ? 'Fills' : 'Plans now'}</dt>
                 <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
                   {planError
                     ? planError
                     : !plan
                       ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
                       : plan.dates.length === 0
-                        ? 'Nothing: every date in the window already has a topic.'
-                        : plan.dates.map(fmtShort).join(' · ')}
+                        ? (planMode === 'regenerate'
+                          ? 'Nothing to fill: every date in the window has a topic. Delete the ones you don’t want, then regenerate.'
+                          : 'Nothing: every date in the window already has a topic.')
+                        : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
                 </dd>
                 <dt style={{ color: 'var(--text-faint)' }}>After that</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
@@ -654,7 +699,11 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
-                  {generating ? 'Starting…' : plan && plan.posts > 0 ? `Plan ${plan.posts} post${plan.posts === 1 ? '' : 's'}` : 'Start plan'}
+                  {generating
+                    ? (planMode === 'regenerate' ? 'Regenerating…' : 'Starting…')
+                    : plan && plan.posts > 0
+                      ? `${planMode === 'regenerate' ? 'Regenerate' : 'Plan'} ${plan.posts} post${plan.posts === 1 ? '' : 's'}`
+                      : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
                 </button>
               </div>
             </form>
