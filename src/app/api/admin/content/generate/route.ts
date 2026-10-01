@@ -907,7 +907,7 @@ async function runTopicGeneration({
     if (topicData.silo_id) {
       const { data: silo, error: siloErr } = await db
         .from('content_silos')
-        .select('name, hub_page_url, hub_page_title, central_entity, cluster_keywords')
+        .select('name, hub_page_url, hub_page_title, central_entity, cluster_keywords, description')
         .eq('id', topicData.silo_id)
         .maybeSingle()
       if (siloErr) console.error('[generate] silo fetch error for topic', topicData.silo_id, ':', siloErr.message)
@@ -961,6 +961,13 @@ LINKING RULES:
 - Cross-link to sibling articles ONLY when the reader of THIS article would genuinely benefit from reading THAT one — shared entity, shared step, natural "next question."
 - Anchor text must name the specific entity or topic: "[service] in [city]", "[problem] cost guide", "[topic] explained", etc. Never generic: "click here", "read more", "this article."
 - GSC suggestions below are supplementary; silo hub + entity-reasoned sibling links take priority.`
+      }
+
+      // Notes a person wrote on the set ("aim these at HOA managers"). They shaped the topic; without
+      // this the writer never saw them, so the article could drift back to the generic angle.
+      const notes = String(silo?.description ?? '').trim().slice(0, 1000)
+      if (silo && notes) {
+        siloSection += `\nNOTES FROM THE EDITOR for articles in "${silo.name}" — follow them wherever they fit this article:\n${notes}\n`
       }
     }
 

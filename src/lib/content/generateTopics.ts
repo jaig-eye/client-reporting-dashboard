@@ -890,6 +890,7 @@ The hub/pillar page does not exist yet. The FIRST topic in your response MUST ta
           queueKeywords,
           existingClusterText,
           (silo as { inject_internal_links?: boolean }).inject_internal_links !== false,
+          count,
         )
       } else {
       // Hub-and-spoke: the original strategy, unchanged.
@@ -1120,6 +1121,10 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       topics,
       protectedKeywords,
       requestTopics,
+      // Keywords a person queued are the subject they asked for. Swapping one for a different
+      // keyword would tick the request off with an article about something else, so a collision
+      // is written as a supporting article for the page that ranks instead.
+      ...(queueKeywords.length > 0 ? { maxRounds: 0 } : {}),
       onLog: m => console.warn(`[generateTopics] client ${clientId}: ${m}`),
     })
     topics = res.topics

@@ -22,6 +22,34 @@ export interface SiloQueueKeyword {
   used_at:      string | null
 }
 
+/**
+ * A keyword as typed, made safe to quote in a prompt: one line, no quotes or backslashes, at most
+ * 200 characters. Empty when nothing is left.
+ */
+export function cleanQueueKeyword(raw: unknown): string {
+  return String(raw ?? '').replace(/[\r\n"\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+/** Typed keywords, cleaned and de-duplicated case-insensitively, in the order given. */
+export function cleanQueueKeywords(raw: unknown[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const r of raw) {
+    const k = cleanQueueKeyword(r)
+    if (!k || seen.has(k.toLowerCase())) continue
+    seen.add(k.toLowerCase())
+    out.push(k)
+  }
+  return out
+}
+
+/** Notes for the writer: control characters other than line breaks removed, at most 1,000 characters. */
+export function cleanSiloNotes(raw: unknown): string | null {
+  // eslint-disable-next-line no-control-regex
+  const s = String(raw ?? '').replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, ' ').trim().slice(0, 1000)
+  return s || null
+}
+
 /** Normalise for matching an AI-returned keyword back to a queue row. */
 function norm(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
@@ -214,6 +242,8 @@ export function buildKeywordQueueBlock(
   keywords: SiloQueueKeyword[],
   alreadyCovered: string,
   injectInternalLinks: boolean,
+  /** Topics the run asks for. When it is more than the keywords left, the rest stay on subject. */
+  count: number = keywords.length,
 ): string {
   // 'transactional', 'navigational' and 'local' are valid values of the intent
   // column (migration 165) but naming them here tells a BLOG topic generator to
@@ -236,10 +266,10 @@ Do not reference, link to, or invent a hub page.
 Write ONE topic for each keyword below, in this order, reusing the keyword
 verbatim as that topic's target_keyword:
 ${list}
-${alreadyCovered ? `\nAlready covered in this set (do NOT duplicate these intents):\n${alreadyCovered}` : ''}
+${count > keywords.length ? `\nThis run needs ${count} topics and only ${keywords.length} keyword${keywords.length === 1 ? ' is' : 's are'} left. Write those first, in order; the other ${count - keywords.length} must stay on the subject of "${siloName}" without repeating them.\n` : ''}${alreadyCovered ? `\nAlready covered in this set (do NOT duplicate these intents):\n${alreadyCovered}` : ''}
 
 RULES:
-1. Exactly one topic per keyword listed, in the order given.
+1. Exactly one topic per keyword listed, in the order given, before any other topic.
 2. Use each keyword EXACTLY as written for target_keyword — UNLESS it would break
    the blog-intent rules stated above. Those rules win: a blog target_keyword must
    be a question or an informational noun phrase, never a bare geo+service term

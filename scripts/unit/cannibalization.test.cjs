@@ -44,6 +44,15 @@ test('exact collision whose retry collides exactly again is demoted after ONE re
   assert.ok(d.directive.endsWith('as the primary internal link.'), 'directive stops before model text')
   assert.ok(!d.directive.includes('Model text'))
 })
+test('a queued keyword (maxRounds 0) is kept and demoted on an exact collision, never swapped', async () => {
+  const s = stub({ topics: [{ target_keyword: 'something else entirely' }] })
+  const t = { target_keyword: 'Roof Repair' }
+  const r = await C.resolveCannibalization({ topics: [t], protectedKeywords: prot, requestTopics: s.fn, maxRounds: 0 })
+  assert.equal(s.calls.length, 0)
+  assert.deepEqual(r.topics.map(x => x.target_keyword), ['Roof Repair'])
+  assert.equal(r.demoted.length, 1); assert.equal(t.page_to_support, 'https://x.com/roof-repair/')
+  assert.equal(C.readDemotion(t.ranking_strategy, t.target_keyword).exact, true)
+})
 test('a replacement that only contains a ranking phrase is kept as a supporting article', async () => {
   const s = stub({ topics: [{ target_keyword: 'roof repair after hail' }] })
   const r = await C.resolveCannibalization({ topics: [{ target_keyword: 'roof repair' }], protectedKeywords: prot, requestTopics: s.fn })
