@@ -14,7 +14,6 @@ import {
   isConnectorImplemented,
 } from '@/lib/connectors/registry'
 import { DEFAULT_SETTINGS } from '@/lib/agency-settings'
-import { ConnectorLogo } from '@/components/ConnectorLogo'
 import ClientSyncButton from './ClientSyncButton'
 import ClientManualSync from './ClientManualSync'
 import DataPurgeButton from './DataPurgeButton'
@@ -33,7 +32,14 @@ import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
 import BillingTab from './BillingTab'
-import { CopyAdLibraryButton } from '@/components/admin/CopyAdLibraryButton'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
+import StatusBadge from '@/components/ui/StatusBadge'
+import BrandLogo from '@/components/ui/BrandLogo'
+import { RouteTabs } from '@/components/ui/PillTabs'
+import ClientLinksMenu from '@/components/admin/ClientLinksMenu'
+import { CLIENT_TAB_SKELETONS } from './ClientSkeletons'
+import { PresentationChart } from '@phosphor-icons/react/dist/ssr'
 
 export const dynamic = 'force-dynamic'
 
@@ -167,61 +173,29 @@ export default async function ClientDetailPage({
 
   return (
     <div>
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-4 text-sm">
-        <Link href="/admin/dashboard" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Clients
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{client.name}</span>
-      </div>
+      <PageHeader
+        back={{ href: '/admin/dashboard', label: 'Clients' }}
+        title={client.name}
+        description={client.website ? client.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined}
+        leading={client.logo_url
+          ? <span className="ui-tile ui-tile--xl ui-tile--logo"><img src={client.logo_url} alt="" style={{ padding: 4 }} /></span>
+          : <span className="ui-tile ui-tile--xl ui-tile--accent" style={{ fontSize: '1.125rem', fontWeight: 700 }} aria-hidden>{client.name.charAt(0).toUpperCase()}</span>}
+        actions={<>
+          <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary"><PresentationChart size={16} aria-hidden />Preview dashboard</Link>
+          <ClientLinksMenu clientId={id} clientName={client.name} dashboardToken={client.dashboard_token} />
+        </>}
+      />
 
-      {/* Flash notices */}
-      {sp.connected && <Notice type="success">{sp.connected.replace(/_/g, ' ')} connected successfully.</Notice>}
-      {sp.synced    && <Notice type="success">Sync complete.</Notice>}
-      {sp.error     && <Notice type="error">Error: {sp.error.replace(/_/g, ' ')}</Notice>}
+      {sp.connected && <div className="ui-notice ui-notice--success" role="status">{sp.connected.replace(/_/g, ' ')} connected.</div>}
+      {sp.synced    && <div className="ui-notice ui-notice--success" role="status">Sync complete.</div>}
+      {sp.error     && <div className="ui-notice ui-notice--danger" role="alert">{sp.error.replace(/_/g, ' ')}</div>}
 
-      {/* Page heading */}
-      <div className="page-header" style={{ marginBottom: '0.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          {client.logo_url && (
-            <img src={client.logo_url} alt={client.name} style={{ height: 36, maxWidth: 100, objectFit: 'contain', flexShrink: 0 }} />
-          )}
-          <h1 className="page-title">{client.name}</h1>
-        </div>
-        <div className="flex gap-2">
-          {adsLibraryUrl && <CopyAdLibraryButton url={adsLibraryUrl} />}
-          <Link href={`/api/admin/preview/${id}`} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}>
-            Preview Dashboard →
-          </Link>
-        </div>
-      </div>
-
-      {/* Tab nav */}
-      <style>{`.tab-nav-bar::-webkit-scrollbar { display: none; }`}</style>
-      <div className="tab-nav-bar" style={{
-        display: 'flex', gap: 2, marginBottom: '1.5rem',
-        borderBottom: '1px solid var(--border-subtle)',
-        overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none',
-      }}>
-        {TABS.map(tab => (
-          <Link
-            key={tab.id}
-            href={tabUrl(tab.id)}
-            style={{
-              display: 'inline-block',
-              padding: '0.5rem 1rem', textDecoration: 'none',
-              fontSize: '0.8125rem', fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: activeTab === tab.id ? '2px solid var(--accent, var(--blue))' : '2px solid transparent',
-              whiteSpace: 'nowrap', marginBottom: -1,
-            }}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </div>
-
+      <RouteTabs
+        label="Client sections"
+        activeId={activeTab}
+        items={TABS.map(t => ({ id: t.id, label: t.label, href: tabUrl(t.id) }))}
+        pending={CLIENT_TAB_SKELETONS}
+      >
       {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
         <OverviewTab
@@ -485,10 +459,8 @@ export default async function ClientDetailPage({
 
       {/* ── PERFORMANCE ──────────────────────────────────────────────── */}
       {activeTab === 'performance' && (
-        <div className="space-y-6 max-w-3xl">
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Performance Benchmarks</h2>
-            <p className="section-desc mb-4">Toggle visibility on the client dashboard and optionally override global benchmark targets for this client.</p>
+        <div className="ui-stack" style={{ maxWidth: 820 }}>
+          <Section title="Performance benchmarks" description="Show benchmarks on the client's dashboard, and override the agency targets for this client.">
             <ClientBenchmarks
               clientId={id}
               showBenchmarks={!!client.show_benchmarks}
@@ -503,11 +475,9 @@ export default async function ClientDetailPage({
                 enabled_benchmarks:  client.enabled_benchmarks,
               }}
             />
-          </div>
+          </Section>
 
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Dashboard Layout</h2>
-            <p className="section-desc mb-4">Configure layout type, custom metric arrangement, and section visibility for this client.</p>
+          <Section title="Dashboard layout" description="The layout type, which metrics show and in what order, and which sections are visible.">
             <ClientMetricVisibility
               clientId={id}
               initialHidden={Array.isArray(client.hidden_metrics) ? client.hidden_metrics : []}
@@ -515,17 +485,13 @@ export default async function ClientDetailPage({
               initialLayoutOverride={(client.metric_layout_override as MetricLayouts | null) ?? null}
               agencyLayouts={(agencySettings?.metric_layouts as MetricLayouts | null) ?? null}
             />
-          </div>
+          </Section>
 
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Campaign Settings</h2>
-            <p className="section-desc mb-4">Configure the display mode (Lead Gen / Ecom) and visibility for each discovered campaign.</p>
+          <Section title="Campaigns" description="Whether each campaign reports as lead gen or ecommerce, and whether it shows on the dashboard.">
             <ClientCampaignManager clientId={id} />
-          </div>
+          </Section>
 
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Conversion Mapping</h2>
-            <p className="section-desc mb-4">Map Meta action types to conversions for Lead Gen and Ecommerce campaigns.</p>
+          <Section title="Conversion mapping" description="Which Meta actions count as conversions for lead gen and ecommerce campaigns.">
             <ClientConversionMapping
               clientId={id}
               leadAction={clientWithActions.lead_action ?? null}
@@ -534,7 +500,7 @@ export default async function ClientDetailPage({
               agencyPurchaseAction={agencyPurch}
               discoveredActions={discoveredActions}
             />
-          </div>
+          </Section>
         </div>
       )}
 
@@ -554,23 +520,13 @@ export default async function ClientDetailPage({
 
       {/* ── ADVANCED ─────────────────────────────────────────────────── */}
       {activeTab === 'advanced' && (
-        <div className="space-y-6 max-w-3xl">
+        <div className="ui-stack" style={{ maxWidth: 820 }}>
 
-          {/* Client info (name/slug) + logo — moved from old General tab */}
-          <div className="card p-5">
-            <h2 className="section-title mb-3">Client Info</h2>
-            <div className="space-y-4">
-              <div>
-                <p className="section-desc mb-3">Edit the client name and slug. The slug appears in internal URLs.</p>
-                <ClientManualSync clientId={id} />
-              </div>
-            </div>
-          </div>
+          <Section title="Sync data" description="Pull recent days again, or backfill up to two years of history.">
+            <ClientManualSync clientId={id} />
+          </Section>
 
-          {/* Ad Fuel auto-pause (moved from removed Ad Fuel tab) */}
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Ad Fuel Auto-Pause</h2>
-            <p className="section-desc mb-3">Automatically pause and resume campaigns when the Ad Fuel balance runs low.</p>
+          <Section title="Ad Fuel auto-pause" description="Pause campaigns when the Ad Fuel balance runs out, and resume them when it's topped up.">
             <ClientAutoPauseSettings
               clientId={id}
               autoPauseAds={(client as unknown as Record<string, unknown>).auto_pause_ads as boolean ?? false}
@@ -578,25 +534,21 @@ export default async function ClientDetailPage({
               campaignsPausedAt={(client as unknown as Record<string, unknown>).campaigns_paused_at as string | null ?? null}
               pauseLog={pauseLog}
             />
-          </div>
+          </Section>
 
-          {/* Client logo and email schedule removed — logo upload moved to Business Info in Overview tab */}
-
-          {/* Data Coverage */}
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Data Coverage</h2>
-            <p className="section-desc mb-4">Earliest and latest synced dates per source. Gap days = expected calendar days minus days with data.</p>
+          <Section title="Data coverage" description="The first and last day synced for each source. Gaps are days in between with no data." flush>
             {coverageRows.length === 0 ? (
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No synced data yet.</p>
+              <p className="ui-row-sub" style={{ padding: '0 20px 20px' }}>No data synced yet.</p>
             ) : (
-              <table className="data-table w-full text-sm">
+              <div className="ui-scroll-x">
+              <table className="ui-table">
                 <thead>
                   <tr>
-                    <th className="text-left">Source</th>
-                    <th className="text-left">Earliest</th>
-                    <th className="text-left">Latest</th>
-                    <th className="text-right">Days w/ Data</th>
-                    <th className="text-right">Gap Days</th>
+                    <th>Source</th>
+                    <th>First day</th>
+                    <th>Last day</th>
+                    <th className="ui-r">Days with data</th>
+                    <th className="ui-r">Gaps</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -610,13 +562,13 @@ export default async function ClientDetailPage({
                     const gapDays = expectedDays !== null ? expectedDays - row.days_with_data : null
                     return (
                       <tr key={row.source}>
-                        <td style={{ fontWeight: 500 }}>{SOURCE_LABELS[row.source] ?? row.source}</td>
+                        <td className="ui-strong">{SOURCE_LABELS[row.source] ?? row.source}</td>
                         <td>{fmtDate(row.min_date)}</td>
                         <td>{fmtDate(row.max_date)}</td>
-                        <td className="text-right">{row.days_with_data.toLocaleString()}</td>
-                        <td className="text-right">
+                        <td className="ui-r">{row.days_with_data.toLocaleString()}</td>
+                        <td className="ui-r">
                           {gapDays !== null ? (
-                            <span className={`badge ${gapDays === 0 ? 'badge-green' : 'badge-amber'}`}>{gapDays}</span>
+                            <StatusBadge tone={gapDays === 0 ? 'success' : 'warning'} dot={false}>{gapDays === 0 ? 'None' : gapDays}</StatusBadge>
                           ) : '—'}
                         </td>
                       </tr>
@@ -624,14 +576,13 @@ export default async function ClientDetailPage({
                   })}
                 </tbody>
               </table>
+              </div>
             )}
-          </div>
+          </Section>
 
-          {/* Recent Syncs */}
           {recentJobs.length > 0 && (
-            <div className="card p-5">
-              <h2 className="section-title mb-3">Recent Syncs</h2>
-              <div className="space-y-3">
+            <Section title="Recent syncs" description="The last 20 syncs for this client, newest first." flush>
+              <div>
                 {recentJobs.map(job => {
                   const connType = connTypeByConnectionId.get(job.connection_id)
                   const sourceLabel = connType ? (SOURCE_LABELS[connType] ?? connType.replace(/_/g, ' ')) : null
@@ -639,45 +590,41 @@ export default async function ClientDetailPage({
                     ? `${new Date(job.date_from + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(job.date_to + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                     : null
                   return (
-                    <div key={job.id}>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <span className="text-xs" style={{ color: 'var(--text-muted)', minWidth: 120 }}>
+                    <div key={job.id} className="ui-row">
+                      {connType ? <BrandLogo type={connType} size={16} tile tileSize="sm" /> : <span className="ui-tile ui-tile--sm" />}
+                      <span className="ui-row-text">
+                        <span className="ui-row-title">
+                          {sourceLabel ?? 'Sync'}
+                          <StatusBadge tone={job.status === 'success' ? 'success' : job.status === 'error' ? 'danger' : 'warning'}>
+                            {job.status === 'success' ? 'Done' : job.status === 'error' ? 'Failed' : job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                          </StatusBadge>
+                        </span>
+                        <span className="ui-row-sub">
                           {new Date(job.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          {dateRange ? `, data for ${dateRange}` : ''}
+                          {`, ${job.records_synced.toLocaleString()} records`}
                         </span>
-                        {sourceLabel && (
-                          <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{sourceLabel}</span>
+                        {job.status === 'error' && job.error_message && (
+                          <span className="ui-row-sub" style={{ color: 'var(--red-fg)' }}>
+                            {job.error_message.slice(0, 160)}{job.error_message.length > 160 ? '…' : ''}
+                          </span>
                         )}
-                        {dateRange && (
-                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{dateRange}</span>
-                        )}
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {job.records_synced.toLocaleString()} records
-                        </span>
-                        <span className={`badge ${job.status === 'success' ? 'badge-green' : job.status === 'error' ? 'badge-red' : 'badge-amber'}`}>
-                          {job.status}
-                        </span>
-                      </div>
-                      {job.status === 'error' && job.error_message && (
-                        <p className="text-xs mt-1 pl-1" style={{ color: 'var(--red, #dc2626)' }}>
-                          ↳ {job.error_message.slice(0, 120)}{job.error_message.length > 120 ? '…' : ''}
-                        </p>
-                      )}
+                      </span>
                     </div>
                   )
                 })}
               </div>
-            </div>
+            </Section>
           )}
 
-          <div className="card p-5">
-            <h2 className="section-title mb-1">Raw Data Inspector</h2>
-            <p className="section-desc mb-4">Browse the raw synced campaign-level data for this client. Useful for diagnosing sync issues.</p>
+          <Section title="Raw data" description="The synced campaign-level rows as stored, for tracking down a sync problem.">
             <ClientRawData clientId={id} />
-          </div>
+          </Section>
 
           <DataPurgeButton clientId={id} clientName={client.name} />
         </div>
       )}
+      </RouteTabs>
     </div>
   )
 }
@@ -901,43 +848,14 @@ async function ContentTabSection({ clientId, clientName, isEcom, initialSubTab }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function SourceBadge({ state, compact = false }: { state: string; compact?: boolean }) {
-  if (state === 'connected') {
-    return (
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 3,
-        padding: compact ? '1px 5px' : '1px 8px',
-        borderRadius: 999, fontSize: compact ? '0.6rem' : '0.7rem', fontWeight: 600,
-        background: '#dcfce7', color: '#166534',
-      }}>
-        ✓ Connected
-      </span>
-    )
+function SourceBadge({ state }: { state: string; compact?: boolean }) {
+  const m: Record<string, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
+    'connected':         { label: 'Connected',   tone: 'success' },
+    'connector-missing': { label: 'Not set up',  tone: 'warning' },
+    'not-connected':     { label: 'Available',   tone: 'neutral' },
+    'coming-soon':       { label: 'Coming soon', tone: 'neutral' },
+    'direct-connect':    { label: 'Not set up',  tone: 'warning' },
   }
-  const m: Record<string, { label: string; cls: string }> = {
-    'connector-missing': { label: 'Not set up',  cls: 'badge-amber' },
-    'not-connected':     { label: 'Available',   cls: 'badge-gray'  },
-    'coming-soon':       { label: 'Coming soon', cls: 'badge-gray'  },
-    'direct-connect':    { label: 'Not set up',  cls: 'badge-amber' },
-  }
-  const d = m[state] ?? { label: state, cls: 'badge-gray' }
-  return (
-    <span
-      className={`badge ${d.cls}`}
-      style={compact ? { fontSize: '0.6rem', padding: '1px 5px' } : undefined}
-    >
-      {d.label}
-    </span>
-  )
-}
-
-function Notice({ type, children }: { type: 'success' | 'error'; children: React.ReactNode }) {
-  const s = type === 'success'
-    ? { bg: 'var(--green-subtle)', border: '#bbf7d0', color: 'var(--green)' }
-    : { bg: 'var(--red-subtle)',   border: '#fecaca', color: 'var(--red)'   }
-  return (
-    <div className="mb-4 rounded-xl px-4 py-3 text-sm" style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}>
-      {children}
-    </div>
-  )
+  const d = m[state] ?? { label: state, tone: 'neutral' as const }
+  return <StatusBadge tone={d.tone}>{d.label}</StatusBadge>
 }

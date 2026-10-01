@@ -1,34 +1,15 @@
-import Bone from '@/components/admin/Bone'
+import { SkHeader, SkTable, SkPage, Sk } from '@/components/ui/Skeleton'
 
 export default function DashboardLoading() {
   return (
-    <div>
-      <div className="page-header">
-        <Bone className="h-7 w-28 rounded" />
-      </div>
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="card p-4">
-            <Bone className="h-3 w-20 rounded mb-3" />
-            <Bone className="h-7 w-16 rounded" />
-          </div>
+    <SkPage label="Loading clients">
+      <SkHeader actions={2} />
+      <div className="card cl-stats" aria-hidden>
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} className="cl-stat"><Sk w={96} h={11} /><Sk w={72} h={24} r={6} /></div>
         ))}
       </div>
-      {/* Table */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-          <Bone className="h-4 w-24 rounded" />
-        </div>
-        {[...Array(8)].map((_, i) => (
-          <div key={i} className="flex items-center gap-4 px-4 py-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-            <Bone className="h-4 w-36 rounded" />
-            <Bone className="h-4 w-20 rounded" style={{ marginLeft: 'auto' }} />
-            <Bone className="h-4 w-16 rounded" />
-            <Bone className="h-4 w-16 rounded" />
-          </div>
-        ))}
-      </div>
-    </div>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}><SkTable rows={8} cols={7} /></div>
+    </SkPage>
   )
 }

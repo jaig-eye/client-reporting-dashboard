@@ -9,6 +9,8 @@ import Link                            from 'next/link'
 import DateRangePicker                 from '@/components/DateRangePicker'
 import AdminDateSync                   from './AdminDateSync'
 import DashboardClientShell            from '@/components/admin/DashboardClientShell'
+import PageHeader                      from '@/components/ui/PageHeader'
+import { Plus }                        from '@phosphor-icons/react/dist/ssr'
 import type { ShellClientRow, ShellConnRow, ShellSyncJob } from '@/components/admin/DashboardClientShell'
 
 export const dynamic = 'force-dynamic'
@@ -102,16 +104,16 @@ export default async function AdminOverviewPage({
         <AdminDateSync />
       </Suspense>
 
-      {/* Page header */}
-      <div className="page-header" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
-        <h1 className="page-title">Clients</h1>
-        <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
+      <PageHeader
+        title="Clients"
+        description="Spend, results and sync health for every client over the period."
+        actions={<>
           <Suspense fallback={null}>
             <DateRangePicker from={dateFrom} to={dateTo} compare={compare} />
           </Suspense>
-          <Link href="/admin/clients/new" className="btn btn-primary">+ Add Client</Link>
-        </div>
-      </div>
+          <Link href="/admin/clients/new" className="btn btn-primary"><Plus size={15} weight="bold" aria-hidden />Add client</Link>
+        </>}
+      />
 
       {/* Client shell — renders stat cards + table with progressive metric loading */}
       <DashboardClientShell

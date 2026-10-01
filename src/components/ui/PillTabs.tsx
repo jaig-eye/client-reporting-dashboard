@@ -134,8 +134,9 @@ export function RouteTabs({ items, activeId, label, block, pending, children }: 
   activeId: string
   label: string
   block?: boolean
-  /** The skeleton for a tab while it loads. */
-  pending?: (id: string) => ReactNode
+  /** Each tab's skeleton while it loads, by tab id. A map rather than a function, so a server
+   *  component can pass it. */
+  pending?: Record<string, ReactNode>
   children?: ReactNode
 }) {
   const router = useRouter()
@@ -170,7 +171,7 @@ export function RouteTabs({ items, activeId, label, block, pending, children }: 
           ))}
         </Strip>
       </nav>
-      {loading && target && pending ? <div aria-busy="true" aria-label="Loading">{pending(target)}</div> : children}
+      {loading && target && pending?.[target] ? <div aria-busy="true" aria-label="Loading">{pending[target]}</div> : children}
     </>
   )
 }

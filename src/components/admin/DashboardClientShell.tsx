@@ -1,10 +1,18 @@
 'use client'
 
-import { useState, useEffect }  from 'react'
+// The Clients page body: the period's totals, then every client — spend and results for the
+// period, the services connected, sync health, and the ⋯ links menu. A table on a laptop; on a
+// phone the same clients as a list of rows. Metrics load after the page (they are the slow part),
+// so names, sources and sync show at once and the numbers shimmer in.
+
+import { useState, useEffect, useMemo }  from 'react'
 import Link                      from 'next/link'
-import { ConnectorLogo }         from '@/components/ConnectorLogo'
+import { CaretDown, CaretUp, CaretRight, ArrowsDownUp, Plus, Buildings } from '@phosphor-icons/react'
 import ClientLinksMenu           from '@/components/admin/ClientLinksMenu'
-import type { ConnectorType }    from '@/lib/types'
+import BrandLogo, { BRAND_NAMES } from '@/components/ui/BrandLogo'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import EmptyState                from '@/components/ui/EmptyState'
+import { Sk }                    from '@/components/ui/Skeleton'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
 // ─── exported row types (used by the server page to build props) ──────────────
@@ -39,8 +47,6 @@ export type ShellSyncJob = {
   completed_at: string | null
 }
 
-// ─── props ────────────────────────────────────────────────────────────────────
-
 interface Props {
   clients: ShellClientRow[]
   connections: ShellConnRow[]
@@ -58,9 +64,9 @@ interface Props {
   sortDir: string
 }
 
-// ─── formatting helpers ───────────────────────────────────────────────────────
+// ─── formatting ───────────────────────────────────────────────────────────────
 
-function fmtSpend(n: number) {
+function fmtMoney(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`
   return `$${n.toFixed(0)}`
@@ -68,588 +74,336 @@ function fmtSpend(n: number) {
 function fmtPct(n: number) { return `${(n * 100).toFixed(1)}%` }
 function fmtX(n: number)   { return `${n.toFixed(2)}x` }
 function fmtBalance(n: number) {
-  const neg = n < 0
   const abs = Math.abs(n)
   const str = abs >= 1_000_000 ? `$${(abs / 1_000_000).toFixed(1)}M`
              : abs >= 1_000    ? `$${(abs / 1_000).toFixed(1)}k`
              : `$${Math.round(abs).toLocaleString()}`
-  return neg ? `-${str}` : str
+  return n < 0 ? `-${str}` : str
+}
+function ago(hours: number): string {
+  if (!isFinite(hours)) return 'never'
+  if (hours < 1) return 'just now'
+  if (hours < 24) return `${Math.round(hours)}h ago`
+  return `${Math.round(hours / 24)}d ago`
 }
 
-// ─── sub-components ───────────────────────────────────────────────────────────
+// ─── columns ──────────────────────────────────────────────────────────────────
 
-const TH_STYLE: React.CSSProperties = {
-  padding: '0.625rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.6875rem',
-  color: 'var(--text-faint)', whiteSpace: 'nowrap', background: 'var(--bg-secondary)',
-  textTransform: 'uppercase', letterSpacing: '0.05em',
+type Col = 'spend' | 'roas' | 'cpa' | 'conversions' | 'ctr' | 'clicks' | 'impressions' | 'sync_status' | 'ad_fuel'
+const COL_LABEL: Record<Col, string> = {
+  spend: 'Spend', roas: 'ROAS', cpa: 'CPA', conversions: 'Conv.', ctr: 'CTR', clicks: 'Clicks',
+  impressions: 'Impr.', sync_status: 'Sync', ad_fuel: 'Ad Fuel',
 }
-
-function SortableTh({ col, label, href, sortCol, sortDir, align = 'left' }: {
-  col: string; label: string; href: string
-  sortCol: string; sortDir: string; align?: 'left' | 'right'
-}) {
-  const active = sortCol === col
-  return (
-    <th style={{ ...TH_STYLE, cursor: 'pointer', textAlign: align }}>
-      <a href={href} style={{
-        textDecoration: 'none',
-        color: active ? 'var(--text-primary)' : 'var(--text-faint)',
-        display: 'inline-flex', alignItems: 'center',
-        justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        gap: 2, width: '100%',
-      }}>
-        {label}
-        <span style={{ opacity: active ? 1 : 0.35, fontSize: '0.7rem' }}>
-          {active ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-        </span>
-      </a>
-    </th>
-  )
-}
-
-function Dash() {
-  return <span style={{ color: 'var(--text-faint)' }}>—</span>
-}
-
-function DeltaBadge({
-  delta, inverse = false, neutral = false,
-}: {
-  delta: number | undefined; inverse?: boolean; neutral?: boolean
-}) {
-  if (delta == null || !isFinite(delta)) return null
-  const up    = delta > 0
-  const good  = neutral ? null : (inverse ? !up : up)
-  const color = good === null ? 'var(--text-faint)' : good ? '#16a34a' : '#dc2626'
-  return (
-    <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: 600, lineHeight: 1, marginTop: 2, color }}>
-      {up ? '+' : ''}{delta.toFixed(1)}%
-    </span>
-  )
-}
-
-function SkeletonCell({ width = 60 }: { width?: number }) {
-  return (
-    <span style={{
-      display: 'inline-block',
-      width,
-      height: 14,
-      borderRadius: 4,
-      background: 'var(--border, #e5e7eb)',
-      animation: 'pulse 1.5s ease-in-out infinite',
-    }} />
-  )
-}
-
-function StatCard({
-  label, value, href, color = 'default',
-}: {
-  label: string; value: string | null; href?: string; color?: 'blue' | 'green' | 'red' | 'default'
-}) {
-  const colors = {
-    blue: 'var(--blue)', green: 'var(--green)',
-    red: 'var(--red)', default: 'var(--text-primary)',
-  }
-  const inner = (
-    <div className="card p-5">
-      <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      <p className="text-3xl font-bold" style={{ color: colors[color], fontVariantNumeric: 'tabular-nums' }}>
-        {value === null ? (
-          <span style={{
-            display: 'inline-block', width: 80, height: 28, borderRadius: 4,
-            background: 'var(--border, #e5e7eb)',
-            animation: 'pulse 1.5s ease-in-out infinite',
-            verticalAlign: 'middle',
-          }} />
-        ) : value}
-      </p>
-    </div>
-  )
-  if (!href) return inner
-  return (
-    <Link href={href} className="card-hover block" style={{ textDecoration: 'none', borderRadius: 12, overflow: 'hidden' }}>
-      {inner}
-    </Link>
-  )
-}
-
-// ─── built row type ───────────────────────────────────────────────────────────
+const SORTABLE = new Set(['name', 'spend', 'roas', 'cpa', 'conversions', 'ctr', 'clicks', 'impressions', 'ad_fuel'])
 
 type BuiltRow = {
   id: string
   name: string
   logoUrl: string | null
   dashboard_token: string | null
-  connectors: { type: ConnectorType; label: string }[]
-  syncStatus: 'success' | 'error' | 'none'
-  syncErrCount: number
-  hoursStale: number
+  connectors: { type: string; label: string }[]
+  sync: { tone: StatusTone; label: string; detail: string }
 } & Pick<ClientMetricData,
   | 'spend' | 'conversions' | 'clicks' | 'impressions' | 'ctr'
-  | 'roas' | 'cpl' | 'showRoas' | 'efficiencyScore'
+  | 'roas' | 'cpl' | 'showRoas'
   | 'deltaSpend' | 'deltaConv' | 'deltaCtr' | 'deltaClicks'
   | 'deltaImpr' | 'deltaRoas' | 'deltaCpl'
   | 'afBalance' | 'hasAfLedger' | 'pendingAch'
 >
 
-// ─── main component ───────────────────────────────────────────────────────────
+// ─── small pieces ─────────────────────────────────────────────────────────────
+
+const Dash = () => <span className="cl-dash">—</span>
+
+function Delta({ delta, inverse = false, neutral = false }: { delta: number | undefined; inverse?: boolean; neutral?: boolean }) {
+  if (delta == null || !isFinite(delta)) return null
+  const up = delta > 0
+  const good = neutral ? null : (inverse ? !up : up)
+  return (
+    <span className={`cl-delta${good === null ? '' : good ? ' cl-delta--good' : ' cl-delta--bad'}`}>
+      {up ? '+' : ''}{delta.toFixed(1)}%
+    </span>
+  )
+}
+
+function ClientMark({ name, logoUrl }: { name: string; logoUrl: string | null }) {
+  return logoUrl
+    ? <span className="ui-tile ui-tile--logo cl-mark"><img src={logoUrl} alt="" /></span>
+    : <span className="ui-tile ui-tile--accent cl-mark" aria-hidden>{name.charAt(0).toUpperCase()}</span>
+}
+
+function Sources({ list, max = 6 }: { list: { type: string; label: string }[]; max?: number }) {
+  if (list.length === 0) return <span className="cl-none">None connected</span>
+  const unique = Array.from(new Map(list.map(c => [c.type, c])).values())
+  const shown = unique.slice(0, max)
+  return (
+    <span className="cl-sources" title={unique.map(c => BRAND_NAMES[c.type] ?? c.label).join(', ')}>
+      {shown.map(c => <BrandLogo key={c.type} type={c.type} size={16} />)}
+      {unique.length > max && <span className="cl-more">+{unique.length - max}</span>}
+    </span>
+  )
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardClientShell({
-  clients,
-  connections,
-  syncJobs,
-  overviewCols,
-  totalClientCount,
-  activeConnectorCount,
-  clientsWithErrors,
-  dateFrom,
-  dateTo,
-  compare,
-  compareDateFrom,
-  compareDateTo,
-  sortCol,
-  sortDir,
+  clients, connections, syncJobs, overviewCols,
+  totalClientCount, activeConnectorCount, clientsWithErrors,
+  dateFrom, dateTo, compare, compareDateFrom, compareDateTo,
+  sortCol: initialSort, sortDir: initialDir,
 }: Props) {
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [metricsData,    setMetricsData]    = useState<MetricsApiResponse | null>(null)
   const [metricsError,   setMetricsError]   = useState(false)
+  const [attempt,        setAttempt]        = useState(0)
+  // Sorting happens here, on data already loaded. It used to be a link per header, so every sort
+  // reloaded the whole app; the URL still records it, for sharing and the back button.
+  const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: initialSort, dir: initialDir === 'asc' ? 'asc' : 'desc' })
 
   useEffect(() => {
     setMetricsLoading(true)
     setMetricsData(null)
     setMetricsError(false)
-
     const controller = new AbortController()
     const params = new URLSearchParams({ from: dateFrom, to: dateTo })
     if (compare !== 'none' && compareDateFrom && compareDateTo) {
       params.set('compare_from', compareDateFrom)
       params.set('compare_to',   compareDateTo)
     }
-
     fetch(`/api/admin/dashboard/metrics?${params}`, { signal: controller.signal })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-      .then((data: MetricsApiResponse) => {
-        setMetricsData(data)
-        setMetricsLoading(false)
-      })
+      .then((data: MetricsApiResponse) => { setMetricsData(data); setMetricsLoading(false) })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return
         setMetricsError(true)
         setMetricsLoading(false)
       })
-
     return () => controller.abort()
-  }, [dateFrom, dateTo, compare, compareDateFrom, compareDateTo])
+  // `attempt` is the Retry button: the old one cleared the error without fetching again.
+  }, [dateFrom, dateTo, compare, compareDateFrom, compareDateTo, attempt])
 
-  // ── build lookup maps from fast server data ──────────────────────────────
-  const connsByClient = new Map<string, ShellConnRow[]>()
-  for (const conn of connections) {
-    if (!connsByClient.has(conn.client_id)) connsByClient.set(conn.client_id, [])
-    connsByClient.get(conn.client_id)!.push(conn)
+  function sortBy(col: string) {
+    const dir: 'asc' | 'desc' = sort.col === col && sort.dir === 'desc' ? 'asc' : 'desc'
+    setSort({ col, dir })
+    const url = new URL(window.location.href)
+    url.searchParams.set('sort', col)
+    url.searchParams.set('dir', dir)
+    window.history.replaceState(window.history.state, '', url)
   }
 
-  const latestSyncByClient = new Map<string, ShellSyncJob>()
-  for (const job of syncJobs) {
-    // syncJobs is ordered by completed_at DESC, first entry per client = most recent
-    if (!latestSyncByClient.has(job.client_id)) latestSyncByClient.set(job.client_id, job)
-  }
+  const cols = overviewCols.filter((c): c is Col => c in COL_LABEL)
 
-  // ── sort href builder ────────────────────────────────────────────────────
-  function sortHref(col: string): string {
-    const newDir = sortCol === col && sortDir === 'desc' ? 'asc' : 'desc'
-    const base = new URLSearchParams()
-    if (dateFrom)           base.set('from',    dateFrom)
-    if (dateTo)             base.set('to',      dateTo)
-    if (compare !== 'none') base.set('compare', compare)
-    base.set('sort', col)
-    base.set('dir',  newDir)
-    return `/admin/dashboard?${base}`
-  }
-
-  // ── build client rows ────────────────────────────────────────────────────
-  let clientRows: BuiltRow[] = clients.map(client => {
-    const conns      = connsByClient.get(client.id) ?? []
-    const latestJob  = latestSyncByClient.get(client.id) ?? null
-    const syncStatus: 'success' | 'error' | 'none' = latestJob
-      ? (latestJob.status === 'error' ? 'error' : 'success')
-      : 'none'
-    const completedAt  = latestJob?.completed_at ? new Date(latestJob.completed_at) : null
-    const hoursStale   = completedAt ? (Date.now() - completedAt.getTime()) / 3_600_000 : Infinity
-    const syncErrCount = syncJobs.filter(j => j.client_id === client.id && j.status === 'error').length
-
-    const metrics = metricsData?.clientMetrics[client.id]
-
-    return {
-      id:              client.id,
-      name:            client.name,
-      logoUrl:         client.logo_url ?? null,
-      dashboard_token: client.dashboard_token ?? null,
-      connectors: conns.map(c => ({
-        type:  c.connector.type as ConnectorType,
-        label: c.connector.label,
-      })),
-      syncStatus,
-      syncErrCount,
-      hoursStale,
-      spend:           metrics?.spend           ?? 0,
-      conversions:     metrics?.conversions      ?? 0,
-      clicks:          metrics?.clicks           ?? 0,
-      impressions:     metrics?.impressions      ?? 0,
-      ctr:             metrics?.ctr              ?? 0,
-      roas:            metrics?.roas             ?? null,
-      cpl:             metrics?.cpl              ?? null,
-      showRoas:        metrics?.showRoas         ?? false,
-      efficiencyScore: metrics?.efficiencyScore  ?? null,
-      deltaSpend:      metrics?.deltaSpend,
-      deltaConv:       metrics?.deltaConv,
-      deltaCtr:        metrics?.deltaCtr,
-      deltaClicks:     metrics?.deltaClicks,
-      deltaImpr:       metrics?.deltaImpr,
-      deltaRoas:       metrics?.deltaRoas,
-      deltaCpl:        metrics?.deltaCpl,
-      afBalance:       metrics?.afBalance        ?? 0,
-      pendingAch:      metrics?.pendingAch       ?? 0,
-      hasAfLedger:     metrics?.hasAfLedger      ?? false,
+  const rows: BuiltRow[] = useMemo(() => {
+    const connsByClient = new Map<string, ShellConnRow[]>()
+    for (const conn of connections) {
+      const list = connsByClient.get(conn.client_id)
+      if (list) list.push(conn); else connsByClient.set(conn.client_id, [conn])
     }
-  })
+    const jobsByClient = new Map<string, ShellSyncJob[]>()
+    for (const job of syncJobs) {
+      const list = jobsByClient.get(job.client_id)
+      if (list) list.push(job); else jobsByClient.set(job.client_id, [job])
+    }
 
-  // ── sort (only meaningful once metrics have loaded) ──────────────────────
-  if (sortCol && metricsData) {
-    clientRows = [...clientRows].sort((a, b) => {
-      let av: number, bv: number
-      if (sortCol === 'spend') {
-        av = a.spend; bv = b.spend
-      } else if (sortCol === 'roas_cpl' || sortCol === 'roas') {
-        av = a.roas ?? -1; bv = b.roas ?? -1
-      } else if (sortCol === 'cpa') {
-        av = a.cpl ?? Infinity; bv = b.cpl ?? Infinity
-      } else if (sortCol === 'conversions') {
-        av = a.conversions; bv = b.conversions
-      } else if (sortCol === 'ctr') {
-        av = a.ctr; bv = b.ctr
-      } else if (sortCol === 'clicks') {
-        av = a.clicks; bv = b.clicks
-      } else if (sortCol === 'impressions') {
-        av = a.impressions; bv = b.impressions
-      } else if (sortCol === 'ad_fuel') {
-        av = a.hasAfLedger ? a.afBalance : -Infinity
-        bv = b.hasAfLedger ? b.afBalance : -Infinity
-      } else if (sortCol === 'name') {
-        return sortDir === 'asc'
-          ? a.name.localeCompare(b.name)
-          : b.name.localeCompare(a.name)
-      } else {
-        return 0
+    const built: BuiltRow[] = clients.map(client => {
+      const conns  = connsByClient.get(client.id) ?? []
+      const jobs   = jobsByClient.get(client.id) ?? []   // newest first
+      const latest = jobs[0] ?? null
+      const errors = jobs.filter(j => j.status === 'error').length
+      const hours  = latest?.completed_at ? (Date.now() - new Date(latest.completed_at).getTime()) / 3_600_000 : Infinity
+      const sync: BuiltRow['sync'] =
+        !latest                     ? { tone: 'neutral', label: 'No syncs', detail: 'No sync in the last 7 days' }
+        : latest.status === 'error' ? { tone: 'danger',  label: errors > 1 ? `${errors} errors` : 'Failed', detail: `Last sync failed${errors > 1 ? `; ${errors} errors in 7 days` : ''}` }
+        : hours >= 48               ? { tone: 'warning', label: 'Stale', detail: `Last synced ${ago(hours)}` }
+        : errors > 0                ? { tone: 'warning', label: `${errors} error${errors === 1 ? '' : 's'}`, detail: `Synced ${ago(hours)}, ${errors} failed in 7 days` }
+        :                             { tone: 'success', label: 'Synced', detail: `Synced ${ago(hours)}` }
+      const m = metricsData?.clientMetrics[client.id]
+      return {
+        id: client.id, name: client.name, logoUrl: client.logo_url ?? null, dashboard_token: client.dashboard_token ?? null,
+        connectors: conns.map(c => ({ type: c.connector.type, label: c.connector.label })),
+        sync,
+        spend: m?.spend ?? 0, conversions: m?.conversions ?? 0, clicks: m?.clicks ?? 0, impressions: m?.impressions ?? 0,
+        ctr: m?.ctr ?? 0, roas: m?.roas ?? null, cpl: m?.cpl ?? null, showRoas: m?.showRoas ?? false,
+        deltaSpend: m?.deltaSpend, deltaConv: m?.deltaConv, deltaCtr: m?.deltaCtr, deltaClicks: m?.deltaClicks,
+        deltaImpr: m?.deltaImpr, deltaRoas: m?.deltaRoas, deltaCpl: m?.deltaCpl,
+        afBalance: m?.afBalance ?? 0, pendingAch: m?.pendingAch ?? 0, hasAfLedger: m?.hasAfLedger ?? false,
       }
-      return sortDir === 'asc' ? av - bv : bv - av
     })
+
+    if (!sort.col || (!metricsData && sort.col !== 'name')) return built
+    const val = (r: BuiltRow): number => {
+      switch (sort.col) {
+        case 'spend': return r.spend
+        case 'roas': case 'roas_cpl': return r.roas ?? -1
+        case 'cpa': return r.cpl ?? Infinity
+        case 'conversions': return r.conversions
+        case 'ctr': return r.ctr
+        case 'clicks': return r.clicks
+        case 'impressions': return r.impressions
+        case 'ad_fuel': return r.hasAfLedger ? r.afBalance : -Infinity
+        default: return 0
+      }
+    }
+    return [...built].sort((a, b) => {
+      if (sort.col === 'name') return sort.dir === 'asc' ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+      const d = val(a) - val(b)
+      return sort.dir === 'asc' ? d : -d
+    })
+  }, [clients, connections, syncJobs, metricsData, sort])
+
+  const totalSpend = metricsData?.totalSpend ?? 0
+  const totalAf    = metricsData?.totalAdFuelBalance ?? 0
+
+  function cell(row: BuiltRow, col: Col) {
+    if (col === 'sync_status') {
+      return <StatusBadge tone={row.sync.tone} title={row.sync.detail}>{row.sync.label}</StatusBadge>
+    }
+    if (metricsLoading) return <Sk w={56} h={12} style={{ marginLeft: 'auto' }} />
+    switch (col) {
+      case 'spend':       return row.spend > 0 ? <>{fmtMoney(row.spend)}<Delta delta={row.deltaSpend} neutral /></> : <Dash />
+      case 'roas':        return row.roas !== null ? <>{fmtX(row.roas)}<Delta delta={row.deltaRoas} /></> : <Dash />
+      case 'cpa':         return row.cpl !== null ? <>{fmtMoney(row.cpl)}<Delta delta={row.deltaCpl} inverse /></> : <Dash />
+      case 'conversions': return row.conversions > 0 ? <>{row.conversions.toLocaleString()}<Delta delta={row.deltaConv} /></> : <Dash />
+      case 'ctr':         return row.ctr > 0 ? <>{fmtPct(row.ctr)}<Delta delta={row.deltaCtr} /></> : <Dash />
+      case 'clicks':      return row.clicks > 0 ? <>{row.clicks.toLocaleString()}<Delta delta={row.deltaClicks} /></> : <Dash />
+      case 'impressions': return row.impressions > 0 ? <>{row.impressions.toLocaleString()}<Delta delta={row.deltaImpr} /></> : <Dash />
+      case 'ad_fuel': {
+        if (!row.hasAfLedger) return <Dash />
+        const proj = row.afBalance + (row.pendingAch ?? 0)
+        return (
+          <>
+            <span className={row.afBalance < 0 ? 'cl-neg' : row.afBalance > 500 ? 'cl-pos' : 'cl-warn'}>{fmtBalance(row.afBalance)}</span>
+            {(row.pendingAch ?? 0) > 0 && <span className={`cl-delta ${proj >= 0 ? 'cl-delta--good' : 'cl-delta--bad'}`}>{fmtBalance(proj)} after ACH</span>}
+          </>
+        )
+      }
+    }
   }
 
-  // ── summary values ───────────────────────────────────────────────────────
-  const totalSpend        = metricsData?.totalSpend        ?? 0
-  const totalAdFuelBalance = metricsData?.totalAdFuelBalance ?? 0
-  const afBalColor: 'green' | 'red' | 'default' =
-    metricsLoading   ? 'default'
-    : totalAdFuelBalance > 500  ? 'green'
-    : totalAdFuelBalance < 0    ? 'red'
-    : 'default'
+  /** The one or two figures a phone row shows. */
+  function headline(row: BuiltRow) {
+    if (metricsLoading) return <Sk w={120} h={11} />
+    const parts: string[] = []
+    if (row.spend > 0) parts.push(`${fmtMoney(row.spend)} spend`)
+    if (row.showRoas && row.roas !== null) parts.push(`${fmtX(row.roas)} ROAS`)
+    else if (row.cpl !== null) parts.push(`${fmtMoney(row.cpl)} CPA`)
+    else if (row.conversions > 0) parts.push(`${row.conversions.toLocaleString()} conv.`)
+    return parts.length ? parts.join(', ') : 'No spend this period'
+  }
 
-  // ── render ───────────────────────────────────────────────────────────────
+  const SortHead = ({ col, label, right }: { col: string; label: string; right?: boolean }) => {
+    const on = sort.col === col
+    return (
+      <th className={right ? 'cl-r' : undefined} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button type="button" className={`cl-sort${on ? ' cl-sort--on' : ''}`} onClick={() => sortBy(col)}>
+          {label}
+          {on ? (sort.dir === 'asc' ? <CaretUp size={11} weight="bold" aria-hidden /> : <CaretDown size={11} weight="bold" aria-hidden />)
+              : <ArrowsDownUp size={11} className="cl-sort-idle" aria-hidden />}
+        </button>
+      </th>
+    )
+  }
+
   return (
     <div>
-      {/* Pulse keyframe — defined once here to avoid a separate CSS file */}
-      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }`}</style>
-
-      {/* Metrics error banner */}
       {metricsError && (
-        <div style={{
-          marginBottom: '1rem', padding: '0.625rem 1rem', borderRadius: 8,
-          background: 'var(--red-subtle)', border: '1px solid var(--red)',
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.8125rem',
-        }}>
-          <span style={{ color: 'var(--red)', fontWeight: 600 }}>⚠</span>
-          <span style={{ color: 'var(--red)' }}>
-            Metric data failed to load. Spend and ROAS figures may be unavailable.
-          </span>
-          <button
-            style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--red)', background: 'none', border: '1px solid var(--red)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}
-            onClick={() => { setMetricsError(false); setMetricsLoading(true); setMetricsData(null) }}
-          >
-            Retry
-          </button>
+        <div className="ui-notice ui-notice--danger" role="alert">
+          <span>Spend and results couldn’t load, so those columns are empty.</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAttempt(a => a + 1)}>Retry</button>
         </div>
       )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        <StatCard label="Total Clients"        value={String(totalClientCount)} />
-        <StatCard label="Active Connectors"    value={String(activeConnectorCount)} color="blue" />
-        <StatCard
-          label="Sync Errors (7d)"
-          value={String(clientsWithErrors)}
-          href="/admin/system"
-          color={clientsWithErrors > 0 ? 'red' : 'default'}
-        />
-        <StatCard
-          label="Total Spend (period)"
-          value={metricsLoading ? null : fmtSpend(totalSpend)}
-          color="blue"
-        />
-        <StatCard
-          label="Total Ad Fuel"
-          value={metricsLoading ? null : fmtBalance(totalAdFuelBalance)}
-          color={afBalColor}
-          href="/admin/ad-fuel"
-        />
-      </div>
+      {/* The period at a glance. */}
+      <section className="card cl-stats" aria-label="Totals">
+        <div className="cl-stat">
+          <span className="cl-stat-label">Clients</span>
+          <span className="cl-stat-value">{totalClientCount}</span>
+        </div>
+        <div className="cl-stat">
+          <span className="cl-stat-label">Active connections</span>
+          <span className="cl-stat-value">{activeConnectorCount}</span>
+        </div>
+        <Link href="/admin/system" className="cl-stat cl-stat--link">
+          <span className="cl-stat-label">Sync errors, 7 days <CaretRight size={11} weight="bold" aria-hidden /></span>
+          <span className={`cl-stat-value${clientsWithErrors > 0 ? ' cl-neg' : ''}`}>{clientsWithErrors}</span>
+        </Link>
+        <div className="cl-stat">
+          <span className="cl-stat-label">Spend this period</span>
+          <span className="cl-stat-value">{metricsLoading ? <Sk w={84} h={24} r={6} /> : fmtMoney(totalSpend)}</span>
+        </div>
+        <Link href="/admin/ad-fuel" className="cl-stat cl-stat--link">
+          <span className="cl-stat-label">Ad Fuel balance <CaretRight size={11} weight="bold" aria-hidden /></span>
+          <span className={`cl-stat-value${!metricsLoading && totalAf < 0 ? ' cl-neg' : ''}`}>{metricsLoading ? <Sk w={84} h={24} r={6} /> : fmtBalance(totalAf)}</span>
+        </Link>
+      </section>
 
-      {/* Row hover via CSS */}
-      <style>{`.client-row:hover { background: var(--bg-muted) !important; }`}</style>
-
-      {/* Client table */}
       {clients.length === 0 ? (
-        <div className="card p-12 text-center">
-          <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>No clients yet</p>
-          <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-            Add your first client to start managing their data connections.
-          </p>
-          <Link href="/admin/clients/new" className="btn btn-primary">+ Add Client</Link>
+        <div className="card">
+          <EmptyState
+            icon={<Buildings size={20} />}
+            title="No clients yet"
+            actions={<Link href="/admin/clients/new" className="btn btn-primary"><Plus size={15} weight="bold" aria-hidden />Add client</Link>}
+          >
+            Add a client, then connect their ad accounts and site to see spend and results here.
+          </EmptyState>
         </div>
       ) : (
-        <div className="card overflow-hidden" style={{ padding: 0 }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <SortableTh col="name" label="Client" href={sortHref('name')} sortCol={sortCol} sortDir={sortDir} />
-                  <th style={TH_STYLE}>Sources</th>
-
-                  {overviewCols.map(col => {
-                    if (col === 'spend')       return <SortableTh key={col} col="spend"       label="Spend"      align="right" href={sortHref('spend')}       sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas_cpl')    return <SortableTh key={col} col="roas"        label="ROAS / CPA" align="right" href={sortHref('roas')}        sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'roas')        return <SortableTh key={col} col="roas"        label="ROAS"       align="right" href={sortHref('roas')}        sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'cpa')         return <SortableTh key={col} col="cpa"         label="CPA"        align="right" href={sortHref('cpa')}         sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'conversions') return <SortableTh key={col} col="conversions" label="Conv."      align="right" href={sortHref('conversions')} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'ctr')         return <SortableTh key={col} col="ctr"         label="CTR"        align="right" href={sortHref('ctr')}         sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'clicks')      return <SortableTh key={col} col="clicks"      label="Clicks"     align="right" href={sortHref('clicks')}      sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'impressions') return <SortableTh key={col} col="impressions" label="Impr."      align="right" href={sortHref('impressions')} sortCol={sortCol} sortDir={sortDir} />
-                    if (col === 'sync_status') return <th key={col} style={TH_STYLE}>Sync</th>
-                    if (col === 'ad_fuel')     return <SortableTh key={col} col="ad_fuel"     label="Ad Fuel"    align="right" href={sortHref('ad_fuel')}     sortCol={sortCol} sortDir={sortDir} />
-                    return null
-                  })}
-
-                  <th style={TH_STYLE} />
-                </tr>
-              </thead>
-
-              <tbody>
-                {clientRows.map((row, i) => {
-                  let syncDot = 'var(--red)'
-                  if (row.syncStatus === 'success') {
-                    syncDot = row.hoursStale < 48 ? 'var(--green)' : 'var(--amber, #f59e0b)'
-                  }
-
-                  return (
-                    <tr
-                      key={row.id}
-                      className="client-row"
-                      style={{
-                        borderBottom: i < clientRows.length - 1 ? '1px solid var(--border-subtle)' : undefined,
-                        background:   i % 2 === 1 ? 'var(--bg-subtle)' : undefined,
-                        transition:   'background 0.15s',
-                      }}
-                    >
-                      {/* Client name + logo */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                        <Link
-                          href={`/admin/clients/${row.id}`}
-                          style={{ color: 'var(--text-primary)', fontWeight: 600, textDecoration: 'none' }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            {row.logoUrl ? (
-                              <img
-                                src={row.logoUrl}
-                                alt=""
-                                style={{ width: 26, height: 26, borderRadius: 6, objectFit: 'contain', flexShrink: 0 }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: 26, height: 26, borderRadius: 6, background: 'var(--accent)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '0.625rem', fontWeight: 700, color: '#fff', flexShrink: 0,
-                              }}>
-                                {row.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                            <span>{row.name}</span>
-                          </div>
+        <>
+          {/* Laptop: the table. */}
+          <div className="card cl-table-card">
+            <div className="ui-scroll-x">
+              <table className="cl-table">
+                <thead>
+                  <tr>
+                    <SortHead col="name" label="Client" />
+                    <th>Sources</th>
+                    {cols.map(c => c === 'sync_status'
+                      ? <th key={c}>Sync</th>
+                      : SORTABLE.has(c) ? <SortHead key={c} col={c} label={COL_LABEL[c]} right /> : <th key={c} className="cl-r">{COL_LABEL[c]}</th>)}
+                    <th aria-label="Links" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(row => (
+                    <tr key={row.id}>
+                      <td>
+                        <Link href={`/admin/clients/${row.id}`} className="cl-client">
+                          <ClientMark name={row.name} logoUrl={row.logoUrl} />
+                          <span className="cl-name">{row.name}</span>
                         </Link>
                       </td>
-
-                      {/* Data sources — connector logo icons */}
-                      <td style={{ padding: '0.75rem 1rem' }}>
-                        {row.connectors.length === 0 ? (
-                          <span style={{ color: 'var(--text-faint)', fontSize: '0.75rem' }}>—</span>
-                        ) : (
-                          <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            {row.connectors.map((c, ci) => (
-                              <span key={ci} title={c.label} style={{ display: 'flex', alignItems: 'center' }}>
-                                <ConnectorLogo type={c.type} size={16} aria-hidden />
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Dynamic metric columns */}
-                      {overviewCols.map(col => {
-                        if (col === 'spend') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.spend > 0 ? fmtSpend(row.spend) : <Dash />}
-                                <DeltaBadge delta={row.deltaSpend} neutral />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'roas_cpl') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              row.showRoas && row.roas !== null
-                                ? <><span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span><DeltaBadge delta={row.deltaRoas} /></>
-                                : row.cpl !== null
-                                  ? <><span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span><DeltaBadge delta={row.deltaCpl} inverse /></>
-                                  : <Dash />
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'roas') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.roas !== null ? <span style={{ color: 'var(--text-primary)' }}>{fmtX(row.roas)}</span> : <Dash />}
-                                <DeltaBadge delta={row.deltaRoas} />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'cpa') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.cpl !== null ? <span style={{ color: 'var(--text-primary)' }}>{fmtSpend(row.cpl)}</span> : <Dash />}
-                                <DeltaBadge delta={row.deltaCpl} inverse />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'conversions') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.conversions > 0 ? row.conversions.toLocaleString() : <Dash />}
-                                <DeltaBadge delta={row.deltaConv} />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'ctr') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.ctr > 0 ? fmtPct(row.ctr) : <Dash />}
-                                <DeltaBadge delta={row.deltaCtr} />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'clicks') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.clicks > 0 ? row.clicks.toLocaleString() : <Dash />}
-                                <DeltaBadge delta={row.deltaClicks} />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'impressions') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              <>
-                                {row.impressions > 0 ? row.impressions.toLocaleString() : <Dash />}
-                                <DeltaBadge delta={row.deltaImpr} />
-                              </>
-                            )}
-                          </td>
-                        )
-
-                        if (col === 'sync_status') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                              <span style={{
-                                width: 9, height: 9, borderRadius: '50%',
-                                background: syncDot, display: 'inline-block', flexShrink: 0,
-                              }} />
-                              {row.syncErrCount > 0 && (
-                                <span style={{
-                                  background: 'var(--red-subtle)', color: 'var(--red)',
-                                  borderRadius: 4, padding: '0 0.3rem',
-                                  fontSize: '0.6875rem', fontWeight: 600,
-                                }}>
-                                  {row.syncErrCount}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        )
-
-                        if (col === 'ad_fuel') return (
-                          <td key={col} style={{ padding: '0.75rem 1rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                            {metricsLoading ? <SkeletonCell /> : (
-                              row.hasAfLedger ? (
-                                <div>
-                                  <span style={{
-                                    color:      row.afBalance > 500 ? 'var(--green)' : row.afBalance < 0 ? 'var(--red)' : 'var(--amber, #f59e0b)',
-                                    fontWeight: 600,
-                                  }}>
-                                    {fmtBalance(row.afBalance)}
-                                  </span>
-                                  {(row.pendingAch ?? 0) > 0 && (() => {
-                                    const proj = row.afBalance + (row.pendingAch ?? 0)
-                                    return (
-                                      <div style={{ fontSize: '0.7rem', fontWeight: 400, marginTop: 1, color: proj >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                                        {fmtBalance(proj)} proj.
-                                      </div>
-                                    )
-                                  })()}
-                                </div>
-                              ) : <Dash />
-                            )}
-                          </td>
-                        )
-
-                        return null
-                      })}
-
-                      {/* Links for this client: dashboard and ad library, each with a copy button. */}
-                      <td style={{ padding: '0.5rem 0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                      <td><Sources list={row.connectors} /></td>
+                      {cols.map(c => <td key={c} className={c === 'sync_status' ? undefined : 'cl-r cl-num'}>{cell(row, c)}</td>)}
+                      <td className="cl-r cl-menu">
                         <ClientLinksMenu clientId={row.id} clientName={row.name} dashboardToken={row.dashboard_token} />
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          {/* Phone: one row per client. */}
+          <div className="card cl-list">
+            {rows.map(row => (
+              <div key={row.id} className="ui-row cl-list-row">
+                <Link href={`/admin/clients/${row.id}`} className="cl-list-main">
+                  <ClientMark name={row.name} logoUrl={row.logoUrl} />
+                  <span className="ui-row-text">
+                    <span className="ui-row-title">{row.name}</span>
+                    <span className="ui-row-sub">{headline(row)}</span>
+                    <span className="cl-list-meta">
+                      <Sources list={row.connectors} max={5} />
+                      <StatusBadge tone={row.sync.tone} title={row.sync.detail}>{row.sync.label}</StatusBadge>
+                    </span>
+                  </span>
+                </Link>
+                <ClientLinksMenu clientId={row.id} clientName={row.name} dashboardToken={row.dashboard_token} />
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   )
