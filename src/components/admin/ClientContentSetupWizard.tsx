@@ -2011,8 +2011,9 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
     <div>
       <StepTitle>Setup complete!</StepTitle>
       <StepSub>
+        {/* "Running" only when it is: a paused plan said "already running" above a Paused badge. */}
         {planActive
-          ? `${clientName}'s content plan is already running. Saving updates the settings it follows.`
+          ? `${clientName}'s content plan is already ${schedule.autoGenerate ? 'running' : 'set up, and paused'}. Saving updates the settings it follows.`
           : `${clientName} is ready for AI content generation.`}
       </StepSub>
 

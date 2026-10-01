@@ -301,7 +301,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
-        showToast(`Topics are generating — they'll appear here automatically`, 'info')
+        showToast(`Planning ${(data.slots ?? []).length || 'the'} post${(data.slots ?? []).length === 1 ? '' : 's'}. Their topics appear here as each one is ready.`, 'info')
         const prevCount = topicsRef.current.length
         let polls = 0
         if (pollRef.current) clearInterval(pollRef.current)
@@ -310,7 +310,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           loadPipeline()
           if (topicsRef.current.length > prevCount || polls >= 12) {
             clearInterval(pollRef.current!); pollRef.current = null
-            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topics generated`, 'success')
+            if (topicsRef.current.length > prevCount) showToast(`${topicsRef.current.length - prevCount} topic${topicsRef.current.length - prevCount === 1 ? '' : 's'} planned`, 'success')
           }
         }, 15_000)
       } else {
@@ -659,7 +659,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           <div style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
               <span className="font-semibold text-sm">{planMode === 'regenerate' ? 'Regenerate the content plan' : 'Start the content plan'}</span>
-              <button type="button" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem' }}>✕</button>
+              <button type="button" aria-label="Close" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
             </div>
             <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
               <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
@@ -668,12 +668,12 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                   : <>The plan follows this client&apos;s schedule in Content settings.</>}
               </p>
               <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
-                <dt style={{ color: 'var(--text-faint)' }}>Cadence</dt>
+                <dt style={{ color: 'var(--text-muted)' }}>Cadence</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
-                <dt style={{ color: 'var(--text-faint)' }}>{planMode === 'regenerate' ? 'Fills' : 'Plans now'}</dt>
+                <dt style={{ color: 'var(--text-muted)' }}>{planMode === 'regenerate' ? 'Fills' : 'Plans now'}</dt>
                 <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
                   {planError
-                    ? planError
+                    ? <>{planError}{' '}<button type="button" onClick={() => void openPlan(planMode)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Try again</button></>
                     : !plan
                       ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
                       : plan.dates.length === 0
@@ -682,7 +682,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                           : 'Nothing: every date in the window already has a topic.')
                         : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
                 </dd>
-                <dt style={{ color: 'var(--text-faint)' }}>After that</dt>
+                <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                   {autoGenerate
                     ? `New dates fill in on their own, keeping the next ${settingsWeeksAhead} ${dateWord(settingsWeeksAhead)} planned.`
@@ -690,7 +690,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 </dd>
               </dl>
               {onOpenSettings && (
-                <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+                <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                   To change the start date, cadence or how far ahead it plans, edit{' '}
                   <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>
                   {' '}first.
