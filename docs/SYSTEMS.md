@@ -381,7 +381,7 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth.
 - `GET PUT /api/admin/content/global-settings` — global content settings
 - `GET PUT /api/admin/content/client-settings` — per-client content/brand settings
 - `POST /api/admin/content/generate-brand-dna` — AI brand analysis from URL
-- `POST /api/admin/content/sitemap-parse` — crawl and parse a sitemap URL
+- `POST /api/admin/content/sitemap-parse` — crawl and parse a sitemap URL. Body `{ xml }` instead reads pasted sitemap XML or a list of URLs (for sites that block our servers) and adds to the cache without pruning
 - `GET PATCH /api/admin/content/sitemap-pages` — list / toggle sitemap page flags
 - `POST /api/admin/content/topics/generate` — batch topic generation
 - `DELETE /api/admin/content/topics/bulk-delete` — bulk delete topics
@@ -394,7 +394,7 @@ All cron jobs in `vercel.json` use `Authorization: Bearer CRON_SECRET` for auth.
 - `POST /api/admin/content/posts/[id]/generate-image` — AI image generation
 - `POST /api/admin/content/posts/[id]/upload-image` — manual image upload
 - `GET POST PATCH /api/admin/content/keyword-research` — read the researched keyword pool (free) / run research (spends DataForSEO; write admins only; reuses research under 30 days old; `force: true` clears and re-runs, keeping the pool when nothing new can be bought; any run is refused within an hour of the client's last research spend; the response's `ok` is false when nothing was stored) / choose, dismiss, restore or add keywords (write admins only)
-- `POST /api/admin/content/calendar/generate` — pick topics for open publish dates. Without `start_date` (every caller) it plans the cron's own window: today out to the client's lead window, on its cadence (biweekly follows the fortnight from `schedule_start_date`). Active priority sets take the first dates, never more than their waiting keywords. `dry_run` returns `{ slots, dates, cleared, from_sets }` and writes nothing; `regenerate` also fills dates a person cleared (deleted, or holding only rejected topics)
+- `POST /api/admin/content/calendar/generate` — pick topics for open publish dates. Without `start_date` (every caller) it plans the cron's own window: today out to the client's lead window, on its cadence (biweekly follows the fortnight from `schedule_start_date`). Active priority sets take the first dates, never more than their waiting keywords. `dry_run` returns `{ slots, dates, cleared, from_sets }` and writes nothing; `regenerate` also fills dates a person cleared (deleted, or holding only rejected topics). While a run is going, `content_settings.plan_generation` holds `{ started_at, dates }` (migration 229); `GET ?client_id=` returns it so the Pipeline shows the run after a refresh
 - `GET PUT /api/admin/dataforseo-usage` — month-to-date DataForSEO spend / set the monthly ceiling (write admins; 501 until migration 226). Without the column the ceiling is the $100 default; unreadable settings or ledger hold spending
 - `GET /api/admin/content/keyword-sources` — the sources the Analytics tab shows: paid converters, Ahrefs positions, researched pool (+ `researchLocation`)
 - `GET /api/admin/content/serp-insights` — stored "what Google shows" per keyword (`seo_keywords.metadata.serp`); read-only

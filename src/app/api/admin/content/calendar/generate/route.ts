@@ -15,6 +15,9 @@
 //
 // Which topics: an active priority set takes the first open dates, one per keyword waiting, oldest
 // set first — the split the cron makes date by date. silo_id instead plans only that set's dates.
+//
+// While a plan runs, content_settings.plan_generation holds { started_at, dates } so the Pipeline
+// can show it after a refresh. GET ?client_id= returns it (null when none is running).
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -31,6 +34,29 @@ export const maxDuration = 300
 
 /** One post to write: its publish date, and the set it comes from (null: the usual selection). */
 type PlannedSlot = { slot: string; siloId: string | null }
+
+/** A marker older than this belongs to a run the platform killed (maxDuration is 300s). */
+const PLAN_MARKER_TTL_MS = 6 * 60_000
+
+export async function GET(request: NextRequest) {
+  const cookieStore = await cookies()
+  if (!isAdminAuthed(cookieStore.get('admin_session')?.value)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const clientId = request.nextUrl.searchParams.get('client_id')
+  if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
+
+  const { data, error } = await createAdminClient()
+    .from('content_settings').select('plan_generation').eq('client_id', clientId).maybeSingle()
+  // Before migration 229 the column is missing: say nothing is running, as before.
+  if (error) return NextResponse.json({ running: null })
+  const marker = (data as { plan_generation?: { started_at?: string; dates?: string[] } | null } | null)?.plan_generation
+  const started = marker?.started_at ? Date.parse(marker.started_at) : NaN
+  if (!marker || Number.isNaN(started) || Date.now() - started > PLAN_MARKER_TTL_MS) {
+    return NextResponse.json({ running: null })
+  }
+  return NextResponse.json({ running: { started_at: marker.started_at, dates: Array.isArray(marker.dates) ? marker.dates : [] } })
+}
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies()
@@ -234,6 +260,21 @@ export async function POST(request: NextRequest) {
   // Read admin session before returning — cookies are request-scoped and unavailable inside waitUntil.
   const adminSession = await getAdminSession()
 
+  // Mark the run before answering, so a refresh straight after still shows it. Best effort: before
+  // migration 229 the column is missing and the plan runs as it always did.
+  const startedAt = new Date().toISOString()
+  const { error: markErr } = await db.from('content_settings')
+    .update({ plan_generation: { started_at: startedAt, dates: Array.from(new Set(plannedSlots)).sort() } })
+    .eq('client_id', client_id)
+  if (markErr) console.warn(`[calendar/generate] could not mark the plan as running for ${client_id}:`, markErr.message)
+  const clearMarker = async () => {
+    if (markErr) return
+    // Only this run's marker: a newer run may have replaced it.
+    const { error } = await db.from('content_settings').update({ plan_generation: null })
+      .eq('client_id', client_id).eq('plan_generation->>started_at', startedAt)
+    if (error) console.warn(`[calendar/generate] could not clear the running marker for ${client_id}:`, error.message)
+  }
+
   // ── Generate topics + assign dates in background ─────────────────────────
   // Batch into groups of 10 — 8192 max_tokens fits ~10 topics with full rationale.
   // Each successive batch automatically avoids previously inserted topics via the
@@ -241,6 +282,7 @@ export async function POST(request: NextRequest) {
   const BATCH_SIZE = 10
   waitUntil(
     (async () => {
+     try {
       // Purge orphaned pending topics with no publish date from previous jobs killed mid-run.
       // Scoped to status='pending' — approved/generated topics may intentionally have no date.
       await db.from('content_topics')
@@ -344,6 +386,9 @@ export async function POST(request: NextRequest) {
       }
 
       await logActivity(adminSession, 'generated', 'calendar', { clientId: client_id, meta: { slots: inserted } })
+     } finally {
+      await clearMarker()
+     }
     })()
   )
 

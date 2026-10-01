@@ -76,6 +76,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   const [idleChecked,       setIdleChecked]       = useState(false)
   const [planError,         setPlanError]         = useState<string | null>(null)
   const [generating,        setGenerating]        = useState(false)
+  // A plan picking topics in the background, read from the server so it survives a refresh.
+  const [planRunning,       setPlanRunning]       = useState<{ started_at: string; dates: string[] } | null>(null)
   const [showNewPost,       setShowNewPost]       = useState(false)
 
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -108,6 +110,27 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   }, [clientId])
 
   useEffect(() => { loadPipeline() }, [loadPipeline])
+
+  const checkPlanRunning = useCallback(() => {
+    fetch(`/api/admin/content/calendar/generate?client_id=${clientId}`)
+      .then(r => r.ok ? r.json() : { running: null })
+      .then((d: { running?: { started_at: string; dates: string[] } | null }) => setPlanRunning(d.running ?? null))
+      .catch(() => { /* keep what is shown; the next check corrects it */ })
+  }, [clientId])
+  useEffect(() => { checkPlanRunning() }, [checkPlanRunning])
+
+  // While a plan runs, reload every 15s so topics appear as each batch lands, and once more when
+  // it finishes. Not while the toast's own poll (started by this tab) is doing the same.
+  const planWasRunning = useRef(false)
+  useEffect(() => {
+    if (!planRunning) {
+      if (planWasRunning.current) { planWasRunning.current = false; loadPipeline() }
+      return
+    }
+    planWasRunning.current = true
+    const t = setInterval(() => { checkPlanRunning(); if (!pollRef.current) loadPipeline() }, 15_000)
+    return () => clearInterval(t)
+  }, [planRunning, checkPlanRunning, loadPipeline])
 
   // If the editor opened before the topic→post link loaded, refresh once.
   useEffect(() => {
@@ -280,6 +303,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     if (res.ok) {
       setCalendarModalOpen(false)
       if (data.queued) {
+        checkPlanRunning()
         const n = (data.slots ?? []).length
         showToast(n ? `Generating ${n} topic${n === 1 ? '' : 's'}. They appear in the calendar as each one is ready.` : 'Generating topics. They appear in the calendar as each one is ready.', 'info')
         const prevCount = topicsRef.current.length
@@ -491,7 +515,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => openPlan('regenerate')} style={{ whiteSpace: 'nowrap' }}>Regenerate plan</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => openPlan('regenerate')} disabled={!!planRunning} style={{ whiteSpace: 'nowrap' }}>Regenerate plan</button>
               {onOpenSettings && (
                 <button className="btn btn-secondary btn-sm" onClick={onOpenSettings} style={{ whiteSpace: 'nowrap' }}>Change in Content settings</button>
               )}
@@ -511,7 +535,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                   : <>{publishes}. Starting picks a topic for each upcoming publish date{autoGenerate ? '; after that, new topics are picked automatically' : ''}.</>}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <button className="btn btn-primary btn-sm" onClick={() => openPlan(hadPlan ? 'regenerate' : 'start')} disabled={!!planRunning} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
               {hadPlan ? 'Regenerate plan' : 'Start plan'}
             </button>
           </div>
@@ -522,6 +546,18 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         )}
         <button className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>+ New Post</button>
       </div>
+
+      {/* ── A plan picking topics in the background ───────────────────────── */}
+      {planRunning && (
+        <div className="plan-running" role="status">
+          <span className="plan-running-dot" aria-hidden />
+          <span>
+            <strong>Picking topics{planRunning.dates.length > 0 ? ` for ${planRunning.dates.length} date${planRunning.dates.length === 1 ? '' : 's'}` : ''}</strong>
+            {planRunning.dates.length > 0 && <> ({planRunning.dates.slice(0, 6).map(fmtShort).join(', ')}{planRunning.dates.length > 6 ? ', …' : ''})</>}
+            . Started {Math.max(0, Math.round((Date.now() - Date.parse(planRunning.started_at)) / 60_000)) || 'under a'} min ago. They appear in the calendar as each batch is ready, usually within a few minutes.
+          </span>
+        </div>
+      )}
 
       {/* ── Publish-to sites ───────────────────────────────────────────────── */}
       {clientSites.length > 0 && (
