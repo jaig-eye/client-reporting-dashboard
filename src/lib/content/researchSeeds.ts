@@ -13,10 +13,38 @@
 import { splitPhrases } from './phrases'
 import { splitPlace } from './usStates'
 
-/** Services, as research reads them: trimmed, real words only, and capped. */
+/**
+ * Services, as research reads them: trimmed and real words only.
+ *
+ * Not capped. A cap here cut services 13 and on out of the relevance matcher, so every keyword
+ * about them was thrown away as off-topic — and twelve of seventeen content clients list more than
+ * six. What a run can afford to EXPAND is bounded where it is spent, by rotatingWindow.
+ */
 export function parseServices(services: unknown): string[] {
   // Split the way the chip input stored them, so "gutter guards (mesh, micro-mesh)" stays one service.
-  return splitPhrases(services).filter(v => v.length > 2).slice(0, 12)
+  return splitPhrases(services).filter(v => v.length > 2)
+}
+
+/**
+ * The `size` items of `items` that research turn `turn` covers, wrapping round the end.
+ *
+ * A run can afford to expand a handful of services, and taking the first handful every time let the
+ * order they were typed in decide which services were ever researched. Consecutive turns take
+ * consecutive windows, so every service is covered within ceil(n / size) turns, and over any stretch
+ * of turns no service is expanded more than once more than another. The cost per run is unchanged:
+ * still `size` of them.
+ */
+export function rotatingWindow<T>(items: T[], size: number, turn: number): T[] {
+  const n = items.length
+  if (size <= 0) return []
+  if (n <= size) return items.slice()
+  const start = (((turn * size) % n) + n) % n
+  return Array.from({ length: size }, (_, i) => items[(start + i) % n])
+}
+
+/** The research turn for a date: months since year 0, so research once a month moves one window on. */
+export function researchTurn(at: Date = new Date()): number {
+  return at.getUTCFullYear() * 12 + at.getUTCMonth()
 }
 
 /**
@@ -31,7 +59,7 @@ export function geoPhrase(location: { name: string } | null, prose: string): str
   if (fromLocation) return fromLocation
   const first = splitPhrases(prose)[0] ?? ''
   // "Melbourne, FL" pins "Melbourne" on, the same head a picked location gives.
-  return splitPlace(first.split(/\s+and\s+|\s*\(|\s+including\s+/i)[0]).head.trim()
+  return splitPlace(first.split(/\s+and\s+|\s*\(|\s+including\s+|\s+with\s+/i)[0]).head.trim()
 }
 
 /**
@@ -50,14 +78,20 @@ export function buildResearchSeeds(services: string[], geo: string, foundational
 }
 
 /**
+ * Words that make service-area text a sentence rather than a list of places.
+ *
+ * "with" belongs here: "Melbourne, FL with nationwide and Canada service area" is a city with an
+ * aside, and without it the aside's words stayed glued to the state, so the lookup lost "FL" and
+ * went looking for a bare "Melbourne".
+ */
+const PROSE_JOINER = /\n|;|\b(including|surrounding|and|serving|with)\b/i
+
+/**
  * Phrases that describe the absence of a local market.
  *
  * A business that says "nationwide" is telling us its competitors are national, and forcing it
  * into a city would be a worse answer than leaving it alone.
  */
-/** Words that make service-area text a sentence rather than a list of places. */
-const PROSE_JOINER = /\n|;|\b(including|surrounding|and|serving)\b/i
-
 const NON_LOCAL =/^\s*(nation-?wide|national|all of|across|worldwide|global|online only|e-?commerce|united states|usa|canada|uk)\b/i
 
 /**
@@ -106,7 +140,7 @@ function proseCandidates(raw: string): string[] {
   // splitting first would tear the bracket in half and leave an orphan "(" in the candidate.
   const withoutAsides = raw.replace(/\([^)]*\)/g, ' ')   // "(based in Cocoa, FL)" is an aside
   // Then split on the joiners people actually use, keeping order.
-  for (const clause of withoutAsides.split(/\n|;|\bincluding\b|\bsurrounding\b|\band\b|\bserving\b/i)) {
+  for (const clause of withoutAsides.split(/\n|;|\bincluding\b|\bsurrounding\b|\band\b|\bserving\b|\bwith\b/i)) {
     const cleaned = clause
       .replace(/\b(area|areas|region|county-wide|metro)\b/gi, ' ')
       .replace(/\s+/g, ' ')

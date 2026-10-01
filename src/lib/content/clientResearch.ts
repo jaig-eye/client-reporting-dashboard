@@ -37,9 +37,10 @@ import {
   resolveDfsCreds, resolveSeoConfig, dfsKeywordsForSite, dfsCompetitorDomains, dfsSerpCompetitors, dfsKeywordIdeas,
   dfsKeywordSuggestions, dfsLocalSerp, dfsLocalSearchVolume, isAggregatorDomain, normalizeDomain, readResearchLocation,
   type DfsKeywordCandidate, type DfsCreds, type SeoTrackingConfig, type ResearchLocation, type DfsSerpSnapshot,
+  type DfsLocalVolume,
 } from '@/lib/connectors/dataforseo'
 import { toSerpInsight, patchKeywordMetadata } from './serpInsights'
-import { parseServices, geoPhrase, buildResearchSeeds } from './researchSeeds'
+import { parseServices, geoPhrase, buildResearchSeeds, rotatingWindow, researchTurn } from './researchSeeds'
 import { splitPhrases } from './phrases'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { recordDfsUsage } from './dataforseoUsage'
@@ -55,24 +56,39 @@ const MAX_COMPETITORS = 3
  * question has no content and the answer is just the vertical's biggest domains.
  */
 const MIN_FOOTPRINT_FOR_OVERLAP = 25
-/** Service seeds probed with a live local SERP when a research location is set. $0.004 each. */
+/**
+ * Service seeds probed with a live local SERP per run when there is a research location. $0.004
+ * each. Which five rotates from run to run (rotatingWindow), so every service is probed in turn.
+ */
 const LOCAL_SERP_SEEDS = 5
 
 /**
- * Services expanded one by one (keyword ideas and local suggestions each). A bound on cost only —
- * every service up to it is treated the same. Two Labs tasks per service, about two cents.
+ * Services expanded per run (keyword ideas and local suggestions each). A bound on cost only, and
+ * not on which services: the window rotates from run to run, so a client with twenty services has
+ * every one of them expanded over four monthly runs rather than the first six forever. Two Labs
+ * tasks per service, about two cents.
  */
 const MAX_SERVICE_EXPANSIONS = 6
+
+/**
+ * How recently a tracked keyword must have had a live reading for the live checks to own it.
+ *
+ * The Labs snapshot is filed as desktop and dated today, and the current-rank view takes the newest
+ * date with desktop first — so writing it over a keyword the rankings cron reads replaced a live,
+ * local reading with a national one that lags weeks, and blanked its URL. 200 days covers the
+ * slowest live cadence (182 days); a tracked keyword not read in that long — retired past two
+ * years, or a money keyword the cron leaves alone — has only the snapshot, and still gets it.
+ */
+const LIVE_OWNED_DAYS = 200
 
 /** Largest share of the stored pool that may come from competitors' rankings. */
 const MAX_COMPETITOR_SHARE = 0.5
 /**
- * Research older than this is redone; anything newer is reused as-is.
+ * Research older than this is redone by the monthly job; anything newer is reused as-is.
  *
- * Six Labs calls is roughly six cents, so the saving is small — the real reason is stability.
- * Re-researching on every topic run would shift the candidate set week to week and make topic
- * selection jump around, when what a content plan wants is coherent coverage of a theme across
- * several posts.
+ * A run is roughly 15–30 cents, so the saving matters less than stability: a candidate set that
+ * shifted week to week would make the list a person picks from jump around, when what a content
+ * plan wants is coherent coverage of a theme across several posts.
  */
 const RESEARCH_MAX_AGE_DAYS = 30
 /** Ceiling on what one run will store, so a broad market can't write thousands of rows. */
@@ -98,6 +114,8 @@ export interface DiscoveryResult {
   location?: string | null
   /** The best-rated businesses in the local pack for the seed services, when the run was local. */
   localPack?: Array<{ title: string; domain: string | null; rating: number | null; votes: number | null }>
+  /** True when the deadline stopped the run before every paid call it planned had been made. */
+  partial?: boolean
 }
 
 /** Which system a candidate came from. Stored as seo_keywords.source, so it must be honest. */
@@ -116,26 +134,6 @@ const normalize = (k: string) => k.trim().toLowerCase().replace(/\s+/g, ' ')
 const SEED_STOP = new Set(['and', 'the', 'for', 'with', 'your', 'our', 'from', 'near', 'this', 'that', 'into', 'you', 'all'])
 
 /**
- * Decide whether a keyword_ideas result is actually about this business.
- *
- * keyword_ideas is DataForSEO's CATEGORY expansion: it answers "what else is searched in the
- * Google Ads categories these seeds belong to", ordered by volume. For "landscape lighting
- * installation" that category is Lighting, and the highest-volume terms in Lighting are
- * "macbook stage light effect", "govee lights" and "light bulb". The first real run for an
- * outdoor-lighting installer stored three hundred of those and nothing about outdoor lighting.
- *
- * So a result has to share the seeds' vocabulary. Two topic words, or one topic word plus the
- * client's geography, or a seed phrase intact — one shared word is not enough, because that one
- * word is nearly always "light". Matching is on prefixes so "lighting", "lights" and "light"
- * agree, and geography words never count as topic words on their own ("los angeles weather").
- */
-/**
- * The phrase local seeds are built on: the research location's own name when there is one
- * ("Los Angeles County" → "Los Angeles"), otherwise the first place the prose names, cut at the
- * first "and", bracket or "including". "Los Angeles and Tri-County area, Southern California" used
- * to produce seeds ending in "los angeles and tri-county area", which nobody types.
- */
-/**
  * How much of national demand this market is, from the phrases Google answered for both. The
  * median, over pairs big enough to be more than noise. 3% — roughly one large metro — when too
  * few answered to say.
@@ -151,6 +149,11 @@ function observedLocalShare(cands: Candidate[]): number {
 
 /**
  * Which of the client's services a keyword is about, if any.
+ *
+ * Needed because keyword_ideas is DataForSEO's CATEGORY expansion: for "landscape lighting
+ * installation" the category is Lighting, whose biggest terms are "macbook stage light effect" and
+ * "govee lights". The first real run for an outdoor-lighting installer stored three hundred of
+ * those and nothing about outdoor lighting, so a result has to be about one of the services.
  *
  * Each service is matched on its own words. The words of every service used to be pooled, so a
  * keyword passed by borrowing one word from each of two unrelated services — "outdoor" from one,
@@ -275,8 +278,12 @@ function score(c: Candidate, paidConversions: number, mentionsGeo: boolean, loca
  *
  * Returns without touching anything when DataForSEO is not connected — the two database-backed
  * sources are still read, so a client without a connection gets a smaller pool rather than none.
+ *
+ * `deadline` (epoch ms) is when to stop STARTING paid calls. A call already in flight finishes and
+ * is recorded, and whatever was found is stored as usual; the result says `partial`. Callers pass
+ * one that leaves room for the slowest call (60s) and the storage after it inside their maxDuration.
  */
-export async function discoverKeywords(clientId: string): Promise<DiscoveryResult> {
+export async function discoverKeywords(clientId: string, opts: { deadline?: number } = {}): Promise<DiscoveryResult> {
   const empty: DiscoveryResult = { ok: false, discovered: 0, stored: 0, snapshotted: 0, bySource: {}, cost: 0, competitors: [] }
   // Hoisted so the competitor list survives the block that fetches it and can be returned.
   let competitorDomains: string[] = []
@@ -285,18 +292,43 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   if (!clientId) return { ...empty, reason: 'no client' }
 
   const db = createAdminClient()
+
+  // ── Spend: recorded call by call, and never started past the deadline ─────
+  //
+  // The ledger used to be written once, after every paid call had returned. A run killed by the
+  // platform part-way — two dozen sequential calls with 30–60s timeouts each — recorded nothing:
+  // invisible to the monthly ceiling, and with no freshness stamp either, so the same client was
+  // first in line to be bought again the next day. Each call's cost now reaches the ledger as soon
+  // as the call returns.
   let cost = 0
-  const onCost = (c: number) => { cost += c }
+  let unrecorded = 0, unrecordedCalls = 0
+  const onCost = (c: number) => { cost += c; unrecorded += c; unrecordedCalls++ }
+  const flushCost = async () => {
+    if (unrecorded <= 0) return
+    const c = unrecorded, units = unrecordedCalls
+    unrecorded = 0; unrecordedCalls = 0
+    await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost: c, units, date: new Date().toISOString().slice(0, 10) })
+  }
+  const deadline = opts.deadline ?? Infinity
+  let cutShort = false
+  /** One paid call: skipped past the deadline, recorded the moment it returns. */
+  const paid = async <T>(call: () => Promise<T>, none: T): Promise<T> => {
+    if (Date.now() >= deadline) { cutShort = true; return none }
+    try { return await call() } finally { await flushCost() }
+  }
 
   // ── The client's DataForSEO connection, if there is one ───────────────────
   let creds: DfsCreds | null = null
   let domain = ''
   let cfg: SeoTrackingConfig = resolveSeoConfig(null, null)
   try {
+    // Active only: a paused connection is not billed by the rankings cron or picked by the monthly
+    // job, and a button press must not be the one path that still spends through it.
     const { data, error } = await db
       .from('client_connections')
       .select('external_id, config, connector:connectors(type, auth, config)')
       .eq('client_id', clientId)
+      .eq('status', 'active')
     // Without this, an unreadable connection is indistinguishable from "not connected" and the
     // client quietly gets database-only research forever.
     if (error) console.warn('[research] cannot read connections:', error.message)
@@ -528,8 +560,13 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   const spentOnDfs = !!creds && !!domain && withinBudget
   if (creds && domain && withinBudget) {
     const labsOpts = { locationCode: cfg.location_code, languageCode: cfg.language_code, onCost }
+    // Narrowed once for the closures below.
+    const dfs: DfsCreds = creds
+    // Which services this run expands and probes. Rotates month by month so every service gets its
+    // turn; see rotatingWindow.
+    const turn = researchTurn()
 
-    for (const c of await dfsKeywordsForSite(domain, creds, { ...labsOpts, source: 'site', limit: 300 })) {
+    for (const c of await paid(() => dfsKeywordsForSite(domain, dfs, { ...labsOpts, source: 'site', limit: 300 }), [])) {
       ownRanked.push(c)
       add(c)
     }
@@ -545,10 +582,15 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     if (location && seeds.length) {
       const own   = normalizeDomain(domain)
       const tally = new Map<string, number>()
-      const probe = seeds.filter(sd => !geo || !sd.toLowerCase().endsWith(geo.toLowerCase())).slice(0, LOCAL_SERP_SEEDS)
+      const market = location
+      // The plain seeds (the location code makes the search local), a rotating five of them.
+      const probe = rotatingWindow(
+        seeds.filter(sd => !geo || !sd.toLowerCase().endsWith(geo.toLowerCase())),
+        LOCAL_SERP_SEEDS, turn,
+      )
       let packs = 0
       for (const sd of probe) {
-        const serp = await dfsLocalSerp(sd, creds, { locationCode: location.code, languageCode: cfg.language_code, depth: 20, onCost })
+        const serp = await paid(() => dfsLocalSerp(sd, dfs, { locationCode: market.code, languageCode: cfg.language_code, depth: 20, onCost }), null)
         if (!serp) continue
         serpBySeed.set(normalize(sd), serp)
         // The seed itself belongs in the pool: it is what the operator said the business should be
@@ -582,7 +624,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // had national brands appended to the set that gets displayed and mined.
     const localAnswered = localRivals.length >= 4
     const bySerp = seeds.length && !localAnswered
-      ? await dfsSerpCompetitors(seeds, creds, { ...labsOpts, limit: 8, exclude: domain })
+      ? await paid(() => dfsSerpCompetitors(seeds, dfs, { ...labsOpts, limit: 8, exclude: domain }), [])
       : []
 
     // Domain overlap compares what two sites both rank for, so it needs the client to rank for
@@ -591,7 +633,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // the site's own ranked_keywords from earlier in this run, so the footprint is already known.
     const hasFootprint = ownRanked.length >= MIN_FOOTPRINT_FOR_OVERLAP
     const byOverlap = !localAnswered && hasFootprint
-      ? await dfsCompetitorDomains(domain, creds, { ...labsOpts, limit: MAX_COMPETITORS })
+      ? await paid(() => dfsCompetitorDomains(domain, dfs, { ...labsOpts, limit: MAX_COMPETITORS }), [])
       : []
     if (!hasFootprint && !localAnswered) {
       console.log(`[research] domain overlap skipped: only ${ownRanked.length} ranked keyword(s) — too new for overlap to mean anything`)
@@ -618,7 +660,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       for (const w of genericWords) rest = rest.split(w).join('')
       const labelIsBrand = label.length >= 4 && rest.length >= 3
       let skipped = 0, offTopic = 0
-      for (const c of await dfsKeywordsForSite(comp, creds, { ...labsOpts, source: 'competitor', limit: 200 })) {
+      for (const c of await paid(() => dfsKeywordsForSite(comp, dfs, { ...labsOpts, source: 'competitor', limit: 200 }), [])) {
         if (labelIsBrand && c.keyword.toLowerCase().replace(/\s+/g, '').includes(label)) { skipped++; continue }
         if (seedMatcher && !seedMatcher.isRelevant(c.keyword)) { offTopic++; continue }
         add(c)
@@ -635,15 +677,16 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
       // One expansion per service, not one for all of them. A single call over every seed returned
       // whatever category had the most search volume — for a lighting installer, Christmas lights
       // — and the other services got the leftovers. Each service now gets its own equal share.
-      // Every service matters as much as the next, so none is favoured; the cap only bounds cost.
+      // Every service matters as much as the next: the cap bounds cost per run, and the window
+      // rotates so that over successive runs every service is expanded the same number of times.
       let kept = 0, dropped = 0
-      const perService = researchServices.slice(0, MAX_SERVICE_EXPANSIONS)
+      const perService = rotatingWindow(researchServices, MAX_SERVICE_EXPANSIONS, turn)
       const batches = perService.length
         ? perService.map(s => (geo ? [s, `${s} ${geo}`] : [s]))
         : [seeds]
       const perBatch = Math.max(40, Math.floor(300 / batches.length))
       for (const batch of batches) {
-        for (const c of await dfsKeywordIdeas(batch, creds, { ...labsOpts, limit: perBatch })) {
+        for (const c of await paid(() => dfsKeywordIdeas(batch, dfs, { ...labsOpts, limit: perBatch }), [])) {
           if (matcher.isRelevant(c.keyword)) { add(c); kept++ } else dropped++
         }
       }
@@ -659,13 +702,14 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // One per service, in the service's own words: with the market pinned on when there is one,
     // "near me" when there is not. This used to take the first three geo seeds and the first two
     // near-me seeds, so the order services were typed in decided which got local phrases at all.
+    // The same rotating window as the ideas above, so a service's turn brings both.
     if (seeds.length && seedMatcher) {
       const matcher = seedMatcher
-      const localSeeds = researchServices.slice(0, MAX_SERVICE_EXPANSIONS)
+      const localSeeds = rotatingWindow(researchServices, MAX_SERVICE_EXPANSIONS, turn)
         .map(s => (geo ? `${s} ${geo}` : `${s} near me`))
       let localKept = 0
       for (const sd of localSeeds) {
-        for (const c of await dfsKeywordSuggestions(sd, creds, { ...labsOpts, limit: 60 })) {
+        for (const c of await paid(() => dfsKeywordSuggestions(sd, dfs, { ...labsOpts, limit: 60 }), [])) {
           if (matcher.isRelevant(c.keyword)) { add(c); localKept++ }
         }
       }
@@ -684,7 +728,11 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
                       - score(a, paidConversions.get(a.normalized) ?? 0, seedMatcher?.mentionsGeo(a.keyword) ?? false))
         .slice(0, 1000)
       for (const c of prelim) byKey.set(c.keyword.toLowerCase().replace(/\s+/g, ' '), c)
-      const local = await dfsLocalSearchVolume(Array.from(byKey.keys()), creds, { locationCode: location.code, languageCode: cfg.language_code, onCost })
+      const market = location
+      const local = await paid(
+        () => dfsLocalSearchVolume(Array.from(byKey.keys()), dfs, { locationCode: market.code, languageCode: cfg.language_code, onCost }),
+        new Map<string, DfsLocalVolume>(),
+      )
       let answered = 0
       for (const [k, v] of Array.from(local.entries())) {
         const c = byKey.get(k)
@@ -698,10 +746,10 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     }
   }
 
-  // Recorded as soon as the paid calls are done, before anything that can fail or return early.
-  // It used to be the last step, so a run whose storage failed returned without recording what it
-  // had bought — invisible to the monthly ceiling, and bought again on the next call.
-  if (cost > 0) await recordDfsUsage({ operation: 'keyword_discovery', clientId, cost, units: candidates.size, date: new Date().toISOString().slice(0, 10) })
+  // Every paid call has already reached the ledger (see paid()); this only catches a cost reported
+  // outside it, so nothing bought can leave the run unrecorded.
+  await flushCost()
+  if (cutShort) console.warn(`[research] client ${clientId}: deadline reached — later paid calls skipped, the rest is stored`)
 
   /**
    * Record that research ran, so the reuse gate has something truthful to read.
@@ -722,7 +770,7 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
     // against the 30-day window. A client with no connection has not been researched at all, so
     // it does not — otherwise connecting DataForSEO later would wait a month to take effect.
     if (spentOnDfs && cost > 0) await stampResearchRun()
-    return { ...empty, ok: true, competitors: competitorDomains, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources' }
+    return { ...empty, ok: true, cost: Number(cost.toFixed(4)), competitors: competitorDomains, reason: creds ? 'nothing discovered' : 'no DataForSEO connection and no local sources', ...(cutShort ? { partial: true } : {}) }
   }
 
   // ── Rank and trim ─────────────────────────────────────────────────────────
@@ -863,13 +911,22 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
   // Not stamped when the budget stopped the DataForSEO half, though: the database sources can
   // still produce candidates, and stamping on the strength of those would claim the market was
   // looked at when it was not — holding the next real run for thirty days after the month rolled
-  // over and the money came back. Nor when every DataForSEO call failed (dead credentials, empty
-  // balance): nothing was billed because nothing answered, and a stamp would have the monthly job
-  // skip the client for thirty days.
+  // over and the money came back. Nor when every DataForSEO call failed or was refused (dead
+  // credentials, empty balance, a bad location): a refusal is not billed (see labsAnswered), so
+  // `cost > 0` means DataForSEO actually answered something, and without that a stamp would have
+  // the monthly job skip the client for thirty days having learned nothing.
+  //
+  // A run the deadline cut short IS stamped. What it bought is stored and recorded, and re-running
+  // it tomorrow would buy those same calls again; the services it did not reach come round in the
+  // rotation.
   if (spentOnDfs && cost > 0) await stampResearchRun()
 
-  console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}`)
-  return { ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)), competitors: competitorDomains, location: location?.name ?? null, localPack }
+  console.log(`[research] client ${clientId}: ${ranked.length} candidates, ${stored} new, ${snapshotted} positions, $${cost.toFixed(4)}` + (cutShort ? ' (partial)' : ''))
+  return {
+    ok: true, discovered: ranked.length, stored, snapshotted, bySource, cost: Number(cost.toFixed(4)),
+    competitors: competitorDomains, location: location?.name ?? null, localPack,
+    ...(cutShort ? { partial: true, reason: 'stopped at the time limit; what was found is stored' } : {}),
+  }
 }
 
 /**
@@ -880,6 +937,9 @@ export async function discoverKeywords(clientId: string): Promise<DiscoveryResul
  *
  * device 'desktop' because Labs data is desktop-based, and provider 'dataforseo_labs' so a
  * snapshot is never confused with a live check — they have very different freshness.
+ *
+ * Keywords the live checks own are left out (isLiveOwned): the current-rank view would otherwise
+ * show this lagging national reading over their live one.
  */
 async function recordOwnRankings(
   clientId: string,
@@ -892,19 +952,22 @@ async function recordOwnRankings(
     const byNormalized = new Map(ranked.map(c => [normalize(c.keyword), c]))
     // Chunked for the same URL-length reason as the store above.
     const keys = Array.from(byNormalized.keys())
-    const data: { id: string; normalized_keyword: string }[] = []
+    type KeywordRow = { id: string; normalized_keyword: string; is_tracked: boolean | null; last_checked_at: string | null }
+    const data: KeywordRow[] = []
     for (let i = 0; i < keys.length; i += 100) {
       const { data: part, error } = await db
         .from('seo_keywords')
-        .select('id, normalized_keyword')
+        .select('id, normalized_keyword, is_tracked, last_checked_at')
         .eq('client_id', clientId)
         .in('normalized_keyword', keys.slice(i, i + 100))
       if (error) { console.warn('[research] cannot resolve keyword ids for snapshot:', error.message); return 0 }
-      data.push(...((part ?? []) as { id: string; normalized_keyword: string }[]))
+      data.push(...((part ?? []) as KeywordRow[]))
     }
 
     const today = new Date().toISOString().slice(0, 10)
+    const now = Date.now()
     const rows = data
+      .filter(k => !isLiveOwned(k, now))
       .map(k => {
         const c = byNormalized.get(k.normalized_keyword)
         if (!c) return null
@@ -939,6 +1002,18 @@ async function recordOwnRankings(
     console.warn('[research] cannot record positions (apply migration 190):', e)
     return 0
   }
+}
+
+/**
+ * Whether the rankings cron's live checks own this keyword's readings: tracked, and read live
+ * within LIVE_OWNED_DAYS. Those get no Labs snapshot. A tracked keyword the cron does not read — a
+ * money keyword with no post, one retired past two years, one not yet published — still does, since
+ * the snapshot is the only reading it gets.
+ */
+export function isLiveOwned(k: { is_tracked?: boolean | null; last_checked_at?: string | null }, now = Date.now()): boolean {
+  if (k.is_tracked !== true || !k.last_checked_at) return false
+  const t = Date.parse(k.last_checked_at)
+  return Number.isFinite(t) && now - t < LIVE_OWNED_DAYS * 86_400_000
 }
 
 /** The Google Ads volume in the research location, stored by a local run. Null otherwise. */
@@ -1047,8 +1122,9 @@ export async function serviceTagger(clientId: string): Promise<{
 }
 
 /**
- * Whether research could buy anything for this client: a DataForSEO connection with credentials and
- * a domain. A read failure answers no, which only ever means "don't throw the current list away".
+ * Whether research could buy anything for this client: an active DataForSEO connection with
+ * credentials and a domain. A read failure answers no, which only ever means "don't throw the
+ * current list away".
  */
 export async function hasDfsConnection(clientId: string): Promise<boolean> {
   try {
@@ -1058,6 +1134,7 @@ export async function hasDfsConnection(clientId: string): Promise<boolean> {
       .select('external_id, connector:connectors!inner(type, auth)')
       .eq('client_id', clientId)
       .eq('connector.type', 'dataforseo')
+      .eq('status', 'active')
     if (error) { console.warn('[research] connection check failed:', error.message); return false }
     type Row = { external_id: string | null; connector: { auth?: Record<string, unknown> } | { auth?: Record<string, unknown> }[] | null }
     return ((data ?? []) as Row[]).some(r => {
@@ -1066,6 +1143,33 @@ export async function hasDfsConnection(clientId: string): Promise<boolean> {
     })
   } catch {
     return false
+  }
+}
+
+/**
+ * When this client's research last spent, if within `withinMs` — read from the ledger, which a run
+ * writes call by call, so a run still in progress already shows. For the button's cooldown.
+ *
+ * `error` set means the ledger could not be read; the caller must not treat that as "no spend".
+ */
+export async function recentResearchSpend(clientId: string, withinMs: number): Promise<{ at: string | null; error: string | null }> {
+  try {
+    const db = createAdminClient()
+    const since = new Date(Date.now() - withinMs).toISOString()
+    const { data, error } = await db
+      .from('dataforseo_usage')
+      .select('created_at')
+      .eq('client_id', clientId)
+      .eq('operation', 'keyword_discovery')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) return { at: null, error: error.message }
+    const at = (data as { created_at?: string | null } | null)?.created_at
+    return { at: at ? String(at) : null, error: null }
+  } catch (e) {
+    return { at: null, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
@@ -1143,22 +1247,36 @@ export async function resetResearchPool(clientId: string): Promise<number> {
   if (!clientId) return 0
   const db = createAdminClient()
   try {
-    const base = () => db
-      .from('seo_keywords')
-      .select('id')
-      .eq('client_id', clientId)
-      .eq('is_tracked', false)
-      .is('content_post_id', null)
+    // Which filters this database can take, so the DELETE below repeats exactly the ones the list used.
+    let hasChosen = true, hasDismissed = true
     // Chosen keywords survive a re-run. Choosing sets chosen_at and nothing else — not
     // is_tracked, not content_post_id — so without this clause every keyword the operator had
     // picked was deleted by the next "Look again", while the UI promised the opposite.
-    let { data, error } = await base().is('dismissed_at', null).is('chosen_at', null)
-    // Which filters this database can take, so the DELETE below repeats exactly the ones the list used.
-    let hasChosen = true, hasDismissed = true
-    if (error && /chosen_at/i.test(error.message)) { hasChosen = false; ({ data, error } = await base().is('dismissed_at', null)) }
-    if (error && /dismissed_at/i.test(error.message)) { hasDismissed = false; ({ data, error } = await base()) }
+    //
+    // Read in pages, ordered by id. Research adds up to 400 rows a month, so a pool passes
+    // PostgREST's 1,000-row cap within a few months, and a single read reset only the first
+    // thousand while the rest of the old list stayed.
+    const page = (from: number) => {
+      let q = db
+        .from('seo_keywords')
+        .select('id')
+        .eq('client_id', clientId)
+        .eq('is_tracked', false)
+        .is('content_post_id', null)
+      if (hasDismissed) q = q.is('dismissed_at', null)
+      if (hasChosen)    q = q.is('chosen_at', null)
+      return q.order('id', { ascending: true }).range(from, from + 999)
+    }
+    let { data, error } = await page(0)
+    if (error && /chosen_at/i.test(error.message)) { hasChosen = false; ({ data, error } = await page(0)) }
+    if (error && /dismissed_at/i.test(error.message)) { hasDismissed = false; ({ data, error } = await page(0)) }
     if (error) { console.warn('[research] reset: cannot list candidates:', error.message); return 0 }
     const ids = ((data ?? []) as { id: string }[]).map(r => r.id)
+    for (let from = 1000; (data ?? []).length === 1000 && from < 100_000; from += 1000) {
+      ;({ data, error } = await page(from))
+      if (error) { console.warn('[research] reset: cannot list candidates:', error.message); return 0 }
+      ids.push(...((data ?? []) as { id: string }[]).map(r => r.id))
+    }
     if (ids.length === 0) return 0
     let removed = 0
     for (let i = 0; i < ids.length; i += 200) {

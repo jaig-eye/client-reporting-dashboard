@@ -15,6 +15,13 @@
 // person ticks from. The monthly job (/api/cron/keyword-research) sees the fresh timestamp and
 // leaves this client alone for 30 days.
 //
+// WHO MAY SPEND
+//
+// POST buys research and every PATCH changes what the writer is handed, so both take
+// requireWriteAdmin: a read-only viewer can look (GET) but not spend or decide. Any run, forced or
+// not, is refused within an hour of the client's last research spend, read from the ledger — which
+// a run writes call by call, so a second press while the first is still running is refused too.
+//
 // WHY POST
 //
 // A GET that spends money is a GET that gets prefetched, retried and crawled. The read path is
@@ -24,15 +31,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { isAdminAuthed, requireWriteAdmin } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
-import { discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf, hasDfsConnection, serviceTagger } from '@/lib/content/clientResearch'
+import {
+  discoverKeywords, resetResearchPool, researchScoreOf, localVolumeOf, hasDfsConnection, serviceTagger,
+  recentResearchSpend,
+} from '@/lib/content/clientResearch'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { addManualKeywords } from '@/lib/content/addManualKeywords'
 
-// Six sequential Labs calls, each with its own 30s timeout. 120s could not hold them, and a
-// kill loses the whole run AND the last_keyword_research_at stamp — so the next topic
-// generation buys it all again.
+// A run is two dozen sequential paid calls with 30–60s timeouts each, plus storage. It is given a
+// deadline (PAID_WINDOW_MS) for starting paid calls, so it stores and records inside this.
 export const maxDuration = 300
+
+/**
+ * How long after the request starts a run may still START a paid call. The slowest call (60s) and
+ * the storage and read-back after it must fit in what is left of maxDuration.
+ */
+const PAID_WINDOW_MS = 200_000
 
 /**
  * How many phrases go into one `in` filter.
@@ -49,8 +64,13 @@ export const fetchCache = 'force-no-store'
 /** Matches RESEARCH_MAX_AGE_DAYS in clientResearch.ts — the monthly job's window. */
 const RESEARCH_REUSE_DAYS = 30
 
-/** A forced re-run is refused within this long of the last run: each one is ~15 paid calls. */
-const FORCE_COOLDOWN_MS = 60 * 60_000
+/** Any run is refused within this long of the client's last research: each one is ~25 paid calls. */
+const COOLDOWN_MS = 60 * 60_000
+
+/** Unchosen rows read for the list. A ceiling on the payload; chosen rows are read separately. */
+const POOL_READ = 400
+/** Unchosen rows returned, best first. Every chosen row is returned on top of these. */
+const UNCHOSEN_SHOWN = 60
 
 /** What the wizard renders. Shaped for reading, not for the pipeline. */
 interface ResearchPayload {
@@ -73,7 +93,16 @@ interface ResearchPayload {
   researchLocation?: string | null
 }
 
-/** The stored pool, best first. Free — this is a database read. */
+/**
+ * The stored pool, best first: every chosen keyword, plus the best unchosen ones. Free — a
+ * database read.
+ *
+ * Chosen rows are read on their own. The main read has no ORDER BY (see the sort note below), so
+ * its limit keeps whatever Postgres hands back first — roughly insertion order — and a pool larger
+ * than it dropped its newest rows, which is exactly where a hand-typed keyword sits. The cut to the
+ * best sixty then removed the rest of the choices: a typed keyword has no research score and sorted
+ * last. A choice must never fall off the list that shows choices. keyword-sources does the same.
+ */
 async function readStored(clientId: string): Promise<ResearchPayload['keywords']> {
   const db = createAdminClient()
   try {
@@ -86,19 +115,40 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
     // chosen_at is migration 225. Without it every keyword reads as chosen, which is exactly the
     // pre-225 behaviour and keeps a database that has not been migrated working unchanged. The
     // retry must drop the column from the select too — retrying the same select failed the same way.
-    let hasChosen = true
-    let { data, error } = await base(`${COLS}, chosen_at`).is('dismissed_at', null).limit(200)
+    let hasChosen = true, hasDismissed = true
+    let { data, error } = await base(`${COLS}, chosen_at`).is('dismissed_at', null).limit(POOL_READ)
     if (error && /chosen_at/i.test(error.message)) {
       hasChosen = false
-      ;({ data, error } = await base(COLS).is('dismissed_at', null).limit(200))
+      ;({ data, error } = await base(COLS).is('dismissed_at', null).limit(POOL_READ))
     }
     // Dismissed rows are not shown. Without migration 223 there is no dismissal to filter on.
-    if (error && /dismissed_at/i.test(error.message)) ({ data, error } = await base(hasChosen ? `${COLS}, chosen_at` : COLS).limit(200))
+    if (error && /dismissed_at/i.test(error.message)) {
+      hasDismissed = false
+      ;({ data, error } = await base(hasChosen ? `${COLS}, chosen_at` : COLS).limit(POOL_READ))
+    }
     if (error) console.warn('[keyword-research] stored read failed:', error.message)
+
+    let picked: Record<string, unknown>[] = []
+    if (hasChosen) {
+      let q = base(`${COLS}, chosen_at`).not('chosen_at', 'is', null)
+      if (hasDismissed) q = q.is('dismissed_at', null)
+      const { data: ch, error: chErr } = await q.limit(1000)
+      if (chErr) console.warn('[keyword-research] chosen read failed:', chErr.message)
+      else picked = (ch ?? []) as unknown as Record<string, unknown>[]
+    }
+    const seen = new Set<string>()
+    const merged: Record<string, unknown>[] = []
+    for (const r of [...picked, ...((data ?? []) as unknown as Record<string, unknown>[])]) {
+      const key = String(r.keyword ?? '').trim().toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      merged.push(r)
+    }
+
     const { serviceOf } = await serviceTagger(clientId)
     // Sorted in JS — see the note in clientResearch.ts read(): the server-side order clause on
     // this select has been observed returning nothing at all, silently.
-    return ((data ?? []) as unknown as Record<string, unknown>[]).map(r => ({
+    const sorted = merged.map(r => ({
       keyword:    String(r.keyword ?? '').trim(),
       volume:     r.search_volume      == null ? null : Number(r.search_volume),
       difficulty: r.keyword_difficulty == null ? null : Number(r.keyword_difficulty),
@@ -112,7 +162,10 @@ async function readStored(clientId: string): Promise<ResearchPayload['keywords']
       .filter(k => k.keyword)
       // Research score first — the order the pool was built to prefer — volume as tie-break.
       .sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9) || (b.volume ?? -1) - (a.volume ?? -1))
-      .slice(0, 60)
+    // Before 225 every row reads as chosen, so the old cut applies as it did.
+    if (!hasChosen) return sorted.slice(0, UNCHOSEN_SHOWN)
+    let unchosenLeft = UNCHOSEN_SHOWN
+    return sorted.filter(k => k.chosen || unchosenLeft-- > 0)
   } catch {
     // seo_keywords arrives with migration 189; until then there is simply nothing to show.
     return []
@@ -133,6 +186,24 @@ async function researchMeta(clientId: string): Promise<{ at: string | null; loca
   } catch {
     return { at: null, location: null }
   }
+}
+
+/**
+ * Milliseconds until this client may be researched again: zero when it may.
+ *
+ * The later of the freshness stamp and the newest research spend in the ledger. The ledger is the
+ * one that matters for money — it is written per paid call, so it also catches a run that never
+ * stamped (storage failed, the run was killed, every call was refused but one) and a run still in
+ * progress. An unreadable ledger is not "no recent spend": `error` is set and the caller refuses.
+ */
+async function cooldownLeft(clientId: string): Promise<{ ms: number; error: boolean }> {
+  const [{ at }, spend] = await Promise.all([researchMeta(clientId), recentResearchSpend(clientId, COOLDOWN_MS)])
+  if (spend.error) {
+    console.warn('[keyword-research] research ledger unreadable, refusing to run:', spend.error)
+    return { ms: 0, error: true }
+  }
+  const last = Math.max(at ? Date.parse(at) || 0 : 0, spend.at ? Date.parse(spend.at) || 0 : 0)
+  return { ms: last ? Math.max(0, COOLDOWN_MS - (Date.now() - last)) : 0, error: false }
 }
 
 /** Read-only: whatever research has already stored. Never spends. */
@@ -163,9 +234,10 @@ export async function GET(request: NextRequest) {
 
 /** Spends. Runs discovery, stores the pool, returns it for display. */
 export async function POST(request: NextRequest) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const startedAt = Date.now()
+  // Spending is an admin's call, not a viewer's — forced or not.
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
 
   let clientId = request.nextUrl.searchParams.get('client_id')
   let force = false
@@ -203,23 +275,25 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Not more than once an hour, forced or not. The non-forced path used to have no limit at all, so
+  // a client whose run never stamped was bought again on every press, and two presses at once both
+  // ran.
+  const cooldown = await cooldownLeft(clientId)
+  if (cooldown.error) {
+    return NextResponse.json({ error: 'Could not check when this market was last researched. Try again shortly.' }, { status: 503 })
+  }
+  if (cooldown.ms > 0) {
+    const minutes = Math.ceil(cooldown.ms / 60_000)
+    return NextResponse.json(
+      { error: `This market was researched less than an hour ago. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.` },
+      { status: 429 },
+    )
+  }
+
   // A forced run is "look again with what I have told you now". Discovery only ever adds
   // unknown keywords, so without clearing the pool first the operator would change the seeds,
-  // pay again, and see the same list. Tracked, claimed and dismissed rows survive the reset.
+  // pay again, and see the same list. Tracked, claimed, chosen and dismissed rows survive the reset.
   if (force) {
-    // Deliberate spending: an admin's call, not a viewer's, and not more than once an hour.
-    const gate = await requireWriteAdmin()
-    if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
-    const { at } = await researchMeta(clientId)
-    const sinceLast = at ? Date.now() - Date.parse(at) : Infinity
-    if (sinceLast < FORCE_COOLDOWN_MS) {
-      const minutes = Math.ceil((FORCE_COOLDOWN_MS - sinceLast) / 60_000)
-      return NextResponse.json(
-        { error: `This market was researched less than an hour ago. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.` },
-        { status: 429 },
-      )
-    }
-
     // The pool is only thrown away when a new one can be bought. Resetting first and then finding
     // the budget spent (or no connection) replaced a paid list with a thin database-only one that
     // stayed until the month rolled over.
@@ -244,7 +318,7 @@ export async function POST(request: NextRequest) {
     console.log(`[keyword-research] forced re-run for ${clientId}: cleared ${removed} candidate(s)`)
   }
 
-  const result = await discoverKeywords(clientId)
+  const result = await discoverKeywords(clientId, { deadline: startedAt + PAID_WINDOW_MS })
   const meta   = await researchMeta(clientId)
 
   const payload: ResearchPayload = {
@@ -273,27 +347,31 @@ export async function POST(request: NextRequest) {
  *
  *   { client_id, keyword, dismissed }        — mark one irrelevant, or take that back
  *   { client_id, keywords: [...], chosen }   — choose or unchoose several at once
+ *   { client_id, add: [...] }                — type keywords in (one paid metrics lookup)
+ *   { client_id, dismiss: [...] }            — remove several at once
  *
  * Bulk matters for choosing: a run returns a few hundred candidates and ticking twenty of them
  * should be one request, not twenty.
+ *
+ * Every action decides what the writer is handed, and `add` spends, so all of them take
+ * requireWriteAdmin. Database errors are logged here and answered with a plain sentence.
  */
 export async function PATCH(request: NextRequest) {
-  const cookieStore = await cookies()
-  if (!isAdminAuthed(cookieStore.get('admin_session')?.value))
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const gate = await requireWriteAdmin()
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status })
 
   let body: { client_id?: string; keyword?: string; dismissed?: boolean; keywords?: unknown; chosen?: boolean; add?: unknown; dismiss?: unknown } = {}
   try { body = await request.json() } catch { /* handled below */ }
   const clientId = String(body.client_id ?? '').trim()
 
   // ── Keywords typed in by hand ─────────────────────────────────────────────
-  // Added to the same pool the research writes, chosen on arrival, and given a SERP snapshot the
-  // same way any other pick is — so a typed keyword is judged and written from exactly like a
-  // discovered one.
+  // Added to the same pool the research writes and chosen on arrival, so a typed keyword is judged
+  // and written from exactly like a discovered one.
   if (Array.isArray(body.add)) {
     if (!clientId) return NextResponse.json({ error: 'Missing client_id' }, { status: 400 })
     const db = createAdminClient()
     const result = await addManualKeywords(db, clientId, (body.add as unknown[]).map(k => String(k ?? '')))
+    // addManualKeywords logs the database detail and returns a sentence written for the operator.
     if (result.error) return NextResponse.json({ error: result.error }, { status: 500 })
     return NextResponse.json({ ok: true, ...result })
   }
@@ -329,9 +407,10 @@ export async function PATCH(request: NextRequest) {
       let { error } = await write({ dismissed_at: now, chosen_at: null })
       if (error && /chosen_at/i.test(error.message)) ({ error } = await write({ dismissed_at: now }))
       if (error) {
+        console.error('[keyword-research] bulk dismiss failed:', error.message)
         const missing = /dismissed_at/i.test(error.message)
         return NextResponse.json(
-          { error: missing ? 'Removing keywords needs migration 223 (seo_keywords.dismissed_at)' : error.message },
+          { error: missing ? 'Removing keywords needs migration 223 (seo_keywords.dismissed_at)' : 'Could not remove those keywords. Try again.' },
           { status: missing ? 501 : 500 },
         )
       }
@@ -359,14 +438,15 @@ export async function PATCH(request: NextRequest) {
         .eq('client_id', clientId)
         .in('normalized_keyword', list.slice(i, i + IN_CHUNK))
       if (error) {
+        console.error('[keyword-research] selection failed:', error.message)
         const missing = /chosen_at/i.test(error.message)
         return NextResponse.json(
-          { error: missing ? 'Choosing keywords needs migration 225 (seo_keywords.chosen_at)' : error.message },
+          { error: missing ? 'Choosing keywords needs migration 225 (seo_keywords.chosen_at)' : 'Could not save the selection. Try again.' },
           { status: missing ? 501 : 500 },
         )
       }
     }
-    // Picking a keyword no longer buys a SERP snapshot.
+    // Picking a keyword does not buy a SERP snapshot.
     //
     // It used to — one live search per keyword, up to thirty per selection — on the reasoning
     // that the talking points are worth reading before a post is committed. They are, but nothing
@@ -375,7 +455,7 @@ export async function PATCH(request: NextRequest) {
     // against that keyword replaced, and its only reader was a display panel.
     //
     // The panel is unaffected. It reads seo_keywords.metadata->serp, which generation still
-    // writes — so it now shows the snapshots the writer actually used, filling in as posts are
+    // writes — so it shows the snapshots the writer actually used, filling in as posts are
     // written rather than as keywords are ticked. Later, truer, and free.
     return NextResponse.json({ ok: true, updated: list.length })
   }
@@ -390,9 +470,10 @@ export async function PATCH(request: NextRequest) {
     .eq('client_id', clientId)
     .eq('normalized_keyword', keyword)
   if (error) {
+    console.error('[keyword-research] dismiss failed:', error.message)
     const missing = /dismissed_at/i.test(error.message)
     return NextResponse.json(
-      { error: missing ? 'Dismissing keywords needs migration 223 (seo_keywords.dismissed_at)' : error.message },
+      { error: missing ? 'Dismissing keywords needs migration 223 (seo_keywords.dismissed_at)' : 'Could not update that keyword. Try again.' },
       { status: missing ? 501 : 500 },
     )
   }

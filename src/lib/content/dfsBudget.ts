@@ -13,22 +13,32 @@
 // HOW IT BEHAVES
 //
 // Over budget is not an error. Research skips and the pool keeps whatever it already had; rank
-// checks skip and the last reading stands; snapshots skip and the keyword is still chosen. The
-// month rolls over and everything resumes. Nothing a client sees depends on it — the same
-// degradation as DataForSEO being disconnected, which every one of these paths already handles.
+// checks skip and the last reading stands; writing skips its SERP lookup and the post is still
+// written. The month rolls over and everything resumes. Nothing a client sees depends on it — the
+// same degradation as DataForSEO being disconnected, which every one of these paths already handles.
 //
-// FAILING SAFE
+// FAILING CLOSED
 //
-// No budget set means no ceiling, which is the behaviour this replaced. But once a budget IS set,
-// a ledger we cannot read has to stop the spending: an unreadable ledger means the spend is
-// unknown, and "unknown" is not a reason to keep buying against a limit someone deliberately set.
+// The only way to spend without a ceiling is to say so: agency_settings.dataforseo_monthly_budget
+// present and NULL. Everything else has a ceiling or holds spending:
+//
+//   column missing (migration 226 not applied)   DEFAULT_MONTHLY_BUDGET, the value 226 sets
+//   no agency_settings row, or a garbage value   DEFAULT_MONTHLY_BUDGET
+//   settings or ledger unreadable, or a throw    held — allowed: false, and not cached, so a
+//                                                recovered database is believed on the next call
+//
+// "Unknown" is never a reason to keep buying. A held call degrades exactly like an over-budget one,
+// which every caller already handles; an unbounded bill does not degrade at all.
 
 import { createAdminClient } from '@/lib/supabase/server'
+
+/** The ceiling migration 226 installs, used whenever the stored one cannot be read as a decision. */
+export const DEFAULT_MONTHLY_BUDGET = 100
 
 export interface BudgetState {
   /** The ceiling, or null when there is none. */
   limit:   number | null
-  /** Spent so far this calendar month. */
+  /** Spent so far this calendar month. NaN when the ledger could not be read. */
   spent:   number
   /** Whether a paid call may proceed. */
   allowed: boolean
@@ -41,7 +51,8 @@ export interface BudgetState {
  *
  * A rankings run asks this once per client and a research run once per call, but a future caller
  * might ask per keyword. Sixty seconds keeps a tight loop from turning the guard into its own
- * source of load, and is far shorter than the window it is guarding.
+ * source of load, and is far shorter than the window it is guarding. Only answers that came from a
+ * successful read are cached — a hold never is.
  */
 const CACHE_MS = 60_000
 let cache: { at: number; state: BudgetState } | null = null
@@ -54,11 +65,39 @@ export function firstOfMonth(): string {
 type Db = ReturnType<typeof createAdminClient>
 
 /**
+ * What the settings read means for the ceiling. Pure, so the rule can be tested on its own.
+ *
+ *   { limit: number }   a ceiling, stored or defaulted
+ *   { limit: null }     no ceiling — only ever a column that exists and holds NULL
+ *   { hold: string }    the settings could not be read; spend nothing until they can
+ */
+export function resolveBudgetSetting(
+  row: { dataforseo_monthly_budget?: unknown } | null,
+  error: { message?: string } | null,
+): { limit: number | null } | { hold: string } {
+  if (error) {
+    // Migration 226 not applied: the ceiling it would have installed, not "no limit".
+    if (/dataforseo_monthly_budget/i.test(error.message ?? '')) return { limit: DEFAULT_MONTHLY_BUDGET }
+    return { hold: 'could not read the DataForSEO budget' }
+  }
+  // No agency_settings row at all: nobody decided anything, so the default applies.
+  if (!row) return { limit: DEFAULT_MONTHLY_BUDGET }
+  if (!('dataforseo_monthly_budget' in row)) return { limit: DEFAULT_MONTHLY_BUDGET }
+  const raw = row.dataforseo_monthly_budget
+  // Present and NULL is the one deliberate "spend without a ceiling".
+  if (raw === null) return { limit: null }
+  const n = Number(raw)
+  // A value nobody could have meant (negative, text) is not a decision to spend without limit.
+  // $0 is a ceiling like any other: it means spend nothing.
+  return { limit: Number.isFinite(n) && n >= 0 ? n : DEFAULT_MONTHLY_BUDGET }
+}
+
+/**
  * Total recorded DataForSEO spend since `sinceDate`, read in pages.
  *
- * The ledger is one row per call or per client-day, so a month passes 1,000 rows with a handful of
- * clients. A single read is silently cut at PostgREST's 1,000-row cap — `.limit(20_000)` does not
- * lift it — and the sum then undercounts until the ceiling can never trip.
+ * The ledger is one row per paid call or per client-day, so a month passes 1,000 rows with a
+ * handful of clients. A single read is silently cut at PostgREST's 1,000-row cap — `.limit(20_000)`
+ * does not lift it — and the sum then undercounts until the ceiling can never trip.
  */
 export async function sumDfsSpendSince(db: Db, sinceDate: string): Promise<{ spent: number; error: string | null }> {
   let spent = 0
@@ -80,44 +119,35 @@ export async function sumDfsSpendSince(db: Db, sinceDate: string): Promise<{ spe
 export async function getDfsBudget(): Promise<BudgetState> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.state
 
-  const unlimited: BudgetState = { limit: null, spent: 0, allowed: true }
+  // A hold reports a limit even when the stored one could not be read — the default — because a
+  // null limit reads as "no ceiling" to the spend panel, which is the opposite of what is happening.
+  const hold = (reason: string, limit: number = DEFAULT_MONTHLY_BUDGET): BudgetState => ({ limit, spent: NaN, allowed: false, reason })
   try {
     const db = createAdminClient()
-
-    // The column arrives with migration 226. Without it there is no ceiling, which is what every
-    // database did until now — so a missing column reads as "no limit", not as "stop".
     const { data: settings, error: setErr } = await db
       .from('agency_settings')
       .select('dataforseo_monthly_budget')
       .limit(1)
       .maybeSingle()
-    if (setErr) {
-      if (/dataforseo_monthly_budget/i.test(setErr.message)) {
-        cache = { at: Date.now(), state: unlimited }
-      } else {
-        // Infrastructure, not a decision: allowed, and not cached, so the next caller asks again.
-        console.warn('[dfs-budget] cannot read the budget, allowing this call:', setErr.message)
-      }
-      return unlimited
+    const setting = resolveBudgetSetting(settings as { dataforseo_monthly_budget?: unknown } | null, setErr)
+    if ('hold' in setting) {
+      console.error('[dfs-budget] cannot read the budget, holding spend:', setErr?.message)
+      return hold(setting.hold)
     }
-
-    const raw = (settings as { dataforseo_monthly_budget?: unknown } | null)?.dataforseo_monthly_budget
-    const limit = raw == null ? null : Number(raw)
-    if (limit == null || !isFinite(limit) || limit < 0) {
+    if (setting.limit == null) {
+      const unlimited: BudgetState = { limit: null, spent: 0, allowed: true }
       cache = { at: Date.now(), state: unlimited }
       return unlimited
     }
-    // $0 is a ceiling like any other: it means spend nothing, not "no limit".
+    const limit = setting.limit
 
     // One retry before holding spend: most read failures are a blip, and holding costs a whole
     // day's rank checks when the cron is the caller.
     let usage = await sumDfsSpendSince(db, firstOfMonth())
     if (usage.error) usage = await sumDfsSpendSince(db, firstOfMonth())
     if (usage.error) {
-      // A budget is set and the spend is unknowable. Stopping is the only honest reading — but it is
-      // not cached, so a recovered database is believed on the very next call.
-      console.error('[dfs-budget] budget set but usage unreadable, holding spend:', usage.error)
-      return { limit, spent: NaN, allowed: false, reason: 'could not read this month’s usage' }
+      console.error('[dfs-budget] usage unreadable, holding spend:', usage.error)
+      return hold('could not read this month’s usage', limit)
     }
 
     const spent = usage.spent
@@ -127,11 +157,9 @@ export async function getDfsBudget(): Promise<BudgetState> {
     cache = { at: Date.now(), state }
     return state
   } catch (e) {
-    // An exception here is infrastructure, not a budget decision. The paid paths each degrade
-    // safely on their own, and blocking every one of them over a thrown error would be a worse
-    // failure than the one being guarded against.
-    console.warn('[dfs-budget] check failed, allowing:', e instanceof Error ? e.message : e)
-    return unlimited
+    // A throw is as unknown as an error return, and unknown does not buy.
+    console.error('[dfs-budget] check threw, holding spend:', e instanceof Error ? e.message : e)
+    return hold('the budget check failed')
   }
 }
 

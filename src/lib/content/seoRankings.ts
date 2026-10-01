@@ -76,11 +76,12 @@ export async function registerKeyword(params: {
       .maybeSingle()
     if (exErr) { console.warn('[seoRankings] registerKeyword lookup failed:', exErr.message); return null }
 
-    // The same keyword filed under another location — a keyword typed or researched while a
-    // research location was set is stored under that market's code, and the writer registers
-    // under the country default. Without this the chosen row was never claimed: it stayed in
-    // "researched, not yet written about" and was offered for a second article, while a duplicate
-    // row took the post link.
+    // The same keyword filed under another location. Research and typed keywords are stored under
+    // the client's DataForSEO connection location_code, while the writer registers under the 'us'
+    // default (2840) — so a client tracked in another country (Canada, 2124) never matches here.
+    // Keywords typed before that was fixed also sit under the research location's city or county
+    // code. Without this the chosen row was never claimed: it stayed in "researched, not yet
+    // written about" and was offered for a second article, while a duplicate row took the post link.
     //
     // Only a researched keyword someone ticked may be claimed this way: untracked, not dismissed,
     // chosen, and not yet tied to a post. A hand-tracked keyword for another location, or a dismissed
@@ -251,8 +252,8 @@ export interface TrackedKeyword {
   content_post_id: string | null
   /**
    * Days since the post went live. Null when no post backs this keyword — a money keyword or a
-   * manual one, which never matures and stays at the top of the cadence ladder.
-   * Drives the check cadence — see checkIntervalDays in the rankings cron.
+   * manual one, which the rankings cron does not live-check; research's Labs snapshot is its only
+   * reading. Drives the check cadence — see checkIntervalDays in the rankings cron.
    */
   age_days:        number | null
   /**

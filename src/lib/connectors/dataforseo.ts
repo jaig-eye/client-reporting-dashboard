@@ -1,5 +1,4 @@
 // ─────────────────────────────────────────────────────────────────────────────
-import { splitPlace } from '@/lib/content/usStates'
 // DataForSEO connector — keyword data + SERP rank tracking
 //
 // "OpenSEO" turned out to be a bring-your-own-DataForSEO-key wrapper, so we integrate
@@ -22,6 +21,7 @@ import { splitPlace } from '@/lib/content/usStates'
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ConnectorAdapter, SyncResult, DiscoveredAccount } from './types'
+import { splitPlace } from '@/lib/content/usStates'
 
 const BASE_URL = 'https://api.dataforseo.com'
 
@@ -150,6 +150,23 @@ function firstTaskError(json: Record<string, unknown> | null): string | null {
   const code = num(tasks[0]?.status_code)
   return code != null && code !== 20000 ? `${code} ${String(tasks[0]?.status_message ?? '')}`.trim() : null
 }
+/**
+ * Why DataForSEO refused this request, at either level, or null when it answered.
+ *
+ * The top-level status covers the whole request (credentials, balance, a malformed body) and can
+ * come back with HTTP 200 and no task at all, which firstTaskError alone reads as "answered". A
+ * refused request is not billed by DataForSEO, so it must not be billed by the ledger either — and
+ * research reads "something was billed" as "DataForSEO answered", so a refusal billed at the
+ * estimate would stamp a client as researched when nothing came back.
+ *
+ * Exported for tests.
+ */
+export function dfsRefusal(json: Record<string, unknown> | null): string | null {
+  if (!json) return null
+  const top = num(json.status_code)
+  if (top != null && top !== 20000) return `${top} ${String(json.status_message ?? '')}`.trim()
+  return firstTaskError(json)
+}
 function num(v: unknown): number | null {
   return typeof v === 'number' && !Number.isNaN(v) ? v : null
 }
@@ -166,6 +183,20 @@ export function estimateSerpCost(depth: number): number {
   return Math.max(1, Math.ceil((depth || 100) / 10)) * 0.002
 }
 const DFS_LABS_COST_ESTIMATE = 0.01
+
+/**
+ * Bill a Labs answer, or log its refusal and bill nothing. True only when DataForSEO answered.
+ *
+ * The SERP helpers already skipped refused tasks; the Labs ones billed the $0.01 estimate for any
+ * HTTP 200, so a refused run looked paid-for and answered.
+ */
+function labsAnswered(json: Record<string, unknown> | null, what: string, onCost?: CostSink): boolean {
+  if (!json) return false
+  const refused = dfsRefusal(json)
+  if (refused) { console.warn(`[dataforseo] ${what} refused: ${refused}`); return false }
+  onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+  return true
+}
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -229,7 +260,7 @@ export async function dfsKeywordOverview(
     location_code: opts.locationCode ?? 2840,
     language_code: opts.languageCode ?? 'en',
   })
-  if (json) opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+  if (!labsAnswered(json, 'keyword_overview', opts.onCost)) return []
   return firstResultItems(json).map(it => {
     const info  = (it.keyword_info as Record<string, unknown>) ?? {}
     const props = (it.keyword_properties as Record<string, unknown>) ?? {}
@@ -378,8 +409,7 @@ export async function dfsKeywordsForSite(
       filters:       [['keyword_data.keyword_info.search_volume', '>', 10]],
       order_by:      ['keyword_data.keyword_info.search_volume,desc'],
     })
-    if (!json) return []
-    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    if (!labsAnswered(json, 'ranked_keywords', opts.onCost)) return []
     const src = opts.source ?? 'site'
     return firstResultItems(json).map(it => ({
       ...readKeywordMetrics(it),
@@ -461,8 +491,7 @@ export async function dfsCompetitorDomains(
       // nothing. That is what "DataForSEO named no competing domains" was.
       limit:         Math.min(20, Math.max(10, (opts.limit ?? 5) * 4)),
     })
-    if (!json) return []
-    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    if (!labsAnswered(json, 'competitors_domain', opts.onCost)) return []
     return firstResultItems(json)
       .map(it => normalizeDomain(String(it.domain ?? it.target ?? '')))
       // A domain does not compete with itself, and aggregators outrank everyone without being
@@ -514,8 +543,7 @@ export async function dfsSerpCompetitors(
       limit:         Math.min(100, Math.max(20, (opts.limit ?? 10) * 3)),
       order_by:      ['rating,desc'],
     })
-    if (!json) return []
-    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    if (!labsAnswered(json, 'serp_competitors', opts.onCost)) return []
     return firstResultItems(json)
       .map(it => ({
         domain:         normalizeDomain(String(it.domain ?? '')),
@@ -553,8 +581,7 @@ export async function dfsKeywordIdeas(
       filters:       [['keyword_info.search_volume', '>', 10]],
       order_by:      ['keyword_info.search_volume,desc'],
     })
-    if (!json) return []
-    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    if (!labsAnswered(json, 'keyword_ideas', opts.onCost)) return []
     return firstResultItems(json).map(it => ({
       ...readKeywordMetrics(it),
       source:            'idea' as const,
@@ -593,8 +620,7 @@ export async function dfsKeywordSuggestions(
       filters:       [['keyword_info.search_volume', '>', 10]],
       order_by:      ['keyword_info.search_volume,desc'],
     })
-    if (!json) return []
-    opts.onCost?.(readTopCost(json) || DFS_LABS_COST_ESTIMATE)
+    if (!labsAnswered(json, 'keyword_suggestions', opts.onCost)) return []
     return firstResultItems(json).map(it => ({
       ...readKeywordMetrics(it),
       source:            'idea' as const,
@@ -702,7 +728,7 @@ export async function dfsSerpIntel(
     depth,
     load_async_ai_overview: opts.aiOverview ?? true,
   }, opts.timeoutMs ?? 15_000)
-  const refused = firstTaskError(json)
+  const refused = dfsRefusal(json)
   // A refused task is not billed by DataForSEO and must not be billed by the ledger either.
   if (refused) { console.warn(`[dataforseo] serp intel refused for "${keyword}": ${refused}`); return empty }
   if (json) opts.onCost?.(readTopCost(json) || estimateSerpCost(depth) + 0.002)
@@ -850,7 +876,7 @@ export async function dfsLocalSearchVolume(
     search_partners: false,
   }, 60_000)
   if (!json) return out
-  const err = firstTaskError(json)
+  const err = dfsRefusal(json)
   if (err) { console.warn(`[dataforseo] google_ads search_volume refused: ${err}`); return out }
   opts.onCost?.(readTopCost(json) || DFS_GOOGLE_ADS_TASK_COST)
   for (const r of firstResultArray(json)) {
@@ -882,7 +908,7 @@ export async function dfsLocalSerp(
     depth,
   })
   if (!json) return null
-  const err = firstTaskError(json)
+  const err = dfsRefusal(json)
   // A refused task is not billed by DataForSEO and must not be billed by the ledger either.
   if (err) { console.warn(`[dataforseo] local SERP refused for "${keyword}": ${err}`); return null }
   opts.onCost?.(readTopCost(json) || estimateSerpCost(depth))

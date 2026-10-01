@@ -1,18 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DataForSEO usage ledger — record + summarize spend.
 //
-// recordDfsUsage() writes one row (per client / operation / cron run) into
-// dataforseo_usage; getDfsUsageSummary() aggregates for the agency spend panel.
+// recordDfsUsage() writes one row into dataforseo_usage — per client per cron run for rank
+// checks, per paid call for keyword research (so a run killed part-way still reaches the ledger),
+// per call for SERP intel. getDfsUsageSummary() aggregates for the agency spend panel.
 // Both SOFT-FAIL (migration 191 may be unapplied) so nothing depends on them.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/server'
 
+// 'serp_snapshot_on_select' is gone: picking a keyword no longer buys a SERP (see the PATCH in
+// keyword-research/route.ts). The spend panel keeps its label so any older ledger rows still read.
 export type DfsOperation = 'rank_check' | 'keyword_discovery' | 'serp_research' | 'serp_intel' | 'keyword_overview' | 'keyword_ideas' | 'search_volume'
-  // One live SERP bought when an operator picks a keyword, so the talking points exist before a
-  // post is committed to it. Its own operation because it is the one line of spend a person
-  // triggers by clicking, and it should be readable apart from the scheduled research.
-  | 'serp_snapshot_on_select'
 
 export async function recordDfsUsage(params: {
   operation: DfsOperation

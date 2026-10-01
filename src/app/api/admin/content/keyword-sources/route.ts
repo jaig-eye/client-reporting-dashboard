@@ -319,10 +319,13 @@ export async function GET(req: NextRequest) {
   // research would use, and deriving one needs the (free) locations list.
   const readDataForSeo = async (): Promise<{ has: boolean; creds: DfsCreds | null }> => {
     try {
+      // Active only, matching research itself: a paused connection buys nothing, so showing it as
+      // connected would offer a "Find keywords" that can only come back empty.
       const { data, error } = await db
         .from('client_connections')
         .select('connector:connectors(type, auth)')
         .eq('client_id', clientId)
+        .eq('status', 'active')
       if (error) { console.warn('[keyword-sources] connection check failed:', error.message); return { has: true, creds: null } }
       type Conn = { type?: string; auth?: Record<string, unknown> }
       type Row = { connector: Conn | Conn[] | null }

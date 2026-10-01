@@ -24,7 +24,7 @@
 
 import type { createAdminClient } from '@/lib/supabase/server'
 import {
-  resolveDfsCreds, resolveSeoConfig, dfsKeywordOverview, readResearchLocation,
+  resolveDfsCreds, resolveSeoConfig, dfsKeywordOverview,
   type DfsCreds, type SeoTrackingConfig,
 } from '@/lib/connectors/dataforseo'
 import { canSpendOnDfs } from '@/lib/content/dfsBudget'
@@ -33,9 +33,8 @@ import { recordDfsUsage } from '@/lib/content/dataforseoUsage'
 type Db = ReturnType<typeof createAdminClient>
 
 /**
- * Per call. Matches the snapshot cap and the input box, so nothing is accepted on screen and
- * then silently dropped on the way in. A paste of a hundred is a research run, not a manual
- * addition.
+ * Per call. Matches the input box, so nothing is accepted on screen and then silently dropped on
+ * the way in. A paste of a hundred is a research run, not a manual addition.
  */
 const MAX_PER_CALL = 30
 
@@ -78,15 +77,20 @@ export async function addManualKeywords(
   const wanted = Array.from(byNormal.values()).slice(0, MAX_PER_CALL)
   if (!clientId || wanted.length === 0) return none
 
-  // The client's market, so a manual keyword is filed against the same location as every other
-  // row. Without this the row lands on the 2840 default and reads as a different keyword from the
-  // identical one research stored.
+  // Filed under the same location_code research writes: the connection's tracking config (a
+  // country — Labs is country-level), NOT the research location. Research has always stored
+  // cfg.location_code; this used to store the research location's city or county code instead,
+  // which split one keyword across two codes and left registerKeyword to find it by fallback.
+  //
+  // Active connections only: a paused one is not billed anywhere else, so typing a keyword must not
+  // be the one path that still spends through it.
   let creds: DfsCreds | null = null
   let cfg: SeoTrackingConfig = resolveSeoConfig(null, null)
   const { data: conns, error: connErr } = await db
     .from('client_connections')
     .select('config, connector:connectors(type, auth, config)')
     .eq('client_id', clientId)
+    .eq('status', 'active')
   if (connErr) console.warn('[manual-keywords] cannot read connections:', connErr.message)
   type Row = {
     config: Record<string, unknown> | null
@@ -101,20 +105,7 @@ export async function addManualKeywords(
     cfg   = resolveSeoConfig(conn.config, row.config)
     break
   }
-  const { data: cs, error: csErr } = await db
-    .from('content_settings')
-    .select('research_location')
-    .eq('client_id', clientId)
-    .maybeSingle()
-  // A failed read looks exactly like "no location set", which would file the row against the
-  // national default while every other row for this client sits in its own market — the same
-  // keyword, split across two location codes, counted as two.
-  if (csErr) {
-    console.warn('[manual-keywords] cannot read the research location:', csErr.message)
-    return { ...none, error: 'Could not read where this client is measured' }
-  }
-  const location     = readResearchLocation((cs as Record<string, unknown> | null)?.research_location)
-  const locationCode = location?.code ?? cfg.location_code
+  const locationCode = cfg.location_code
 
   // Already here? Then this is a choice, not an addition.
   const normalized = wanted.map(normalize)
@@ -168,6 +159,14 @@ export async function addManualKeywords(
       // Metrics are a nicety; the keyword still gets added without them.
       console.warn('[manual-keywords] overview failed:', e instanceof Error ? e.message : e)
     }
+    // Recorded as soon as it is bought, before the insert that can fail: it used to be written
+    // after the insert, so a failed insert left a paid lookup out of the ledger and the ceiling.
+    if (cost > 0) {
+      await recordDfsUsage({
+        operation: 'keyword_overview', clientId, cost, units: fresh.length,
+        date: new Date().toISOString().slice(0, 10),
+      })
+    }
   }
 
   const now = new Date().toISOString()
@@ -194,15 +193,9 @@ export async function addManualKeywords(
   const { error: insErr } = await db.from('seo_keywords').insert(rows)
   if (insErr) {
     console.error('[manual-keywords] insert failed:', insErr.message)
-    return { ...none, rechosen, error: insErr.message }
+    return { ...none, rechosen, cost: Number(cost.toFixed(4)), error: 'Could not save the keywords' }
   }
 
-  if (cost > 0) {
-    await recordDfsUsage({
-      operation: 'keyword_overview', clientId, cost, units: fresh.length,
-      date: now.slice(0, 10),
-    })
-  }
   console.log(`[manual-keywords] client ${clientId}: added ${rows.length}, rechose ${rechosen}, cost $${cost.toFixed(4)}`)
   return { added: rows.length, rechosen, enriched: metrics.size > 0, cost: Number(cost.toFixed(4)) }
 }

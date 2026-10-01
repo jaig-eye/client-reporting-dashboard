@@ -67,10 +67,17 @@ export function expandRegion(token: string): string | null {
  *   "Brevard County, FL" → { head: 'Brevard County', region: 'Florida' }
  *   "Melbourne"          → { head: 'Melbourne', region: null }
  *   "Florida"            → { head: 'Florida', region: null }   ← a region alone is the place
+ *   "West Virginia"      → { head: 'West Virginia', region: null }   ← so is a two-word one
+ *   "Charleston West Virginia" → { head: 'Charleston', region: 'West Virginia' }
+ *   "South Florida"      → { head: 'South Florida', region: null }   ← part of a state, not a town
  */
 export function splitPlace(input: string): { head: string; region: string | null } {
   const raw = String(input ?? '').trim()
   if (!raw) return { head: '', region: null }
+
+  // A region named on its own is the place being asked for. Checked first because the trailing-token
+  // rule below would otherwise read "West Virginia" as a town called West in Virginia.
+  if (isRegionToken(raw)) return { head: raw, region: null }
 
   const comma = raw.lastIndexOf(',')
   if (comma > 0) {
@@ -79,12 +86,26 @@ export function splitPlace(input: string): { head: string; region: string | null
     if (region) return { head: raw.slice(0, comma).trim(), region }
   }
 
-  // No comma: only a trailing token, and only when something precedes it — "Florida" on its own is
-  // the place being asked for, not a qualifier on nothing.
+  // No comma: a trailing region, and only when something precedes it. The longest name wins, so
+  // "Charleston West Virginia" is Charleston in West Virginia rather than "Charleston West" in
+  // Virginia.
   const parts = raw.split(/\s+/)
-  if (parts.length >= 2) {
-    const region = expandRegion(parts[parts.length - 1])
-    if (region) return { head: parts.slice(0, -1).join(' '), region }
+  for (let n = Math.min(3, parts.length - 1); n >= 1; n--) {
+    const region = expandRegion(parts.slice(-n).join(' '))
+    if (!region) continue
+    const head = parts.slice(0, -n)
+    // "South Florida", "Northern Virginia", "Central Texas": a stretch of the state, not a town in
+    // it. Splitting handed the lookup a bare "South", which matches the shortest-named South-something
+    // in the state — a single small city standing in for a whole region.
+    if (head.every(w => REGION_QUALIFIERS.has(w.toLowerCase()))) return { head: raw, region: null }
+    return { head: head.join(' '), region }
   }
   return { head: raw, region: null }
 }
+
+/** Words that name part of a region rather than a place in it. */
+const REGION_QUALIFIERS = new Set([
+  'north', 'south', 'east', 'west', 'northern', 'southern', 'eastern', 'western', 'central',
+  'northeast', 'northwest', 'southeast', 'southwest', 'northeastern', 'northwestern',
+  'southeastern', 'southwestern', 'upstate', 'downstate', 'coastal', 'greater', 'all', 'of',
+])
