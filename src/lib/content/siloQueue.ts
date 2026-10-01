@@ -230,6 +230,86 @@ export async function attachPostToKeyword(
 }
 
 /**
+ * A pinned keyword as a queue entry, so a rewrite on the same keyword is prompted exactly as the
+ * keyword was the first time (see buildKeywordQueueBlock). Never stored or claimed.
+ */
+export function pinnedKeywordEntry(keyword: string): SiloQueueKeyword {
+  return { id: 'pinned', keyword: cleanQueueKeyword(keyword), keyword_type: 'supporting', intent: null, sort_order: 0, used_at: null }
+}
+
+/** What a rewrite on the same keyword adds to the keyword block: same subject, a different angle. */
+export function pinnedKeywordNote(keyword: string): string {
+  const k = cleanQueueKeyword(keyword)
+  return `\n\nTHIS REPLACES AN ARTICLE ALREADY WRITTEN FOR "${k}". Keep "${k}" as the target_keyword`
+    + ` (or the informational rewrite rule 2 allows) and choose a fresh angle on it — a different`
+    + ` question, reader or stage than an obvious first article on it would take.`
+}
+
+/** A priority set with keywords still to be written, and how many. */
+export interface WaitingSet {
+  id:      string
+  waiting: number
+}
+
+/**
+ * The client's active blog sets that still have keywords waiting, oldest first: the order the topic
+ * cron hands publish dates out in, and the order a generated plan must use to agree with it.
+ *
+ * Counted per set rather than read as rows, so a set with more than PostgREST's 1,000 waiting
+ * keywords cannot be cut short and read as finished. `error` is set when a read failed; callers
+ * then plan without sets — the usual selection, which is what happened before sets existed.
+ */
+export async function waitingSets(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: SupabaseClient<any>,
+  clientId: string,
+): Promise<{ sets: WaitingSet[]; error: string | null }> {
+  // Oldest first. priority is no longer set anywhere, and a legacy value would reorder sets in a
+  // way nobody can see.
+  const { data, error } = await db
+    .from('content_silos')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('status', 'active')
+    .eq('content_type', 'blog')
+    .order('created_at', { ascending: true })
+  if (error) return { sets: [], error: error.message }
+  const ids = ((data ?? []) as { id: string }[]).map(s => s.id)
+  if (ids.length === 0) return { sets: [], error: null }
+
+  const counts = await Promise.all(ids.map(id => db
+    .from('content_silo_keywords')
+    .select('id', { count: 'exact', head: true })
+    .eq('silo_id', id)
+    .eq('selected', true)
+    .is('used_at', null)))
+  const failed = counts.find(c => c.error)
+  if (failed?.error) return { sets: [], error: failed.error.message }
+  return {
+    sets:  ids.map((id, i) => ({ id, waiting: counts[i].count ?? 0 })).filter(s => s.waiting > 0),
+    error: null,
+  }
+}
+
+/**
+ * Which publish slots each set takes: the oldest set the first slots, one per keyword waiting,
+ * then the next set, and the rest go to the usual selection (siloId null).
+ *
+ * `slots` holds one entry per post wanted, in date order, so a date wanting two posts appears twice
+ * and a set with one keyword left takes one of them — the same split the topic cron makes date by
+ * date. A set never takes more slots than it has keywords waiting.
+ */
+export function splitSlotsBySets(slots: string[], sets: WaitingSet[]): { slot: string; siloId: string | null }[] {
+  const out: { slot: string; siloId: string | null }[] = []
+  let i = 0
+  for (const set of sets) {
+    for (let k = 0; k < set.waiting && i < slots.length; k++) out.push({ slot: slots[i++], siloId: set.id })
+  }
+  while (i < slots.length) out.push({ slot: slots[i++], siloId: null })
+  return out
+}
+
+/**
  * Prompt block for a hub-less silo.
  *
  * The hub-and-spoke block assumes a pillar page to funnel authority to. With no

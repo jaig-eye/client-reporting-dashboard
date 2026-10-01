@@ -9,6 +9,7 @@ import { priceImages, priceImageUsage, type ImageUsage } from '@/lib/ai/pricing'
 import { searchAndStoreStockCandidates } from '@/lib/content/stockImages'
 import { IMAGE_MODELS, IMAGE_REQUEST, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 import { splitPhrases } from '@/lib/content/phrases'
+import { locationCandidates } from '@/lib/content/researchSeeds'
 
 /** OpenAI's own ceiling for a slow generation, "up to 2 minutes" — see the call below. */
 const OPENAI_TIMEOUT_MS = 120_000
@@ -82,17 +83,21 @@ function article(word: string): string {
 
 /**
  * The industry and place both the prompt and the alt text situate the picture in: the first
- * service and the first (primary) service area.
+ * service and the primary service area.
  *
- * Both lists are read with splitPhrases, the way the chip input wrote them. Cutting services on
- * the first comma turned "gutter guards (mesh, micro-mesh)" into "gutter guards (mesh", and the
- * whole geographic_focus string put every service area into one sentence the picture is "in" —
- * "in Melbourne, FL, Palm Bay, FL, Cocoa, FL" — which reads badly aloud as alt text.
+ * Services are read with splitPhrases, the way the chip input wrote them. Cutting services on
+ * the first comma turned "gutter guards (mesh, micro-mesh)" into "gutter guards (mesh".
+ *
+ * The place is the primary market as keyword research reads it (locationCandidates): a place
+ * name, not the sentence it was written in. The raw first entry put prose into the picture —
+ * "in Nationwide online (ships across the US)", "in All of Canada (coast to coast)" — which is no
+ * place at all and reads badly aloud as alt text. A business with no local market gets none.
  */
 function describeSetting(settings: ClientSettings | null): { industry: string; location: string } {
   return {
     industry: splitPhrases(settings?.services)[0] || 'local service',
-    location: splitPhrases(settings?.geographic_focus)[0] || '',
+    location: locationCandidates(String(settings?.geographic_focus ?? ''))
+      .find(place => !/\bonline\b/i.test(place)) ?? '',
   }
 }
 

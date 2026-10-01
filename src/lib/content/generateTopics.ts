@@ -2,11 +2,14 @@
 // Extracted from /api/admin/content/topics/generate/route.ts so both the
 // per-client API route and the bulk calendar/generate route use identical logic.
 
-import { fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, type SiloQueueKeyword } from '@/lib/content/siloQueue'
+import {
+  fetchQueueKeywords, claimKeywordsForTopics, buildKeywordQueueBlock, pinnedKeywordEntry, pinnedKeywordNote,
+  type SiloQueueKeyword,
+} from '@/lib/content/siloQueue'
 import { completeText } from '@/lib/ai/client'
 import { describeTenure } from '@/lib/content/eeat'
 import { createAdminClient }              from '@/lib/supabase/server'
-import { PLATFORM_BOT_UA, BROWSER_BOT_UA } from '@/lib/platformBot'
+import { BROWSER_BOT_UA } from '@/lib/platformBot'
 import { sendEmail }                      from '@/lib/email'
 import { buildTopicsEmail }               from '@/lib/content/emailTemplates'
 import { researchCompetitors, sanitizeHeading } from '@/lib/content/competitorResearch'
@@ -109,11 +112,6 @@ async function fetchSitemapData(sitemapUrl: string): Promise<{ pages: string[]; 
     console.warn(`[generateTopics] sitemap ${sitemapUrl} fetch failed: ${e instanceof Error ? e.message : e}. Cannibalization avoid-list will not include this site's existing pages.`)
     return empty
   }
-}
-
-async function fetchSitemapPages(sitemapUrl: string): Promise<string[]> {
-  const { pages, blogPosts } = await fetchSitemapData(sitemapUrl)
-  return [...pages, ...blogPosts]
 }
 
 function scoreUrlRelevance(url: string, keywords: string[]): number {
@@ -229,9 +227,20 @@ export async function generateTopicsForClient(
      * keyword already covered will not be resurrected.
      */
     steerKeyword?: string
+    /**
+     * Rewrite a set post on its own keyword — a full regenerate of a post a priority set produced.
+     *
+     * The topic targets this keyword (or the informational rewrite the queue rules allow) at a
+     * fresh angle. Nothing is taken from the set's queue: the caller relinks the keyword itself.
+     * The post and topic being replaced, and anything else already written for this keyword, are
+     * left out of the avoid list — otherwise the list names the very keyword the topic must keep
+     * and tells the model to stay off it. A collision with a ranking page is demoted, never swapped.
+     */
+    pinned?: { keyword: string; replacesPostId?: string | null; replacesTopicId?: string | null }
   },
 ): Promise<GenerateTopicsResult> {
   const windowStart = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+  const pinned = opts?.pinned?.keyword?.trim() ? opts.pinned : undefined
 
   // Build avoid-list queries scoped to the same content_type when one is provided.
   // Blog generation avoids blog posts/topics only; SA generation avoids SA only —
@@ -259,6 +268,7 @@ export async function generateTopicsForClient(
     .order('created_at', { ascending: false })
     .limit(500)
   if (opts?.contentType) existingTopicsQ = existingTopicsQ.eq('content_type', opts.contentType)
+  if (pinned?.replacesTopicId) existingTopicsQ = existingTopicsQ.neq('id', pinned.replacesTopicId)
 
   // No date cap — include all posts ever generated for this client so nothing is
   // recycled. Rejected posts are included for the same reason as rejected topics;
@@ -269,6 +279,7 @@ export async function generateTopicsForClient(
     .order('generated_at', { ascending: false })
     .limit(500)
   if (opts?.contentType) existingPostsQ = existingPostsQ.eq('content_type', opts.contentType)
+  if (pinned?.replacesPostId) existingPostsQ = existingPostsQ.neq('id', pinned.replacesPostId)
 
   const [
     settingsRes,
@@ -528,10 +539,8 @@ export async function generateTopicsForClient(
   try {
     const dfsCtx = await getClientDfsContext(db, clientId)
     if (dfsCtx) {
-      // Paid converters lead: a term with a known cost per lead is the one whose volume and
-      // difficulty are most worth paying to learn.
-      // Paid converters are not seeded any more: buying figures for a term nothing will target is
-      // money spent to learn nothing. See the note above paidText.
+      // Paid converters are not seeded: buying figures for a term nothing will target is money
+      // spent to learn nothing. See "Converting paid terms" below.
       const seeds = Array.from(new Set([
         ...growthTargets.map(t => t.query),
         ...quickWins.map(t => t.query),
@@ -630,9 +639,13 @@ export async function generateTopicsForClient(
   const existingPosts  = (existingPostsRes.data ?? []) as { title?: string; focus_topic?: string; target_keyword?: string }[]
   const avoidEntries: string[] = []
   const avoidSeen = new Set<string>()
+  // A pinned keyword is the subject this run must keep, so nothing already written for it may
+  // appear as off-limits — earlier rewrites of the same post (rejected topics) included.
+  const pinnedKey = pinned ? normalizeKeyword(pinned.keyword) : ''
   function addAvoid(label: string | null | undefined, kw: string | null | undefined) {
     const key = (kw || label || '').toLowerCase().trim()
     if (!key || avoidSeen.has(key)) return
+    if (pinnedKey && kw && normalizeKeyword(kw) === pinnedKey) return
     avoidSeen.add(key)
     avoidEntries.push(kw && label ? `${label} [kw: ${kw}]` : (kw || label)!)
   }
@@ -711,7 +724,6 @@ export async function generateTopicsForClient(
   // score of a RESEARCHED keyword matching it (score() in clientResearch), so proven commercial
   // value still steers the choice without the buying query itself becoming the subject. The terms
   // stay visible on the Keywords page under Converted in paid, as reporting.
-  const paidText = ''
 
   const ahrefsNearText = ahrefsNearMiss.length > 0
     ? `\nRANKING 11–30 (Ahrefs) — close enough that one good article moves them onto page one. Write a SUPPORT article targeting the question behind the keyword and link it to the page that should own the term:\n${promptSafe(ahrefsNearMiss).map(k => `  - "${k.keyword}" (pos ${k.position}${k.volume ? `, ${k.volume} vol` : ''}${k.difficulty != null ? `, KD ${k.difficulty}` : ''})${kwSuffix(k.keyword)}`).join('\n')}`
@@ -813,54 +825,80 @@ export async function generateTopicsForClient(
       .eq('client_id', clientId)
       .maybeSingle()
     if (siloErr) console.error('[generateTopics] silo fetch error:', siloErr.message)
-    if (!silo) {
+    // A rewrite on a pinned keyword still has its subject without the set, so it carries on with no
+    // set context; anything else needs the set.
+    if (!silo && !pinned) {
       console.warn('[generateTopics] silo not found or does not belong to client:', opts.siloId)
       return { topics: [], clientName, count: 0, error: 'Silo not found or access denied' }
     }
+    if (!silo && pinned) console.warn(`[generateTopics] silo ${opts.siloId} not found — rewriting "${pinned.keyword}" without its set`)
 
     if (silo) {
       siloName        = silo.name as string
       siloContentType = (silo.content_type as string | null) ?? null
 
       // Fetch existing cluster posts in this silo to prevent duplicate intents
-      const { data: existingClusters } = await db
+      let clustersQ = db
         .from('content_posts')
         .select('title, target_keyword')
         .eq('silo_id', opts.siloId)
         .in('status', ['for_review', 'draft_saved', 'published', 'approved'])
         .limit(30)
+      // The post being rewritten is not "already covered": it is the article being replaced.
+      if (pinned?.replacesPostId) clustersQ = clustersQ.neq('id', pinned.replacesPostId)
+      const { data: existingClusters } = await clustersQ
 
       const existingClusterText = (existingClusters ?? [])
         .filter((c: { title: string | null; target_keyword: string | null }) => c.title)
+        .filter((c: { title: string | null; target_keyword: string | null }) => !pinnedKey || normalizeKeyword(c.target_keyword) !== pinnedKey)
         .map((c: { title: string | null; target_keyword: string | null }) => `  - "${c.title}" — keyword: ${c.target_keyword ?? 'n/a'}`)
         .join('\n')
-
-      // Every set is a keyword queue, with or without a main page. The main page only adds
-      // linking: topics are angled to support it, and the writer links each article to it (see the
-      // generate route). A set with no keywords waiting is finished. The hub-and-spoke prompt this
-      // replaces invented topics around the hub for as long as the set stayed active, so a set with
-      // a main page never ended and every set added after it waited forever.
-      queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
-      if (queueKeywords.length === 0) {
-        console.warn(`[generateTopics] silo ${opts.siloId} has no keywords waiting — nothing to generate`)
-        return {
-          topics:     [],
-          clientName: '',
-          count:      0,
-          error:      'Every keyword in this set has been used. Add more keywords to keep it going.',
-        }
-      }
       const hubUrl = (silo.hub_page_url as string | null)?.trim() || null
-      siloPromptBlock = buildKeywordQueueBlock(
-        silo.name as string,
-        (silo.description as string | null) ?? null,
-        queueKeywords,
-        existingClusterText,
-        count,
-        hubUrl ? { url: hubUrl, title: ((silo.hub_page_title as string | null)?.trim() || (silo.name as string)) } : null,
-      )
+      const hub = hubUrl ? { url: hubUrl, title: ((silo.hub_page_title as string | null)?.trim() || (silo.name as string)) } : null
+
+      if (pinned) {
+        // The keyword is already the set's, written once; the caller relinks it to the new topic.
+        // Nothing is taken from the queue.
+        siloPromptBlock = buildKeywordQueueBlock(
+          silo.name as string, (silo.description as string | null) ?? null,
+          [pinnedKeywordEntry(pinned.keyword)], existingClusterText, count, hub,
+        ) + pinnedKeywordNote(pinned.keyword)
+      } else {
+        // Every set is a keyword queue, with or without a main page. The main page only adds
+        // linking: topics are angled to support it, and the writer links each article to it (see
+        // the generate route). A set with no keywords waiting is finished. The hub-and-spoke prompt
+        // this replaces invented topics around the hub for as long as the set stayed active, so a
+        // set with a main page never ended and every set added after it waited forever.
+        queueKeywords = await fetchQueueKeywords(db, opts.siloId, count)
+        if (queueKeywords.length === 0) {
+          console.warn(`[generateTopics] silo ${opts.siloId} has no keywords waiting — nothing to generate`)
+          return {
+            topics:     [],
+            clientName,
+            count:      0,
+            error:      'Every keyword in this set has been used. Add more keywords to keep it going.',
+          }
+        }
+        siloPromptBlock = buildKeywordQueueBlock(
+          silo.name as string,
+          (silo.description as string | null) ?? null,
+          queueKeywords,
+          existingClusterText,
+          count,
+          hub,
+        )
+      }
     }
   }
+  // A pinned keyword with no set to read context from still gets its keyword block.
+  if (pinned && !siloPromptBlock) {
+    siloPromptBlock = buildKeywordQueueBlock(pinned.keyword, null, [pinnedKeywordEntry(pinned.keyword)], '', count, null)
+      + pinnedKeywordNote(pinned.keyword)
+  }
+  // Topics at the front of the model's list that answer for a keyword a person chose: the set's
+  // queue, or the pinned keyword of a rewrite. These are written as asked — a collision is demoted
+  // rather than swapped, and the blog-keyword filter does not drop them (see requestTopics).
+  const chosenCount = queueKeywords.length > 0 ? queueKeywords.length : pinned ? 1 : 0
 
   const effectiveContentType = siloContentType ?? opts?.contentType ?? 'blog'
   const isBlog = effectiveContentType === 'blog'
@@ -923,7 +961,6 @@ ${siloName ? `\nTarget silo: "${siloName}" — all topics must fit within this t
 ${gscGrowthText}
 ${gscQuickWinsText}
 ${gscCtrText}
-${paidText}
 ${rankNearText}
 ${ahrefsNearText}
 ${poolText}
@@ -938,7 +975,7 @@ ${sitemapText}
 ${avoidText ? `\nALREADY COVERED — HARD BLOCK (includes both published and scheduled/pending topics for this client — every item on this list is off-limits, even with a slightly different angle):\n${avoidText}` : ''}
 ${guidelinesText}
 
-${opts?.steerKeyword?.trim() ? `\nEDITOR DIRECTION — the reviewer asked for this regeneration and specified: "${opts.steerKeyword.trim().slice(0, 200)}". Steer the topic toward it where that is compatible with the constraints above. The ALREADY COVERED block still applies and overrides this: if the direction names something already covered, choose the closest angle that is not.\n` : ''}
+${opts?.steerKeyword?.trim() ? `\nEDITOR DIRECTION — the reviewer asked for this regeneration and specified: "${opts.steerKeyword.trim().slice(0, 200)}". Steer the ${pinned ? 'angle' : 'topic'} toward it where that is compatible with the constraints above.${pinned ? ` The keyword stays "${pinned.keyword.replace(/"/g, "'")}".` : ' The ALREADY COVERED block still applies and overrides this: if the direction names something already covered, choose the closest angle that is not.'}\n` : ''}
 Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "${siloName}" silo` : ''} that will improve this client's organic search performance.`
 
   const provider = settings.ai_provider || 'anthropic'
@@ -986,9 +1023,24 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
     // Blog-intent safety net. The guardrail prompt is primary enforcement; this drops
     // transactional/near-me leaks and relabels any non-informational intent the model slipped
     // through. A short valid list beats a padded transactional one.
+    //
+    // Except for the topics a person chose the keyword of — the set's queue, or a pinned rewrite —
+    // which the prompt puts first. The filter is a word list ("company", "contractor", "book"), so
+    // it also catches informational phrases like "how to choose an awning company". Dropping one
+    // of those emptied the run, the keyword stayed waiting, and every later run picked the same set
+    // and failed the same way: the client's dates stayed empty for as long as the set was active.
     if (isBlog) {
       const before = parsed.length
-      parsed = parsed.filter(t => t && !isForbiddenBlogKeyword(t.target_keyword))
+      const chosen = extra ? 0 : chosenCount
+      parsed = parsed.filter((t, i) => {
+        if (!t) return false
+        if (!isForbiddenBlogKeyword(t.target_keyword)) return true
+        if (i < chosen) {
+          console.warn(`[generateTopics] kept "${t.target_keyword}" for client ${clientId}: a chosen keyword, though it reads as transactional`)
+          return true
+        }
+        return false
+      })
       parsed.forEach(t => { if (!isAllowedBlogIntent(t.search_intent)) t.search_intent = 'informational' })
       if (parsed.length < before) {
         console.warn(`[generateTopics] dropped ${before - parsed.length} transactional/near-me blog topic(s) for client ${clientId}`)
@@ -1071,10 +1123,11 @@ Suggest ${count} high-impact ${contentTypeLabel} topics${siloName ? ` for the "$
       topics,
       protectedKeywords,
       requestTopics,
-      // Keywords a person queued are the subject they asked for. Swapping one for a different
-      // keyword would tick the request off with an article about something else, so a collision
-      // is written as a supporting article for the page that ranks instead.
-      ...(queueKeywords.length > 0 ? { maxRounds: 0 } : {}),
+      // Keywords a person queued (or a rewrite pinned to one) are the subject they asked for.
+      // Swapping one for a different keyword would tick the request off with an article about
+      // something else, so a collision is written as a supporting article for the page that ranks
+      // instead.
+      ...(chosenCount > 0 ? { maxRounds: 0 } : {}),
       onLog: m => console.warn(`[generateTopics] client ${clientId}: ${m}`),
     })
     topics = res.topics

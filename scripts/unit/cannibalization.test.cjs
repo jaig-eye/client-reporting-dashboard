@@ -90,3 +90,32 @@ test('brand matcher: place+service names gate nothing, distinctive names still g
   const ii = B.brandMatcher('Irrigation Inc', 'irrigationinc.com', 'irrigation repair, sprinklers', 'Orlando')
   assert.equal(ii('irrigation repair'), false)
 })
+
+test('demotion keeps the input order, so the queue pairs each keyword with its own topic', async () => {
+  // A containing collision first, a clean topic second: demoting used to move the first to the end.
+  const a = { target_keyword: 'roof repair cost guide' }, b = { target_keyword: 'metal roof lifespan' }
+  const r = await C.resolveCannibalization({ topics: [a, b], protectedKeywords: prot, requestTopics: async () => ({ topics: [] }), maxRounds: 0 })
+  assert.deepEqual(r.topics, [a, b]); assert.equal(r.demoted.length, 1)
+})
+test('a replacement takes the place of the topic it replaces', async () => {
+  const s = stub({ topics: [{ target_keyword: 'how to spot hail damage on shingles' }] })
+  const r = await C.resolveCannibalization({
+    topics: [{ target_keyword: 'metal roof lifespan' }, { target_keyword: 'roof repair' }, { target_keyword: 'roof repair after a storm' }],
+    protectedKeywords: prot, requestTopics: s.fn,
+  })
+  assert.deepEqual(r.topics.map(t => t.target_keyword), ['metal roof lifespan', 'how to spot hail damage on shingles', 'roof repair after a storm'])
+  assert.equal(r.replaced, 1); assert.equal(r.demoted.length, 1)
+})
+test('with no URL for the ranking page, the directive asks for no link', async () => {
+  const exact = { target_keyword: 'gutter cleaning', ranking_strategy: 'Model text.' }
+  const near  = { target_keyword: 'gutter cleaning tools' }
+  await C.resolveCannibalization({ topics: [exact, near], protectedKeywords: prot, requestTopics: async () => ({ topics: [] }), maxRounds: 0 })
+  for (const t of [exact, near]) {
+    const d = C.readDemotion(t.ranking_strategy, t.target_keyword)
+    assert.equal(d.prot, 'gutter cleaning')
+    assert.doesNotMatch(d.directive, /link to it/)
+    assert.match(d.directive, /add no link for it\.$/)
+    assert.equal(t.page_to_support, undefined)
+  }
+  assert.ok(!C.readDemotion(exact.ranking_strategy, exact.target_keyword).directive.includes('Model text'))
+})

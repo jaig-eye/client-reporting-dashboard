@@ -1,5 +1,5 @@
 // GET /api/cron/content-topics
-// Daily cron (7 AM + 7 PM UTC) that drives automated content scheduling.
+// Cron (every two hours, vercel.json) that drives automated content scheduling.
 //
 // Topic generation timing is automatic based on frequency × weeks_ahead:
 //   weekly  + weeks_ahead=1 → topics generated 7 days before publish
@@ -22,7 +22,8 @@ import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
-import { getCycleDays, computeFutureSlots } from '@/lib/content/scheduleSlots'
+import { getCycleDays, computeFutureSlots, leadWindowDays, windowSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
+import { waitingSets } from '@/lib/content/siloQueue'
 
 // ── Cron handler ──────────────────────────────────────────────────────────────
 
@@ -219,14 +220,11 @@ export async function GET(request: NextRequest) {
     const frequency = (schedule_frequency as string | null) ?? globalFreq
     const dayOfWeek = (schedule_day_of_week as number | null) ?? globalDay
 
-    const cycle      = getCycleDays(frequency)
-    const leadWindow = cycle * Math.max(weeks_ahead, 1)
-    const weeksToScan = Math.ceil(leadWindow / 7) + 1
-
-    const slots = computeFutureSlots(frequency, dayOfWeek, weeksToScan, monthly_publish_day, schedule_start_date).filter(slot => {
-      const ms = new Date(slot + 'T00:00:00Z').getTime() - Date.now()
-      const d  = Math.round(ms / 86_400_000)
-      return d > 0 && d <= leadWindow
+    // The dates inside the client's lead window — the same definition calendar/generate plans from.
+    const leadWindow = leadWindowDays(frequency, weeks_ahead)
+    const slots = windowSlots({
+      frequency, dayOfWeek, weeksAhead: weeks_ahead,
+      monthlyPublishDay: monthly_publish_day, scheduleStartDate: schedule_start_date,
     })
 
     // ── Priority set: the oldest active set with keywords waiting takes the date ──
@@ -243,35 +241,13 @@ export async function GET(request: NextRequest) {
     void generate_service_pages  // suppress unused-var lint without removing the destructure
     void generate_regular_pages
     const pickSilo = async (): Promise<{ id: string; waiting: number } | null> => {
-      // Oldest first. priority is no longer set anywhere, and a legacy value would reorder sets
-      // in a way nobody can see.
-      const { data: activeSilos, error: silosErr } = await db
-        .from('content_silos')
-        .select('id')
-        .eq('client_id', client_id)
-        .eq('status', 'active')
-        .eq('content_type', 'blog')
-        .order('created_at', { ascending: true })
-      if (silosErr) {
-        console.warn(`[content-topics cron] silo read failed for ${client_id}, using the usual selection:`, silosErr.message)
+      // Shared with calendar/generate, so a generated plan splits dates between sets as this does.
+      const { sets, error } = await waitingSets(db, client_id)
+      if (error) {
+        console.warn(`[content-topics cron] silo read failed for ${client_id}, using the usual selection:`, error)
         return null
       }
-      const ids = ((activeSilos ?? []) as { id: string }[]).map(s => s.id)
-      if (ids.length === 0) return null
-      const { data: left, error: leftErr } = await db
-        .from('content_silo_keywords')
-        .select('silo_id')
-        .in('silo_id', ids)
-        .eq('selected', true)
-        .is('used_at', null)
-      if (leftErr) {
-        console.warn(`[content-topics cron] silo keyword read failed for ${client_id}, using the usual selection:`, leftErr.message)
-        return null
-      }
-      const waiting = new Map<string, number>()
-      for (const k of (left ?? []) as { silo_id: string }[]) waiting.set(k.silo_id, (waiting.get(k.silo_id) ?? 0) + 1)
-      const id = ids.find(i => (waiting.get(i) ?? 0) > 0)
-      return id ? { id, waiting: waiting.get(id)! } : null
+      return sets[0] ?? null
     }
 
     // ── Slots a human deliberately emptied — never refill them ───────────────
@@ -321,7 +297,7 @@ export async function GET(request: NextRequest) {
         .select('id', { count: 'exact', head: true })
         .eq('client_id', client_id)
         .eq('target_publish_date', slot)
-        .in('status', ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
+        .in('status', SLOT_STATUSES)
 
       // A failed count reads as an empty slot, which would generate a full quota of topics on top
       // of whatever is already there. Skipping the slot is the safe direction: a missed window
@@ -330,9 +306,10 @@ export async function GET(request: NextRequest) {
         console.warn(`[cron/content-topics] slot count failed for ${client_id} on ${slot}, skipping:`, onSlotErr.message)
         continue
       }
-      // A rejected or deleted topic still counts against the quota, for the same reason the old
-      // check listed 'rejected': the slot has been dealt with, and refilling it is the
-      // regenerate-what-you-removed loop this cron already learned not to do.
+      // A rejected topic still counts against the quota, for the same reason the old check listed
+      // 'rejected': the slot has been dealt with, and refilling it is the regenerate-what-you-removed
+      // loop this cron already learned not to do. A deleted topic is gone from the table; its date
+      // is held by the suppression checked above instead.
       const needed = postsPerRun - (onSlot ?? 0)
       if (needed <= 0) continue
 
@@ -348,7 +325,15 @@ export async function GET(request: NextRequest) {
             : [{ count: silo.waiting, siloId: silo.id }, { count: needed - silo.waiting }]
         if (silo) console.log(`[content-topics cron] slot ${slot} for ${client_id} comes from silo ${silo.id}`)
         for (const batch of batches) {
-          const result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true, siloId: batch.siloId })
+          let result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true, siloId: batch.siloId })
+          // A set that cannot produce its topic must not hold the date. Its keyword stays waiting,
+          // so the next run would pick the same set and fail the same way, and the client's dates
+          // stayed empty for as long as the set was active. The usual selection fills this date now;
+          // the set gets the next one.
+          if (batch.siloId && (result.error || result.topics.length === 0)) {
+            console.warn(`[content-topics cron] silo ${batch.siloId} produced nothing for ${client_id} slot ${slot} (${result.error ?? 'no topics'}) — using the usual selection for this date`)
+            result = await generateTopicsForClient(db, client_id, batch.count, slot, { suppressEmail: true })
+          }
           // generateTopicsForClient REPORTS failure, it does not throw — so the catch below never
           // saw a refused run. A client could produce nothing every two hours forever and the only
           // trace was the absence of topics. Say why.
@@ -401,11 +386,15 @@ export async function GET(request: NextRequest) {
           .from('content_topics')
           .select('target_publish_date')
           .eq('client_id', client_id)
-          // The same list generation uses to decide a slot is taken (minus 'pending', which is
-          // what is being approved from). Counting fewer statuses here than there meant a slot
-          // generation had already declared full — say, holding a 'published' or 'rejected' topic
-          // — still looked free to approval, and a second post landed on the date.
-          .in('status', ['approved', 'generating', 'generated', 'scheduled', 'rejected', 'published'])
+          // Every status that becomes a post on the date: a second approval on top of a published
+          // or approved topic puts two posts on the date.
+          //
+          // NOT 'rejected'. A rejected topic will never be written, so it takes no post's place.
+          // Generation still treats it as filling the date (so the cron never refills a date a
+          // person turned down), and the only way a pending topic lands beside one is a person
+          // asking for it: "Regenerate plan" filling a rejected-only date, or a topic added by
+          // hand. Counting it here left that topic pending forever, and the date with no post.
+          .in('status', ['approved', 'generating', 'generated', 'scheduled', 'published'])
           .in('target_publish_date', pendingDates)
       // A failed read here reads as "every slot is empty", which approves a full quota on top of
       // whatever already holds the date — duplicate posts on a client's site, unattended. So the

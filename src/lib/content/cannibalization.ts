@@ -88,6 +88,11 @@ export function findCollision(
 
 const DEMOTION_MARK = 'SUPPORTING ARTICLE — '
 const DIRECTIVE_END = 'as the primary internal link.'
+/**
+ * How a directive ends when the ranking page's URL is not known (an Ahrefs-only ranking with no
+ * Search Console page). Asking for a link there sent the writer after a page it could not name.
+ */
+const NO_LINK_END = 'Its URL is not known, so add no link for it.'
 
 /**
  * The brief a demoted topic carries into the writer.
@@ -96,15 +101,15 @@ const DIRECTIVE_END = 'as the primary internal link.'
  * pipeline card. The protected phrase is always quoted, so readDemotion can recover it.
  */
 export function demotionDirective(c: Collision): string {
-  const at   = c.info.url ? ` at ${c.info.url}` : ''
-  const link = c.info.url ? ` (${c.info.url})` : ''
+  const url  = c.info.url
+  const at   = url ? ` at ${url}` : ''
   return c.exact
     ? `${DEMOTION_MARK}the client ALREADY RANKS #${c.info.position} for "${c.prot}" (this exact keyword)${at}.`
       + ` Do NOT write another page targeting it. Shift to a genuinely narrower question this page`
-      + ` does not answer, and link to it${link} ${DIRECTIVE_END}`
+      + (url ? ` does not answer, and link to it (${url}) ${DIRECTIVE_END}` : ` does not answer. ${NO_LINK_END}`)
     : `${DEMOTION_MARK}the client already ranks #${c.info.position} for "${c.prot}"${at}.`
-      + ` This must not compete with that page: cover a genuinely narrower question and link to`
-      + ` it${link} ${DIRECTIVE_END}`
+      + ` This must not compete with that page: cover a genuinely narrower question`
+      + (url ? ` and link to it (${url}) ${DIRECTIVE_END}` : `. ${NO_LINK_END}`)
 }
 
 export interface Demotion {
@@ -125,8 +130,12 @@ export interface Demotion {
 export function readDemotion(rankingStrategy: string | null | undefined, targetKeyword?: string | null): Demotion | null {
   const s = String(rankingStrategy ?? '')
   if (!s.startsWith(DEMOTION_MARK)) return null
-  const end = s.indexOf(DIRECTIVE_END)
-  const directive = end >= 0 ? s.slice(0, end + DIRECTIVE_END.length) : s
+  // Whichever ending comes first closes the directive; anything after it is the model's own text.
+  const ends = [DIRECTIVE_END, NO_LINK_END]
+    .map(e => ({ at: s.indexOf(e), len: e.length }))
+    .filter(e => e.at >= 0)
+    .sort((a, b) => a.at - b.at)
+  const directive = ends.length > 0 ? s.slice(0, ends[0].at + ends[0].len) : s
   const quoted = directive.match(/ranks #\d+ for "([^"]+)"/i)
   const exact  = /this exact keyword/i.test(directive)
   const prot   = quoted?.[1] ?? (exact ? normalizeKeyword(targetKeyword) : '')
@@ -153,6 +162,10 @@ export const MAX_REGEN_ROUNDS = 1
  * Never returns fewer topics than it was given: every input either survives, is swapped for a
  * clean replacement, or is demoted. The count is the contract — the automation downstream expects
  * to hand a person posts, not an empty run.
+ *
+ * The order is kept too: a replacement takes the place of the topic it replaces, and a demoted
+ * topic stays where it was. The silo queue pairs topics with its keywords by position, so moving a
+ * demoted topic to the end handed each keyword the other one's article.
  */
 export async function resolveCannibalization<T extends DemotableTopic>(args: {
   topics:            T[]
@@ -171,23 +184,22 @@ export async function resolveCannibalization<T extends DemotableTopic>(args: {
   }
 
   const collides = (t: T) => findCollision(t.target_keyword, protectedKeywords)
-  const wanted = topics.length
   // A topic already demoted (a regenerate reusing a stored topic) keeps its brief; it is not judged again.
   const isDemoted = (t: T) => readDemotion(t.ranking_strategy, t.target_keyword) !== null
-  let keep    = topics.filter(t => isDemoted(t) || !collides(t))
-  // Containing collisions go straight to demotion; only exact ones are worth another model call.
-  const supporting = topics.filter(t => !isDemoted(t) && collides(t) && !collides(t)!.exact)
-  let flagged      = topics.filter(t => !isDemoted(t) && collides(t)?.exact === true)
+  // Slots in the input's order. Exact collisions are the only ones worth another model call:
+  // a containing collision is demoted where it stands, below, with the rest.
+  const out = topics.slice()
+  let flagged = out.map((_, i) => i).filter(i => !isDemoted(out[i]) && collides(out[i])?.exact === true)
   const rejected = flagged.length
   let replaced = 0
 
   for (let round = 1; round <= maxRounds && flagged.length > 0; round++) {
-    const rejectedList = flagged.map(t => {
+    const rejectedList = flagged.map(i => {
+      const t = out[i]
       const c = collides(t)!
       return `  - "${t.target_keyword}" collides with "${c.prot}", which this client already ranks #${c.info.position} for`
     }).join('\n')
-    const need = Math.min(flagged.length, Math.max(0, wanted - keep.length - supporting.length))
-    if (need === 0) break
+    const need = flagged.length
     log(`cannibalization: ${flagged.length} topic(s) rejected, regenerating (round ${round}):\n${rejectedList}`)
 
     const retry = await requestTopics(
@@ -202,7 +214,8 @@ export async function resolveCannibalization<T extends DemotableTopic>(args: {
     // still produces usable briefs.
     if (retry.error) { log(`regeneration round ${round} failed: ${retry.error}`); break }
 
-    const seen = new Set(keep.concat(supporting).map(t => normalizeKeyword(t.target_keyword)))
+    const stillFlagged = new Set(flagged)
+    const seen = new Set(out.filter((_, i) => !stillFlagged.has(i)).map(t => normalizeKeyword(t.target_keyword)))
     const fresh: T[] = []
     for (const t of retry.topics) {
       const kw = normalizeKeyword(t.target_keyword)
@@ -212,22 +225,24 @@ export async function resolveCannibalization<T extends DemotableTopic>(args: {
       seen.add(kw)
       fresh.push(t)
     }
-    // Retire exactly as many flagged topics as were actually replaced. Slicing `flagged` by
-    // fresh.length instead would discard more than were replaced whenever the model returned more
-    // than asked for — losing a topic silently instead of demoting it below.
+    // Retire exactly as many flagged topics as were actually replaced, each replacement taking the
+    // slot of the topic it replaces. Taking fresh.length instead would discard more than were
+    // replaced whenever the model returned more than asked for — losing a topic silently instead of
+    // demoting it below.
     const took = Math.min(fresh.length, need)
-    const taken = fresh.slice(0, took)
-    keep = keep.concat(taken.filter(t => !collides(t)))
-    supporting.push(...taken.filter(t => collides(t)))
+    for (let k = 0; k < took; k++) out[flagged[k]] = fresh[k]
     flagged = flagged.slice(took)
     replaced += took
     if (took > 0) log(`cannibalization: round ${round} replaced ${took} topic(s)`)
   }
 
+  // Whatever still collides — containing collisions, exact ones a retry could not replace, and
+  // replacements that contain a ranking phrase — is demoted in place.
   const demoted: string[] = []
-  for (const t of supporting.concat(flagged)) {
+  for (const t of out) {
+    if (isDemoted(t)) continue
     const c = collides(t)
-    if (!c) { keep.push(t); continue }
+    if (!c) continue
     const directive = demotionDirective(c)
     t.ranking_strategy = t.ranking_strategy ? `${directive} ${t.ranking_strategy}` : directive
     // The directive is what the operator reads on the pipeline card and what the writer is given
@@ -235,8 +250,7 @@ export async function resolveCannibalization<T extends DemotableTopic>(args: {
     // as "Core page to support", and the writer route adds it to the links it may keep.
     if (c.info.url) t.page_to_support = c.info.url
     demoted.push(`"${t.target_keyword}" → supports "${c.prot}"${c.exact ? ' (exact)' : ''}${c.info.url ? '' : ' (no URL known — directive only)'}`)
-    keep.push(t)
   }
 
-  return { topics: keep, rejected, replaced, demoted }
+  return { topics: out, rejected, replaced, demoted }
 }

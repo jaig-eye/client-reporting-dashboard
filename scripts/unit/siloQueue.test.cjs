@@ -33,3 +33,38 @@ test('queue prompt: a main page is named and supported; without one each article
   assert.ok(flat.includes('stands on its own'))
   assert.ok(!flat.includes('main page "'))
 })
+
+// A stand-in for the claim writes: every compare-and-swap wins, and the pairs are recorded.
+function claimDb() {
+  const claims = []
+  return {
+    claims,
+    from(table) {
+      let patch = null, id = null
+      const chain = {
+        update: (p) => { patch = p; return chain },
+        eq: (col, v) => { if (col === 'id') id = v; return chain },
+        is: () => chain,
+        select: async () => { if (table === 'content_silo_keywords') claims.push({ keywordId: id, topicId: patch.target_topic_id }); return { data: [{ id }], error: null } },
+        then: (res) => res({ error: null }),
+      }
+      return chain
+    },
+  }
+}
+
+test('reworded queue topics are claimed in queue order, demoted or not', async () => {
+  const C = require(path.join(process.env.WT, 'src/lib/content/cannibalization.ts'))
+  const prot = new Map([['roof repair', { position: 3, url: 'https://x.com/roof-repair/' }]])
+  // Both keywords reworded by the model (blog-intent rule 2); the first now contains a ranking phrase.
+  const topics = [
+    { id: 't1', target_keyword: 'how much does roof repair cost' },
+    { id: 't2', target_keyword: 'how often should gutters be cleaned' },
+  ]
+  const r = await C.resolveCannibalization({ topics, protectedKeywords: prot, requestTopics: async () => ({ topics: [] }), maxRounds: 0 })
+  const db = claimDb()
+  await Q.claimKeywordsForTopics(db, [kw('roof repair cost', 0), kw('gutter cleaning schedule', 1)], r.topics)
+  assert.deepEqual(db.claims.sort((a, b) => a.keywordId.localeCompare(b.keywordId)), [
+    { keywordId: 'k0', topicId: 't1' }, { keywordId: 'k1', topicId: 't2' },
+  ])
+})

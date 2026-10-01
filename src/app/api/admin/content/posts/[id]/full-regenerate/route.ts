@@ -275,6 +275,11 @@ export async function POST(
       //    replacement topic claims no keyword — while the old topic's keyword was
       //    just released. The silo then counted a free slot whose article is live
       //    and handed the same term to a second topic on the next run.
+      //
+      //    A set post keeps its keyword: `pinned` writes the topic for that keyword at a fresh
+      //    angle, takes nothing from the set's queue, and leaves this post and its topic out of the
+      //    avoid list. Passed only as a steer, the keyword lost to the avoid list — which named it
+      //    as already covered — and the post changed subject while still filed under the keyword.
       const topicResult = await generateTopicsForClient(
         db,
         post.client_id as string,
@@ -283,14 +288,19 @@ export async function POST(
         {
           suppressEmail: true,
           contentType:   (post.content_type as string | undefined) ?? undefined,
-          // A set post keeps its keyword (see setKeyword); any other set topic still asks the set.
-          ...(post.silo_id && !setKeyword ? { siloId: String(post.silo_id) } : {}),
+          ...(post.silo_id ? { siloId: String(post.silo_id) } : {}),
+          ...(setKeyword ? {
+            pinned: {
+              keyword:         setKeyword.keyword,
+              replacesPostId:  postId,
+              replacesTopicId: (post.topic_id as string | null) ?? null,
+            },
+          } : {}),
           // Must reach topic SELECTION, not just the content prompt — for a full
           // regenerate the subject is decided here, so a direction applied later
-          // would arrive after the topic was already picked.
-          ...(body.steer_keyword?.trim()
-            ? { steerKeyword: body.steer_keyword.trim() }
-            : setKeyword ? { steerKeyword: setKeyword.keyword } : {}),
+          // would arrive after the topic was already picked. On a set post it steers the angle;
+          // the keyword stays.
+          ...(body.steer_keyword?.trim() ? { steerKeyword: body.steer_keyword.trim() } : {}),
         }
       )
 
@@ -373,8 +383,11 @@ export async function POST(
       const pageToSupport = (newTopic.page_to_support as string | null) ?? null
       const demotion      = readDemotion(newTopic.ranking_strategy as string | null, newTopic.target_keyword as string | null)
       if (pageToSupport && /^https?:\/\//i.test(pageToSupport)) allowedUrls.add(pageToSupport)
+      // The anchor-text sentence only when there is a page to link to: an Ahrefs-only ranking has
+      // no known URL, and asking for a link there sent the writer after a page it could not name.
       const keywordLine = demotion?.exact
-        ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for. Use "${demotion.prot}" only as anchor text for the link to the page this article supports.`
+        ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for.`
+          + (pageToSupport ? ` Use "${demotion.prot}" only as anchor text for the link to the page this article supports.` : '')
         : `Target keyword: ${(newTopic.target_keyword as string | null) ?? 'not specified'}`
       const supportLines = [
         pageToSupport ? `Core page to support (must appear as an internal link): ${pageToSupport}` : '',

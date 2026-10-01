@@ -1057,7 +1057,7 @@ LINKING RULES:
 
 Title: ${topicData.topic}
 ${demotion?.exact
-  ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for. Use "${demotion.prot}" only as anchor text for the link to the page this article supports.`
+  ? `Target keyword: a narrower long-tail keyword of your choosing — NOT "${demotion.prot}", which the client already ranks for.${topicData.page_to_support ? ` Use "${demotion.prot}" only as anchor text for the link to the page this article supports.` : ''}`
   : `Target keyword: ${topicData.target_keyword || 'derive from topic'}`}
 ${topicData.rationale ? `Topic rationale: ${topicData.rationale}` : ''}
 ${contentType === 'regular_page' && topicData.custom_focus ? `Page focus: ${topicData.custom_focus}` : ''}

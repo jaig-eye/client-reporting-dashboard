@@ -25,7 +25,7 @@ export function daysInMonth(year: number, month: number): number {
  * The day-of-month a rolling-monthly schedule publishes on.
  *
  * This MUST be stable across runs. It used to be `now.getUTCDate()` — today's date —
- * and because this cron runs every day, every run anchored a brand-new monthly
+ * and because the topic cron runs every day (every two hours), each day's runs anchored a brand-new monthly
  * series on a different day: run on the 25th and you get the 25th of each month,
  * run on the 26th and you get the 26th as well, and so on. After a week of runs a
  * "monthly" client had seven consecutive publish dates, repeating every month —
@@ -58,6 +58,55 @@ export function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: s
   return now.getUTCDate()
 }
 
+const DAY_MS = 86_400_000
+
+/** Days since the epoch of a date's UTC calendar day — the unit cadence arithmetic is done in. */
+function utcDay(d: Date): number {
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / DAY_MS)
+}
+
+/**
+ * Move a biweekly date onto the client's own fortnight.
+ *
+ * A biweekly series used to start at "the next publish weekday after today". That anchor moves
+ * forward a week every week, so successive runs planned alternate weeks and, between them, filled
+ * every week: a biweekly client got weekly posts (Landworx did, Monday after Monday). The series
+ * now runs from the schedule's start date — its first publish weekday on or after that date — so
+ * every run lands on the same fortnight. `date` must already fall on `dayOfWeek`; it is returned as
+ * is, or a week later when it is in the off week. With no start date there is nothing to align to
+ * and the date stands, as before.
+ */
+export function alignToFortnight(date: Date, dayOfWeek: number, scheduleStartDate: string | null): Date {
+  if (!scheduleStartDate) return date
+  const start = new Date(scheduleStartDate + 'T00:00:00Z')
+  if (Number.isNaN(start.getTime())) return date
+  const first = utcDay(start) + ((dayOfWeek - start.getUTCDay() + 7) % 7)
+  const offset = (((utcDay(date) - first) % 14) + 14) % 14
+  return offset === 7 ? new Date(date.getTime() + 7 * DAY_MS) : date
+}
+
+/** Days ahead the topic cron plans for a client: one cadence cycle per weeks_ahead, at least one. */
+export function leadWindowDays(frequency: string, weeksAhead: number | null | undefined): number {
+  return getCycleDays(frequency) * Math.max(Number(weeksAhead ?? 1) || 1, 1)
+}
+
+/**
+ * The publish dates inside a client's planning window: the cadence dates after today, up to the
+ * lead window. What the topic cron fills on every run, and what a plan generated now covers — one
+ * definition, so a plan and the cron cannot disagree about which dates are the client's.
+ */
+export function windowSlots(p: {
+  frequency:         string
+  dayOfWeek:         number
+  weeksAhead:        number | null | undefined
+  monthlyPublishDay: number | null
+  scheduleStartDate: string | null
+}): string[] {
+  const lead = leadWindowDays(p.frequency, p.weeksAhead)
+  return computeFutureSlots(p.frequency, p.dayOfWeek, Math.ceil(lead / 7) + 1, p.monthlyPublishDay, p.scheduleStartDate)
+    .filter(slot => { const d = daysFromNow(slot); return d > 0 && d <= lead })
+}
+
 export function computeFutureSlots(
   frequency: string,
   dayOfWeek: number,
@@ -80,6 +129,7 @@ export function computeFutureSlots(
     let cur = new Date(now)
     const daysUntil = (dayOfWeek - cur.getUTCDay() + 7) % 7 || 7
     cur = new Date(cur.getTime() + daysUntil * 86_400_000)
+    if (frequency === 'biweekly') cur = alignToFortnight(cur, dayOfWeek, scheduleStartDate)
     while (cur <= end) { slots.push(cur.toISOString().slice(0, 10)); cur = new Date(cur.getTime() + interval * 86_400_000) }
     return slots
   }
@@ -104,7 +154,7 @@ export function computeFutureSlots(
 
 // Statuses that occupy a publish date, as the topic cron counts them. 'rejected' is one: a date a
 // person turned down is dealt with and is not refilled.
-const SLOT_STATUSES = ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published']
+export const SLOT_STATUSES = ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published']
 
 export interface NextOpenSlot {
   /** The first future publish date with room for another post. */
@@ -150,7 +200,7 @@ export async function nextOpenSlot(
   const frequency  = s.schedule_frequency ?? g.schedule_frequency ?? 'weekly'
   const dayOfWeek  = s.schedule_day_of_week ?? g.schedule_day_of_week ?? 1
   const cycle      = getCycleDays(frequency)
-  const leadWindow = cycle * Math.max(s.weeks_ahead ?? 1, 1)
+  const leadWindow = leadWindowDays(frequency, s.weeks_ahead)
   const perDate    = Math.min(10, Math.max(1, Number(s.posts_per_run ?? 1) || 1))
 
   // Past the window by a few cycles, so a full window still answers with the date after it.
@@ -189,6 +239,6 @@ export async function nextOpenSlot(
 }
 
 /** Whole days from now to a date, rounded as the cron rounds them when it decides what is in range. */
-function daysFromNow(date: string): number {
+export function daysFromNow(date: string): number {
   return Math.round((new Date(date + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
 }
