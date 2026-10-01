@@ -3,7 +3,7 @@
 import { useState, useEffect }  from 'react'
 import Link                      from 'next/link'
 import { ConnectorLogo }         from '@/components/ConnectorLogo'
-import { PresentationChart, BookOpen, Check } from '@phosphor-icons/react/dist/ssr'
+import ClientLinksMenu           from '@/components/admin/ClientLinksMenu'
 import type { ConnectorType }    from '@/lib/types'
 import type { MetricsApiResponse, ClientMetricData } from '@/app/api/admin/dashboard/metrics/route'
 
@@ -212,7 +212,6 @@ export default function DashboardClientShell({
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [metricsData,    setMetricsData]    = useState<MetricsApiResponse | null>(null)
   const [metricsError,   setMetricsError]   = useState(false)
-  const [copiedId,       setCopiedId]       = useState<string | null>(null)
 
   useEffect(() => {
     setMetricsLoading(true)
@@ -640,41 +639,9 @@ export default function DashboardClientShell({
                         return null
                       })}
 
-                      {/* Actions — ad library copy + gear icon */}
-                      <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 2 }}>
-                        {row.dashboard_token && (
-                          <button
-                            title="Copy Ad Library link"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(`${window.location.origin}/share/ads?token=${row.dashboard_token}`)
-                              setCopiedId(row.id)
-                              setTimeout(() => setCopiedId(c => c === row.id ? null : c), 1500)
-                            }}
-                            style={{
-                              display: 'inline-flex', alignItems: 'center',
-                              padding: '0.3rem', borderRadius: 6,
-                              border: 'none', background: 'none',
-                              color: copiedId === row.id ? 'var(--green)' : 'var(--text-muted)',
-                              cursor: 'pointer', transition: 'color 0.15s',
-                            }}
-                          >
-                            {copiedId === row.id
-                              ? <Check size={16} aria-hidden />
-                              : <BookOpen size={16} aria-hidden />}
-                          </button>
-                        )}
-                        <a
-                          href={`/api/admin/preview/${row.id}`}
-                          title="View Client Dashboard"
-                          style={{
-                            display: 'inline-flex', alignItems: 'center',
-                            padding: '0.3rem', borderRadius: 6,
-                            color: 'var(--text-muted)', textDecoration: 'none',
-                            transition: 'background 0.1s, color 0.1s',
-                          }}
-                        >
-                          <PresentationChart size={16} aria-hidden />
-                        </a>
+                      {/* Links for this client: dashboard and ad library, each with a copy button. */}
+                      <td style={{ padding: '0.5rem 0.75rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        <ClientLinksMenu clientId={row.id} clientName={row.name} dashboardToken={row.dashboard_token} />
                       </td>
                     </tr>
                   )
