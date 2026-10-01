@@ -8,6 +8,7 @@
 // next one is due), and each set opens in that client's Pipeline, where sets are actually managed.
 // The authority planner stays reachable as a quiet link.
 
+import Link from 'next/link'
 import { fmtPublishDay } from '@/components/admin/priorityTopics'
 
 export interface OverviewSet {
@@ -51,7 +52,10 @@ export default function PriorityTopicsOverview({ clients }: { clients: OverviewC
           They’re added per client: open a client, go to <strong>Content → Pipeline</strong>, and use{' '}
           <strong>Add priority topics</strong>. Each keyword becomes a post that goes next in the queue.
         </p>
-        <a className="btn btn-secondary btn-sm" href="/admin/clients">Go to clients</a>
+        {/* /admin/clients only redirects to /admin/dashboard, where the client list lives. A plain
+            link to it loaded the page and was then redirected mid-render, which threw in the
+            browser ("Rendered more hooks than during the previous render") before landing. */}
+        <Link className="btn btn-secondary btn-sm" href="/admin/dashboard">Go to clients</Link>
       </div>
     )
   }
@@ -81,10 +85,10 @@ export default function PriorityTopicsOverview({ clients }: { clients: OverviewC
           <section key={c.id} className="pto-client" aria-labelledby={`pto-${c.id}`}>
             <div className="pto-client-head">
               <div className="pto-client-id">
-                <h2 id={`pto-${c.id}`} className="pto-client-name"><a href={pipelineHref(c.id)}>{c.name}</a></h2>
+                <h2 id={`pto-${c.id}`} className="pto-client-name"><Link href={pipelineHref(c.id)}>{c.name}</Link></h2>
                 <p className="pto-client-when">{whenLine(next, c.slot)}</p>
               </div>
-              <a className="btn btn-secondary btn-sm" href={pipelineHref(c.id)}>Manage in Pipeline</a>
+              <Link className="btn btn-secondary btn-sm" href={pipelineHref(c.id)}>Manage in Pipeline</Link>
             </div>
             <div className="pto-grid">
               {ordered.map(s => <SetCard key={s.id} set={s} clientId={c.id} isNext={next?.id === s.id} next={next} slot={c.slot} />)}
@@ -134,7 +138,7 @@ function SetCard({ set, clientId, isNext, next, slot }: {
   return (
     <article className={`pt-set pto-set${isNext ? ' pt-set--next' : ''}${done ? ' pt-set--done' : ''}`}>
       <div className="pt-set-title-row">
-        <a className="pt-set-name pto-set-name" href={pipelineHref(clientId)}>{set.name}</a>
+        <Link className="pt-set-name pto-set-name" href={pipelineHref(clientId)}>{set.name}</Link>
         <span className={`badge ${badge.tone}`}>{badge.label}</span>
       </div>
       {st && !pages && st.total > 0 && (
@@ -153,7 +157,7 @@ function SetCard({ set, clientId, isNext, next, slot }: {
           {set.linksOpen > 0 && <> <strong className="pto-links-due">{set.linksOpen} link{set.linksOpen === 1 ? '' : 's'} to add</strong> by hand.</>}
         </p>
       )}
-      <a className="pto-quiet" href={`/admin/content/silos/${set.id}`}>Authority planner</a>
+      <Link className="pto-quiet" href={`/admin/content/silos/${set.id}`}>Authority planner</Link>
     </article>
   )
 }
