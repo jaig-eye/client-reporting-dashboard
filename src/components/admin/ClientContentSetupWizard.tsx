@@ -99,13 +99,13 @@ const SEED_MAX = 25
 const FREQ_OPTIONS = [
   { id: 'daily',    label: 'Daily',       sub: 'A post every day' },
   { id: 'weekly',   label: 'Weekly',      sub: 'Once a week' },
-  { id: 'biweekly', label: 'Bi-Weekly',   sub: 'Every 2 weeks' },
+  { id: 'biweekly', label: 'Every 2 weeks', sub: 'Every other week' },
   { id: 'monthly',  label: 'Monthly',     sub: 'Once a month' },
 ]
 
 /** The monthly variants Content settings offers. The Monthly button covers all of them. */
 const MONTHLY_DAYS = [
-  { id: 'monthly',       label: 'Same day each month as the start date' },
+  { id: 'monthly',       label: 'The first of a weekday' },
   { id: 'monthly_first', label: '1st of the month' },
   { id: 'monthly_mid',   label: '15th of the month' },
   { id: 'monthly_end',   label: '28th of the month' },
@@ -1550,7 +1550,8 @@ function StepSchedule({
   imageGen: boolean; setImageGen: (v: boolean) => void
   imagePrompt: string; setImagePrompt: (v: string) => void
 }) {
-  const needsDay = ['weekly', 'biweekly'].includes(schedule.frequency)
+  // Monthly on the first of a weekday names the weekday too; the fixed dates (1st, 15th, 28th) don't.
+  const needsDay = ['weekly', 'biweekly', 'monthly'].includes(schedule.frequency)
   const isMonthly = schedule.frequency.startsWith('monthly')
 
   return (
@@ -1583,17 +1584,17 @@ function StepSchedule({
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        {needsDay && (
-          <Field label="Day of Week" htmlFor="wiz-day-of-week">
-            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
-              {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
-            </select>
-          </Field>
-        )}
         {isMonthly && (
           <Field label="Day of the Month" htmlFor="wiz-month-day">
             <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} style={inputStyle}>
               {MONTHLY_DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </Field>
+        )}
+        {needsDay && (
+          <Field label={schedule.frequency === 'monthly' ? 'Which weekday' : 'Day of Week'} htmlFor="wiz-day-of-week">
+            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
+              {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
             </select>
           </Field>
         )}

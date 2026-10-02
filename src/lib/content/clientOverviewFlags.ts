@@ -18,7 +18,6 @@ export interface OverviewFacts {
   autoGenerate:      boolean
   /** The schedule the planner really uses: the client's own frequency, else the global default. */
   frequency:         string
-  monthlyPublishDay: number | null
   scheduleStartDate: string | null
   /** The site posts go to, null when the client has none. Undefined when connections could not be read. */
   site?:             { platform: string; name: string; status: string } | null
@@ -55,7 +54,8 @@ export interface ClientOverviewRow {
   window:      string
   startDate:   string | null
   site:        { platform: string; name: string; status: string; mode: string | null } | 'none' | null
-  planned:     { through: string | null; open: number | null } | null
+  /** open: dates from the plan's frontier on with room; gaps: empty dates before it, left for Regenerate plan. */
+  planned:     { through: string | null; open: number | null; gaps: number | null } | null
   review:      { count: number; overdue: number } | null
   lastPublished: { date: string | null; daysAgo: number | null } | null
   length:      number | null
@@ -124,12 +124,6 @@ export function overviewFlags(f: OverviewFacts): OverviewFlag[] {
     issue('seo_meta', 'SEO fields not saved',
       `WordPress didn’t keep the SEO title or description for ${plural(f.seoMetaLost!, 'post')} in the last 14 days. ` +
       'Add them by hand in WordPress. System → Activity Log lists which fields on which post.')
-  }
-
-  if (f.frequency === 'monthly' && !f.monthlyPublishDay && !f.scheduleStartDate) {
-    issue('monthly_drift', 'Monthly date drifts',
-      'This client publishes monthly but has no publish day or start date, so the day of the month moves and posts can bunch up. ' +
-      'Set a start date in Content settings.')
   }
 
   if (f.frequency === 'biweekly' && !f.scheduleStartDate) {

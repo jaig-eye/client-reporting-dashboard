@@ -6,7 +6,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { cadenceLabel, planningWindowLabel } from '@/lib/content/cadence'
-import { windowSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
+import { windowSlots, forwardSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
 import {
   overviewFlags, sortOverviewRows, countOpenDates,
   type ClientOverviewRow, type OverviewFacts,
@@ -63,7 +63,7 @@ async function safe<T>(what: string, run: () => Promise<T | null>): Promise<T | 
 type SettingsRow = {
   client_id: string | null
   schedule_frequency: string | null; schedule_day_of_week: number | null; weeks_ahead: number | null
-  monthly_publish_day: number | null; schedule_start_date: string | null; posts_per_run: number | null
+  schedule_start_date: string | null; posts_per_run: number | null
   auto_generate: boolean | null; auto_approve_topics: boolean | null; auto_push_posts: boolean | null
   wp_publish_mode: string | null; target_length: number | null; last_keyword_research_at: string | null
   connection_id: string | null; updated_at: string | null
@@ -73,7 +73,7 @@ type ConnRow = {
   id: string; client_id: string; external_id: string | null; external_name: string | null; status: string | null
   connector: Embedded<{ type: string; status: string | null; role: string | null }>
 }
-type TopicRow = { client_id: string; target_publish_date: string; status: string }
+type TopicRow = { client_id: string; target_publish_date: string; status: string; content_type: string | null }
 type SuppressionRow = { client_id: string; target_publish_date: string }
 type PostRow = {
   id: string; client_id: string; status: string | null; wp_status: string | null; archived_at: string | null
@@ -103,7 +103,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
   // Everything that doesn't depend on another read, at once.
   const [settings, conns, topics, suppressions, posts, activity, silos] = await Promise.all([
     safe('settings', () => readAll<SettingsRow>('settings', (f, t) => db.from('content_settings')
-      .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, monthly_publish_day, schedule_start_date, posts_per_run, auto_generate, auto_approve_topics, auto_push_posts, wp_publish_mode, target_length, last_keyword_research_at, connection_id, updated_at')
+      .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, schedule_start_date, posts_per_run, auto_generate, auto_approve_topics, auto_push_posts, wp_publish_mode, target_length, last_keyword_research_at, connection_id, updated_at')
       .order('updated_at', { ascending: false, nullsFirst: false }).order('client_id', { ascending: true })
       .range(f, t))),
     // Every status, not only active ones: a connection that stopped working is what the column is for.
@@ -113,7 +113,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       .order('id', { ascending: true }).range(f, t))),
     // The statuses that hold a date, as the planner counts them; rejected ones are set aside below.
     safe('topics', () => readAll<TopicRow>('topics', (f, t) => db.from('content_topics')
-      .select('client_id, target_publish_date, status')
+      .select('client_id, target_publish_date, status, content_type')
       .gt('target_publish_date', today)
       .in('status', SLOT_STATUSES)
       .order('id', { ascending: true }).range(f, t))),
@@ -238,18 +238,21 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       plannedFuture = live.length
       const through = live.reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
       let open: number | null = null
+      let gaps: number | null = null
       if (suppressedBy) {
-        // A monthly client with no anchor publishes on today's day of the month; passing it in says
-        // so without the schedule code warning about it on every page view.
-        const anchorless = frequency === 'monthly' && !cs.monthly_publish_day && !cs.schedule_start_date
         const slots = windowSlots({
-          frequency, dayOfWeek, weeksAhead: cs.weeks_ahead,
-          monthlyPublishDay: anchorless ? now.getUTCDate() : cs.monthly_publish_day,
-          scheduleStartDate: cs.schedule_start_date,
+          frequency, dayOfWeek, weeksAhead: cs.weeks_ahead, scheduleStartDate: cs.schedule_start_date,
         })
-        open = countOpenDates(slots, mine.map(t => t.target_publish_date), (suppressedBy.get(id) ?? []).map(s => s.target_publish_date), cs.posts_per_run ?? 1)
+        // The cron fills from the plan's frontier on (scheduleSlots.forwardSlots): open dates are the
+        // ones it is behind on; empty dates before the frontier wait for Regenerate plan.
+        const frontier = mine.filter(t => t.content_type !== 'service_area')
+          .reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
+        const dates = mine.map(t => t.target_publish_date)
+        const off = (suppressedBy.get(id) ?? []).map(s => s.target_publish_date)
+        open = countOpenDates(forwardSlots(slots, frontier), dates, off, cs.posts_per_run ?? 1)
+        gaps = countOpenDates(frontier ? slots.filter(s => s < frontier) : [], dates, off, cs.posts_per_run ?? 1)
       }
-      planned = { through, open }
+      planned = { through, open, gaps }
     }
 
     // ── Posts ──
@@ -284,7 +287,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
 
     const facts: OverviewFacts = {
       autoGenerate: running, frequency,
-      monthlyPublishDay: cs.monthly_publish_day, scheduleStartDate: cs.schedule_start_date,
+      scheduleStartDate: cs.schedule_start_date,
       site: site === null ? undefined : site === 'none' ? null : site,
       draftOnly: site !== null && site !== 'none' && cs.wp_publish_mode === 'draft_only' && site.mode !== null,
       openDates: planned?.open ?? null, plannedFuture,

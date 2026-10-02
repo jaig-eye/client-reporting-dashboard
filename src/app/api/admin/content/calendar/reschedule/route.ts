@@ -27,6 +27,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { suppressSlots } from '@/lib/content/slotSuppression'
+import { firstWeekdayOfMonth } from '@/lib/content/scheduleSlots'
 
 export const dynamic = 'force-dynamic'
 
@@ -93,13 +94,12 @@ export async function POST(request: NextRequest) {
 
   const { data: settings } = await db
     .from('content_settings')
-    .select('schedule_frequency, schedule_day_of_week, monthly_publish_day')
+    .select('schedule_frequency, schedule_day_of_week')
     .eq('client_id', clientId)
     .maybeSingle()
 
   const frequency = (settings?.schedule_frequency as string | null) ?? 'weekly'
   const dayOfWeek = (settings?.schedule_day_of_week as number | null) ?? 1
-  const monthDay  = (settings?.monthly_publish_day as number | null) ?? null
 
   const { data: postRows, error: postErr } = await db
     .from('content_posts')
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
   // Over-generate, then drop collisions, so the tail is not stranded when dates are skipped.
   // The cadence is preserved: skipping a taken date moves that post to the NEXT cadence date
   // rather than to an arbitrary gap.
-  const dates = cadenceDates(startDate, frequency, dayOfWeek, monthDay, movable.length + taken.size)
+  const dates = cadenceDates(startDate, frequency, dayOfWeek, movable.length + taken.size)
     .filter(d => !taken.has(d))
     .slice(0, movable.length)
 
@@ -244,7 +244,6 @@ function cadenceDates(
   startDate: string,
   frequency: string,
   dayOfWeek: number,
-  monthlyPublishDay: number | null,
   count: number,
 ): string[] {
   if (count <= 0) return []
@@ -261,13 +260,13 @@ function cadenceDates(
     // Same mapping and the same 28-for-month-end as calendar/generate, which took it from the
     // cron. Three copies of this arithmetic is two too many, but making them agree is the
     // fix that matters here; unifying them is a refactor of the cron's own slot maths.
-    const day = frequency === 'monthly_first' ? 1
-              : frequency === 'monthly_mid'   ? 15
-              : frequency === 'monthly_end'   ? 28
-              : (monthlyPublishDay ?? start.getUTCDate())
     const cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))
     // Guarded rather than while(true): a bad cadence must not spin forever on a request.
     for (let guard = 0; guard < count + 24 && out.length < count; guard++) {
+      const day = frequency === 'monthly_first' ? 1
+                : frequency === 'monthly_mid'   ? 15
+                : frequency === 'monthly_end'   ? 28
+                : firstWeekdayOfMonth(cur.getUTCFullYear(), cur.getUTCMonth(), dayOfWeek)
       const dim = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 0)).getUTCDate()
       const d   = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), Math.min(day, dim)))
       if (iso(d) >= startDate) out.push(iso(d))

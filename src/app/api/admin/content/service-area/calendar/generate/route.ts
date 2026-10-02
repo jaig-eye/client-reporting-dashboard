@@ -25,6 +25,7 @@ import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
 import { completeText }              from '@/lib/ai/client'
+import { firstWeekdayOfMonth }       from '@/lib/content/scheduleSlots'
 
 export const maxDuration = 60
 
@@ -356,7 +357,6 @@ Return ONLY valid JSON array, no markdown:
 // ── Slot computation ───────────────────────────────────────────────────────────
 
 function toIso(d: Date): string { return d.toISOString().slice(0, 10) }
-function daysInMonth(y: number, m: number): number { return new Date(y, m + 1, 0).getDate() }
 
 function computeSlots(p: { anchor: Date; weeksAhead: number; frequency: string; dayOfWeek: number }): string[] {
   const { anchor, weeksAhead, frequency, dayOfWeek } = p
@@ -375,10 +375,10 @@ function computeSlots(p: { anchor: Date; weeksAhead: number; frequency: string; 
     return slots
   }
   if (frequency === 'monthly') {
-    const td = anchor.getDate()
+    // The first of the publish weekday, as the cron plans service-area pages.
     let y = anchor.getFullYear(), m = anchor.getMonth()
     for (;;) {
-      const cand = new Date(y, m, Math.min(td, daysInMonth(y, m)))
+      const cand = new Date(y, m, firstWeekdayOfMonth(y, m, dayOfWeek))
       if (cand > end) break
       if (cand >= anchor) slots.push(toIso(cand))
       m++; if (m > 11) { m = 0; y++ }
