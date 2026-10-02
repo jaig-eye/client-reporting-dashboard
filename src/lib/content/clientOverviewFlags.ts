@@ -54,8 +54,15 @@ export interface ClientOverviewRow {
   window:      string
   startDate:   string | null
   site:        { platform: string; name: string; status: string; mode: string | null } | 'none' | null
-  /** open: dates from the plan's frontier on with room; gaps: empty dates before it, left for Regenerate plan. */
-  planned:     { through: string | null; open: number | null; gaps: number | null } | null
+  /**
+   * open: dates automation should already have filled and hasn't (openDates lists them); waiting:
+   * dates it fills at its next run, new since the last one (waitingDates); gaps: empty dates it
+   * skips; cleared: dates emptied by deleting their topics. Gaps and cleared wait for Regenerate plan.
+   */
+  planned: {
+    through: string | null; open: number | null; openDates: string[]; waiting: number | null; waitingDates: string[]
+    gaps: number | null; cleared: number | null
+  } | null
   review:      { count: number; overdue: number } | null
   lastPublished: { date: string | null; daysAgo: number | null } | null
   length:      number | null
@@ -97,9 +104,9 @@ export function overviewFlags(f: OverviewFacts): OverviewFlag[] {
 
   if (f.autoGenerate && (f.openDates ?? 0) > 0) {
     issue('planner_behind', `${plural(f.openDates!, 'date')} not planned`,
-      `Automation is on, but ${plural(f.openDates!, 'publish date')} inside the planning window ${f.openDates === 1 ? 'has' : 'have'} no topic yet. ` +
-      'The planner fills the window every two hours, so a date that has just come into range can show here briefly. ' +
-      'If it stays, open the client’s Pipeline to see why topics aren’t being added.')
+      `Automation is on and has run since ${f.openDates === 1 ? 'this date' : 'these dates'} came into the planning window, ` +
+      `but ${plural(f.openDates!, 'publish date')} still ${f.openDates === 1 ? 'has' : 'have'} no topic. ` +
+      'Open the client’s Pipeline to see why topics aren’t being added.')
   }
 
   if ((f.reviewOverdue ?? 0) > 0) {
@@ -158,15 +165,47 @@ export function sortOverviewRows<T extends { name: string; flags: OverviewFlag[]
  * Dates in the window with room for another topic: not suppressed, and holding fewer topics than
  * the client publishes per date — the same test the planner makes before it fills a date.
  */
-export function countOpenDates(
+export function openDatesIn(
   slots: string[],
   topicDates: string[],
   suppressed: Iterable<string>,
   perDate: number,
-): number {
+): string[] {
   const per = Math.min(10, Math.max(1, Number(perDate) || 1))
   const filled = new Map<string, number>()
   for (const d of topicDates) filled.set(d, (filled.get(d) ?? 0) + 1)
   const off = new Set(suppressed)
-  return slots.filter(s => !off.has(s) && (filled.get(s) ?? 0) < per).length
+  return slots.filter(s => !off.has(s) && (filled.get(s) ?? 0) < per)
+}
+
+export function countOpenDates(slots: string[], topicDates: string[], suppressed: Iterable<string>, perDate: number): number {
+  return openDatesIn(slots, topicDates, suppressed, perDate).length
+}
+
+/** The topic cron runs at the top of every even UTC hour (vercel.json: "0 *\/2 * * *"). */
+const PLANNER_EVERY_MS = 2 * 3_600_000
+
+/**
+ * Open dates split by whether the planner has had a run to fill them. A date that came into the
+ * window after its last run, or any open date when the schedule was saved after that run, is
+ * waiting for the next run; only the rest mean the planner is behind. Without this a schedule
+ * change (a wider window, a new cadence) showed its new dates as "not planned" until the next run.
+ * A date enters the window when the cron's rounded day count reaches the lead: half a day early.
+ */
+export function splitOpenDates(
+  open: string[],
+  leadDays: number,
+  settingsSavedAt: string | null,
+  now: Date,
+): { behind: string[]; waiting: string[] } {
+  const lastRun = Math.floor(now.getTime() / PLANNER_EVERY_MS) * PLANNER_EVERY_MS
+  const saved = settingsSavedAt ? Date.parse(settingsSavedAt) : NaN
+  if (!Number.isNaN(saved) && saved > lastRun) return { behind: [], waiting: open }
+  const behind: string[] = []
+  const waiting: string[] = []
+  for (const d of open) {
+    const entered = Date.parse(d + 'T00:00:00Z') - (leadDays + 0.5) * 86_400_000
+    ;(entered > lastRun ? waiting : behind).push(d)
+  }
+  return { behind, waiting }
 }

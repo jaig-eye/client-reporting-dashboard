@@ -6,9 +6,9 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { cadenceLabel, planningWindowLabel } from '@/lib/content/cadence'
-import { windowSlots, forwardSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
+import { windowSlots, forwardSlots, leadWindowDays, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
 import {
-  overviewFlags, sortOverviewRows, countOpenDates,
+  overviewFlags, sortOverviewRows, countOpenDates, openDatesIn, splitOpenDates,
   type ClientOverviewRow, type OverviewFacts,
 } from '@/lib/content/clientOverviewFlags'
 
@@ -238,21 +238,34 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       plannedFuture = live.length
       const through = live.reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
       let open: number | null = null
+      let openDates: string[] = []
+      let waiting: number | null = null
+      let waitingDates: string[] = []
       let gaps: number | null = null
+      let cleared: number | null = null
       if (suppressedBy) {
         const slots = windowSlots({
           frequency, dayOfWeek, weeksAhead: cs.weeks_ahead, scheduleStartDate: cs.schedule_start_date,
         })
         // The cron fills from the plan's frontier on (scheduleSlots.forwardSlots): open dates are the
-        // ones it is behind on; empty dates before the frontier wait for Regenerate plan.
+        // ones it is behind on; the empty dates it skips (before the frontier, or too close after it)
+        // wait for Regenerate plan.
         const frontier = mine.filter(t => t.content_type !== 'service_area')
           .reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
         const dates = mine.map(t => t.target_publish_date)
         const off = (suppressedBy.get(id) ?? []).map(s => s.target_publish_date)
-        open = countOpenDates(forwardSlots(slots, frontier), dates, off, cs.posts_per_run ?? 1)
-        gaps = countOpenDates(frontier ? slots.filter(s => s < frontier) : [], dates, off, cs.posts_per_run ?? 1)
+        const ahead = forwardSlots(slots, frontier, frequency)
+        // Open dates the planner has had a run to fill are behind; ones new since its last run (a
+        // date that just came into range, or a schedule saved since) wait for the next run.
+        const split = splitOpenDates(openDatesIn(ahead, dates, off, cs.posts_per_run ?? 1), leadWindowDays(frequency, cs.weeks_ahead), cs.updated_at, now)
+        open = split.behind.length; openDates = split.behind
+        waiting = split.waiting.length; waitingDates = split.waiting
+        gaps = countOpenDates(slots.filter(s => !ahead.includes(s)), dates, off, cs.posts_per_run ?? 1)
+        // Dates in the window someone emptied by deleting their topics. Neither open (automation
+        // leaves them alone) nor full: without this a window of deleted dates read "Window full".
+        cleared = countOpenDates(slots.filter(s => off.includes(s)), dates, [], cs.posts_per_run ?? 1)
       }
-      planned = { through, open, gaps }
+      planned = { through, open, openDates, waiting, waitingDates, gaps, cleared }
     }
 
     // ── Posts ──
