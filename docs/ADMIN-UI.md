@@ -114,7 +114,7 @@ with stacked full-width buttons. Options:
 | `mr-`, `cal-`, `cs-`, `sd-`, `ra-` | Monthly review, calendar, content settings, silo detail, rationale (`content.css`) |
 | `pl-`, `sm-`, `ccs-`, `wz-`, `pe-`, `cp-` | Pipeline, sitemap, client content settings, setup wizard, post editor, plan (`pipeline.css`) |
 | `co-`, `af-`, `em-`, `st-`, `sy-`, `al-` | Client overview, Ad Fuel, emails, sites, system, alerts |
-| `au-` | Signed-out pages: login, forgot and reset password (`auth.css`, with the three.js scene in `LoginCanvas`) |
+| `au-` | Signed-out pages: login, forgot and reset password (`auth.css`, with the mesh in `LoginCanvas`) |
 | `pv-`, `ap-`, `np-`, `ccs-cadence` | Preview bar and client switcher, Ad Fuel auto-pause, the note's client, the schedule fields (`admin.css`) |
 | `il-`, `lb-` | Image library and stock-image lightbox (`pipeline.css`) |
 | `cco-`, `pto-`, `kw-`, `pt-` | Content → Clients, priority topics overview, keywords, priority topics (`globals.css`; `pt-ext` is in `admin.css`) |

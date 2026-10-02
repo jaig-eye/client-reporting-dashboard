@@ -12,12 +12,11 @@
 // passes it through) so the common path is: read code from email, type it, choose
 // a password.
 
-import { Suspense, useState, useEffect, lazy } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from '@phosphor-icons/react'
-
-const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
+import LoginCanvas from '@/components/admin/LoginCanvas'
 
 function ResetPasswordForm() {
   const router       = useRouter()
@@ -82,7 +81,7 @@ function ResetPasswordForm() {
 
   return (
     <div className="au">
-      <Suspense fallback={null}><LoginCanvas /></Suspense>
+      <LoginCanvas />
 
       <div className="au-card">
         <div className="mb-6">

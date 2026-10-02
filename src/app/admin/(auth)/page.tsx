@@ -5,19 +5,21 @@
 // Regular admin: enter email/username + password.
 //
 // While a sign-in is in flight the form is locked: the fields and the button are disabled, the
-// button shows a spinner, a bar runs across the card, and the background answers (LoginCanvas).
-// A successful sign-in stays locked until the dashboard has loaded; it used to unlock in a
-// finally block while the page was still navigating, so the button could be pressed again.
+// button shows a spinner and what's happening, a progress bar runs along the top of the card, and
+// the mesh behind swirls around it (LoginCanvas). The busy state lasts at least MIN_BUSY_MS, so a
+// quick answer still reads as "checked" rather than a flicker. A successful sign-in stays locked
+// until the dashboard has loaded; it used to unlock in a finally block while the page was still
+// navigating, so the button could be pressed again.
 
-import { Suspense, useState, useEffect, useRef, lazy } from 'react'
+import { Suspense, useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, WarningCircle } from '@phosphor-icons/react'
-import type { LoginCanvasMode } from '@/components/admin/LoginCanvas'
-
-const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
+import LoginCanvas from '@/components/admin/LoginCanvas'
 
 type Phase = 'idle' | 'busy' | 'success' | 'error'
+
+const MIN_BUSY_MS = 700
 
 function AdminLoginForm() {
   const router       = useRouter()
@@ -74,6 +76,8 @@ function AdminLoginForm() {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15_000)
     let leaving = false
+    const startedAt = Date.now()
+    const settle = () => new Promise(r => setTimeout(r, Math.max(0, MIN_BUSY_MS - (Date.now() - startedAt))))
 
     try {
       const res = await fetch('/api/auth/admin-login', {
@@ -85,6 +89,7 @@ function AdminLoginForm() {
       const data = await res.json().catch(() => ({}))
 
       if (res.ok && data.step === 'code') {
+        await settle()
         setStep('code')
         setPhase('idle')
         return
@@ -116,9 +121,11 @@ function AdminLoginForm() {
         return
       }
 
+      await settle()
       setError(data.error || 'That email and password don’t match. Try again.')
       setPhase('error')
     } catch (err) {
+      await settle()
       setError(err instanceof DOMException && err.name === 'AbortError'
         ? 'The sign-in took too long. Check your connection and try again.'
         : 'Couldn’t reach the server. Check your connection and try again.')
@@ -134,9 +141,9 @@ function AdminLoginForm() {
 
   return (
     <main className="au">
-      <Suspense fallback={null}><LoginCanvas mode={phase as LoginCanvasMode} /></Suspense>
+      <LoginCanvas mode={phase} />
 
-      <section className="au-card" aria-labelledby="au-title" aria-busy={locked || undefined}>
+      <section className="au-card" aria-labelledby="au-title" aria-busy={locked || undefined} data-phase={phase}>
         <div className="au-progress" aria-hidden />
 
         <div className="au-brand">

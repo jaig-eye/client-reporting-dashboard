@@ -1,319 +1,287 @@
 'use client'
 
-// The sign-in screens' background: an analytics landscape in three.js. Thousands of points form a
-// slowly rolling data surface that rises toward the right (growth), with a glowing trend line
-// riding above it and a few chart markers on the line. It follows the pointer a little, and it
-// answers the form: a pulse rings out through the surface while signing in, the whole field
-// surges on success, and the trend line dims and reddens on an error.
+// The sign-in screens' background: a mesh of drifting points joined by lines that fade with
+// distance. Each point sits at a depth, so nearer points are larger, brighter and quicker, and on a
+// desktop the pointer joins the mesh and parts the points around it.
 //
-// Colours come from the theme (--accent, the agency's brand colour) and are re-read when the
-// theme flips. Kept light: fewer points on a phone, the pixel ratio capped, the loop paused while
-// the tab is hidden, a single still frame for reduced motion, and nothing at all (the page's own
-// gradient shows) where WebGL isn't available. three.js loads only on these screens.
+// It answers the form (mode). While signing in, the mesh swirls around the card and waves pulse out
+// from it, lighting the lines they cross. On success the points gather into a ring around the card.
+// On an error they jolt outward and flash red, then settle.
+//
+// Colours are the theme's (--accent, the agency's brand colour, and --red), re-read when the theme
+// changes. Reduced motion keeps the drift, slower, and drops the swirl, waves and jolt. The loop
+// pauses while the tab is hidden.
 
 import { useEffect, useRef } from 'react'
-import * as THREE from 'three'
 
 export type LoginCanvasMode = 'idle' | 'busy' | 'success' | 'error'
 
-const SURFACE_VERT = /* glsl */ `
-  uniform float uTime;
-  uniform float uPulse;
-  uniform float uSurge;
-  uniform float uPixelRatio;
-  uniform float uSize;
-  attribute float aRand;
-  varying float vHeight;
-  varying float vFade;
-  varying float vRing;
+interface Node {
+  x: number; y: number
+  vx: number; vy: number   // its own drift
+  ix: number; iy: number   // a jolt, decaying
+  z: number                // depth, 0.35 (far) to 1 (near)
+}
+type Rgb = [number, number, number]
 
-  float surface(vec2 p, float t) {
-    return sin(p.x * 0.32 + t * 0.55) * 0.55
-         + sin(p.y * 0.41 - t * 0.42) * 0.45
-         + sin((p.x + p.y) * 0.21 + t * 0.31) * 0.75
-         + sin(length(p - vec2(8.0, -4.0)) * 0.55 - t * 0.8) * 0.22;
+const SPEED        = 0.32   // drift, px per frame at 60fps, for the nearest points
+const POINTER_DIST = 190
+const WAVE_EVERY   = 1100   // ms between waves while signing in
+const WAVE_SPEED   = 0.6    // px per ms
+const WAVE_WIDTH   = 70
+const BUCKETS      = 24     // lines are stroked in batches of equal opacity
+
+/** A theme colour as rgb, or null when the token isn't a colour a canvas can read. */
+function tokenRgb(ctx: CanvasRenderingContext2D, name: string): Rgb | null {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (!raw) return null
+  ctx.fillStyle = 'transparent'
+  ctx.fillStyle = raw   // ignored when it isn't a colour, which leaves the sentinel
+  const v = String(ctx.fillStyle)
+  if (v.startsWith('#') && v.length === 7) {
+    return [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)]
   }
-
-  void main() {
-    vec3 pos = position;
-    float h = surface(pos.xz, uTime);
-    // Growth: the field rises toward the right.
-    h += (pos.x + 30.0) * 0.045;
-    // A ring travelling out from the centre while signing in.
-    float d = length(pos.xz - vec2(0.0, 2.0));
-    float front = mod(uTime * 11.0, 46.0);
-    float ring = exp(-pow(d - front, 2.0) * 0.06) * uPulse;
-    h += ring * 1.4 + uSurge * (0.6 + 0.4 * sin(d * 0.5 - uTime * 4.0));
-    pos.y += h;
-    vHeight = h;
-    vRing = ring;
-    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-    gl_Position = projectionMatrix * mv;
-    gl_PointSize = uSize * uPixelRatio * (0.55 + aRand * 0.7) * (1.0 + ring * 1.6 + uSurge * 0.8) / -mv.z;
-    vFade = smoothstep(70.0, 14.0, -mv.z) * smoothstep(-1.0, 6.0, -mv.z);
-  }
-`
-
-const SURFACE_FRAG = /* glsl */ `
-  uniform vec3 uColorA;
-  uniform vec3 uColorB;
-  uniform float uAlpha;
-  uniform float uAlert;
-  varying float vHeight;
-  varying float vFade;
-  varying float vRing;
-
-  void main() {
-    vec2 c = gl_PointCoord - 0.5;
-    float r = length(c);
-    if (r > 0.5) discard;
-    float soft = smoothstep(0.5, 0.0, r);
-    vec3 col = mix(uColorA, uColorB, clamp(vHeight * 0.18 + 0.25, 0.0, 1.0));
-    col = mix(col, uColorB, vRing);
-    col = mix(col, vec3(0.92, 0.26, 0.26), uAlert * 0.45);
-    gl_FragColor = vec4(col, soft * vFade * uAlpha * (0.8 + vRing * 0.2));
-  }
-`
-
-const LINE_VERT = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`
-
-const LINE_FRAG = /* glsl */ `
-  uniform float uTime;
-  uniform vec3 uColor;
-  uniform float uAlpha;
-  uniform float uSpeed;
-  uniform float uAlert;
-  varying vec2 vUv;
-  void main() {
-    float head = fract(uTime * uSpeed);
-    float glow = exp(-pow((vUv.x - head) * 9.0, 2.0));
-    float base = 0.35 + 0.65 * smoothstep(0.0, 0.15, vUv.x);
-    float edge = 1.0 - abs(vUv.y - 0.5) * 2.0;
-    vec3 col = mix(uColor, vec3(1.0), glow * 0.55);
-    col = mix(col, vec3(0.92, 0.26, 0.26), uAlert * 0.6);
-    gl_FragColor = vec4(col, (base * 0.55 + glow) * edge * uAlpha * (1.0 - uAlert * 0.55));
-  }
-`
-
-/** The theme's accent and whether the page is dark, read off the document. */
-function readTheme(): { accent: THREE.Color; dark: boolean } {
-  const root = document.documentElement
-  const dark = root.getAttribute('data-theme') === 'dark'
-  const raw = getComputedStyle(root).getPropertyValue('--accent').trim() || '#2563eb'
-  const accent = new THREE.Color()
-  try { accent.setStyle(raw) } catch { accent.set('#2563eb') }
-  return { accent, dark }
+  const m = v.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/)
+  if (!m || m[4] === '0') return null
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
 }
 
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
+  Math.round(a[0] + (b[0] - a[0]) * t),
+  Math.round(a[1] + (b[1] - a[1]) * t),
+  Math.round(a[2] + (b[2] - a[2]) * t),
+]
+
 export default function LoginCanvas({ mode = 'idle' }: { mode?: LoginCanvasMode }) {
-  const hostRef = useRef<HTMLDivElement>(null)
-  const modeRef = useRef<LoginCanvasMode>(mode)
-  const kickRef = useRef<() => void>(() => {})
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const modeRef   = useRef<LoginCanvasMode>(mode)
+  // Set by the mode effect, read by the loop: a fresh error, a fresh sign-in.
+  const kickRef   = useRef<{ error: boolean; busy: boolean }>({ error: false, busy: false })
 
   useEffect(() => {
+    const was = modeRef.current
     modeRef.current = mode
-    kickRef.current()
+    if (mode === 'error' && was !== 'error') kickRef.current.error = true
+    if (mode === 'busy' && was !== 'busy') kickRef.current.busy = true
   }, [mode])
 
   useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
 
-    let renderer: THREE.WebGLRenderer
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
-    } catch {
-      return // No WebGL: the page's gradient stands in.
-    }
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const small = window.innerWidth < 640
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, small ? 1.5 : 1.75)
-    renderer.setPixelRatio(pixelRatio)
-    renderer.setClearColor(0x000000, 0)
-    host.appendChild(renderer.domElement)
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const finePointer = window.matchMedia('(pointer: fine)').matches
 
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200)
-    const lookAt = new THREE.Vector3(0, 1.2, -6)
-    let camY = 7.5
-
-    // ── The data surface ──────────────────────────────────────────────────────
-    const cols = small ? 96 : 170
-    const rows = small ? 64 : 104
-    const positions = new Float32Array(cols * rows * 3)
-    const rand = new Float32Array(cols * rows)
-    for (let i = 0; i < rows; i++) {
-      for (let j = 0; j < cols; j++) {
-        const k = i * cols + j
-        positions[k * 3]     = (j / (cols - 1) - 0.5) * 64 + (Math.random() - 0.5) * 0.18
-        positions[k * 3 + 1] = 0
-        positions[k * 3 + 2] = (i / (rows - 1) - 0.5) * 44 + (Math.random() - 0.5) * 0.18
-        rand[k] = Math.random()
-      }
-    }
-    const surfaceGeo = new THREE.BufferGeometry()
-    surfaceGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    surfaceGeo.setAttribute('aRand', new THREE.BufferAttribute(rand, 1))
-    const surfaceMat = new THREE.ShaderMaterial({
-      vertexShader: SURFACE_VERT,
-      fragmentShader: SURFACE_FRAG,
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 }, uPulse: { value: 0 }, uSurge: { value: 0 }, uAlert: { value: 0 },
-        uPixelRatio: { value: pixelRatio }, uSize: { value: small ? 190 : 160 },
-        uColorA: { value: new THREE.Color() }, uColorB: { value: new THREE.Color() }, uAlpha: { value: 1 },
-      },
-    })
-    const surface = new THREE.Points(surfaceGeo, surfaceMat)
-    scene.add(surface)
-
-    // ── The trend line and its markers ───────────────────────────────────────
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(-30, 1.2, 6), new THREE.Vector3(-18, 2.4, 3), new THREE.Vector3(-8, 2.0, 1),
-      new THREE.Vector3(2, 4.4, -1), new THREE.Vector3(12, 5.6, -3), new THREE.Vector3(22, 8.4, -6),
-      new THREE.Vector3(32, 10.6, -9),
-    ])
-    const lineGeo = new THREE.TubeGeometry(curve, 240, 0.12, 8, false)
-    const lineMat = new THREE.ShaderMaterial({
-      vertexShader: LINE_VERT,
-      fragmentShader: LINE_FRAG,
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 }, uColor: { value: new THREE.Color() }, uAlpha: { value: 1 },
-        uSpeed: { value: 0.12 }, uAlert: { value: 0 },
-      },
-    })
-    scene.add(new THREE.Mesh(lineGeo, lineMat))
-
-    const markerGeo = new THREE.SphereGeometry(0.22, 16, 16)
-    const markerMat = new THREE.MeshBasicMaterial({ transparent: true })
-    const markers = [0.18, 0.42, 0.66, 0.9].map(t => {
-      const m = new THREE.Mesh(markerGeo, markerMat)
-      m.position.copy(curve.getPoint(t))
-      scene.add(m)
-      return m
-    })
-
-    // ── Theme ────────────────────────────────────────────────────────────────
-    const applyTheme = () => {
-      const { accent, dark } = readTheme()
-      const deep = accent.clone().lerp(new THREE.Color(dark ? 0x0b1020 : 0x0f172a), dark ? 0.35 : 0.15)
-      const bright = accent.clone().lerp(new THREE.Color(0xffffff), dark ? 0.55 : 0.1)
-      surfaceMat.uniforms.uColorA.value.copy(dark ? deep : accent.clone().lerp(new THREE.Color(0xffffff), 0.2))
-      surfaceMat.uniforms.uColorB.value.copy(dark ? bright : deep)
-      surfaceMat.blending = dark ? THREE.AdditiveBlending : THREE.NormalBlending
-      surfaceMat.uniforms.uAlpha.value = dark ? 0.95 : 0.85
-      lineMat.uniforms.uColor.value.copy(dark ? bright : accent)
-      lineMat.blending = dark ? THREE.AdditiveBlending : THREE.NormalBlending
-      markerMat.color.copy(dark ? bright : accent)
-      surfaceMat.needsUpdate = true
-      lineMat.needsUpdate = true
-    }
-    applyTheme()
-    const themeWatch = new MutationObserver(() => { applyTheme(); kick() })
-    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
-
-    // ── Size, pointer, loop ──────────────────────────────────────────────────
-    const resize = () => {
-      // The host's own box: on a phone it covers only the top of the screen (auth.css).
-      const w = host.clientWidth || window.innerWidth, h = host.clientHeight || window.innerHeight
-      renderer.setSize(w, h, false)
-      renderer.domElement.style.width = '100%'
-      renderer.domElement.style.height = '100%'
-      camera.aspect = w / h
-      // A narrow, tall box sees a thin slice of the field: step back so the trend line still
-      // crosses it from edge to edge.
-      const tall = w < h * 1.1
-      camY = tall ? 8.5 : 7.5
-      lookAt.set(0, 1.4, -6)
-      camera.position.set(0, camY, tall ? 34 : 21)
-      camera.updateProjectionMatrix()
-      kick()
-    }
-    const pointer = { x: 0, y: 0, tx: 0, ty: 0 }
-    const onPointer = (e: PointerEvent) => {
-      pointer.tx = (e.clientX / window.innerWidth) * 2 - 1
-      pointer.ty = (e.clientY / window.innerHeight) * 2 - 1
-    }
-
-    const clock = new THREE.Clock()
-    let t = 0
-    let pulse = 0, surge = 0, alert = 0
+    let w = 0, h = 0, dpr = 1, maxDist = 150
+    const nodes: Node[] = []
+    let accent: Rgb | null = null
+    let red: Rgb | null = null
     let raf = 0
-    let running = false
+    let last = performance.now()
+    let pointer: { x: number; y: number } | null = null
 
-    const frame = () => {
-      const dt = Math.min(clock.getDelta(), 0.05)
+    // Eased levels the loop moves toward, so a change of mode never snaps.
+    let energy = 0     // signing in: swirl and brighter lines
+    let gather = 0     // success: the ring around the card
+    let alarm  = 0     // error: the red flash, fading
+    let nextWave = 0
+    const waves: number[] = []   // birth times
+
+    function readColours() {
+      accent = tokenRgb(ctx!, '--accent')
+      red = tokenRgb(ctx!, '--red') ?? accent
+    }
+
+    function spawn(x = Math.random() * w, y = Math.random() * h): Node {
+      const z = 0.35 + Math.random() * 0.65
+      const a = Math.random() * Math.PI * 2
+      const s = SPEED * (0.45 + z * 0.75)
+      return { x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, ix: 0, iy: 0, z }
+    }
+
+    function fit() {
+      w = window.innerWidth
+      h = window.innerHeight
+      dpr = Math.min(window.devicePixelRatio || 1, 2)
+      canvas!.width = Math.round(w * dpr)
+      canvas!.height = Math.round(h * dpr)
+      maxDist = Math.max(115, Math.min(170, w * 0.115))
+      const want = Math.max(38, Math.min(120, Math.round((w * h) / 12500)))
+      while (nodes.length < want) nodes.push(spawn())
+      if (nodes.length > want) nodes.length = want
+      for (const n of nodes) { n.x = Math.min(n.x, w); n.y = Math.min(n.y, h) }
+    }
+
+    /** The card's centre and the radius of a circle around it. */
+    function cardCircle() {
+      const card = document.querySelector('.au-card')
+      if (!card) return { cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.3 }
+      const b = card.getBoundingClientRect()
+      return { cx: b.left + b.width / 2, cy: b.top + b.height / 2, r: Math.hypot(b.width, b.height) / 2 }
+    }
+
+    function frame(now: number) {
+      const dt = Math.min((now - last) / 16.667, 3)
+      last = now
+      const reduced = motion.matches
       const m = modeRef.current
-      const busy = m === 'busy', success = m === 'success', error = m === 'error'
-      // Everything speeds up a little while signing in and surges on success.
-      t += dt * (success ? 2.2 : busy ? 1.5 : 1)
-      pulse += ((busy || success ? 1 : 0) - pulse) * Math.min(1, dt * 3)
-      surge += ((success ? 1 : 0) - surge) * Math.min(1, dt * 2.5)
-      alert += ((error ? 1 : 0) - alert) * Math.min(1, dt * 4)
-      pointer.x += (pointer.tx - pointer.x) * Math.min(1, dt * 2)
-      pointer.y += (pointer.ty - pointer.y) * Math.min(1, dt * 2)
+      const kick = kickRef.current
+      const { cx, cy, r: cardR } = cardCircle()
 
-      surfaceMat.uniforms.uTime.value = t
-      surfaceMat.uniforms.uPulse.value = pulse
-      surfaceMat.uniforms.uSurge.value = surge
-      surfaceMat.uniforms.uAlert.value = alert
-      lineMat.uniforms.uTime.value = t
-      lineMat.uniforms.uSpeed.value = busy || success ? 0.32 : 0.12
-      lineMat.uniforms.uAlert.value = alert
-      markers.forEach((mk, i) => mk.scale.setScalar(1 + 0.35 * Math.sin(t * 2.2 + i * 1.3) + surge * 0.8))
+      const ease = (v: number, to: number, k: number) => v + (to - v) * Math.min(1, k * dt)
+      energy = ease(energy, m === 'busy' || m === 'success' ? 1 : 0, 0.06)
+      gather = ease(gather, m === 'success' ? 1 : 0, 0.05)
+      alarm  = kick.error ? 1 : Math.max(0, alarm - 0.018 * dt)
 
-      camera.position.x = Math.sin(t * 0.06) * 3 + pointer.x * 2.6
-      camera.position.y = camY - pointer.y * 1.4
-      camera.lookAt(lookAt)
-      renderer.render(scene, camera)
+      if (kick.busy) { kick.busy = false; nextWave = now }
+      if (m === 'busy' && !reduced && now >= nextWave) { waves.push(now); nextWave = now + WAVE_EVERY }
+      const reach = Math.hypot(w, h)
+      while (waves.length && (now - waves[0]) * WAVE_SPEED > reach) waves.shift()
+
+      // ── Move ────────────────────────────────────────────────────────────
+      const pace = reduced ? 0.35 : 1
+      for (const n of nodes) {
+        if (kick.error && !reduced) {
+          const dx = n.x - cx, dy = n.y - cy
+          const d = Math.hypot(dx, dy) || 1
+          const push = 7 * n.z * Math.max(0.25, 1 - d / reach)
+          n.ix += (dx / d) * push
+          n.iy += (dy / d) * push
+        }
+
+        let mx = n.vx * pace, my = n.vy * pace
+        if (!reduced && (energy > 0.01 || gather > 0.01)) {
+          const dx = n.x - cx, dy = n.y - cy
+          const d = Math.hypot(dx, dy) || 1
+          // Round the card, quicker near it.
+          const swirl = energy * (0.6 + 2.4 * n.z) * (cardR / (cardR + d * 0.6))
+          mx += (-dy / d) * swirl
+          my += (dx / d) * swirl
+          // Into a ring just outside the card.
+          const ring = cardR + 30 + (1 - n.z) * 150
+          const pull = (ring - d) * 0.045 * gather
+          mx += (dx / d) * pull
+          my += (dy / d) * pull
+        }
+        if (pointer && !reduced) {
+          const dx = n.x - pointer.x, dy = n.y - pointer.y
+          const d = Math.hypot(dx, dy)
+          if (d < 110 && d > 0.1) {
+            const push = (1 - d / 110) * 1.4
+            mx += (dx / d) * push
+            my += (dy / d) * push
+          }
+        }
+
+        n.x += (mx + n.ix) * dt
+        n.y += (my + n.iy) * dt
+        n.ix *= Math.pow(0.9, dt)
+        n.iy *= Math.pow(0.9, dt)
+
+        if (n.x < 0) { n.x = 0; n.vx = Math.abs(n.vx) }
+        else if (n.x > w) { n.x = w; n.vx = -Math.abs(n.vx) }
+        if (n.y < 0) { n.y = 0; n.vy = Math.abs(n.vy) }
+        else if (n.y > h) { n.y = h; n.vy = -Math.abs(n.vy) }
+      }
+      kick.error = false
+
+      // ── Draw ────────────────────────────────────────────────────────────
+      ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx!.clearRect(0, 0, w, h)
+      if (!accent) { raf = requestAnimationFrame(frame); return }
+      const [r, g, b] = alarm > 0.01 && red ? mix(accent, red, alarm) : accent
+
+      // How lit each point is by the waves passing through.
+      const glow = new Float32Array(nodes.length)
+      if (waves.length) {
+        for (let i = 0; i < nodes.length; i++) {
+          const d = Math.hypot(nodes[i].x - cx, nodes[i].y - cy)
+          let v = 0
+          for (const born of waves) {
+            const front = cardR * 0.6 + (now - born) * WAVE_SPEED
+            const off = (d - front) / WAVE_WIDTH
+            v += Math.exp(-off * off) * Math.max(0, 1 - front / reach)
+          }
+          glow[i] = Math.min(1, v)
+        }
+      }
+
+      const lift = 1 + energy * 0.8 + gather * 0.6 + alarm * 0.6
+      const base = 0.2 * lift
+      const batches: number[][] = Array.from({ length: BUCKETS + 1 }, () => [])
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i]
+        for (let j = i + 1; j < nodes.length; j++) {
+          const c = nodes[j]
+          const dx = a.x - c.x, dy = a.y - c.y
+          const dist2 = dx * dx + dy * dy
+          if (dist2 > maxDist * maxDist) continue
+          const near = 1 - Math.sqrt(dist2) / maxDist
+          const depth = (a.z + c.z) / 2
+          const alpha = Math.min(1, near * depth * base + near * (glow[i] + glow[j]) * 0.42)
+          const k = Math.round(alpha * BUCKETS)
+          if (k > 0) batches[k].push(a.x, a.y, c.x, c.y)
+        }
+        if (pointer) {
+          const d = Math.hypot(a.x - pointer.x, a.y - pointer.y)
+          if (d < POINTER_DIST) {
+            const k = Math.round(Math.min(1, (1 - d / POINTER_DIST) * 0.45 * a.z) * BUCKETS)
+            if (k > 0) batches[k].push(a.x, a.y, pointer.x, pointer.y)
+          }
+        }
+      }
+      ctx!.lineWidth = 1
+      for (let k = 1; k <= BUCKETS; k++) {
+        const seg = batches[k]
+        if (!seg.length) continue
+        ctx!.strokeStyle = `rgba(${r},${g},${b},${k / BUCKETS})`
+        ctx!.beginPath()
+        for (let s = 0; s < seg.length; s += 4) { ctx!.moveTo(seg[s], seg[s + 1]); ctx!.lineTo(seg[s + 2], seg[s + 3]) }
+        ctx!.stroke()
+      }
+
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i]
+        const lit = glow[i]
+        ctx!.fillStyle = `rgba(${r},${g},${b},${Math.min(1, (0.22 + n.z * 0.4) * (1 + energy * 0.35) + lit * 0.5)})`
+        ctx!.beginPath()
+        ctx!.arc(n.x, n.y, 1.1 + n.z * 2 + lit * 2.2, 0, Math.PI * 2)
+        ctx!.fill()
+      }
+
+      if (!canvas!.hasAttribute('data-ready')) canvas!.setAttribute('data-ready', '')
+      raf = requestAnimationFrame(frame)
     }
 
-    const loop = () => {
-      frame()
-      raf = requestAnimationFrame(loop)
-    }
-    const start = () => {
-      if (running || reduceMotion || document.hidden) return
-      running = true
-      clock.getDelta()
-      raf = requestAnimationFrame(loop)
-    }
-    const stop = () => { running = false; cancelAnimationFrame(raf) }
-    // With reduced motion there's no loop: draw one frame now and again whenever something changes.
-    function kick() { if (reduceMotion || !running) frame() }
-    kickRef.current = kick
+    function start() { cancelAnimationFrame(raf); last = performance.now(); raf = requestAnimationFrame(frame) }
+    function onVisibility() { if (document.hidden) cancelAnimationFrame(raf); else start() }
+    function onMove(e: PointerEvent) { pointer = { x: e.clientX, y: e.clientY } }
+    function onLeave() { pointer = null }
 
-    const onVisibility = () => (document.hidden ? stop() : start())
+    readColours()
+    fit()
+    start()
 
-    resize()
-    window.addEventListener('resize', resize)
-    window.addEventListener('pointermove', onPointer, { passive: true })
+    window.addEventListener('resize', fit)
     document.addEventListener('visibilitychange', onVisibility)
-    if (reduceMotion) frame(); else start()
-    requestAnimationFrame(() => host.setAttribute('data-ready', ''))
+    if (finePointer) {
+      window.addEventListener('pointermove', onMove, { passive: true })
+      document.documentElement.addEventListener('pointerleave', onLeave)
+    }
+    // The accent and theme are attributes on <html>; follow them if they change.
+    const themeWatch = new MutationObserver(readColours)
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
 
     return () => {
-      stop()
-      kickRef.current = () => {}
-      window.removeEventListener('resize', resize)
-      window.removeEventListener('pointermove', onPointer)
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', fit)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pointermove', onMove)
+      document.documentElement.removeEventListener('pointerleave', onLeave)
       themeWatch.disconnect()
-      surfaceGeo.dispose(); surfaceMat.dispose(); lineGeo.dispose(); lineMat.dispose()
-      markerGeo.dispose(); markerMat.dispose()
-      renderer.dispose()
-      renderer.domElement.remove()
     }
   }, [])
 
-  return <div ref={hostRef} className="au-canvas" aria-hidden />
+  return <canvas ref={canvasRef} className="au-canvas" aria-hidden />
 }

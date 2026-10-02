@@ -1,10 +1,9 @@
 'use client'
 
-import { Suspense, useState, useEffect, lazy } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft } from '@phosphor-icons/react'
-
-const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
+import LoginCanvas from '@/components/admin/LoginCanvas'
 
 function ForgotPasswordForm() {
   const [step,     setStep]     = useState<'email' | 'code'>('email')
@@ -92,7 +91,7 @@ function ForgotPasswordForm() {
 
   return (
     <div className="au">
-      <Suspense fallback={null}><LoginCanvas /></Suspense>
+      <LoginCanvas />
 
       <div className="au-card">
         <div className="mb-6">

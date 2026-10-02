@@ -1,8 +1,9 @@
 // Bare layout for the signed-out admin pages (login, forgot and reset password). No sidebar.
 //
-// Nobody is signed in here, so there is no user theme to apply: these pages follow the device's
-// light or dark setting and use the agency's brand colour as the accent, set before the first
-// paint the same way the admin does (ThemeScript). admin.css is loaded for its tokens.
+// Nobody is signed in here, so there is no user theme to apply. These pages are always light (the
+// agency's logo is made for a white background) and use the agency's brand colour as the accent,
+// set before the first paint the same way the admin does (ThemeScript). admin.css is loaded for
+// its tokens.
 
 import '@/styles/admin.css'
 import '@/styles/admin/auth.css'
@@ -26,7 +27,7 @@ async function brandAccent(): Promise<string> {
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <ThemeScript mode="auto" accent={await brandAccent()} />
+      <ThemeScript mode="light" accent={await brandAccent()} />
       {children}
     </>
   )
