@@ -1,69 +1,119 @@
 /* ═════════════════════════════════════════════════════════════════════════════
-   Alerts — /admin/alerts
+   Alerts — /admin/alerts, an inbox: day headings, quiet rows, repeats collapsed into one.
    Imported by AlertsPage and the route's loading state. Every class is al- so nothing leaks.
 ═════════════════════════════════════════════════════════════════════════════ */
 
-.al-tabs { margin-bottom: 16px; max-width: 100%; }
+.al-summary { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; }
+.al-summary strong { font-weight: 650; color: var(--text-primary); }
+.al-summary-critical, .al-summary-critical strong { color: var(--red-fg); }
+
+.al-filters { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; margin: 14px 0; }
+.al-client-filter .input { width: 260px; max-width: 100%; }
+
+/* Select mode: one bar with the select-all box and what to do with the selection. */
+.al-bulk {
+  position: sticky; top: 8px; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 8px 10px 8px 14px; border-radius: var(--radius-md);
+  background: var(--bg-elevated); box-shadow: var(--shadow-md), 0 0 0 1px var(--border);
+}
+.al-bulk-all { display: inline-flex; align-items: center; gap: 10px; font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); cursor: pointer; }
+.al-bulk-actions { display: flex; gap: 8px; }
+.al-danger { color: var(--red-fg); }
+
+/* ── The list ─────────────────────────────────────────────────────────────── */
 
 .al-list { padding: 0; overflow: hidden; }
-
-/* One alert: severity tile, title, the detail, then client, type and time. */
-.al-row { position: relative; align-items: flex-start; padding: 14px 16px; transition: opacity 0.15s, background 0.15s; }
-.al-row > .ui-tile { margin-top: 1px; }
-.al-row .ui-row-text { gap: 3px; }
-.al-row .ui-row-title { gap: 6px 8px; }
-.al-row--new { background: color-mix(in srgb, var(--accent) 5%, var(--bg-surface)); }
-.al-row--busy { opacity: 0.45; pointer-events: none; }
-
-.al-body {
-  margin: 0; font-size: 0.8125rem; line-height: 1.55; color: var(--text-secondary);
-  white-space: pre-wrap; overflow-wrap: anywhere;
+.al-day + .al-day { border-top: 1px solid var(--border); }
+.al-day-head {
+  display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 8px 16px;
+  background: var(--bg-subtle); border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem; font-weight: 650; color: var(--text-secondary);
 }
-.al-body strong { font-weight: 600; color: var(--text-primary); }
+.al-day-count { font-weight: 500; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.al-rows { margin: 0; padding: 0; list-style: none; }
+
+.al-row + .al-row { border-top: 1px solid var(--border-subtle); }
+.al-row[aria-busy="true"] { opacity: 0.45; pointer-events: none; }
+.al-row[data-selected="true"] { background: var(--accent-soft); }
+.al-row-head { display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 10px; }
+.al-row-head:hover { background: var(--bg-hover); }
+.al-row[data-selected="true"] .al-row-head:hover { background: transparent; }
+
+.al-check { display: flex; align-items: center; height: 30px; padding-left: 4px; }
+.al-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* The unread dot sits in the gutter before the icon, so read and unread rows line up. */
+.al-lead { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.al-dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; flex-shrink: 0; }
+.al-row[data-unread="true"] .al-lead .al-dot { background: var(--accent); }
+.al-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); }
+.al-icon--critical { background: var(--red-subtle); color: var(--red-fg); }
+.al-icon--warning  { background: var(--amber-subtle); color: var(--amber-fg); }
+.al-icon--info     { background: var(--accent-soft); color: var(--accent); }
+
+.al-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; border-radius: var(--radius-sm); cursor: pointer; outline: none; }
+.al-main:focus-visible { box-shadow: var(--ring); }
+.al-meta { display: flex; align-items: baseline; gap: 8px; font-size: 0.75rem; }
+.al-client { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-secondary); }
+.al-meta-time { display: none; }
+.al-titleline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.al-title { min-width: 0; font-size: 0.875rem; font-weight: 500; line-height: 1.4; color: var(--text-secondary); overflow-wrap: anywhere; }
+.al-row[data-unread="true"] .al-title { font-weight: 650; color: var(--text-primary); }
+.al-count {
+  flex-shrink: 0; padding: 0 6px; border-radius: var(--radius-pill); background: var(--bg-muted);
+  font-size: 0.7rem; font-weight: 650; color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
+.al-caret { flex-shrink: 0; display: inline-block; color: var(--text-faint); transition: transform 0.15s; }
+.al-row[data-expanded="true"] .al-caret { transform: rotate(180deg); }
+.al-preview { font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
+
+.al-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.al-time { font-size: 0.75rem; color: var(--text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The row's actions wait for hover or focus on a wide screen, and are always there on a phone. */
+.al-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.al-row-head:hover .al-actions, .al-row-head:focus-within .al-actions, .al-row[data-expanded="true"] .al-actions { opacity: 1; }
+@media (hover: none) { .al-actions { opacity: 1; } }
+.al-action {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 28px; height: 28px; padding: 0 6px;
+  border: none; border-radius: var(--radius-sm); background: none; font: inherit; font-size: 0.75rem; font-weight: 600;
+  color: var(--text-muted); text-decoration: none; cursor: pointer;
+}
+.al-action:hover { background: var(--bg-muted); color: var(--text-primary); }
+.al-action--dismiss:hover { background: var(--red-subtle); color: var(--red-fg); }
+.al-action:focus-visible { outline: none; box-shadow: var(--ring); }
+.al-action:disabled { opacity: 0.5; cursor: default; }
+
+/* Opened: the full body, every time it fired, and the two actions. */
+.al-detail { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 14px 63px; }
+.al-full { font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary); }
+.al-history { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; }
+.al-history-title { margin: 0; padding: 7px 12px; background: var(--bg-subtle); font-size: 0.75rem; font-weight: 650; color: var(--text-secondary); }
+.al-history ol { margin: 0; padding: 0; list-style: none; max-height: 260px; overflow: auto; }
+.al-occ { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-top: 1px solid var(--border-subtle); font-size: 0.78rem; }
+.al-occ[data-unread="true"] .al-dot { background: var(--accent); }
+.al-occ-time { flex-shrink: 0; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.al-occ-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.al-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.al-body strong { font-weight: 650; color: var(--text-primary); }
+.al-body-p { margin: 0; }
+.al-body-p + .al-body-p { margin-top: 4px; }
+.al-body-list { margin: 4px 0 0; padding-left: 18px; }
+
 .al-more {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; margin: 1px 0 0; padding: 2px 4px; margin-left: -4px;
-  border: none; border-radius: 5px; background: none; font: inherit; font-size: 0.75rem; font-weight: 600;
-  color: var(--accent); cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; border-top: 1px solid var(--border); font-size: 0.78rem; color: var(--text-muted);
 }
-.al-more:hover { text-decoration: underline; text-underline-offset: 3px; }
-.al-more:focus-visible { outline: none; box-shadow: var(--ring); }
-
-.al-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin-top: 3px; }
-.al-when { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.al-dot { color: var(--text-faint); }
-.al-meta time { font-variant-numeric: tabular-nums; }
-
-/* The client, as a chip that opens their page. */
-.al-client {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 8px 1px 6px; border-radius: var(--radius-pill);
-  background: var(--bg-subtle); box-shadow: inset 0 0 0 1px var(--border);
-  font-size: 0.75rem; font-weight: 600; line-height: 1.6; color: var(--text-secondary); text-decoration: none;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
-}
-a.al-client:hover { background: var(--bg-hover); color: var(--text-primary); }
-a.al-client:focus-visible { outline: none; box-shadow: var(--ring); }
-.al-client svg { flex-shrink: 0; color: var(--text-faint); }
-
-.al-actions { gap: 4px; }
-.al-dismiss {
-  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 36px; height: 36px; margin: -2px -6px -2px -4px;
-  border: none; border-radius: var(--radius); background: none; color: var(--text-faint); cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.al-dismiss:hover { background: var(--bg-hover); color: var(--text-primary); }
-.al-dismiss:focus-visible { outline: none; box-shadow: var(--ring); }
-.al-actions .btn-sm { min-height: 32px; }
+.al-more-error { color: var(--red-fg); }
 
 @media (max-width: 639px) {
-  .al-row { padding: 14px; }
-  /* Dismiss moves to the top corner; View sits under the text, lined up with it. */
-  .al-row .ui-row-text { padding-right: 26px; }
-  .al-row .al-dismiss { position: absolute; top: 8px; right: 6px; margin: 0; }
-  .al-row .ui-row-actions { padding-left: 44px; justify-content: flex-start; }
-  .al-actions .btn-sm { min-height: 36px; }
+  .al-client-filter { flex: 1 1 100%; }
+  .al-client-filter .input { width: 100%; }
+  .al-row-head { gap: 10px; padding: 12px 8px 12px 6px; }
+  .al-meta-time { display: inline; margin-left: auto; }
+  .al-aside-time { display: none; }
+  .al-aside { padding-top: 22px; }
+  .al-action-label { display: none; }
+  .al-detail { padding: 0 12px 14px 12px; }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .al-row, .al-client, .al-dismiss { transition: none; }
-}
+@media (prefers-reduced-motion: reduce) { .al-caret, .al-actions { transition: none; } }
