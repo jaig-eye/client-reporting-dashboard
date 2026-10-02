@@ -1,6 +1,7 @@
 // My Profile — /admin/users/me
-// Regular admins update their name, email, avatar, and password here.
-// Super admin sees why there's nothing to edit — their account is environment-based.
+// Regular admins update their name, email, avatar, password and theme here.
+// Super admin sees why there's nothing else to edit — their account is environment-based — and
+// can still switch the theme for this visit.
 
 import '@/styles/admin/users.css'
 import { getAdminSession } from '@/lib/auth'
@@ -10,6 +11,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import Section from '@/components/ui/Section'
 import ProfileForm  from './ProfileForm'
 import McpTokens   from './McpTokens'
+import ThemeSection from './ThemeSection'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,10 +24,13 @@ export default async function MyProfilePage() {
     return (
       <div className="us-page">
         <PageHeader title="Your profile" />
-        <Section
-          title="Super admin account"
-          description={<>This account is set by the <code>ADMIN_PASSWORD</code> environment variable on the server, so there’s nothing to change here.</>}
-        />
+        <div className="ui-stack">
+          <Section
+            title="Super admin account"
+            description={<>This account is set by the <code>ADMIN_PASSWORD</code> environment variable on the server, so there’s nothing to change here.</>}
+          />
+          <ThemeSection saved={false} />
+        </div>
       </div>
     )
   }
@@ -40,7 +45,7 @@ export default async function MyProfilePage() {
 
   return (
     <div className="us-page">
-      <PageHeader title="Your profile" description="Your name, photo and password, and your Claude Code access." />
+      <PageHeader title="Your profile" description="Your name, photo, password and theme, and your Claude Code access." />
       <div className="ui-stack">
         <ProfileForm
           userId={session.userId!}
@@ -48,6 +53,7 @@ export default async function MyProfilePage() {
           initialEmail={user?.email ?? ''}
           initialAvatarUrl={user?.avatar_url ?? ''}
         />
+        <ThemeSection />
         <McpTokens appUrl={process.env.NEXT_PUBLIC_APP_URL ?? 'https://dash.golaunchlocal.com'} />
         <Section
           title="Sign out"

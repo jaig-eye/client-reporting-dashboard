@@ -1,7 +1,8 @@
 import '@/styles/admin/users.css'
 import { Sk, SkCard, SkHeader, SkPage } from '@/components/ui/Skeleton'
 
-// Your profile while it loads: header, the profile section with its photo, then the password one.
+// Your profile while it loads: header, the profile section with its photo, the password one, then
+// the theme.
 export default function ProfileLoading() {
   const field = (w: string) => <span style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><Sk w={w} h={11} /><Sk h={38} r={8} /></span>
   return (
@@ -16,6 +17,12 @@ export default function ProfileLoading() {
             </span>
           </SkCard>
           <SkCard><span className="ui-fields" style={{ marginTop: 16 }}>{field('22%')}<span className="ui-grid-2">{field('30%')}{field('36%')}</span></span></SkCard>
+          <SkCard>
+            <span className="ui-fields" style={{ marginTop: 16 }}>
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><Sk w="14%" h={11} /><Sk w={210} h={34} r={8} /></span>
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><Sk w="16%" h={11} /><Sk w={260} h={30} r={8} /></span>
+            </span>
+          </SkCard>
         </div>
       </div>
     </SkPage>

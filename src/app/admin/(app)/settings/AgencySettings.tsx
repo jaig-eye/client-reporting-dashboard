@@ -17,9 +17,7 @@ import Section from '@/components/ui/Section'
 import Field from '@/components/ui/Field'
 import { SwitchRow } from '@/components/ui/Switch'
 import EmptyState from '@/components/ui/EmptyState'
-import { useTheme } from '@/components/ThemeProvider'
 import { DEFAULT_IMAGE_MODEL } from '@/lib/content/imageModels'
-import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import { SettingsSkeleton } from './SettingsSkeleton'
 import { isSettingsTab, type SettingsTab } from './tabs'
@@ -552,13 +550,11 @@ export default function AgencySettings() {
         </>)}
 
         {panel('colors', <>
-          <Section title="Brand color" description="The main color across the admin and client dashboards. Each admin can still choose their own accent below.">
+          <Section title="Brand color" description={<>The main color across the admin and client dashboards. Each admin can still choose their own accent in <Link href="/admin/users/me">My profile</Link>.</>}>
             <Field label="Brand color" id="se-brand">
               <ColorInput id="se-brand" value={form.brand_primary} onChange={v => field('brand_primary', v)} />
             </Field>
           </Section>
-
-          <ThemeControls />
 
           <Section title="Chart colors" description="The Daily performance chart on every client dashboard.">
             <div className="ui-grid-2">
@@ -820,78 +816,6 @@ export default function AgencySettings() {
         </div>
       </form>
     </div>
-  )
-}
-
-// ─── Per-user theme ───────────────────────────────────────────────────────────
-
-// Preset accents. These are values a person picks (stored on their profile), not styling.
-const ACCENT_PRESETS = [
-  { label: 'Blue',    value: '#2563eb' },
-  { label: 'Purple',  value: '#7c3aed' },
-  { label: 'Emerald', value: '#059669' },
-  { label: 'Rose',    value: '#e11d48' },
-  { label: 'Amber',   value: '#d97706' },
-  { label: 'Slate',   value: '#475569' },
-]
-
-const MODES: { value: ThemeMode; label: string }[] = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark',  label: 'Dark'  },
-  { value: 'auto',  label: 'Auto'  },
-]
-
-function ThemeControls() {
-  const theme = useTheme()
-  if (!theme) return null
-  const { mode, accentColor, setMode, setAccent } = theme
-
-  return (
-    <Section title="Your theme" description="Only changes what you see, and saves straight away. Each admin can set their own.">
-      <div className="ui-fields">
-        <div className="ui-field">
-          <span className="ui-field-label" id="se-mode-label">Color mode</span>
-          <div className="ui-tabs" style={{ alignSelf: 'flex-start' }}>
-            <div className="ui-tabs-track" role="radiogroup" aria-labelledby="se-mode-label">
-              {MODES.map(({ value, label }) => (
-                <button key={value} type="button" role="radio" aria-checked={mode === value} className="ui-tab" onClick={() => setMode(value)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="ui-field-hint">Auto follows your device’s setting.</p>
-        </div>
-
-        <div className="ui-field">
-          <span className="ui-field-label" id="se-accent-label">Accent color</span>
-          <div className="ui-swatches" role="radiogroup" aria-labelledby="se-accent-label">
-            {ACCENT_PRESETS.map(preset => (
-              <button
-                key={preset.value}
-                type="button"
-                role="radio"
-                aria-checked={accentColor === preset.value}
-                aria-label={preset.label}
-                title={preset.label}
-                className="ui-swatch"
-                style={{ '--sw': preset.value } as React.CSSProperties}
-                onClick={() => setAccent(preset.value)}
-              />
-            ))}
-            <input
-              type="color"
-              className="ui-swatch-custom"
-              value={accentColor || '#2563eb'}
-              onChange={e => setAccent(e.target.value)}
-              aria-label="Custom accent color"
-              title="Custom color"
-            />
-            <span className="ui-swatch-value">{accentColor}</span>
-          </div>
-        </div>
-      </div>
-    </Section>
   )
 }
 
