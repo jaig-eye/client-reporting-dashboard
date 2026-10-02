@@ -141,9 +141,19 @@ export const SLOT_STATUSES = ['pending', 'approved', 'generating', 'generated', 
  * Without this a schedule change made every date of the new schedule that fell between the old
  * plan's dates look empty (weekly on Mondays to monthly, say), and the cron planned them on top of
  * the old plan. The frontier date itself is included, so a date short of posts_per_run is topped up.
+ *
+ * Forward also keeps the cadence's spacing: the next date must be at least half a cycle after the
+ * frontier (14 days for monthly, 7 for every two weeks, 4 for weekly). A plan made under one rule
+ * can end a few days before the new rule's next date: a monthly plan on the old calendar day ran
+ * to Dec 2, and the first Monday after it is Dec 7, which would have put two posts five days apart
+ * in one month. On an unchanged schedule the next date is a whole cycle out, so this never bites.
  */
-export function forwardSlots(slots: string[], frontier: string | null): string[] {
-  return frontier ? slots.filter(s => s >= frontier) : slots
+export function forwardSlots(slots: string[], frontier: string | null, frequency: string): string[] {
+  if (!frontier) return slots
+  const from = Date.parse(frontier + 'T00:00:00Z')
+  const minGapDays = getCycleDays(frequency) / 2
+  return slots.filter(s =>
+    s === frontier || (s > frontier && (Date.parse(s + 'T00:00:00Z') - from) / DAY_MS >= minGapDays))
 }
 
 /**
@@ -225,6 +235,7 @@ export async function nextOpenSlot(
   const slots = forwardSlots(
     computeFutureSlots(frequency, dayOfWeek, Math.ceil(horizon / 7) + 1, s.schedule_start_date).filter(slot => daysFromNow(slot) > 0),
     frontier,
+    frequency,
   )
   if (slots.length === 0) return null
 

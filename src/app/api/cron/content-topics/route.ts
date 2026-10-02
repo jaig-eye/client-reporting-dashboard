@@ -282,7 +282,7 @@ export async function GET(request: NextRequest) {
     // An unreadable frontier skips the client: filling without one is how a plan gets doubled.
     const frontier = await planFrontier(db, client_id)
     if (frontier === undefined) console.warn(`[content-topics cron] plan frontier unreadable for ${client_id}, skipping its topic generation this run`)
-    for (const slot of frontier === undefined ? [] : forwardSlots(slots, frontier)) {
+    for (const slot of frontier === undefined ? [] : forwardSlots(slots, frontier, frequency)) {
       if (suppressed.has(slot)) {
         console.log(`[content-topics cron] slot ${slot} suppressed for ${client_id} — skipping`)
         continue
@@ -987,7 +987,7 @@ export async function GET(request: NextRequest) {
             // for Regenerate plan, never this run.
             const saFrontier = ((allSaTopics ?? []) as SaTopicRow[])
               .reduce<string | null>((max, t) => (t.target_publish_date && (!max || t.target_publish_date > max) ? t.target_publish_date : max), null)
-            for (const slot of forwardSlots(saSlots, saFrontier)) {
+            for (const slot of forwardSlots(saSlots, saFrontier, saFrequency)) {
               if (saSuppressed.has(slot)) {
                 console.log(`[content-topics cron] SA slot ${slot} suppressed for ${saClientId} — skipping`)
                 continue
