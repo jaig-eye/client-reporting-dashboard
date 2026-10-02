@@ -132,8 +132,46 @@ export function computeFutureSlots(
 // person turned down is dealt with and is not refilled.
 export const SLOT_STATUSES = ['pending', 'approved', 'generating', 'generated', 'scheduled', 'rejected', 'published']
 
+/**
+ * Automatic planning only moves forward. A client's frontier is the latest date its plan reaches;
+ * the cron fills cadence dates on or after it and never goes back for an empty date before it, even
+ * one still in the future. Those gaps (left by a schedule change, a deleted or moved topic) are
+ * filled only by Regenerate plan, which a person presses.
+ *
+ * Without this a schedule change made every date of the new schedule that fell between the old
+ * plan's dates look empty (weekly on Mondays to monthly, say), and the cron planned them on top of
+ * the old plan. The frontier date itself is included, so a date short of posts_per_run is topped up.
+ */
+export function forwardSlots(slots: string[], frontier: string | null): string[] {
+  return frontier ? slots.filter(s => s >= frontier) : slots
+}
+
+/**
+ * The latest publish date of any topic holding a date in the client's plan (blog posts and pages;
+ * service-area pages run on their own schedule). Null when there is none, undefined when it could
+ * not be read: callers skip the client then, since filling from no frontier could double a plan.
+ */
+export async function planFrontier(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: SupabaseClient<any>,
+  clientId: string,
+): Promise<string | null | undefined> {
+  const { data, error } = await db
+    .from('content_topics')
+    .select('target_publish_date')
+    .eq('client_id', clientId)
+    .in('status', SLOT_STATUSES)
+    .not('target_publish_date', 'is', null)
+    .or('content_type.is.null,content_type.neq.service_area')
+    .order('target_publish_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return undefined
+  return (data as { target_publish_date?: string | null } | null)?.target_publish_date ?? null
+}
+
 export interface NextOpenSlot {
-  /** The first future publish date with room for another post. */
+  /** The first publish date on or after the plan's frontier with room for another post. */
   date:         string
   /**
    * When the topic cron gets to it: the day the date enters the client's planning window. Null when
@@ -145,8 +183,9 @@ export interface NextOpenSlot {
 }
 
 /**
- * The next date the topic cron will fill for a client, and when — the same window, cadence and
- * occupancy rules the cron applies. Null when the client has no schedule or nothing could be read.
+ * The next date the topic cron will fill for a client, and when — the same window, cadence,
+ * frontier and occupancy rules the cron applies. Null when the client has no schedule or nothing
+ * could be read.
  */
 export async function nextOpenSlot(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -181,8 +220,12 @@ export async function nextOpenSlot(
 
   // Past the window by a few cycles, so a full window still answers with the date after it.
   const horizon = leadWindow + cycle * 4
-  const slots = computeFutureSlots(frequency, dayOfWeek, Math.ceil(horizon / 7) + 1, s.schedule_start_date)
-    .filter(slot => daysFromNow(slot) > 0)
+  const frontier = await planFrontier(db, clientId)
+  if (frontier === undefined) return null
+  const slots = forwardSlots(
+    computeFutureSlots(frequency, dayOfWeek, Math.ceil(horizon / 7) + 1, s.schedule_start_date).filter(slot => daysFromNow(slot) > 0),
+    frontier,
+  )
   if (slots.length === 0) return null
 
   const [topics, suppressions] = await Promise.all([

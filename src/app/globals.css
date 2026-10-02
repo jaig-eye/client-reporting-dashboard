@@ -1338,15 +1338,6 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 @keyframes plan-running-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .plan-running-dot { animation: none; } }
 
-/* Pipeline: automatic planning paused after a schedule change, until Regenerate plan. */
-.plan-hold {
-  display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 8px;
-  background: var(--amber-subtle); border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
-  font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary);
-}
-.plan-hold strong { color: var(--text-primary); font-weight: 600; }
-.plan-hold-dot { width: 8px; height: 8px; margin-top: 6px; flex-shrink: 0; border-radius: 50%; background: var(--amber); }
-
 /* Sitemap paste: a quiet link that opens a box. */
 .smp-link {
   padding: 0; border: none; background: none; cursor: pointer;

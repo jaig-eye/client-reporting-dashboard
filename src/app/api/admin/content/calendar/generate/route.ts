@@ -17,9 +17,7 @@
 // set first — the split the cron makes date by date. silo_id instead plans only that set's dates.
 //
 // While a plan runs, content_settings.plan_generation holds { started_at, dates } so the Pipeline
-// can show it after a refresh. GET ?client_id= returns it (null when none is running), and the
-// schedule hold (lib/content/scheduleHold): { since, stranded } when a schedule change has paused
-// the cron for this client, null otherwise. A real blog plan run lifts the hold.
+// can show it after a refresh. GET ?client_id= returns it (null when none is running).
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -31,7 +29,6 @@ import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
 import { windowSlots, alignToFortnight, firstWeekdayOfMonth } from '@/lib/content/scheduleSlots'
 import { waitingSets, splitSlotsBySets }  from '@/lib/content/siloQueue'
-import { readScheduleHold, setScheduleHold, plannedBlogDates, offScheduleDates, resolveCadence, globalCadence } from '@/lib/content/scheduleHold'
 
 export const maxDuration = 300
 
@@ -49,31 +46,16 @@ export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('client_id')
   if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
 
-  const db = createAdminClient()
-  const [hold, { data, error }] = await Promise.all([
-    scheduleHoldFor(db, clientId),
-    db.from('content_settings').select('plan_generation').eq('client_id', clientId).maybeSingle(),
-  ])
+  const { data, error } = await createAdminClient()
+    .from('content_settings').select('plan_generation').eq('client_id', clientId).maybeSingle()
   // Before migration 229 the column is missing: say nothing is running, as before.
-  if (error) return NextResponse.json({ running: null, hold })
+  if (error) return NextResponse.json({ running: null })
   const marker = (data as { plan_generation?: { started_at?: string; dates?: string[] } | null } | null)?.plan_generation
   const started = marker?.started_at ? Date.parse(marker.started_at) : NaN
   if (!marker || Number.isNaN(started) || Date.now() - started > PLAN_MARKER_TTL_MS) {
-    return NextResponse.json({ running: null, hold })
+    return NextResponse.json({ running: null })
   }
-  return NextResponse.json({ running: { started_at: marker.started_at, dates: Array.isArray(marker.dates) ? marker.dates : [] }, hold })
-}
-
-/** The client's schedule hold, with the planned dates the current schedule no longer uses. */
-async function scheduleHoldFor(db: ReturnType<typeof createAdminClient>, clientId: string): Promise<{ since: string; stranded: string[] } | null> {
-  const since = await readScheduleHold(db, clientId)
-  if (!since) return null
-  const [own, global, planned] = await Promise.all([
-    db.from('content_settings').select('schedule_frequency, schedule_day_of_week, schedule_start_date').eq('client_id', clientId).maybeSingle().then(r => r.data),
-    globalCadence(db),
-    plannedBlogDates(db, clientId),
-  ])
-  return { since, stranded: planned ? offScheduleDates(planned, resolveCadence(own, global)) : [] }
+  return NextResponse.json({ running: { started_at: marker.started_at, dates: Array.isArray(marker.dates) ? marker.dates : [] } })
 }
 
 export async function POST(request: NextRequest) {
@@ -262,11 +244,6 @@ export async function POST(request: NextRequest) {
       cleared: cleared.filter(d => dates.includes(d)), from_sets: setShares(plan),
     })
   }
-
-  // A person planning the client's blog dates is what the schedule hold waits for: from here the
-  // cron keeps the new schedule's dates filled again. A single priority set's plan, or service
-  // pages, is not a re-plan of the schedule and leaves the hold alone.
-  if (!silo_id && (!content_type || content_type === 'blog')) await setScheduleHold(db, client_id, false)
 
   if (plan.length === 0) {
     return NextResponse.json({

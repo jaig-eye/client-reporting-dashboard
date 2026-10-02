@@ -10,8 +10,15 @@ function stubDb({ settings, global = null, topics = [], suppressed = [] }) {
       const q = { table, isNull: false }
       const chain = {
         select: () => chain, eq: () => chain, in: () => chain, order: () => chain, limit: () => chain,
+        not: () => chain, or: () => chain,
         is: (col, v) => { if (v === null) q.isNull = true; return chain },
-        maybeSingle: async () => ({ data: q.isNull ? global : settings, error: null }),
+        // content_topics' single row is the plan's frontier: its latest date.
+        maybeSingle: async () => ({
+          data: table === 'content_topics'
+            ? (topics.length ? { target_publish_date: [...topics].sort().at(-1) } : null)
+            : q.isNull ? global : settings,
+          error: null,
+        }),
         then: (res) => res({
           data: table === 'content_topics' ? topics.map(d => ({ target_publish_date: d })) : suppressed.map(d => ({ target_publish_date: d })),
           error: null,
@@ -57,3 +64,29 @@ test('the fixed monthly dates are unchanged', (t) => {
   assert.deepEqual(S.computeFutureSlots('monthly_mid', 1, 9), ['2026-10-15', '2026-11-15'])
   assert.deepEqual(S.computeFutureSlots('monthly_end', 3, 9), ['2026-10-28', '2026-11-28'])
 })
+
+// ── Planning only moves forward ──────────────────────────────────────────────
+
+test('forward slots: from the plan’s last date on, that date included', () => {
+  const slots = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26']
+  assert.deepEqual(S.forwardSlots(slots, '2026-10-12'), ['2026-10-12', '2026-10-19', '2026-10-26'])
+  assert.deepEqual(S.forwardSlots(slots, null), slots)
+  assert.deepEqual(S.forwardSlots(slots, '2026-11-30'), [])
+})
+
+test('a gap before the plan’s last date is left for Regenerate plan', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
+  // Oct 12 is empty, but Oct 19 is planned: the next date the cron fills is Oct 26.
+  const r = await S.nextOpenSlot(stubDb({ settings: weekly, topics: ['2026-10-05', '2026-10-19'] }), 'c')
+  assert.deepEqual(r, { date: '2026-10-26', picksOn: null, autoGenerate: true })
+})
+
+test('weekly to monthly: the old weekly plan stands and monthly carries on after it', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
+  // Planned weekly through Oct 26. The first Monday of October (Oct 5) sits inside the old plan's
+  // span and is left alone; the first Monday of November is the next date filled.
+  const monthly = { ...weekly, schedule_frequency: 'monthly', weeks_ahead: 2 }
+  const r = await S.nextOpenSlot(stubDb({ settings: monthly, topics: ['2026-10-12', '2026-10-19', '2026-10-26'] }), 'c')
+  assert.equal(r.date, '2026-11-02')
+})
+

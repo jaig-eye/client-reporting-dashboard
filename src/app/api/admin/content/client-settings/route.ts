@@ -3,7 +3,6 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                   from '@/lib/activity'
-import { CADENCE_FIELDS, cadenceMoved, offScheduleDates, plannedBlogDates, resolveCadence, globalCadence, setScheduleHold } from '@/lib/content/scheduleHold'
 import { parseBody }                     from '@/lib/apiError'
 
 /**
@@ -140,16 +139,6 @@ export async function PUT(request: NextRequest) {
     } catch { /* column absent — nothing moves */ }
   }
 
-  // The schedule as it was, to tell whether this save moves the client's publish dates.
-  const touchesCadence = CADENCE_FIELDS.some(f => f in row)
-  const [cadenceBefore, cadenceGlobal] = touchesCadence
-    ? await Promise.all([
-        db.from('content_settings').select(CADENCE_FIELDS.join(', ')).eq('client_id', String(client_id)).maybeSingle()
-          .then(r => (r.data ?? null) as Record<string, unknown> | null),
-        globalCadence(db),
-      ])
-    : [null, null]
-
   let { error } = await db
     .from('content_settings')
     .upsert(row, { onConflict: 'client_id', ignoreDuplicates: false })
@@ -174,22 +163,6 @@ export async function PUT(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // A schedule change that leaves planned topics on dates the new schedule doesn't use holds the
-  // client's automatic planning (see lib/content/scheduleHold): otherwise the cron plans every new
-  // date on top of the old plan. Moving back to a schedule the plan fits lifts the hold again.
-  let scheduleHold: boolean | null = null
-  if (touchesCadence) {
-    const before = resolveCadence(cadenceBefore, cadenceGlobal)
-    const after  = resolveCadence({ ...(cadenceBefore ?? {}), ...Object.fromEntries(CADENCE_FIELDS.filter(f => f in row).map(f => [f, row[f]])) }, cadenceGlobal)
-    if (cadenceMoved(before, after)) {
-      const planned = await plannedBlogDates(db, String(client_id))
-      if (planned) {
-        const stranded = offScheduleDates(planned, after)
-        if (await setScheduleHold(db, String(client_id), stranded.length > 0)) scheduleHold = stranded.length > 0
-      }
-    }
-  }
-
   if (locationMoved && 'research_location' in row) {
     const { error: resetErr } = await db.from('seo_keywords')
       .update({ last_checked_at: null })
@@ -211,7 +184,5 @@ export async function PUT(request: NextRequest) {
     clientId: String(client_id),
     meta: { fields: Object.keys(body).filter(k => k !== 'client_id') },
   })
-  // schedule_hold: true when this save paused automatic planning, false when it lifted it, null
-  // when the schedule's dates didn't move.
-  return NextResponse.json({ ok: true, schedule_hold: scheduleHold })
+  return NextResponse.json({ ok: true })
 }

@@ -78,9 +78,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   const [generating,        setGenerating]        = useState(false)
   // A plan picking topics in the background, read from the server so it survives a refresh.
   const [planRunning,       setPlanRunning]       = useState<{ started_at: string; dates: string[] } | null>(null)
-  // The schedule changed under a planned backlog, so the cron is leaving this client's dates for
-  // Regenerate plan (lib/content/scheduleHold). stranded: planned dates the schedule no longer uses.
-  const [scheduleHold,      setScheduleHold]      = useState<{ since: string; stranded: string[] } | null>(null)
   const [showNewPost,       setShowNewPost]       = useState(false)
 
   const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -117,10 +114,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
   const checkPlanRunning = useCallback(() => {
     fetch(`/api/admin/content/calendar/generate?client_id=${clientId}`)
       .then(r => r.ok ? r.json() : { running: null })
-      .then((d: { running?: { started_at: string; dates: string[] } | null; hold?: { since: string; stranded: string[] } | null }) => {
-        setPlanRunning(d.running ?? null)
-        setScheduleHold(d.hold ?? null)
-      })
+      .then((d: { running?: { started_at: string; dates: string[] } | null }) => setPlanRunning(d.running ?? null))
       .catch(() => { /* keep what is shown; the next check corrects it */ })
   }, [clientId])
   useEffect(() => { checkPlanRunning() }, [checkPlanRunning])
@@ -553,19 +547,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
         <button className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>+ New Post</button>
       </div>
 
-      {/* ── Automatic planning waiting for a re-plan after a schedule change ── */}
-      {scheduleHold && !planRunning && (
-        <div className="plan-hold" role="status">
-          <span className="plan-hold-dot" aria-hidden />
-          <span>
-            <strong>Automatic planning is paused.</strong>{' '}
-            The schedule changed on {fmtShort(scheduleHold.since.slice(0, 10))}
-            {scheduleHold.stranded.length > 0 && <>, and {scheduleHold.stranded.length} planned date{scheduleHold.stranded.length === 1 ? ' isn’t' : 's aren’t'} on it any more ({scheduleHold.stranded.slice(0, 6).map(fmtShort).join(', ')}{scheduleHold.stranded.length > 6 ? ', …' : ''})</>}
-            . No new dates are planned until you press Regenerate plan. Topics already planned stay where they are; delete any you don’t want.
-          </span>
-        </div>
-      )}
-
       {/* ── A plan picking topics in the background ───────────────────────── */}
       {planRunning && (
         <div className="plan-running" role="status">
@@ -737,12 +718,6 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                           : 'Every upcoming date already has a topic.')
                         : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
                 </dd>
-                {planMode === 'regenerate' && scheduleHold && scheduleHold.stranded.length > 0 && (<>
-                  <dt style={{ color: 'var(--text-muted)' }}>Old schedule</dt>
-                  <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                    {scheduleHold.stranded.length} planned topic{scheduleHold.stranded.length === 1 ? ' stays' : 's stay'} on {scheduleHold.stranded.length === 1 ? 'a date' : 'dates'} the schedule no longer uses ({scheduleHold.stranded.slice(0, 6).map(fmtShort).join(' · ')}{scheduleHold.stranded.length > 6 ? ' · …' : ''}). Delete any you don’t want.
-                  </dd>
-                </>)}
                 <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
                 <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                   {autoGenerate

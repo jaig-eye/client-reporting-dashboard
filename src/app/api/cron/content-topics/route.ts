@@ -22,8 +22,7 @@ import { sendEmail }                 from '@/lib/email'
 import { buildTopicsEmail, buildPostsEmail } from '@/lib/content/emailTemplates'
 import { sendDiscordMessage }        from '@/lib/discord'
 import { getNotif, type NotifConfig } from '@/lib/notificationConfig'
-import { getCycleDays, computeFutureSlots, leadWindowDays, windowSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
-import { heldClientIds } from '@/lib/content/scheduleHold'
+import { getCycleDays, computeFutureSlots, leadWindowDays, windowSlots, SLOT_STATUSES, planFrontier, forwardSlots } from '@/lib/content/scheduleSlots'
 import { waitingSets } from '@/lib/content/siloQueue'
 
 // ── Cron handler ──────────────────────────────────────────────────────────────
@@ -155,10 +154,6 @@ export async function GET(request: NextRequest) {
   const briefsGenerated: string[] = []
   const postsTriggered:  string[] = []
 
-  // Clients whose schedule changed under a planned backlog. Their dates wait for Regenerate plan;
-  // filling them here would plan the new schedule on top of the old one. See lib/content/scheduleHold.
-  const held = await heldClientIds(db)
-
   for (const row of settingsRows) {
     const {
       client_id,
@@ -281,11 +276,13 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── Topic generation: cover every slot in the lead window ─────────────
-    if (held.has(client_id)) {
-      console.log(`[content-topics cron] ${client_id}: schedule changed with topics still planned on the old dates — leaving its dates for Regenerate plan`)
-    }
-    for (const slot of held.has(client_id) ? [] : slots) {
+    // ── Topic generation: the lead window's dates from the plan's frontier on ──
+    // Only forward: an empty date before the plan's last one is left for Regenerate plan
+    // (scheduleSlots.forwardSlots), so a schedule change can't plan its dates on top of the old plan.
+    // An unreadable frontier skips the client: filling without one is how a plan gets doubled.
+    const frontier = await planFrontier(db, client_id)
+    if (frontier === undefined) console.warn(`[content-topics cron] plan frontier unreadable for ${client_id}, skipping its topic generation this run`)
+    for (const slot of frontier === undefined ? [] : forwardSlots(slots, frontier)) {
       if (suppressed.has(slot)) {
         console.log(`[content-topics cron] slot ${slot} suppressed for ${client_id} — skipping`)
         continue
@@ -986,7 +983,11 @@ export async function GET(request: NextRequest) {
               }
             }
 
-            for (const slot of saSlots) {
+            // Forward from the latest service-area date, as for blog dates: gaps before it are
+            // for Regenerate plan, never this run.
+            const saFrontier = ((allSaTopics ?? []) as SaTopicRow[])
+              .reduce<string | null>((max, t) => (t.target_publish_date && (!max || t.target_publish_date > max) ? t.target_publish_date : max), null)
+            for (const slot of forwardSlots(saSlots, saFrontier)) {
               if (saSuppressed.has(slot)) {
                 console.log(`[content-topics cron] SA slot ${slot} suppressed for ${saClientId} — skipping`)
                 continue
