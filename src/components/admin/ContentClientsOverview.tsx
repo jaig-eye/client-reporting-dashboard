@@ -35,7 +35,7 @@ const Unknown = () => <span className="cco-unknown" title="Couldn’t load this"
 const HELP = {
   automation: 'Running: the planner picks topics, writes the posts and publishes them on their dates. Paused: nothing happens until someone does it by hand.',
   schedule:   'How often this client publishes, how many posts go out on each date, how far ahead the planner fills dates, and the date the schedule counts from.',
-  planned:    'The furthest date that has a topic, and how many publish dates after it, inside the planning window, still have room for one. Automation only plans forward, so empty dates before the furthest one are listed apart: Regenerate plan fills them.',
+  planned:    'The furthest date that has a topic, and how many publish dates after it, inside the planning window, still have room for one. Automation only plans forward, so empty dates it skips (before the furthest one, or too close after it) are listed apart: Regenerate plan fills them.',
   review:     'Posts written and waiting for someone to review them, and how many of those have a publish date that has already gone by.',
   published:  'The newest post that is live on the client’s site.',
   length:     'The length posts are written to, in words.',
@@ -111,8 +111,8 @@ function Row({ r }: { r: ClientOverviewRow }) {
               </span>
             )}
             {(r.planned.gaps ?? 0) > 0 && (
-              <span className="cco-sub" title="Empty dates before the last planned one. Automation only plans forward; Regenerate plan fills these.">
-                {plural(r.planned.gaps!, 'earlier date')} empty
+              <span className="cco-sub" title="Empty dates automation doesn't go back for: before the last planned one, or too close after it for the schedule. Regenerate plan fills them.">
+                {plural(r.planned.gaps!, 'date')} skipped
               </span>
             )}
           </>

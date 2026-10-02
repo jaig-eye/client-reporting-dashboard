@@ -69,9 +69,9 @@ test('the fixed monthly dates are unchanged', (t) => {
 
 test('forward slots: from the plan’s last date on, that date included', () => {
   const slots = ['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26']
-  assert.deepEqual(S.forwardSlots(slots, '2026-10-12'), ['2026-10-12', '2026-10-19', '2026-10-26'])
-  assert.deepEqual(S.forwardSlots(slots, null), slots)
-  assert.deepEqual(S.forwardSlots(slots, '2026-11-30'), [])
+  assert.deepEqual(S.forwardSlots(slots, '2026-10-12', 'weekly'), ['2026-10-12', '2026-10-19', '2026-10-26'])
+  assert.deepEqual(S.forwardSlots(slots, null, 'weekly'), slots)
+  assert.deepEqual(S.forwardSlots(slots, '2026-11-30', 'weekly'), [])
 })
 
 test('a gap before the plan’s last date is left for Regenerate plan', async (t) => {
@@ -84,9 +84,21 @@ test('a gap before the plan’s last date is left for Regenerate plan', async (t
 test('weekly to monthly: the old weekly plan stands and monthly carries on after it', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
   // Planned weekly through Oct 26. The first Monday of October (Oct 5) sits inside the old plan's
-  // span and is left alone; the first Monday of November is the next date filled.
-  const monthly = { ...weekly, schedule_frequency: 'monthly', weeks_ahead: 2 }
+  // span and is left alone, and the first Monday of November is a week after the last weekly post,
+  // under half a month: the first monthly date is December's.
+  const monthly = { ...weekly, schedule_frequency: 'monthly', weeks_ahead: 3 }
   const r = await S.nextOpenSlot(stubDb({ settings: monthly, topics: ['2026-10-12', '2026-10-19', '2026-10-26'] }), 'c')
-  assert.equal(r.date, '2026-11-02')
+  assert.equal(r.date, '2026-12-07')
+})
+
+test('forward keeps the cadence spacing: no new date days after the plan’s last one', () => {
+  // A monthly plan on the old calendar day ran to Dec 2; the first Monday after it is Dec 7.
+  // Five days is under half a cycle (14), so the next monthly date is the first Monday of January.
+  assert.deepEqual(S.forwardSlots(['2026-12-07', '2027-01-04', '2027-02-01'], '2026-12-02', 'monthly'), ['2027-01-04', '2027-02-01'])
+  // Weekly Monday to Thursday: Thursday three days after the last Monday waits a week.
+  assert.deepEqual(S.forwardSlots(['2026-10-29', '2026-11-05'], '2026-10-26', 'weekly'), ['2026-11-05'])
+  // An unchanged schedule is a whole cycle out, so nothing is held back; the last date can be topped up.
+  assert.deepEqual(S.forwardSlots(['2026-11-02', '2026-12-07'], '2026-11-02', 'monthly'), ['2026-11-02', '2026-12-07'])
+  assert.deepEqual(S.forwardSlots(['2026-10-03', '2026-10-04'], '2026-10-02', 'daily'), ['2026-10-03', '2026-10-04'])
 })
 

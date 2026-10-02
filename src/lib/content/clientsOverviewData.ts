@@ -244,13 +244,15 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
           frequency, dayOfWeek, weeksAhead: cs.weeks_ahead, scheduleStartDate: cs.schedule_start_date,
         })
         // The cron fills from the plan's frontier on (scheduleSlots.forwardSlots): open dates are the
-        // ones it is behind on; empty dates before the frontier wait for Regenerate plan.
+        // ones it is behind on; the empty dates it skips (before the frontier, or too close after it)
+        // wait for Regenerate plan.
         const frontier = mine.filter(t => t.content_type !== 'service_area')
           .reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
         const dates = mine.map(t => t.target_publish_date)
         const off = (suppressedBy.get(id) ?? []).map(s => s.target_publish_date)
-        open = countOpenDates(forwardSlots(slots, frontier), dates, off, cs.posts_per_run ?? 1)
-        gaps = countOpenDates(frontier ? slots.filter(s => s < frontier) : [], dates, off, cs.posts_per_run ?? 1)
+        const ahead = forwardSlots(slots, frontier, frequency)
+        open = countOpenDates(ahead, dates, off, cs.posts_per_run ?? 1)
+        gaps = countOpenDates(slots.filter(s => !ahead.includes(s)), dates, off, cs.posts_per_run ?? 1)
       }
       planned = { through, open, gaps }
     }
