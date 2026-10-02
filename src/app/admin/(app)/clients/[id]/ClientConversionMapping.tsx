@@ -124,7 +124,7 @@ export default function ClientConversionMapping({
           className="btn btn-primary"
           style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
         >
-          {saving ? 'Saving…' : 'Save Mapping'}
+          {saving ? 'Saving…' : 'Save the mapping'}
         </button>
         {saved && (
           <span className="text-xs" style={{ color: 'var(--green)' }}>✓ Saved</span>

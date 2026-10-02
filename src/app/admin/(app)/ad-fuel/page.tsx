@@ -124,7 +124,7 @@ function fmtDay(iso: string): string {
 }
 
 const PACE: Record<string, { tone: StatusTone; label: string }> = {
-  'On Pace':       { tone: 'success', label: 'On pace' },
+  'On pace':       { tone: 'success', label: 'On pace' },
   'Underspending': { tone: 'warning', label: 'Underspending' },
   'Overspending':  { tone: 'danger',  label: 'Overspending' },
 }
@@ -148,7 +148,7 @@ function balanceTitle(row: DashRow): string | undefined {
   return undefined
 }
 
-const ENTRY_TYPES = ['MRR', 'One-Time', 'ACH', 'Catch Up', 'Other']
+const ENTRY_TYPES = ['MRR', 'One-Time', 'ACH', 'Catch up', 'Other']
 
 function sortValue(row: DashRow, key: string): string | number {
   switch (key) {
@@ -168,7 +168,7 @@ function sortValue(row: DashRow, key: string): string | number {
     case 'rawDailyBudget':     return row.rawDailyBudget ?? -1
     case 'afDailyBudget':      return row.afDailyBudget  ?? -1
     case 'pace': {
-      const o: Record<string, number> = { 'Overspending': 2, 'On Pace': 1, 'Underspending': 0 }
+      const o: Record<string, number> = { 'Overspending': 2, 'On pace': 1, 'Underspending': 0 }
       return o[row.pace] ?? -1
     }
     default: return 0

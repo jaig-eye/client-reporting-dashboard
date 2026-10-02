@@ -92,7 +92,7 @@ export default function ClientIntegrationCards({
         open={discordOpen}
         onClose={() => setDiscordOpen(false)}
         onSaved={() => { setDiscordJustSaved(true); setTimeout(() => setDiscordJustSaved(false), 2000) }}
-        title="Discord Alert Channel"
+        title="Discord alert channel"
         brand="discord"
         isConnected={discordConnected}
         canDelete={discordConnected}
@@ -139,7 +139,7 @@ export default function ClientIntegrationCards({
         open={stripeOpen}
         onClose={() => setStripeOpen(false)}
         onSaved={() => { setStripeJustSaved(true); setTimeout(() => setStripeJustSaved(false), 2000) }}
-        title="Stripe Customer"
+        title="Stripe customer"
         brand="stripe"
         isConnected={stripeConnected}
         canDelete={stripeConnected}

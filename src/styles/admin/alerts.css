@@ -49,7 +49,7 @@
 .al-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); }
 .al-icon--critical { background: var(--red-subtle); color: var(--red-fg); }
 .al-icon--warning  { background: var(--amber-subtle); color: var(--amber-fg); }
-.al-icon--info     { background: var(--accent-soft); color: var(--accent); }
+.al-icon--info     { background: var(--accent-soft); color: var(--accent-fg); }
 
 .al-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; border-radius: var(--radius-sm); cursor: pointer; outline: none; }
 .al-main:focus-visible { box-shadow: var(--ring); }

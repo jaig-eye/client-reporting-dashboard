@@ -78,8 +78,8 @@ export function NoteTemplateFields({
       {template.fields.map(f => (
         <label key={f.key} style={{ gridColumn: f.wide ? '1 / -1' : 'auto', minWidth: 0 }}>
           <span style={{
-            display: 'block', fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.03em',
-            textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 2,
+            display: 'block', fontSize: '0.72rem', fontWeight: 600,
+            color: 'var(--text-muted)', marginBottom: 2,
           }}>
             {f.label}
           </span>

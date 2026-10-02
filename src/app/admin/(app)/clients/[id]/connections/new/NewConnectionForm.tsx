@@ -91,13 +91,13 @@ export default function NewConnectionForm({
       <form onSubmit={handleSubmit} className="space-y-4">
         {status === 'error' && errorMsg && (
           <div className="rounded-xl px-4 py-3 text-sm"
-            style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+            style={{ background: 'var(--red-subtle)', border: '1px solid var(--red-border)', color: 'var(--red-fg)' }}>
             {errorMsg}
           </div>
         )}
         <div>
           <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-            Website Domain <span style={{ color: 'var(--red)' }}>*</span>
+            Website Domain <span style={{ color: 'var(--red-fg)' }}>*</span>
           </label>
           <input
             className="input"
@@ -138,7 +138,7 @@ export default function NewConnectionForm({
 
         <div className="flex items-center gap-3 pt-2">
           <button type="submit" className="btn btn-primary" disabled={status === 'saving' || !externalId.trim()}>
-            {status === 'saving' ? 'Connecting…' : 'Connect Domain'}
+            {status === 'saving' ? 'Connecting…' : 'Connect the domain'}
           </button>
           <a href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</a>
         </div>
@@ -150,7 +150,7 @@ export default function NewConnectionForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       {status === 'error' && errorMsg && (
         <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          style={{ background: 'var(--red-subtle)', border: '1px solid var(--red-border)', color: 'var(--red-fg)' }}>
           {errorMsg}
         </div>
       )}
@@ -206,7 +206,7 @@ export default function NewConnectionForm({
 
       <div className="flex items-center gap-3 pt-2">
         <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
-          {status === 'saving' ? 'Connecting…' : 'Connect Account'}
+          {status === 'saving' ? 'Connecting…' : 'Connect the account'}
         </button>
         <a href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</a>
       </div>

@@ -15,6 +15,7 @@
 //     post exists, because a written keyword is never used again
 //   - an inline box to add more keywords at any time, and × to remove one that is still waiting
 
+import { ArrowSquareOut } from '@phosphor-icons/react'
 import { useState, type ReactNode } from 'react'
 import {
   canPickNow, fmtPublishDay, isHub, linkTasksOf, parseKeywordLines, stateOf, takesDates,
@@ -150,7 +151,7 @@ export default function PrioritySetCard({
         <p className="pt-hub">
           Main page:{' '}
           {set.hub_page_url
-            ? <a href={set.hub_page_url} target="_blank" rel="noopener noreferrer">{set.hub_page_title || set.hub_page_url}<span aria-hidden> ↗</span></a>
+            ? <a href={set.hub_page_url} target="_blank" rel="noopener noreferrer">{set.hub_page_title || set.hub_page_url}<ArrowSquareOut size={12} className="pt-ext" aria-label="opens in a new tab" /></a>
             : set.hub_page_title}
           . Each post links to it and to this set’s earlier live posts; the links back are yours to add, listed below as posts go live.
         </p>
@@ -256,7 +257,7 @@ function KeywordRow({ k, upNext, slot, onRemove }: { k: SetKeyword; upNext: bool
   const state = stateOf(k)
   let detail: ReactNode = null
   if (state === 'live' && k.post) {
-    detail = <a href={k.post.published_url!} target="_blank" rel="noopener noreferrer" className="pt-kw-link">{k.post.title || 'View post'}<span aria-hidden> ↗</span></a>
+    detail = <a href={k.post.published_url!} target="_blank" rel="noopener noreferrer" className="pt-kw-link">{k.post.title || 'View post'}<ArrowSquareOut size={12} className="pt-ext" aria-label="opens in a new tab" /></a>
   } else if (state === 'written' && k.post) {
     detail = <>{k.post.title || 'Untitled post'}{k.post.target_publish_date && <span className="pt-kw-date"> · for {fmtPublishDay(k.post.target_publish_date)}</span>}</>
   } else if (state === 'picked') {
@@ -395,7 +396,7 @@ function LinkTaskRow({ task, onDone }: { task: LinkTask; onDone: (task: LinkTask
 
 function PageLink({ url, title }: { url: string | null; title: string }) {
   return url
-    ? <a href={url} target="_blank" rel="noopener noreferrer" className="pt-link-page"><strong>{title}</strong><span aria-hidden> ↗</span></a>
+    ? <a href={url} target="_blank" rel="noopener noreferrer" className="pt-link-page"><strong>{title}</strong><ArrowSquareOut size={12} className="pt-ext" aria-label="opens in a new tab" /></a>
     : <strong>{title}</strong>
 }
 

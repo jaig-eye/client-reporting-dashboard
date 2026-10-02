@@ -132,7 +132,7 @@ export default function ClientAutoPauseSettings({
       {/* Pause log */}
       {pauseLog.length > 0 && (
         <div className="card p-5">
-          <h2 className="section-title mb-3">Pause / Resume Log</h2>
+          <h2 className="section-title mb-3">Pause and resume log</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {pauseLog.map(entry => {
               const { label, color, bg } = actionLabel(entry.action)

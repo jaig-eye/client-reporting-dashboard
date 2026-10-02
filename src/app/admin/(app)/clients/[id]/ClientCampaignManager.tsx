@@ -1,6 +1,8 @@
 'use client'
 
 import { SkRows } from '@/components/ui/Skeleton'
+import Switch from '@/components/ui/Switch'
+import { CheckCircle, WarningCircle } from '@phosphor-icons/react'
 import { useEffect, useState, useCallback } from 'react'
 
 interface CampaignRow {
@@ -88,9 +90,9 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Campaign</th>
-                  <th style={{ textAlign: 'center', padding: '0.375rem 0.5rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 180 }}>Display Mode</th>
-                  <th style={{ textAlign: 'center', padding: '0.375rem 0.5rem', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 80 }}>Visible</th>
+                  <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Campaign</th>
+                  <th style={{ textAlign: 'center', padding: '0.375rem 0.5rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', width: 180 }}>Display mode</th>
+                  <th style={{ textAlign: 'center', padding: '0.375rem 0.5rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', width: 80 }}>Visible</th>
                   <th style={{ width: 32 }} />
                 </tr>
               </thead>
@@ -112,15 +114,17 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
                         />
                       </td>
                       <td style={{ padding: '0.5rem', textAlign: 'center' }}>
-                        <VisibilityToggle
-                          visible={!c.hidden}
+                        <Switch
+                          checked={!c.hidden}
                           onChange={v => update(c.source, c.campaign_id, { hidden: !v })}
+                          label={`Show ${c.campaign_name} on the dashboard`}
+                          hideLabel
                         />
                       </td>
                       <td style={{ padding: '0.5rem', width: 32, textAlign: 'center' }}>
-                        {state === 'saving' && <span style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>…</span>}
-                        {state === 'saved'  && <span style={{ fontSize: '0.75rem', color: 'var(--green)' }}>✓</span>}
-                        {state === 'error'  && <span style={{ fontSize: '0.75rem', color: 'var(--red)' }}>✗</span>}
+                        {state === 'saving' && <span className="ui-dot-busy" aria-label="Saving" />}
+                        {state === 'saved'  && <CheckCircle size={15} weight="fill" className="ui-saved" aria-label="Saved" />}
+                        {state === 'error'  && <WarningCircle size={15} weight="fill" className="ui-savefail" aria-label="Didn\u2019t save" />}
                       </td>
                     </tr>
                   )
@@ -136,49 +140,12 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
 
 function ModeToggle({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div style={{ display: 'inline-flex', borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden', fontSize: '0.75rem' }}>
-      {(['lead_gen', 'ecommerce'] as const).map(mode => {
-        const active = value === mode
-        return (
-          <button
-            key={mode}
-            onClick={() => onChange(mode)}
-            style={{
-              padding: '0.2rem 0.6rem',
-              border: 'none',
-              cursor: 'pointer',
-              fontWeight: active ? 600 : 400,
-              background:  active ? (mode === 'ecommerce' ? 'var(--blue)' : 'var(--green)') : 'transparent',
-              color:       active ? '#fff' : 'var(--text-muted)',
-              transition:  'all 0.12s',
-            }}
-          >
-            {mode === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function VisibilityToggle({ visible, onChange }: { visible: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!visible)}
-      title={visible ? 'Click to hide from dashboard' : 'Click to show in dashboard'}
-      style={{
-        width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
-        background: visible ? 'var(--blue)' : 'var(--border)',
-        position: 'relative', transition: 'background 0.15s',
-        flexShrink: 0,
-      }}
-    >
-      <span style={{
-        position: 'absolute', top: 2, left: visible ? 18 : 2,
-        width: 16, height: 16, borderRadius: 8,
-        background: '#fff', transition: 'left 0.15s',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
-      }} />
-    </button>
+    <span className="ui-picks ui-picks--sm" role="group" aria-label="What this campaign reports">
+      {(['lead_gen', 'ecommerce'] as const).map(mode => (
+        <button key={mode} type="button" className="ui-pick" aria-pressed={value === mode} onClick={() => onChange(mode)}>
+          {mode === 'lead_gen' ? 'Lead gen' : 'Ecommerce'}
+        </button>
+      ))}
+    </span>
   )
 }

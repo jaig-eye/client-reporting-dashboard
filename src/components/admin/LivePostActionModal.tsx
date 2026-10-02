@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { CmsAction } from '@/lib/content/cmsLifecycle'
+import Dialog from '@/components/ui/Dialog'
+import Field from '@/components/ui/Field'
 
 export type LiveMode = 'replace' | 'new_keep' | 'new_remove'
 
@@ -12,6 +14,10 @@ export type LiveMode = 'replace' | 'new_keep' | 'new_remove'
  * Only ever shown when the post actually has a platform id — there is nothing to
  * decide for a post that was never pushed, and an extra click on the common path
  * is exactly how people learn to dismiss dialogs without reading them.
+ *
+ * It is the only human gate on taking down or replacing an article that is LIVE on a client's
+ * site, so it gets full dialog semantics (the shared Dialog: focus kept inside, Escape, the
+ * phone sheet) and every option says whether it's the selected one.
  */
 export default function LivePostActionModal({
   mode,
@@ -62,278 +68,142 @@ export default function LivePostActionModal({
     ? 'Trashes the WordPress copy (recoverable from wp-admin) and deletes the BigCommerce copy. The BigCommerce half is permanent.'
     : isWp
       ? 'Move it to the WordPress trash. Recoverable from wp-admin.'
-      : 'Delete it from BigCommerce. Permanent — BigCommerce has no trash.'
-
-  const optionStyle = (on: boolean): React.CSSProperties => ({
-    display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-    padding: '9px 11px', borderRadius: 7, marginBottom: 6,
-    background: on ? 'var(--blue-subtle, rgba(37,99,235,0.08))' : 'var(--bg-subtle)',
-    border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
-    fontFamily: 'inherit',
-  })
-  const titleStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }
-  const descStyle: React.CSSProperties  = { fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.45 }
+      : 'Delete it from BigCommerce. Permanent: BigCommerce has no trash.'
 
   const destructive = mode === 'remove'
     ? cms === 'delete'
     : liveMode === 'new_remove' && cms === 'delete'
 
-  // ── Dialog semantics ────────────────────────────────────────────────────────
-  //
-  // This modal had none, while its three siblings on the same surface all did — and it is
-  // the one that matters most: it is the only human gate on taking down or replacing an
-  // article that is LIVE on a client's site. A keyboard or screen-reader user got an
-  // unannounced div they could tab out of, with no way to escape and no way to tell which of
-  // three irreversible CMS actions was selected.
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const firstRef  = useRef<HTMLButtonElement>(null)
-  const openerRef = useRef<HTMLElement | null>(null)
+  const firstRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    openerRef.current = document.activeElement as HTMLElement | null
-    firstRef.current?.focus()
-    return () => { openerRef.current?.focus?.() }
-  }, [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { if (!busy) onCancel(); return }
-      if (e.key !== 'Tab') return
-      const root = dialogRef.current
-      if (!root) return
-      const f = root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )
-      if (!f.length) return
-      const first = f[0], last = f[f.length - 1]
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onCancel, busy])
+  const option = (on: boolean, onClick: () => void, title: React.ReactNode, text: React.ReactNode, first = false) => (
+    <button ref={first ? firstRef : undefined} type="button" className="ui-choice" aria-pressed={on} onClick={onClick}>
+      <span className="ui-choice-title">{title}</span>
+      <span className="ui-choice-text">{text}</span>
+    </button>
+  )
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={mode === 'remove' ? 'Remove a live article' : 'Regenerate a live article'}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-      }}
-      onClick={e => { if (e.target === e.currentTarget && !busy) onCancel() }}
+    <Dialog
+      open
+      onClose={onCancel}
+      title={mode === 'remove' ? 'This article is live' : 'This post is already published'}
+      description={<>
+        “{postTitle ?? 'Untitled'}” is on {platformName} right now.
+        {mode === 'remove' ? ' Removing it here doesn’t take it off the site unless you say so.' : ' Choose what the rewrite should do with it.'}
+      </>}
+      role={destructive ? 'alertdialog' : 'dialog'}
+      busy={busy}
+      initialFocus={firstRef}
+      bodyClassName="ui-stack-sm"
+      footer={<>
+        <button type="button" onClick={onCancel} disabled={busy} className="btn btn-secondary">Cancel</button>
+        <button
+          type="button"
+          onClick={() => onConfirm({
+            cms: mode === 'remove' ? cms : (liveMode === 'new_remove' ? cms : 'leave'),
+            ...(mode === 'regenerate'
+              ? {
+                  liveMode,
+                  notes: notes.trim() || undefined,
+                  scope,
+                  steerKeyword: scope === 'new_topic' ? steerKeyword.trim() || undefined : undefined,
+                }
+              : {}),
+          })}
+          disabled={busy}
+          className={`btn ${destructive ? 'btn-danger-solid' : 'btn-primary'}`}
+        >
+          {busy
+            ? 'Working…'
+            : mode === 'remove'
+              ? (cms === 'leave' ? 'Remove from the dashboard' : cms === 'unpublish' ? 'Unpublish and remove' : 'Delete and remove')
+              : 'Start regenerating'}
+        </button>
+      </>}
     >
-      <div ref={dialogRef} style={{
-        background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
-        width: '100%', maxWidth: 520, maxHeight: '86vh', overflowY: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-      }}>
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-            {mode === 'remove' ? 'This article is live' : 'This post is already published'}
-          </h3>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            &ldquo;{postTitle ?? 'Untitled'}&rdquo; is on {platformName} right now.
-            {mode === 'remove'
-              ? ' Removing it here does not take it off the site unless you say so.'
-              : ' Choose what the rewrite should do with it.'}
-          </p>
+      {mode === 'regenerate' && (
+        <div>
+          <p className="ui-label">What should change</p>
+          <div className="ui-choices ui-choices--list">
+            {option(scope === 'rewrite', () => { setScope('rewrite'); setLiveMode('replace') }, 'Rewrite this article',
+              'Keeps the same subject and target keyword, and writes it again. The URL and the topic it ranks for stay as they are.', true)}
+            {option(scope === 'new_topic', () => setScope('new_topic'), 'Pick a new topic',
+              'Retires this subject and its keyword, then writes about something else. With “Replace the live article”, the published URL ends up covering a different subject.')}
+          </div>
         </div>
+      )}
 
-        <div style={{ padding: '14px 16px' }}>
-          {mode === 'regenerate' && (
-            <div style={{ marginTop: 0 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 6 }}>
-                What should change
-              </label>
-              <button
-                ref={firstRef}
-                type="button"
-                style={optionStyle(scope === 'rewrite')}
-                aria-pressed={scope === 'rewrite'}
-                onClick={() => { setScope('rewrite'); setLiveMode('replace') }}
-              >
-                <div style={titleStyle}>Rewrite this article</div>
-                <div style={descStyle}>
-                  Keeps the same subject and target keyword, and writes it again. The URL and the
-                  topic it ranks for stay as they are.
-                </div>
-              </button>
-              <button
-                type="button"
-                style={optionStyle(scope === 'new_topic')}
-                aria-pressed={scope === 'new_topic'}
-                onClick={() => setScope('new_topic')}
-              >
-                <div style={titleStyle}>Pick a new topic</div>
-                <div style={descStyle}>
-                  Retires this subject and its keyword, then writes about something else. With
-                  &ldquo;Replace the live article&rdquo; above, the published URL ends up covering a
-                  different subject.
-                </div>
-              </button>
-            </div>
-          )}
+      {/* Only a NEW topic raises the replace-or-publish-separately question. A rewrite keeps the
+          same post, so it necessarily replaces the live article on publish. */}
+      {mode === 'regenerate' && scope === 'new_topic' && (
+        <div>
+          <p className="ui-label">Where the new article goes</p>
+          <div className="ui-choices ui-choices--list">
+            {option(liveMode === 'replace', () => setLiveMode('replace'), 'Replace the live article',
+              `The rewrite overwrites the existing ${platformName} post when you publish it. Same URL, so existing links and any rankings it has built stay with it. This is almost always what you want.`)}
+            {option(liveMode === 'new_keep', () => setLiveMode('new_keep'), 'Publish as a new post, leave this one up',
+              'The rewrite becomes a separate article. The current one stays live and untouched. Two pages on a similar topic can compete in search, so use this when the new post is about something different.')}
+            {option(liveMode === 'new_remove', () => setLiveMode('new_remove'), 'Publish as a new post, and take this one down',
+              'The rewrite becomes a separate article and the current one is removed from the site.')}
+          </div>
+        </div>
+      )}
 
-          {/* Only a NEW topic raises the replace-or-publish-separately question. A rewrite
-              keeps the same post, so it necessarily replaces the live article on publish. */}
-          {mode === 'regenerate' && scope === 'new_topic' && (
-            <>
-              <button style={optionStyle(liveMode === 'replace')} onClick={() => setLiveMode('replace')}>
-                <div style={titleStyle}>Replace the live article</div>
-                <div style={descStyle}>
-                  The rewrite overwrites the existing {platformName} post when you publish it. Same URL, so
-                  existing links and any rankings it has built stay with it. This is almost always what you want.
-                </div>
-              </button>
-
-              <button style={optionStyle(liveMode === 'new_keep')} onClick={() => setLiveMode('new_keep')}>
-                <div style={titleStyle}>Publish as a new post, leave this one up</div>
-                <div style={descStyle}>
-                  The rewrite becomes a separate article. The current one stays live and untouched.
-                  Two pages on a similar topic can compete with each other in search, so use this
-                  when the new post is genuinely about something different.
-                </div>
-              </button>
-
-              <button style={optionStyle(liveMode === 'new_remove')} onClick={() => setLiveMode('new_remove')}>
-                <div style={titleStyle}>Publish as a new post, and take this one down</div>
-                <div style={descStyle}>
-                  The rewrite becomes a separate article and the current one is removed from the site.
-                </div>
-              </button>
-            </>
-          )}
-
-          {(mode === 'remove' || liveMode === 'new_remove') && (
-            <div style={{ marginTop: mode === 'regenerate' ? 12 : 0 }}>
-              {mode === 'regenerate' && (
-                <p style={{ margin: '0 0 6px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' }}>
-                  How to take it down
-                </p>
-              )}
-
-              {mode === 'remove' && (
-                <button style={optionStyle(cms === 'leave')} onClick={() => setCms('leave')}>
-                  <div style={titleStyle}>Leave it published</div>
-                  <div style={descStyle}>
-                    Removes it from the dashboard only. The article stays live on the client&rsquo;s site.
-                  </div>
-                </button>
-              )}
-
-              <button style={optionStyle(cms === 'unpublish')} onClick={() => setCms('unpublish')}>
-                <div style={titleStyle}>
-                  {isBoth ? 'Take it out of view' : isWp ? 'Revert to draft' : 'Hide from the storefront'}
-                </div>
-                <div style={descStyle}>
-                  {isBoth
-                    ? 'Reverts the WordPress copy to a draft and unpublishes the BigCommerce copy. Both reversible.'
-                    : isWp
-                      ? 'The post stays in WordPress but is no longer visible to visitors. Reversible.'
-                      : 'The post stays in BigCommerce but is unpublished. Reversible.'}
-                </div>
-              </button>
-
-              <button style={optionStyle(cms === 'delete')} onClick={() => setCms('delete')}>
-                <div style={titleStyle}>Delete from {platformName}</div>
-                <div style={descStyle}>{deleteCopy}</div>
-              </button>
-            </div>
-          )}
-
-
-          {mode === 'regenerate' && scope === 'new_topic' && (
-            <div style={{ marginTop: 12 }}>
-              <label htmlFor="live-steer-kw" style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
-                Steer the new topic (optional)
-              </label>
-              <input
-                id="live-steer-kw"
-                value={steerKeyword}
-                onChange={e => setSteerKeyword(e.target.value)}
-                placeholder="e.g. commercial roofing, emergency repair"
-                className="input"
-                style={{ width: '100%', fontSize: 13 }}
-              />
-              <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '4px 0 0' }}>
-                A short phrase. This reaches topic selection, unlike the direction below.
-              </p>
-            </div>
-          )}
-
-          {mode === 'regenerate' && (
-            <div style={{ marginTop: 12 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)', marginBottom: 4 }}>
-                Direction for the rewrite (optional)
-              </label>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                rows={3}
-                placeholder="What was wrong with this one? e.g. too generic, wrong angle, missed the local search intent"
-                style={{
-                  width: '100%', boxSizing: 'border-box', resize: 'vertical',
-                  background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-                  borderRadius: 6, padding: '7px 9px', fontSize: 12.5,
-                  color: 'var(--text-primary)', fontFamily: 'inherit', lineHeight: 1.5,
-                }}
-              />
-            </div>
-          )}
-
-          {destructive && (
-            <div style={{
-              marginTop: 12, padding: '8px 10px', borderRadius: 6,
-              background: '#fee2e2', border: '1px solid #fca5a5',
-              fontSize: 11.5, color: '#b91c1c', lineHeight: 1.5,
-            }}>
-              {isBoth
-                ? 'This removes the article from both live sites. The WordPress copy goes to the trash and can be restored from wp-admin; the BigCommerce copy is deleted permanently, with no trash and no undo.'
+      {(mode === 'remove' || liveMode === 'new_remove') && (
+        <div>
+          {mode === 'regenerate' && <p className="ui-label">How to take it down</p>}
+          <div className="ui-choices ui-choices--list">
+            {mode === 'remove' && option(cms === 'leave', () => setCms('leave'), 'Leave it published',
+              'Removes it from the dashboard only. The article stays live on the client’s site.', true)}
+            {option(cms === 'unpublish', () => setCms('unpublish'),
+              isBoth ? 'Take it out of view' : isWp ? 'Revert to draft' : 'Hide from the storefront',
+              isBoth
+                ? 'Reverts the WordPress copy to a draft and unpublishes the BigCommerce copy. Both reversible.'
                 : isWp
-                  ? 'This removes the article from the live site. It goes to the WordPress trash, so it can be restored from wp-admin if this was a mistake.'
-                  : 'This permanently deletes the article from BigCommerce. There is no trash and no undo.'}
-            </div>
-          )}
+                  ? 'The post stays in WordPress but visitors can’t see it. Reversible.'
+                  : 'The post stays in BigCommerce but is unpublished. Reversible.')}
+            {option(cms === 'delete', () => setCms('delete'), `Delete from ${platformName}`, deleteCopy)}
+          </div>
         </div>
+      )}
 
-        <div style={{ padding: '11px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="btn btn-secondary btn-sm"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => onConfirm({
-              cms: mode === 'remove' ? cms : (liveMode === 'new_remove' ? cms : 'leave'),
-              ...(mode === 'regenerate'
-                ? {
-                    liveMode,
-                    notes: notes.trim() || undefined,
-                    scope,
-                    steerKeyword: scope === 'new_topic' ? steerKeyword.trim() || undefined : undefined,
-                  }
-                : {}),
-            })}
-            disabled={busy}
-            className="btn btn-sm"
-            style={{
-              background: destructive ? 'var(--red, #dc2626)' : 'var(--blue)',
-              color: '#fff', border: 'none', fontWeight: 600,
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            {busy
-              ? 'Working...'
-              : mode === 'remove'
-                ? (cms === 'leave' ? 'Remove from dashboard' : cms === 'unpublish' ? 'Unpublish and remove' : 'Delete and remove')
-                : 'Start regenerating'}
-          </button>
+      {mode === 'regenerate' && scope === 'new_topic' && (
+        <Field label="Steer the new topic (optional)" id="live-steer-kw" hint="A short phrase. This reaches topic selection, unlike the direction below.">
+          <input
+            id="live-steer-kw"
+            className="input"
+            value={steerKeyword}
+            onChange={e => setSteerKeyword(e.target.value)}
+            placeholder="e.g. commercial roofing, emergency repair"
+            aria-describedby="live-steer-kw-hint"
+          />
+        </Field>
+      )}
+
+      {mode === 'regenerate' && (
+        <Field label="Direction for the rewrite (optional)" id="live-notes">
+          <textarea
+            id="live-notes"
+            className="input"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={3}
+            placeholder="What was wrong with this one? e.g. too generic, wrong angle, missed the local search intent"
+            style={{ resize: 'vertical' }}
+          />
+        </Field>
+      )}
+
+      {destructive && (
+        <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>
+          {isBoth
+            ? 'This removes the article from both live sites. The WordPress copy goes to the trash and can be restored from wp-admin; the BigCommerce copy is deleted permanently, with no trash and no undo.'
+            : isWp
+              ? 'This removes the article from the live site. It goes to the WordPress trash, so it can be restored from wp-admin if this was a mistake.'
+              : 'This permanently deletes the article from BigCommerce. There is no trash and no undo.'}
         </div>
-      </div>
-    </div>
+      )}
+    </Dialog>
   )
 }

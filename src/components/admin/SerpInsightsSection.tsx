@@ -278,8 +278,8 @@ function ResultList({ rows }: { rows: Result[] }) {
 function ZoneHeading({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-      color: 'var(--text-faint)', marginBottom: 6,
+      fontSize: '0.75rem', fontWeight: 650,
+      color: 'var(--text-secondary)', marginBottom: 6,
     }}>
       {children}
     </div>

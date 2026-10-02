@@ -180,7 +180,7 @@ export default function ClientRawData({ clientId }: { clientId: string }) {
                 <th style={{ textAlign: 'right' }}>Conv. Value</th>
                 <th style={{ textAlign: 'right' }}>ROAS</th>
                 <th style={{ textAlign: 'right' }}>CTR</th>
-                <th>Action Types</th>
+                <th>Action types</th>
               </tr>
             </thead>
             <tbody>

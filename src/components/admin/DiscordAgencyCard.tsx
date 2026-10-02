@@ -62,7 +62,7 @@ export default function DiscordAgencyCard({ initialBotToken, initialOpsChannelId
         onSave={handleSave}
       >
         <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot Token</label>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Bot token</label>
           <input
             className="input"
             type="password"

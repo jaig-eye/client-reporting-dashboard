@@ -100,12 +100,12 @@ export default function DataForSeoAgencyCard({
         onSave={handleSave}
       >
         <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Login</label>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API login</label>
           <input type="text" className="input" value={login} onChange={e => setLogin(e.target.value)}
             placeholder={hasCreds ? '•••••• (leave blank to keep)' : 'you@example.com'} autoComplete="off" style={{ width: '100%' }} />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Password</label>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API password</label>
           <input type="password" className="input" value={password} onChange={e => setPassword(e.target.value)}
             placeholder={hasCreds ? '•••••• (leave blank to keep)' : 'DataForSEO API password'} autoComplete="off" style={{ width: '100%' }} />
         </div>

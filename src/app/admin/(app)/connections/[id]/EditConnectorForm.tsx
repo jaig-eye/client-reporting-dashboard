@@ -20,7 +20,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-          Reconnect Google Account
+          Reconnect the Google account
         </h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Re-authorize if the connection has expired or you want to switch Google accounts.
@@ -33,7 +33,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
   if (connector.type === 'google_analytics') {
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect the Google account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
         <OAuthConnectButton href="/api/auth/google/start?connector_type=google_analytics" label="Reconnect Google Analytics" variant="secondary" provider="Google" />
       </div>
@@ -43,7 +43,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
   if (connector.type === 'google_search_console') {
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect the Google account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
         <OAuthConnectButton href="/api/auth/google/start?connector_type=google_search_console" label="Reconnect Search Console" variant="secondary" provider="Google" />
       </div>
@@ -53,7 +53,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
   if (connector.type === 'google_business_profile') {
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect Google Account</h3>
+        <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reconnect the Google account</h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Re-authorize if the connection has expired.</p>
         <OAuthConnectButton href="/api/auth/google/start?connector_type=google_business_profile" label="Reconnect Business Profile" variant="secondary" provider="Google" />
       </div>
@@ -115,7 +115,7 @@ function AhrefsStatusSection({ connector }: { connector: Connector }) {
         <p className="text-xs mb-3" style={{ color: 'var(--red)' }}>{errMsg}</p>
       )}
       <button type="button" onClick={handleTest} disabled={testing} className="btn btn-secondary">
-        {testing ? 'Testing…' : 'Test Connection'}
+        {testing ? 'Testing…' : 'Test the connection'}
       </button>
       {testResult === 'ok'   && <span className="text-xs ml-3" style={{ color: 'var(--green)' }}>API key is valid.</span>}
       {testResult === 'fail' && <span className="text-xs ml-3" style={{ color: 'var(--red)' }}>API key invalid or unreachable.</span>}
@@ -128,7 +128,7 @@ const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder: s
   google_ads: [
     {
       key:         'mcc_customer_id',
-      label:       'MCC Customer ID',
+      label:       'MCC customer ID',
       placeholder: '1234567890',
       hint:        'Top-level manager account ID (digits only, no dashes).',
     },
@@ -148,7 +148,7 @@ const AUTH_FIELDS: Record<string, { key: string; label: string; placeholder: str
   google_ads: [
     {
       key:         'developer_token',
-      label:       'Developer Token',
+      label:       'Developer token',
       placeholder: 'Leave blank to keep existing',
       hint:        'Found in Google Ads → Admin → API Center under your MCC account.',
     },
@@ -157,7 +157,7 @@ const AUTH_FIELDS: Record<string, { key: string; label: string; placeholder: str
   ahrefs: [
     {
       key:         'api_key',
-      label:       'API Key',
+      label:       'API key',
       placeholder: 'Leave blank to keep existing',
       hint:        'Found in Ahrefs → Account Settings → API. Requires a Standard plan or above.',
     },
@@ -315,7 +315,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
 
         <div className="flex items-center gap-3">
           <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
-            {status === 'saving' ? 'Saving…' : 'Save Changes'}
+            {status === 'saving' ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </form>
@@ -344,7 +344,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
           disabled={discovering}
           className="btn btn-secondary"
         >
-          {discovering ? 'Refreshing…' : 'Refresh Accounts'}
+          {discovering ? 'Refreshing…' : 'Refresh accounts'}
         </button>
       </div>}
 
@@ -368,7 +368,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
               className="btn btn-danger"
               disabled={status === 'deleting'}
             >
-              {status === 'deleting' ? 'Deleting…' : 'Confirm Delete'}
+              {status === 'deleting' ? 'Deleting…' : 'Delete it'}
             </button>
             <button onClick={() => setShowDelete(false)} className="btn btn-secondary">
               Cancel

@@ -73,7 +73,7 @@ export default function SearchApiAgencyCard({ initialApiKey, initialProvider }: 
           <div>
             <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
               <li>Create an account at <strong>serpapi.com</strong>.</li>
-              <li>Copy your <strong>Private API key</strong> from the dashboard and paste it below.</li>
+              <li>Copy your <strong>private API key</strong> from the dashboard and paste it below.</li>
             </ol>
             <p style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-faint)' }}>
               Used to research top-ranking competitor pages so generated posts fill content gaps. Free plan: 250 searches/month.
@@ -89,7 +89,7 @@ export default function SearchApiAgencyCard({ initialApiKey, initialProvider }: 
           </select>
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Key</label>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API key</label>
           <input
             type="password"
             className="input"

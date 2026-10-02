@@ -100,7 +100,7 @@
 }
 .af-client:hover .af-client-name { text-decoration: underline; text-underline-offset: 3px; }
 .af-client:focus-visible { outline: none; box-shadow: var(--ring); }
-.af-robot { display: inline-flex; color: var(--accent); }
+.af-robot { display: inline-flex; color: var(--accent-fg); }
 .af-robot--paused { color: var(--red-fg); }
 
 /* Checkboxes: a 16px box inside a bigger hit area. */

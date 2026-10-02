@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
+import { CheckCircle } from '@phosphor-icons/react'
+import { SwitchRow } from '@/components/ui/Switch'
 import MetricLayoutEditor from '@/components/admin/MetricLayoutEditor'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 
 // Visibility toggles that are not layout-driven
 const VISIBILITY_DEFS = [
-  { id: 'daily_chart', label: 'Daily Performance Chart', desc: 'Daily spend & conversions trend chart' },
-  { id: 'campaigns',   label: 'Campaign Breakdown',      desc: 'Campaign performance table' },
+  { id: 'daily_chart', label: 'Daily performance chart', desc: 'Spend and conversions, day by day' },
+  { id: 'campaigns',   label: 'Campaign breakdown',      desc: 'Campaign performance table' },
 ]
 
 export default function ClientMetricVisibility({
@@ -70,9 +72,9 @@ export default function ClientMetricVisibility({
   return (
     <div className="space-y-6">
 
-      {/* ── Layout Type ─────────────────────────────────────────────── */}
+      {/* ── Layout type ─────────────────────────────────────────────── */}
       <div className="card p-5">
-        <h3 className="section-title mb-1">Layout Type</h3>
+        <h3 className="section-title mb-1">Layout type</h3>
         <p className="section-desc mb-3">
           Choose which preset layout drives this client&rsquo;s KPI cards, top metrics, and table columns.
         </p>
@@ -81,21 +83,12 @@ export default function ClientMetricVisibility({
             <button
               key={val}
               type="button"
+              className="ui-pick"
+              aria-pressed={layoutType === val}
               onClick={() => handleLayoutTypeChange(val)}
               disabled={saving}
-              style={{
-                padding: '0.375rem 0.875rem',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                fontSize: '0.8125rem',
-                fontWeight: layoutType === val ? 600 : 400,
-                background: layoutType === val ? 'var(--blue)' : 'var(--bg-surface)',
-                color: layoutType === val ? '#fff' : 'var(--text-secondary)',
-                cursor: saving ? 'not-allowed' : 'pointer',
-                transition: 'background 0.15s, color 0.15s',
-              }}
             >
-              {val === 'auto' ? 'Auto-detect' : val === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
+              {val === 'auto' ? 'Auto-detect' : val === 'lead_gen' ? 'Lead gen' : 'Ecommerce'}
             </button>
           ))}
         </div>
@@ -104,12 +97,12 @@ export default function ClientMetricVisibility({
         </p>
       </div>
 
-      {/* ── Custom Layout Override ──────────────────────────────────── */}
+      {/* ── Custom layout override ──────────────────────────────────── */}
       <div className="card p-5">
         {/* Header row — always visible */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h3 className="section-title mb-0">Custom Layout Override</h3>
+            <h3 className="section-title mb-0">Custom layout override</h3>
             <p className="section-desc mt-0.5">
               {layoutOverride
                 ? 'Client-specific layout active — overrides the agency default.'
@@ -182,37 +175,20 @@ export default function ClientMetricVisibility({
           {VISIBILITY_DEFS.map(m => {
             const isVisible = !hidden.has(m.id)
             return (
-              <button
+              <SwitchRow
                 key={m.id}
-                onClick={() => toggleVisibility(m.id)}
+                title={m.label}
+                description={m.desc}
+                checked={isVisible}
+                onChange={() => toggleVisibility(m.id)}
                 disabled={saving}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '0.625rem',
-                  padding: '0.625rem 0.875rem', borderRadius: '0.5rem',
-                  border: '1px solid var(--border)',
-                  background: isVisible ? 'var(--bg-surface)' : 'var(--bg-subtle)',
-                  textAlign: 'left', cursor: saving ? 'not-allowed' : 'pointer',
-                  opacity: saving ? 0.6 : 1, width: '100%',
-                  transition: 'background 0.15s',
-                }}
-              >
-                <div style={{ width: 32, height: 18, borderRadius: 9999, background: isVisible ? 'var(--blue)' : 'var(--border)', position: 'relative', flexShrink: 0, transition: 'background 0.15s' }}>
-                  <div style={{ position: 'absolute', top: 2, left: isVisible ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)', marginBottom: 1 }}>{m.label}</p>
-                  <p className="text-xs" style={{ color: 'var(--text-faint)' }}>{m.desc}</p>
-                </div>
-                <span className="text-xs font-medium" style={{ color: isVisible ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
-                  {isVisible ? 'Visible' : 'Hidden'}
-                </span>
-              </button>
+              />
             )
           })}
         </div>
       </div>
 
-      {saved && <p className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</p>}
+      {saved && <p className="ui-saved" role="status"><CheckCircle size={14} weight="fill" aria-hidden />Saved</p>}
     </div>
   )
 }

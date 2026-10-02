@@ -24,7 +24,7 @@
 // Self-contained: owns its data, the add/edit modal, the archive confirm and a local toast.
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ConfirmDialog } from '@/components/ui/Dialog'
 import { useSiloSounds } from '@/lib/useSiloSounds'
 import PrioritySetCard, { type CardNotice } from '@/components/admin/PrioritySetCard'
 import PrioritySetModal, { draftFrom, type SetDraft } from '@/components/admin/PrioritySetModal'
@@ -352,9 +352,9 @@ export default function SiloManager({ clientId, onGenerated }: {
         </div>
       )}
 
-      {/* Dialogs go to the body: the section is a size container, and the tab around it animates
-          with a transform, either of which can pin a fixed overlay to it instead of the window. */}
-      {modal && createPortal(
+      {/* Both dialogs are the shared Dialog, which portals itself out of this section (a size
+          container inside a tab that animates with a transform). */}
+      {modal && (
         <PrioritySetModal
           key={modal.mode === 'edit' ? modal.set.id : 'create'}
           mode={modal.mode}
@@ -363,31 +363,23 @@ export default function SiloManager({ clientId, onGenerated }: {
           error={modalError}
           onCancel={() => setModal(null)}
           onSave={draft => void save(draft)}
-        />,
-        document.body,
+        />
       )}
 
-      {archiving && createPortal(
-        <div className="pt-overlay" onMouseDown={e => { if (e.target === e.currentTarget) setArchiving(null) }}>
-          <div className="pt-modal pt-modal--small card" role="alertdialog" aria-modal="true" aria-labelledby={`${headingId}-arch`}>
-            <div className="pt-modal-head">
-              <h3 id={`${headingId}-arch`} className="pt-modal-title">Archive “{archiving.set.name}”?</h3>
-            </div>
-            <div className="pt-modal-body">
-              <p className="pt-modal-lede">
-                {archiving.active === 1 ? 'One topic from this set is' : `${archiving.active} topics from this set are`} still
-                in the pipeline. {archiving.active === 1 ? 'It stays' : 'They stay'} there and will still be written —
-                archiving only stops this set taking any more publish dates.
-              </p>
-            </div>
-            <div className="pt-modal-foot">
-              <button type="button" className="btn btn-secondary" onClick={() => setArchiving(null)} autoFocus>Keep it</button>
-              <button type="button" className="btn btn-danger" onClick={() => void archive(archiving.set)}>Archive</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ConfirmDialog
+        open={!!archiving}
+        title={`Archive \u201c${archiving?.set.name ?? ''}\u201d?`}
+        confirmLabel="Archive"
+        cancelLabel="Keep it"
+        onClose={() => setArchiving(null)}
+        onConfirm={() => { if (archiving) void archive(archiving.set) }}
+      >
+        <p>
+          {archiving?.active === 1 ? 'One topic from this set is' : `${archiving?.active ?? 0} topics from this set are`} still
+          in the pipeline. {archiving?.active === 1 ? 'It stays' : 'They stay'} there and will still be written;
+          archiving only stops this set taking any more publish dates.
+        </p>
+      </ConfirmDialog>
 
       {toast && <div id="content-toast-container"><div className={`content-toast content-toast--${toast.type}`} role="status">{toast.msg}</div></div>}
     </section>

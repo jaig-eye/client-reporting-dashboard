@@ -15,7 +15,7 @@ export default function PreviewIframe() {
         border: 'none',
         display: 'block',
       }}
-      title="Client Dashboard Preview"
+      title="Client dashboard preview"
     />
   )
 }

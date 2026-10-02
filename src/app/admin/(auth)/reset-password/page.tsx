@@ -168,7 +168,7 @@ function ResetPasswordForm() {
             </div>
 
             {error && (
-              <div className="rounded-lg px-3 py-2 text-sm" style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}>
+              <div className="rounded-lg px-3 py-2 text-sm" style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid var(--red-border)' }}>
                 {error}
               </div>
             )}

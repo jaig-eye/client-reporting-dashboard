@@ -4,14 +4,14 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 const SOURCE_OPTIONS = [
-  { value: 'all',                    label: 'All Sources'          },
+  { value: 'all',                    label: 'All sources'          },
   { value: 'google_ads',             label: 'Google Ads'           },
   { value: 'meta_ads',               label: 'Meta Ads'             },
   { value: 'google_search_console',  label: 'Search Console'       },
   { value: 'google_analytics_4',     label: 'Google Analytics 4'   },
   { value: 'google_business',        label: 'Google Business'      },
   { value: 'ahrefs',                 label: 'Ahrefs'               },
-  { value: 'content',                label: 'Content & Schedule'   },
+  { value: 'content',                label: 'Content and schedule'   },
 ]
 
 export default function DataPurgeButton({ clientId, clientName }: { clientId: string; clientName: string }) {
@@ -67,11 +67,11 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
 
   return (
     <div className="card p-5" style={{ borderColor: 'var(--red)', borderWidth: 1 }}>
-      <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--red)' }}>Danger Zone</h3>
+      <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--red)' }}>Danger zone</h3>
 
-      {/* ── Purge Data ── */}
+      {/* ── Purge data ── */}
       <div style={{ marginTop: '1rem' }}>
-        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Purge Synced Data</p>
+        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Purge synced data</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
           Permanently delete synced data for a source. Client settings, connections, and configuration are kept.
           This cannot be undone.
@@ -116,7 +116,7 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
               onClick={handlePurge}
               disabled={!purgeReady || purgeStatus === 'loading'}
             >
-              {purgeStatus === 'loading' ? 'Purging…' : 'Purge Data'}
+              {purgeStatus === 'loading' ? 'Purging…' : 'Purge data'}
             </button>
             {purgeStatus === 'done' && (
               <span className="text-xs" style={{ color: 'var(--green)' }}>✓ {purgeMsg}</span>
@@ -131,9 +131,9 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
       {/* ── Divider ── */}
       <div style={{ borderTop: '1px solid var(--border)', margin: '1.25rem 0' }} />
 
-      {/* ── Delete Client ── */}
+      {/* ── Delete client ── */}
       <div>
-        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Delete Client</p>
+        <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Delete client</p>
         <p className="text-xs mb-3" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
           Deleting this client will remove all their data sources and sync history. Metrics data is also removed.
           This cannot be undone.
@@ -176,7 +176,7 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
             className="btn btn-danger"
             style={{ fontSize: '0.8rem', padding: '0.375rem 0.75rem' }}
           >
-            Delete Client
+            Delete client
           </button>
         )}
       </div>

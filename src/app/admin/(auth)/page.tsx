@@ -159,7 +159,7 @@ function AdminLoginForm() {
             {error && (
               <div
                 className="rounded-lg px-3 py-2 text-sm"
-                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
               >
                 {error}
               </div>
@@ -224,7 +224,7 @@ function AdminLoginForm() {
             {error && (
               <div
                 className="rounded-lg px-3 py-2 text-sm"
-                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid #fecaca' }}
+                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
               >
                 {error}
               </div>

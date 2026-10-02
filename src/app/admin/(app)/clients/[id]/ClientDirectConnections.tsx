@@ -167,7 +167,7 @@ function GhlModal({ open, onClose, apiKey, setApiKey, locId, setLocId, isConnect
       onSave={onSave}
     >
       <div>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Key</label>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API key</label>
         <input className="input" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
           placeholder="ghl_xxxxxxxxxxxxxxxx" style={{ width: '100%' }} />
       </div>
@@ -212,7 +212,7 @@ function WpModal({ open, onClose, siteUrl, setSiteUrl, username, setUsername, pa
           placeholder="WordPress username" style={{ width: '100%' }} />
       </div>
       <div>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Application Password</label>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Application password</label>
         <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)}
           placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" style={{ width: '100%' }} />
       </div>
@@ -238,19 +238,19 @@ function BcModal({ open, onClose, storeHash, setStoreHash, token, setToken, isCo
       saveLabel={isConnected ? 'Reconnect' : `Connect ${title}`}
       howTo={
         <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-          <li><strong>Store Hash:</strong> Find it in your BigCommerce store URL — it looks like <code>store-<strong>abc123</strong>.mybigcommerce.com</code>. Copy the bold portion.</li>
+          <li><strong>Store hash:</strong> Find it in your BigCommerce store URL — it looks like <code>store-<strong>abc123</strong>.mybigcommerce.com</code>. Copy the bold portion.</li>
           <li><strong>Access Token:</strong> Go to <strong>BigCommerce Admin → Settings → API Accounts → Create API Account (V2/V3)</strong>. Under {scopeNote} Copy the Access Token from the credential sheet — it only shows once.</li>
         </ol>
       }
       onSave={onSave}
     >
       <div>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Store Hash</label>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>Store hash</label>
         <input className="input" value={storeHash} onChange={e => setStoreHash(e.target.value)}
           placeholder="abc123xyz" style={{ width: '100%' }} />
       </div>
       <div>
-        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API Access Token</label>
+        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4 }}>API access token</label>
         <input className="input" type="password" value={token} onChange={e => setToken(e.target.value)}
           placeholder="Access token from API Accounts" style={{ width: '100%' }} />
       </div>

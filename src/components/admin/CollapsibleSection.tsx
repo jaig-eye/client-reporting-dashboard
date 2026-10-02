@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { CaretRight } from '@phosphor-icons/react'
 
 // Presentational accordion section used by the two-pane ContentPostEditor.
 // Matches the MonthlyReviewClientSection accordion styling (var(--border) / .card).
@@ -26,7 +27,7 @@ export default function CollapsibleSection({ title, open, onToggle, badge, child
           fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'none' }}>▸</span>
+        <CaretRight size={12} weight="bold" aria-hidden style={{ flexShrink: 0, color: 'var(--text-muted)', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'none' }} />
         <span style={{ flex: 1 }}>{title}</span>
         {badge}
       </button>

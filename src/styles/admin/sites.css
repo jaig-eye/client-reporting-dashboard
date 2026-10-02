@@ -70,7 +70,7 @@
 .st-r { text-align: right; justify-self: end; }
 .st-beta {
   display: inline-flex; align-items: center; margin-left: 6px; padding: 0 6px; border-radius: var(--radius-pill);
-  font-size: 0.65rem; font-weight: 600; line-height: 1.6; background: var(--accent-soft); color: var(--accent);
+  font-size: 0.65rem; font-weight: 600; line-height: 1.6; background: var(--accent-soft); color: var(--accent-fg);
 }
 
 .st-site { position: relative; }
@@ -96,7 +96,7 @@
 }
 .st-domain > span { overflow: hidden; text-overflow: ellipsis; }
 .st-domain svg { flex-shrink: 0; color: var(--text-faint); transition: color 0.12s; }
-.st-domain:hover, .st-domain:hover svg { color: var(--accent); }
+.st-domain:hover, .st-domain:hover svg { color: var(--accent-fg); }
 .st-domain:focus-visible { outline: none; box-shadow: var(--ring); }
 .st-dot-sep { color: var(--text-faint); }
 .st-platform { flex-shrink: 0; color: var(--text-faint); }
@@ -210,7 +210,7 @@
   display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text-primary); font-weight: 500; text-decoration: none; border-radius: 4px;
 }
-.st-page-url:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.st-page-url:hover { color: var(--accent-fg); text-decoration: underline; text-underline-offset: 3px; }
 .st-page-url:focus-visible { outline: none; box-shadow: var(--ring); }
 .st-issue { display: block; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-issue--clean { color: var(--green-fg); }
@@ -282,7 +282,7 @@
 .st-chip:focus-visible { outline: none; box-shadow: var(--ring); }
 .st-chip-name { font-weight: 600; white-space: nowrap; }
 .st-chip-url { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
-.st-chip-add { flex-shrink: 0; color: var(--accent); }
+.st-chip-add { flex-shrink: 0; color: var(--accent-fg); }
 .st-chip-src { display: inline-flex; flex-shrink: 0; color: var(--text-muted); }
 .st-import-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 @media (max-width: 639px) {

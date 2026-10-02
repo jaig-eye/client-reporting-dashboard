@@ -23,13 +23,13 @@ const GOOD_UP   = new Set(['roas', 'conversions'])  // up = good
 
 function alertColor(alert: MetricAlert): { bg: string; border: string; dot: string } {
   if (alert.alertType === 'daily') {
-    return { bg: 'rgba(239,68,68,0.08)', border: '#ef4444', dot: '#ef4444' }
+    return { bg: 'var(--red-subtle)', border: 'var(--red)', dot: 'var(--red)' }
   }
   const up     = alert.direction === 'up'
   const isGood = GOOD_UP.has(alert.metric) ? up : !up
   return isGood
-    ? { bg: 'rgba(16,185,129,0.08)',  border: '#10b981', dot: '#10b981' }
-    : { bg: 'rgba(245,158,11,0.08)',  border: '#f59e0b', dot: '#f59e0b' }
+    ? { bg: 'var(--green-subtle)', border: 'var(--green)', dot: 'var(--green)' }
+    : { bg: 'var(--amber-subtle)', border: 'var(--amber)', dot: 'var(--amber)' }
 }
 
 function timeLabel(alert: MetricAlert): string {
@@ -101,8 +101,8 @@ export default function MetricAlertBanner() {
                 {alert.platform && (
                   <span style={{
                     fontSize: '0.6875rem', fontWeight: 600, padding: '1px 6px', borderRadius: 4,
-                    background: alert.platform === 'google' ? 'rgba(59,130,246,0.12)' : 'rgba(139,92,246,0.12)',
-                    color:      alert.platform === 'google' ? '#3b82f6'              : '#8b5cf6',
+                    background: 'var(--bg-muted)',
+                    color:      'var(--text-secondary)',
                   }}>
                     {alert.platform === 'google' ? 'Google' : 'Meta'}
                   </span>

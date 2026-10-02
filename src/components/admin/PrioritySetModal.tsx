@@ -17,9 +17,10 @@
 // its default.
 //
 // Editing covers the name, the notes and Advanced. Keywords are added and removed on the set's card,
-// where you can see which ones are already written.
+// where you can see which ones are already written. Built on the shared Dialog (a form: Enter saves).
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useState } from 'react'
+import Dialog from '@/components/ui/Dialog'
 import { MAX_KEYWORDS, MAX_NOTES, parseKeywordLines, type PrioritySet } from '@/components/admin/priorityTopics'
 
 export interface SetDraft {
@@ -53,14 +54,6 @@ export default function PrioritySetModal({ mode, initial, saving, error, onCance
   // Open on edit when a main page is already set, so it is not hidden from the person changing it.
   const [advanced, setAdvanced] = useState(!!(initial.hubUrl || initial.hubTitle))
   const ids = useId()
-  const nameRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { nameRef.current?.focus() }, [])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onCancel() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onCancel, saving])
 
   const { keywords, repeats } = parseKeywordLines(draft.keywords)
   const kept = Math.min(keywords.length, MAX_KEYWORDS)
@@ -68,7 +61,6 @@ export default function PrioritySetModal({ mode, initial, saving, error, onCance
   const canSave = !!draft.name.trim() && !saving
   const set = <K extends keyof SetDraft>(k: K, v: SetDraft[K]) => setDraft(d => ({ ...d, [k]: v }))
 
-  const titleId = `${ids}-title`
   const saveLabel = saving
     ? 'Saving…'
     : mode === 'edit'
@@ -76,31 +68,25 @@ export default function PrioritySetModal({ mode, initial, saving, error, onCance
       : kept > 0 ? `Add ${kept} topic${kept === 1 ? '' : 's'}` : 'Add set'
 
   return (
-    <div className="pt-overlay" onMouseDown={e => { if (e.target === e.currentTarget && !saving) onCancel() }}>
-      <div className="pt-modal card" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-        <div className="pt-modal-head">
-          <div>
-            <h3 id={titleId} className="pt-modal-title">
-              {mode === 'create' ? 'Add priority topics' : `Edit “${initial.name}”`}
-            </h3>
-            <p className="pt-modal-lede">
-              {mode === 'create'
-                ? 'Each keyword becomes one post. They go next in the queue: the next open publish dates, ahead of the usual topic picks, in the order you list them.'
-                : 'Keywords are added and removed on the set itself, where you can see which are already written.'}
-            </p>
-          </div>
-          <button type="button" className="pt-icon-btn" onClick={onCancel} aria-label="Close" disabled={saving}>×</button>
-        </div>
-
-        <form
-          className="pt-modal-body"
-          id={`${ids}-form`}
-          onSubmit={e => { e.preventDefault(); if (canSave) onSave(draft) }}
-        >
+    <Dialog
+      open
+      onClose={onCancel}
+      title={mode === 'create' ? 'Add priority topics' : `Edit “${initial.name}”`}
+      description={mode === 'create'
+        ? 'Each keyword becomes one post. They go next in the queue: the next open publish dates, ahead of the usual topic picks, in the order you list them.'
+        : 'Keywords are added and removed on the set itself, where you can see which are already written.'}
+      busy={saving}
+      onSubmit={() => { if (canSave) onSave(draft) }}
+      bodyClassName="pt-modal-body"
+      footer={<>
+        {error && <p className="ui-dialog-error" role="alert">{error}</p>}
+        <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={!canSave}>{saveLabel}</button>
+      </>}
+    >
           <div className="pt-field">
             <label htmlFor={`${ids}-name`} className="pt-label">What’s this batch about?</label>
             <input
-              ref={nameRef}
               id={`${ids}-name`}
               className="input"
               value={draft.name}
@@ -204,14 +190,6 @@ export default function PrioritySetModal({ mode, initial, saving, error, onCance
               </div>
             )}
           </div>
-        </form>
-
-        <div className="pt-modal-foot">
-          {error && <p className="pt-modal-error" role="alert">{error}</p>}
-          <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={saving}>Cancel</button>
-          <button type="submit" form={`${ids}-form`} className="btn btn-primary" disabled={!canSave}>{saveLabel}</button>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

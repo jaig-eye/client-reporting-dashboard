@@ -11,6 +11,7 @@
 // Multi-tab deduplication: uses localStorage 'payment-sound-last' to ensure
 // only one tab plays the sound when multiple admin tabs are open.
 
+import { CurrencyDollar, X } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { createClient }                from '@/lib/supabase/client'
 
@@ -164,50 +165,22 @@ export default function PaymentNotifier({ soundUrl }: { soundUrl?: string | null
   if (!banner) return null
 
   return (
-    <>
-      <div
-        role="alert"
-        aria-live="polite"
-        style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-          display: 'flex', alignItems: 'center', gap: 12,
-          background: 'var(--bg-surface, #fff)',
-          border: '1px solid var(--border)', borderLeft: '4px solid #16a34a',
-          borderRadius: 10, padding: '12px 16px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
-          minWidth: 260, maxWidth: 380,
-          animation: 'slideInRight 0.25s ease-out',
-        }}
-      >
-        <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>💰</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#16a34a' }}>
-            Payment received —{' '}
-            {new Intl.NumberFormat('en-US', {
-              style: 'currency', currency: (banner.currency ?? 'usd').toUpperCase(),
-            }).format(Number(banner.amount ?? 0))}
+    <div className="ui-toast ui-toast--success" role="status" aria-live="polite">
+      <CurrencyDollar size={18} weight="bold" aria-hidden />
+      <div className="ui-toast-text">
+        <p style={{ margin: 0, fontWeight: 650, color: 'var(--green-fg)' }}>
+          Payment received:{' '}
+          {new Intl.NumberFormat('en-US', {
+            style: 'currency', currency: (banner.currency ?? 'usd').toUpperCase(),
+          }).format(Number(banner.amount ?? 0))}
+        </p>
+        {(banner.client_name || banner.description || banner.customer_email) && (
+          <p style={{ margin: '2px 0 0', fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {[banner.client_name, banner.description ?? banner.customer_email].filter(Boolean).join(', ')}
           </p>
-          {(banner.client_name || banner.description || banner.customer_email) && (
-            <p style={{
-              margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
-              {[banner.client_name, banner.description ?? banner.customer_email].filter(Boolean).join(' · ')}
-            </p>
-          )}
-        </div>
-        <button
-          onClick={() => setBanner(null)}
-          aria-label="Dismiss"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '1rem', flexShrink: 0, padding: 0, lineHeight: 1 }}
-        >✕</button>
+        )}
       </div>
-      <style>{`
-        @keyframes slideInRight {
-          from { transform: translateX(120%); opacity: 0; }
-          to   { transform: translateX(0);    opacity: 1; }
-        }
-      `}</style>
-    </>
+      <button type="button" className="ui-toast-x" onClick={() => setBanner(null)} aria-label="Dismiss"><X size={14} aria-hidden /></button>
+    </div>
   )
 }

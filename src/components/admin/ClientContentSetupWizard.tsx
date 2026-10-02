@@ -104,13 +104,13 @@ const SEED_MAX = 25
 const FREQ_OPTIONS = [
   { id: 'daily',    label: 'Daily',       sub: 'A post every day' },
   { id: 'weekly',   label: 'Weekly',      sub: 'Once a week' },
-  { id: 'biweekly', label: 'Bi-Weekly',   sub: 'Every 2 weeks' },
+  { id: 'biweekly', label: 'Every 2 weeks', sub: 'Every other week' },
   { id: 'monthly',  label: 'Monthly',     sub: 'Once a month' },
 ]
 
 /** The monthly variants Content settings offers. The Monthly button covers all of them. */
 const MONTHLY_DAYS = [
-  { id: 'monthly',       label: 'Same day each month as the start date' },
+  { id: 'monthly',       label: 'The first of a weekday' },
   { id: 'monthly_first', label: '1st of the month' },
   { id: 'monthly_mid',   label: '15th of the month' },
   { id: 'monthly_end',   label: '28th of the month' },
@@ -216,7 +216,7 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // ── Load initial data on mount ─────────────────────────────────────────────
   useEffect(() => {
     async function loadInit() {
-      // Pages already imported for this client are shown, not hidden behind "Fetch Pages". The
+      // Pages already imported for this client are shown, not hidden behind "Fetch pages". The
       // step used to start empty on every visit, so a client whose sitemap had been imported
       // last week looked like it had never been — and fetching again was the only way to see the
       // ticks that were already saved.
@@ -1119,7 +1119,7 @@ function StepWpConnect({
         </>
       ) : (
         <>
-          <Field label="WordPress Site URL" htmlFor="wiz-wp-url">
+          <Field label="WordPress site address" htmlFor="wiz-wp-url">
             <input
               id="wiz-wp-url"
               type="url"
@@ -1129,7 +1129,7 @@ function StepWpConnect({
               className="input"
             />
           </Field>
-          <Field label="WordPress Username" htmlFor="wiz-wp-user">
+          <Field label="WordPress username" htmlFor="wiz-wp-user">
             <input
               id="wiz-wp-user"
               type="text"
@@ -1140,7 +1140,7 @@ function StepWpConnect({
               autoComplete="username"
             />
           </Field>
-          <Field label="Application Password" htmlFor="wiz-wp-password">
+          <Field label="Application password" htmlFor="wiz-wp-password">
             <input
               id="wiz-wp-password"
               type="password"
@@ -1216,7 +1216,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           className="btn btn-primary"
           style={{ fontSize: '0.875rem', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
-          {analyzing ? 'Analyzing…' : 'Analyze Website'}
+          {analyzing ? 'Analyzing…' : 'Analyse the website'}
         </button>
       </div>
 
@@ -1231,7 +1231,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
             {RESEARCH_FIELDS_NOTE}
           </p>
-          <Field label="Business Background" htmlFor="wiz-business-background">
+          <Field label="Business background" htmlFor="wiz-business-background">
             <textarea id="wiz-business-background" value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} className="input wz-ta" />
           </Field>
           <Field label="What they sell" htmlFor="wiz-services" drivesResearch>
@@ -1245,11 +1245,11 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               {SERVICES_HELP}
             </p>
           </Field>
-          <Field label="Target Audience" htmlFor="wiz-target-audience">
+          <Field label="Target audience" htmlFor="wiz-target-audience">
             <input id="wiz-target-audience" type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} className="input" />
           </Field>
 
-          <Field label="Service Areas" htmlFor="wiz-service-areas" drivesResearch>
+          <Field label="Service areas" htmlFor="wiz-service-areas" drivesResearch>
             {/* The same place suggestions as Brand DNA: picking "Melbourne, Florida" off the list
                 stores a name research is known to resolve, instead of a guess at which Melbourne. */}
             <KeywordChipInput
@@ -1264,7 +1264,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           {/* Research Location used to sit here. It was a second place to name the market the
               first service area already names, and in production not one client had ever set it.
               The market is derived from the first service area and shown under it. */}
-          <Field label="Brand Voice" htmlFor="wiz-brand-voice">
+          <Field label="Brand voice" htmlFor="wiz-brand-voice">
             <input id="wiz-brand-voice" type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} className="input" placeholder="Professional, approachable, trustworthy" />
           </Field>
         </div>
@@ -1272,7 +1272,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
 
       {!brandLoaded && !brand.business_background && (
         <div style={{ padding: '2rem', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-          Enter a website URL above and click &quot;Analyze Website&quot; to auto-fill brand info, or continue to fill it in manually.
+          Enter a website URL above and click &quot;Analyse the website&quot; to auto-fill brand info, or continue to fill it in manually.
         </div>
       )}
     </div>
@@ -1288,22 +1288,22 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
       <StepSub>These help the AI write with real authority. E-E-A-T signals significantly improve content quality and rankings for local businesses.</StepSub>
 
       <div className="ui-grid-2" style={{ gap: '0 16px' }}>
-        <Field label="Year Founded" htmlFor="wiz-founded-year">
+        <Field label="Year founded" htmlFor="wiz-founded-year">
           <input id="wiz-founded-year" type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} className="input" placeholder="2003" />
         </Field>
-        <Field label="Phone Number" htmlFor="wiz-phone">
+        <Field label="Phone number" htmlFor="wiz-phone">
           <input id="wiz-phone" type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} className="input" placeholder="(555) 123-4567" />
         </Field>
-        <Field label="Number of Reviews" htmlFor="wiz-reviews">
+        <Field label="Number of reviews" htmlFor="wiz-reviews">
           <input id="wiz-reviews" type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} className="input" placeholder="200+ Google reviews" />
         </Field>
-        <Field label="Owner / Operator Name" htmlFor="wiz-owner">
+        <Field label="Owner or operator" htmlFor="wiz-owner">
           <input id="wiz-owner" type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} className="input" placeholder="John Smith" />
         </Field>
-        <Field label="Licenses / Certifications" htmlFor="wiz-licenses">
+        <Field label="Licences and certifications" htmlFor="wiz-licenses">
           <input id="wiz-licenses" type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} className="input" placeholder="Licensed, Bonded, Insured" />
         </Field>
-        <Field label="Guarantees / Warranties" htmlFor="wiz-guarantees">
+        <Field label="Guarantees and warranties" htmlFor="wiz-guarantees">
           <input id="wiz-guarantees" type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} className="input" placeholder="100% satisfaction guarantee" />
         </Field>
       </div>
@@ -1420,7 +1420,7 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, onPasted, f
           className="btn btn-primary"
           style={{ fontSize: '0.875rem', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
-          {fetching ? 'Fetching…' : 'Fetch Pages'}
+          {fetching ? 'Fetching…' : 'Fetch pages'}
         </button>
       </div>
 
@@ -1485,7 +1485,7 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, onPasted, f
 
       {pages.length === 0 && !fetching && (
         <div style={{ padding: '1.5rem', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-          Enter a sitemap URL above and click &quot;Fetch Pages&quot;, or skip this step.
+          Enter a sitemap URL above and click &quot;Fetch pages&quot;, or skip this step.
         </div>
       )}
     </div>
@@ -1501,7 +1501,8 @@ function StepSchedule({
   imageGen: boolean; setImageGen: (v: boolean) => void
   imagePrompt: string; setImagePrompt: (v: string) => void
 }) {
-  const needsDay = ['weekly', 'biweekly'].includes(schedule.frequency)
+  // Monthly on the first of a weekday names the weekday too; the fixed dates (1st, 15th, 28th) don't.
+  const needsDay = ['weekly', 'biweekly', 'monthly'].includes(schedule.frequency)
   const isMonthly = schedule.frequency.startsWith('monthly')
 
   return (
@@ -1534,21 +1535,21 @@ function StepSchedule({
       </div>
 
       <div className="ui-grid-2" style={{ gap: '0 16px' }}>
-        {needsDay && (
-          <Field label="Day of Week" htmlFor="wiz-day-of-week">
-            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} className="input">
-              {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
-            </select>
-          </Field>
-        )}
         {isMonthly && (
-          <Field label="Day of the Month" htmlFor="wiz-month-day">
+          <Field label="Day of the month" htmlFor="wiz-month-day">
             <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} className="input">
               {MONTHLY_DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
             </select>
           </Field>
         )}
-        <Field label="Posts Each Publish Date" htmlFor="wiz-posts-per-run">
+        {needsDay && (
+          <Field label={schedule.frequency === 'monthly' ? 'Which weekday' : 'Day of the week'} htmlFor="wiz-day-of-week">
+            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} className="input">
+              {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Posts each publish date" htmlFor="wiz-posts-per-run">
           <input
             id="wiz-posts-per-run" type="number" min={1} max={10}
             value={schedule.postsPerRun || ''}
@@ -1557,7 +1558,7 @@ function StepSchedule({
             className="input"
           />
         </Field>
-        <Field label="Weeks Ahead" htmlFor="wiz-weeks-ahead">
+        <Field label="Weeks ahead" htmlFor="wiz-weeks-ahead">
           <input
             id="wiz-weeks-ahead" type="number" min={1} max={24}
             title="How many publish dates the planner keeps topics ready for"
@@ -1567,7 +1568,7 @@ function StepSchedule({
             className="input"
           />
         </Field>
-        <Field label="Start Date" htmlFor="wiz-start-date">
+        <Field label="Start date" htmlFor="wiz-start-date">
           <input
             id="wiz-start-date" type="date"
             title="The first publish date the schedule counts from"
@@ -1576,7 +1577,7 @@ function StepSchedule({
             className="input"
           />
         </Field>
-        <Field label="Publish Time" htmlFor="wiz-publish-time">
+        <Field label="Publish time" htmlFor="wiz-publish-time">
           <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} className="input" />
         </Field>
       </div>
@@ -1641,7 +1642,7 @@ function StepContentTypes({
         <span style={{ marginLeft: 10, verticalAlign: 'middle', display: 'inline-flex' }}><StatusBadge tone="neutral" dot={false}>Coming soon</StatusBadge></span>
       </StepTitle>
       <StepSub>
-        AI-generated Service Pages and Regular Pages alongside blog posts. Not switched on yet —
+        AI-generated Service pages and Regular pages alongside blog posts. Not switched on yet —
         the options below are shown so you can see what is planned, and nothing here is saved.
         Pages can still be generated on demand from the Pipeline tab today.
       </StepSub>
@@ -1649,7 +1650,7 @@ function StepContentTypes({
       {/* Disabled until the automation behind these exists: the content-topics cron reads the
           two flags and deliberately discards them, so a tick here has never driven anything. */}
       <div aria-disabled="true" style={{ opacity: 0.45, pointerEvents: 'none', userSelect: 'none' }}>
-      {/* Service Pages */}
+      {/* Service pages */}
       <div className="card p-4" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <input
@@ -1660,7 +1661,7 @@ function StepContentTypes({
             style={{ width: 18, height: 18, marginTop: 2, cursor: 'pointer', flexShrink: 0 }}
           />
           <label htmlFor="wiz-sp" style={{ cursor: 'pointer', flex: 1 }}>
-            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Service Pages</p>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Service pages</p>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: enableServicePages ? '0.75rem' : 0 }}>
               AI-generated landing pages targeting each of your services. Great for service-based businesses that want dedicated pages per offering.
             </p>
@@ -1678,7 +1679,7 @@ function StepContentTypes({
         )}
       </div>
 
-      {/* Regular Pages */}
+      {/* Regular pages */}
       <div className="card p-4">
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <input
@@ -1689,7 +1690,7 @@ function StepContentTypes({
             style={{ width: 18, height: 18, marginTop: 2, cursor: 'pointer', flexShrink: 0 }}
           />
           <label htmlFor="wiz-rp" style={{ cursor: 'pointer', flex: 1 }}>
-            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Regular Pages</p>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem', marginBottom: '0.2rem' }}>Regular pages</p>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: enableRegularPages ? '0.75rem' : 0 }}>
               Evergreen pages like About Us, FAQ, Resources, and more. Ideal for filling out a site&apos;s content architecture.
             </p>
@@ -2112,7 +2113,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
           className={planActive ? 'btn btn-primary' : 'btn btn-secondary'}
           style={{ fontSize: '0.875rem', flex: 1 }}
         >
-          {saving ? 'Saving…' : 'Save Setup'}
+          {saving ? 'Saving…' : 'Save the setup'}
         </button>
         {!planActive && (
           <button
@@ -2121,7 +2122,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
             className="btn btn-primary"
             style={{ fontSize: '0.875rem', flex: 2 }}
           >
-            {saving ? 'Saving…' : 'Save & Generate First Topics'}
+            {saving ? 'Saving…' : 'Save and pick the first topics'}
           </button>
         )}
       </div>

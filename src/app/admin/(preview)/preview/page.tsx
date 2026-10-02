@@ -1,5 +1,6 @@
-// Admin — Preview Dashboards: client selection
+// Admin — Preview a client’s dashboard: client selection
 
+import { CaretRight } from '@phosphor-icons/react/dist/ssr'
 import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import type { Client } from '@/lib/types'
@@ -15,7 +16,7 @@ export default async function PreviewIndexPage() {
     <div className="p-8 max-w-4xl mx-auto">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Preview Dashboards</h1>
+          <h1 className="page-title">Preview a client’s dashboard</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
             Select a client to preview their dashboard as they see it
           </p>
@@ -49,7 +50,7 @@ export default async function PreviewIndexPage() {
                 <p className="font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>{client.name}</p>
                 {client.email && <p className="text-xs truncate mt-0.5" style={{ color: 'var(--text-faint)' }}>{client.email}</p>}
               </div>
-              <span className="ml-auto text-lg" style={{ color: 'var(--text-faint)', flexShrink: 0 }}>→</span>
+              <CaretRight size={16} weight="bold" className="ml-auto" style={{ color: 'var(--text-faint)', flexShrink: 0 }} aria-hidden />
             </Link>
           ))}
         </div>

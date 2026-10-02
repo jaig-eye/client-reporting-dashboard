@@ -93,7 +93,7 @@ export default function PriorityTopicsOverview({ clients }: { clients: OverviewC
                 <h2 id={`pto-${c.id}`} className="pto-client-name"><Link href={pipelineHref(c.id)}>{c.name}</Link></h2>
                 <p className="pto-client-when">{whenLine(next, c.slot)}</p>
               </div>
-              <Link className="btn btn-secondary btn-sm" href={pipelineHref(c.id)}>Manage in Pipeline</Link>
+              <Link className="btn btn-secondary btn-sm" href={pipelineHref(c.id)}>Open the pipeline</Link>
             </div>
             <div className="pto-grid">
               {ordered.map(s => <SetCard key={s.id} set={s} clientId={c.id} isNext={next?.id === s.id} next={next} slot={c.slot} />)}

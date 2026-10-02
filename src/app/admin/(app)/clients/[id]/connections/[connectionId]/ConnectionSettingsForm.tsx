@@ -74,13 +74,13 @@ export default function ConnectionSettingsForm({
     <div className="space-y-4">
       {status === 'success' && (
         <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--green-subtle)', border: '1px solid #bbf7d0', color: 'var(--green)' }}>
+          style={{ background: 'var(--green-subtle)', border: '1px solid var(--green-border)', color: 'var(--green-fg)' }}>
           Saved successfully.
         </div>
       )}
       {status === 'error' && errorMsg && (
         <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
+          style={{ background: 'var(--red-subtle)', border: '1px solid var(--red-border)', color: 'var(--red-fg)' }}>
           {errorMsg}
         </div>
       )}
@@ -115,7 +115,7 @@ export default function ConnectionSettingsForm({
       <form onSubmit={handleSave} className="space-y-3" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
         <div>
           <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-            Display Name <span style={{ color: 'var(--text-faint)' }}>(optional)</span>
+            Display name <span style={{ color: 'var(--text-faint)' }}>(optional)</span>
           </label>
           <input
             className="input"
@@ -169,7 +169,7 @@ export default function ConnectionSettingsForm({
         </p>
         {!showDelete ? (
           <button onClick={() => setShowDelete(true)} className="btn btn-danger">
-            Disconnect Account
+            Disconnect the account
           </button>
         ) : (
           <div className="flex items-center gap-3">
@@ -178,7 +178,7 @@ export default function ConnectionSettingsForm({
               className="btn btn-danger"
               disabled={status === 'deleting'}
             >
-              {status === 'deleting' ? 'Disconnecting…' : 'Confirm Disconnect'}
+              {status === 'deleting' ? 'Disconnecting…' : 'Disconnect it'}
             </button>
             <button onClick={() => setShowDelete(false)} className="btn btn-secondary">
               Cancel

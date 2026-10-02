@@ -30,15 +30,15 @@ export function NoteSecretInput({
     <div style={{
       padding: '0.5rem 0.6rem', borderRadius: 6,
       background: 'var(--bg-subtle)',
-      border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid #f59e0b',
+      border: '1px solid var(--amber-border)',
+      borderLeft: '2px solid var(--amber)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         <span style={{
           fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em',
-          textTransform: 'uppercase', color: '#b45309',
+          color: 'var(--amber-fg)',
         }}>
-          Password (encrypted)
+          Password, encrypted
         </span>
         {hasSecret && (
           <span style={{ fontSize: '0.6rem', color: 'var(--text-faint)' }}>
@@ -154,11 +154,11 @@ export function NoteSecretReveal({
     <div style={{
       margin: '0 0 0.75rem', padding: '0.55rem 0.7rem', borderRadius: 6,
       background: 'var(--bg-subtle)',
-      border: '1px solid rgba(245,158,11,0.35)',
-      borderLeft: '2px solid #f59e0b',
+      border: '1px solid var(--amber-border)',
+      borderLeft: '2px solid var(--amber)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--amber-fg)' }}>
           Password
         </span>
 

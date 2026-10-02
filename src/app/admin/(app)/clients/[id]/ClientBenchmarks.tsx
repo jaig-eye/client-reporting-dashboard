@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { CheckCircle } from '@phosphor-icons/react'
+import Switch from '@/components/ui/Switch'
 
 const ALL_BENCHMARK_KEYS = ['roas', 'ctr', 'cpc', 'conv_rate', 'cpm', 'cpl'] as const
 type BenchmarkKey = typeof ALL_BENCHMARK_KEYS[number]
@@ -142,28 +144,15 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
 
   return (
     <div className="space-y-4">
-      {/* Dashboard visibility toggles */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <label className="flex items-center gap-3 cursor-pointer">
-          <button
-            type="button" role="switch" aria-checked={dashVisible}
-            onClick={() => toggleDashVisible(!dashVisible)}
-            className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-            style={{ background: dashVisible ? 'var(--blue)' : 'var(--bg-muted)' }}
-          >
-            <span
-              className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-              style={{ transform: dashVisible ? 'translateX(1rem)' : 'translateX(0)' }}
-            />
-          </button>
-          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {dashVisible ? 'Performance benchmarks visible on dashboard' : 'Performance benchmarks hidden from dashboard'}
-          </span>
-        </label>
-      </div>
+      {/* Dashboard visibility */}
+      <Switch
+        checked={dashVisible}
+        onChange={toggleDashVisible}
+        label={dashVisible ? 'Benchmarks show on the client\u2019s dashboard' : 'Benchmarks are hidden from the client\u2019s dashboard'}
+      />
 
       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-        Toggle individual benchmarks on/off. Disabled benchmarks are hidden from the benchmark panel <em>and</em> the admin health cards. Leave a value blank to use the global default.
+        Turn a benchmark off to hide it from the benchmark panel and the admin health cards. Leave a value blank to use the agency default.
       </p>
 
       {/* Per-benchmark rows: toggle + label + input */}
@@ -171,45 +160,25 @@ export default function ClientBenchmarks({ clientId, showBenchmarks, globalDefau
         {benchmarkDefs.map(({ key, label, hint, input }) => {
           const isOn = enabled.has(key)
           return (
-            <div key={key} style={{
-              display: 'grid', gridTemplateColumns: '2rem 1fr 1fr', gap: '0.75rem', alignItems: 'center',
-              opacity: isOn ? 1 : 0.45, transition: 'opacity 0.15s',
-            }}>
-              {/* Toggle */}
-              <button
-                type="button" role="switch" aria-checked={isOn}
-                onClick={() => toggleBenchmark(key)}
-                className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-                style={{ background: isOn ? 'var(--blue)' : 'var(--border)', width: 32, height: 18 }}
-              >
-                <span
-                  className="inline-block rounded-full bg-white shadow transition-transform"
-                  style={{ width: 14, height: 14, position: 'absolute', top: 0, left: isOn ? 14 : 0, transition: 'left 0.15s' }}
-                />
-              </button>
-              {/* Label */}
-              <div>
-                <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                  {label} <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>— {hint}</span>
-                </p>
-              </div>
-              {/* Input */}
-              <div>{input}</div>
+            <div key={key} className="co-bench-row" data-off={!isOn || undefined}>
+              <Switch checked={isOn} onChange={() => toggleBenchmark(key)} label={`Use the ${label} benchmark`} hideLabel />
+              <p className="co-bench-label">{label} <span>{hint}</span></p>
+              <div className="co-bench-input">{input}</div>
             </div>
           )
         })}
       </div>
 
-      {error && <p className="text-xs" style={{ color: 'var(--red)' }}>{error}</p>}
+      {error && <p className="ui-savefail" role="alert">{error}</p>}
 
-      <div className="flex items-center gap-3 pt-1">
+      <div className="ui-saverow">
         <button onClick={handleSave} disabled={saving} className="btn btn-primary">
-          {saving ? 'Saving…' : 'Save Benchmarks'}
+          {saving ? 'Saving…' : 'Save benchmarks'}
         </button>
         <button onClick={handleReset} disabled={saving} className="btn btn-secondary">
-          Reset to Global
+          Use the agency defaults
         </button>
-        {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
+        {saved && <span className="ui-saved" role="status"><CheckCircle size={14} weight="fill" aria-hidden />Saved</span>}
       </div>
     </div>
   )

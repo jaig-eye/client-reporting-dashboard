@@ -15,9 +15,11 @@
 //
 // The keyword field only steers NEW TOPIC — for a rewrite the topic is already fixed, so
 // there is nothing for it to steer. The UI says that rather than accepting input that
-// would be silently ignored.
+// would be silently ignored. Built on the shared Dialog.
 
-import { useState, useEffect, useRef } from 'react'
+import { useRef, useState } from 'react'
+import Dialog from '@/components/ui/Dialog'
+import Field from '@/components/ui/Field'
 
 export type RegenerateScope = 'rewrite' | 'new_topic'
 
@@ -42,146 +44,71 @@ export default function RegenerateDialog({ postTitle, busy, onCancel, onConfirm 
   const [scope,        setScope]        = useState<RegenerateScope>('rewrite')
   const [notes,        setNotes]        = useState('')
   const [steerKeyword, setSteerKeyword] = useState('')
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const firstRef  = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => { firstRef.current?.focus() }, [])
-
-  // Escape closes and Tab is trapped — aria-modal claims the background is inert, and
-  // behind this dialog sit Approve, Reject and Save Changes.
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onCancel(); return }
-      if (e.key !== 'Tab') return
-      const root = dialogRef.current
-      if (!root) return
-      const f = root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )
-      if (!f.length) return
-      const first = f[0], last = f[f.length - 1]
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey); previouslyFocused?.focus?.() }
-  }, [onCancel])
-
-  const optionStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1, textAlign: 'left', padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-    border: `1px solid ${active ? 'var(--blue)' : 'var(--border)'}`,
-    background: active ? 'rgba(37,99,235,0.06)' : 'var(--bg-base)',
-  })
+  const firstRef = useRef<HTMLButtonElement>(null)
 
   return (
-    <div
-      role="dialog" aria-modal="true" aria-label="Regenerate this post"
-      onClick={onCancel}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.55)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-      }}
+    <Dialog
+      open
+      onClose={onCancel}
+      title="Regenerate"
+      description={postTitle ?? undefined}
+      busy={busy}
+      initialFocus={firstRef}
+      bodyClassName="ui-stack-sm"
+      footer={<>
+        <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button
+          type="button" className="btn btn-primary" disabled={busy}
+          onClick={() => onConfirm({ scope, notes: notes.trim(), steerKeyword: steerKeyword.trim() })}
+        >
+          {busy ? 'Starting…' : scope === 'rewrite' ? 'Rewrite the article' : 'Pick a new topic and write it'}
+        </button>
+      </>}
     >
-      <div
-        ref={dialogRef}
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-elevated, #fff)', borderRadius: 10, width: 'min(560px, 100%)',
-          border: '1px solid var(--border)', boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-          maxHeight: '85vh', overflowY: 'auto',
-        }}
-      >
-        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
-          <strong style={{ fontSize: '0.95rem' }}>Regenerate</strong>
-          {postTitle && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {postTitle}
-            </div>
-          )}
-        </div>
-
-        <div style={{ padding: 18 }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-            <button
-              ref={firstRef}
-              type="button" onClick={() => setScope('rewrite')}
-              style={optionStyle(scope === 'rewrite')}
-              aria-pressed={scope === 'rewrite'}
-            >
-              <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>Rewrite content</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.35 }}>
-                Keeps the topic, keyword and publish date. Rewrites the article.
-              </div>
-            </button>
-            <button
-              type="button" onClick={() => setScope('new_topic')}
-              style={optionStyle(scope === 'new_topic')}
-              aria-pressed={scope === 'new_topic'}
-            >
-              <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>New topic &amp; article</div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.35 }}>
-                Picks a fresh topic and writes it. The old topic is rejected. Not undoable.
-              </div>
-            </button>
-          </div>
-
-          <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-            Direction <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional</span>
-          </label>
-          <textarea
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            rows={3}
-            maxLength={2000}
-            placeholder={scope === 'rewrite'
-              ? 'e.g. Less sales-y, add a short cost table, keep it under 1200 words'
-              : 'e.g. Something seasonal, aimed at first-time buyers'}
-            style={{
-              width: '100%', padding: '7px 10px', borderRadius: 6, resize: 'vertical',
-              border: '1px solid var(--border)', background: 'var(--bg-base)',
-              color: 'var(--text-primary)', fontSize: '0.82rem', marginBottom: 12,
-            }}
-          />
-
-          <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
-            Target keyword <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional</span>
-          </label>
-          <input
-            value={steerKeyword}
-            onChange={e => setSteerKeyword(e.target.value)}
-            maxLength={200}
-            disabled={scope === 'rewrite'}
-            placeholder={scope === 'rewrite'
-              ? 'Only applies when picking a new topic'
-              : 'e.g. commercial awning installation'}
-            style={{
-              width: '100%', padding: '7px 10px', borderRadius: 6,
-              border: '1px solid var(--border)', background: 'var(--bg-base)',
-              color: 'var(--text-primary)', fontSize: '0.82rem',
-              opacity: scope === 'rewrite' ? 0.5 : 1,
-            }}
-          />
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 5 }}>
-            {scope === 'rewrite'
-              ? 'The topic is already fixed for a rewrite, so there is nothing for a keyword to steer.'
-              : 'Steers which topic is chosen. Topics already covered for this client stay excluded.'}
-          </div>
-        </div>
-
-        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            type="button" className="btn btn-primary" style={{ fontSize: '0.8rem' }}
-            disabled={busy}
-            onClick={() => onConfirm({ scope, notes: notes.trim(), steerKeyword: steerKeyword.trim() })}
-          >
-            {busy ? 'Starting…' : scope === 'rewrite' ? 'Rewrite article' : 'Pick new topic & write'}
-          </button>
-        </div>
+      <div className="ui-choices" role="group" aria-label="What to regenerate">
+        <button ref={firstRef} type="button" className="ui-choice" onClick={() => setScope('rewrite')} aria-pressed={scope === 'rewrite'}>
+          <span className="ui-choice-title">Rewrite the content</span>
+          <span className="ui-choice-text">Keeps the topic, keyword and publish date. Rewrites the article.</span>
+        </button>
+        <button type="button" className="ui-choice" onClick={() => setScope('new_topic')} aria-pressed={scope === 'new_topic'}>
+          <span className="ui-choice-title">New topic and article</span>
+          <span className="ui-choice-text">Picks a fresh topic and writes it. The old topic is rejected. Can’t be undone.</span>
+        </button>
       </div>
-    </div>
+
+      <Field label="Direction (optional)" id="regen-notes">
+        <textarea
+          id="regen-notes"
+          className="input"
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          rows={3}
+          maxLength={2000}
+          placeholder={scope === 'rewrite'
+            ? 'e.g. Less sales-y, add a short cost table, keep it under 1200 words'
+            : 'e.g. Something seasonal, aimed at first-time buyers'}
+          style={{ resize: 'vertical' }}
+        />
+      </Field>
+
+      <Field
+        label="Target keyword (optional)"
+        id="regen-keyword"
+        hint={scope === 'rewrite'
+          ? 'The topic is already fixed for a rewrite, so there is nothing for a keyword to steer.'
+          : 'Steers which topic is chosen. Topics already covered for this client stay excluded.'}
+      >
+        <input
+          id="regen-keyword"
+          className="input"
+          value={steerKeyword}
+          onChange={e => setSteerKeyword(e.target.value)}
+          maxLength={200}
+          disabled={scope === 'rewrite'}
+          aria-describedby="regen-keyword-hint"
+          placeholder={scope === 'rewrite' ? 'Only applies when picking a new topic' : 'e.g. commercial awning installation'}
+        />
+      </Field>
+    </Dialog>
   )
 }

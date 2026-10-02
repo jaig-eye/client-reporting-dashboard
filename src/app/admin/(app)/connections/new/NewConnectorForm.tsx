@@ -24,7 +24,7 @@ export default function NewConnectorForm({ type }: { type: ConnectorType | 'goog
           : 'Connect this from its card on the Integrations page.'}
       </span>
       <Link href={type === 'ghl' || type === 'wordpress' || type === 'bigcommerce' ? '/admin/dashboard' : '/admin/connections'} className="btn btn-secondary btn-sm">
-        {type === 'ghl' || type === 'wordpress' || type === 'bigcommerce' ? 'Go to Clients' : 'Go to Integrations'}
+        {type === 'ghl' || type === 'wordpress' || type === 'bigcommerce' ? 'Go to clients' : 'Go to Integrations'}
       </Link>
     </div>
   )

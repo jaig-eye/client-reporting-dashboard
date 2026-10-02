@@ -96,7 +96,7 @@
 .em-preview img { display: block; width: 100%; border-radius: var(--radius); box-shadow: 0 0 0 1px var(--border), var(--shadow-sm); }
 .em-preview .em-frame { height: 640px; }
 .em-preview-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 240px; text-align: center; font-size: 0.8125rem; color: var(--text-muted); }
-.em-preview-empty a { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.em-preview-empty a { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--accent-fg); text-decoration: none; }
 .em-preview-empty a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .em-side { min-width: 0; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 22px; }
 .em-group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
@@ -125,7 +125,7 @@
 .em-danger-text:hover:not(:disabled) { background: var(--red-subtle); }
 .em-linkbtn {
   display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; margin: -4px -6px; border: none; border-radius: var(--radius-sm);
-  background: none; font: inherit; font-size: 0.78rem; font-weight: 500; color: var(--accent); cursor: pointer;
+  background: none; font: inherit; font-size: 0.78rem; font-weight: 500; color: var(--accent-fg); cursor: pointer;
 }
 .em-linkbtn:hover { background: var(--accent-soft); }
 .em-linkbtn:focus-visible { outline: none; box-shadow: var(--ring); }
@@ -151,7 +151,7 @@
 .em-sched { display: flex; flex-direction: column; gap: 14px; }
 .em-sched-head { display: flex; align-items: center; gap: 8px; }
 .em-sched-title { margin: 0; flex: 1; display: inline-flex; align-items: center; gap: 8px; font-size: 0.875rem; font-weight: 650; color: var(--text-primary); }
-.em-sched-title svg { color: var(--accent); }
+.em-sched-title svg { color: var(--accent-fg); }
 .em-sched .input[type="number"] { width: 96px; font-variant-numeric: tabular-nums; }
 .em-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer; }
 .em-switch-track {

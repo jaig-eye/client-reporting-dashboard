@@ -21,16 +21,16 @@ function fmtPos(n: number | null | undefined): string {
 
 function posColor(pos: number | null): string {
   if (!pos) return 'var(--text-muted)'
-  if (pos <= 5)  return '#16a34a'
-  if (pos <= 10) return '#d97706'
+  if (pos <= 5)  return 'var(--green-fg)'
+  if (pos <= 10) return 'var(--amber-fg)'
   return 'var(--text-muted)'
 }
 
 function posBackground(pos: number | null): string {
-  if (!pos) return 'var(--bg-muted, #f3f4f6)'
-  if (pos <= 5)  return '#dcfce7'
-  if (pos <= 10) return '#fef3c7'
-  return 'var(--bg-muted, #f3f4f6)'
+  if (!pos) return 'var(--bg-muted)'
+  if (pos <= 5)  return 'var(--green-subtle)'
+  if (pos <= 10) return 'var(--amber-subtle)'
+  return 'var(--bg-muted)'
 }
 
 function truncatePath(url: string, max = 48): string {
@@ -165,8 +165,8 @@ function PageCard({ group }: { group: PageGroup }) {
       }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>
-              Core Page
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+              Core page
             </span>
             {group.page ? (
               <a
@@ -225,7 +225,7 @@ function InsightSection({ badge, badgeColor, badgeBg, posRange, subtitle, conten
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
         <span style={{
           display: 'inline-block', padding: '0.15rem 0.65rem', borderRadius: 999,
-          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          fontSize: '0.72rem', fontWeight: 650,
           background: badgeBg, color: badgeColor,
         }}>
           {badge}
@@ -255,7 +255,7 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
   return (
     <div className="card p-6 mb-6">
       <div style={{ marginBottom: '1.25rem' }}>
-        <h3 className="section-title">GSC Opportunities</h3>
+        <h3 className="section-title">Search Console openings</h3>
         <p className="section-desc" style={{ marginBottom: '0.5rem' }}>
           Core pages grouped with their ranking keywords — use keywords as article targets, pages as internal link destinations.
         </p>
@@ -264,7 +264,7 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
           paddingTop: '0.5rem', borderTop: '1px solid var(--border)',
           flexWrap: 'wrap', rowGap: '0.25rem',
         }}>
-          <span><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Core Page</span> → internal link destination</span>
+          <span><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Core page</span> → internal link destination</span>
           <span style={{ color: 'var(--border)' }}>·</span>
           <span><span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Keywords</span> → target in new content</span>
           <span style={{ color: 'var(--border)' }}>·</span>
@@ -279,7 +279,7 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
       ) : (
         <>
           <InsightSection
-            badge="Growth Targets"
+            badge="Growth targets"
             badgeColor="#92400e"
             badgeBg="#fef3c7"
             posRange="Pos 10–20"
@@ -288,7 +288,7 @@ export default function GscInsightsPanel({ quickWins, growth, lowCtr }: {
             rows={growth}
           />
           <InsightSection
-            badge="Quick Wins"
+            badge="Quick wins"
             badgeColor="#166534"
             badgeBg="#dcfce7"
             posRange="Pos 5–10"
