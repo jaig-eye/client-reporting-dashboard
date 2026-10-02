@@ -580,7 +580,9 @@
 .ui-grid-side { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
 @media (max-width: 1023px) { .ui-grid-3, .ui-grid-side { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 767px)  { .ui-grid-2 { grid-template-columns: minmax(0, 1fr); } }
-.ui-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Positioned, so an absolutely placed child (a table's sr-only header text) is clipped here
+   instead of measuring against the page and widening it. */
+.ui-scroll-x { position: relative; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .ui-hide-sm { }
 @media (max-width: 639px) { .ui-hide-sm { display: none !important; } }
 .ui-only-sm { display: none !important; }

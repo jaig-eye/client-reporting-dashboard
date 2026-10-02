@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Books, ArrowCircleRight, ArrowClockwise, CheckCircle, XCircle, WarningCircle, CaretDown, X, LinkBreak, ArrowBendDownRight, ArrowDown, ArrowUp, MagnifyingGlass } from '@phosphor-icons/react'
 import '@/styles/admin/pipeline.css'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import { Sk, SkText } from '@/components/ui/Skeleton'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, isOnSite as postIsOnSite } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
@@ -1480,8 +1481,20 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         )}
 
         {loading ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          // The drawer's own two columns, so nothing jumps when the post arrives.
+          <div className="pe-sk" aria-busy="true" aria-label="Loading the post">
+            {!isNarrow && (
+              <div className="pe-sk-preview">
+                <Sk w="74%" h={30} /><Sk w="52%" h={30} />
+                <span style={{ height: 6 }} />
+                <SkText lines={7} last="40%" />
+              </div>
+            )}
+            <div className="pe-sk-side" style={{ flexBasis: isNarrow ? '100%' : '45%' }}>
+              {[180, 38, 38].map((h, i) => (
+                <span key={i} className="pe-sk-card"><Sk w={`${30 - i * 6}%`} h={12} /><Sk h={38} r={8} /><Sk h={h} r={8} /></span>
+              ))}
+            </div>
           </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

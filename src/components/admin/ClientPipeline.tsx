@@ -548,7 +548,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             </button>
           </div>
         ) : (
-          <div className="ui-notice ui-notice--info" style={{ flex: 1, margin: 0 }}>
+          <div className="ui-notice ui-notice--info" style={{ flex: 1, minWidth: 280, margin: 0 }}>
             <span>Content plans need an AI provider. Add one in Agency settings, then come back to start the plan.</span>
             <Link href="/admin/settings?tab=ai" className="btn btn-secondary btn-sm">Set up AI</Link>
           </div>

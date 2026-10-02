@@ -208,6 +208,8 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .sd-group-head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.875rem; font-weight: 650; color: var(--text-primary); }
 .sd-empty { margin: 0; padding: 4px 0; font-size: 0.8125rem; color: var(--text-muted); }
 .sd-table td { vertical-align: middle; }
+/* The table scrolls sideways on a phone; the keyword keeps a readable width instead of one word a line. */
+.sd-table td.ui-strong { min-width: 160px; }
 .sd-table select.input { width: auto; min-height: 32px; padding: 4px 28px 4px 8px; font-size: 0.78rem; }
 .sd-url { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; color: var(--link, var(--accent)); }
 .sd-score-good { color: var(--green-fg); font-weight: 650; }

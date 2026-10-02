@@ -103,7 +103,6 @@ export default function CategoryEditor({ categories: initial }: Props) {
   return (
     <div>
       <PageHeader
-        back={{ href: '/admin/settings', label: 'Agency settings' }}
         title="Campaign categories"
         description="How campaigns are grouped across every client, and which numbers each group’s dashboard leads with."
         actions={addButton}

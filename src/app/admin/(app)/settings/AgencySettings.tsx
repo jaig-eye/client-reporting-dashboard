@@ -502,7 +502,7 @@ export default function AgencySettings() {
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => field('agency_logo_url', '')}>Remove</button>
                     )}
                   </div>
-                  <input id="se-logo-url" className="input" value={form.agency_logo_url} aria-describedby="se-logo-url-hint"
+                  <input id="se-logo-url" className="input" value={form.agency_logo_url ?? ''} aria-describedby="se-logo-url-hint"
                     onChange={e => field('agency_logo_url', e.target.value)} placeholder="https://…" />
                 </div>
               </Field>
@@ -522,7 +522,7 @@ export default function AgencySettings() {
               </Field>
 
               <Field label="CRM name" id="se-crm-name" hint="What clients see the CRM called, such as CRM, Pipeline or GoHighLevel.">
-                <input id="se-crm-name" className="input" value={form.crm_name} aria-describedby="se-crm-name-hint"
+                <input id="se-crm-name" className="input" value={form.crm_name ?? ''} aria-describedby="se-crm-name-hint"
                   onChange={e => field('crm_name', e.target.value)} placeholder="CRM" />
               </Field>
             </div>
@@ -801,7 +801,7 @@ export default function AgencySettings() {
           >
             <Field label="Team email" id="se-team-email" hint="Gets every notification switched on in the Team email column below.">
               <div className="se-upload">
-                <input id="se-team-email" className="input" type="email" value={form.notification_email} aria-describedby="se-team-email-hint"
+                <input id="se-team-email" className="input" type="email" value={form.notification_email ?? ''} aria-describedby="se-team-email-hint"
                   onChange={e => field('notification_email', e.target.value)} placeholder="team@agency.com" style={{ flex: '1 1 220px' }} />
                 <button type="button" className="btn btn-secondary" disabled={!form.notification_email || testingEmail} onClick={handleTestEmail}>
                   {testingEmail ? 'Sending…' : 'Send test email'}

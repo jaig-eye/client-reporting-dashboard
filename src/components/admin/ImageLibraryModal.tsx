@@ -31,6 +31,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Books, MagnifyingGlass, ArrowClockwise } from '@phosphor-icons/react'
 import type { StockImageCandidate } from '@/lib/content/stockImages'
 import ClientImage from './ClientImage'
+import { Sk } from '@/components/ui/Skeleton'
 
 type TabId = 'library' | 'stock'
 
@@ -273,11 +274,14 @@ export default function ImageLibraryModal({
 
         {/* Gallery */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
-          {items.length === 0 ? (
+          {items.length === 0 && tab === 'library' && loading ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }} aria-busy="true" aria-label="Loading images">
+              {Array.from({ length: 8 }, (_, i) => <Sk key={i} h={112} r={8} />)}
+            </div>
+          ) : items.length === 0 ? (
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: 40 }}>
               {tab === 'library'
-                ? (loading ? 'Loading…'
-                  : mediaError ? mediaError
+                ? (mediaError ? mediaError
                   : connectionId ? 'No images here yet. Try a different search.'
                   : 'No site connection chosen.')
                 : 'No stock photos cleared the relevance bar for this topic. That is a normal result for specialised subjects — a confident wrong photo is worse than none.'}
