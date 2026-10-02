@@ -6,7 +6,6 @@ export const SETTINGS_TABS = [
   { id: 'colors',        label: 'Colors'            },
   { id: 'layouts',       label: 'Dashboard layouts' },
   { id: 'benchmarks',    label: 'Benchmarks'        },
-  { id: 'ai',            label: 'AI'                },
   { id: 'notifications', label: 'Notifications'     },
   { id: 'sync',          label: 'Sync schedule'     },
 ] as const

@@ -37,7 +37,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     items: [
       section('branding'), section('colors'), section('layouts'), section('benchmarks'),
       { id: 'categories', label: 'Campaign categories', href: '/admin/categories' },
-      section('ai'),
       { id: 'content', label: 'Content', href: '/admin/content/settings' },
       section('notifications'), section('sync'),
     ],

@@ -2,7 +2,7 @@
 // AI spend ledger — record + summarise.
 //
 // recordAiUsage() writes one row per provider call into ai_usage (migration 213);
-// getAiUsageSummary() aggregates it for the AI tab in agency settings.
+// getAiUsageSummary() aggregates it for the Usage page.
 //
 // Both SOFT-FAIL. Metering is an observability concern and must never be able to break
 // content generation: if the table is missing because migration 213 has not been applied, or

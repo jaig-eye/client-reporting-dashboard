@@ -549,8 +549,8 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
           </div>
         ) : (
           <div className="ui-notice ui-notice--info" style={{ flex: 1, minWidth: 280, margin: 0 }}>
-            <span>Content plans need an AI provider. Add one in Agency settings, then come back to start the plan.</span>
-            <Link href="/admin/settings?tab=ai" className="btn btn-secondary btn-sm">Set up AI</Link>
+            <span>Content plans need an AI provider. Connect one in Integrations, then come back to start the plan.</span>
+            <Link href="/admin/connections#int-ai" className="btn btn-secondary btn-sm">Set up AI</Link>
           </div>
         )}
         <button type="button" className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0, alignSelf: 'flex-start' }}><Plus size={14} weight="bold" aria-hidden />New post</button>

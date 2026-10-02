@@ -1,5 +1,5 @@
 // GET /api/admin/ai-usage?days=30
-// Aggregated AI spend for the AI tab in agency settings.
+// Aggregated AI spend, for the Usage page.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'

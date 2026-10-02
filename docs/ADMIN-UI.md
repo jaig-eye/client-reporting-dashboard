@@ -23,6 +23,9 @@ the shared components, and where styles live. Colour tokens and the client dashb
   button can still say "Saving…".
 - **In-app links use `next/link`**, never `window.location`.
 - **390px wide, light and dark.** Every page and dialog works at both.
+- **Exact times.** Anything someone wrote or something that happened (a note, an alert) shows its
+  date and clock time ("Sep 29, 2026, 4:12 PM"; under a day heading, just the time). "3 days ago"
+  goes in the tooltip, never in place of the time.
 - **Phosphor icons**, not emoji or text arrows.
 - **Deletes ask first** in a `ConfirmDialog`, never `window.confirm`. A failed delete throws from
   `onConfirm`, and the dialog shows the message and stays open.
@@ -36,6 +39,8 @@ Personal) beside every settings page. On a wide screen it's a column; below 1180
 `isSettingsPath` matches, so pages keep their own URLs.
 
 - A new settings page: add it to `SETTINGS_GROUPS` and its path to `isSettingsPath` / `activeId`.
+- AI keys (the writing model and the featured-image key) are a connection, so they live on
+  Integrations (`AiAgencyCards`), not in Settings. `/admin/settings?tab=ai` redirects there.
 - Agency settings' sections are `?tab=` values (`settings/tabs.ts`). On `/admin/settings` the
   menu switches them in place with `history.pushState` (no request, edits survive, Back works),
   and `AgencySettings` reads the section from `useSearchParams`.

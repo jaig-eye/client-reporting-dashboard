@@ -2,6 +2,9 @@
 // Every service the agency connects once, grouped by what it's for. Clients then get accounts
 // assigned from these on their own Integrations tab.
 //
+// AI (the writing model and the featured-image key) is here too: it's a connection like the rest,
+// and used to be a tab of Agency settings.
+//
 // Google is one sign-in for four services (Ads, Analytics, Search Console, Business Profile), so it
 // shows as one row with the four underneath. Google and Meta sign in through a popup that
 // refreshes this page when it finishes; the key-based services connect in a dialog.
@@ -14,6 +17,7 @@ import StripeAgencyCard     from '@/components/admin/StripeAgencyCard'
 import AhrefsAgencyCard     from '@/components/admin/AhrefsAgencyCard'
 import DataForSeoAgencyCard from '@/components/admin/DataForSeoAgencyCard'
 import SearchApiAgencyCard  from '@/components/admin/SearchApiAgencyCard'
+import AiAgencyCards        from '@/components/admin/AiAgencyCards'
 import { resolveDfsCreds }  from '@/lib/connectors/dataforseo'
 import type { SeoDevice }   from '@/lib/connectors/dataforseo'
 import DiscordAgencyCard    from '@/components/admin/DiscordAgencyCard'
@@ -44,12 +48,19 @@ export default async function ConnectionsPage({
 }) {
   const sp = await searchParams
   const db = createAdminClient()
-  const [connectorsRes, agencyRes] = await Promise.all([
+  const [connectorsRes, agencyRes, aiRes] = await Promise.all([
     db.from('connectors').select('*').order('created_at'),
     db.from('agency_settings')
       .select('stripe_api_key, stripe_webhook_secret, serp_api_key, serp_api_provider, discord_bot_token, discord_ops_channel_id')
       .single(),
+    // Its own read, and every column: image_model only exists once migration 227 has run, and naming
+    // it in the select above would fail the whole query on a database without it.
+    db.from('agency_settings').select('*').maybeSingle(),
   ])
+  const ai = aiRes.data as {
+    ai_provider?: string | null; ai_model?: string | null; ai_api_key?: string | null
+    openai_api_key?: string | null; image_model?: string | null
+  } | null
   const existing = (connectorsRes.data ?? []) as Connector[]
   const agencySettings = agencyRes.data as {
     stripe_api_key?: string; stripe_webhook_secret?: string
@@ -144,6 +155,23 @@ export default async function ConnectionsPage({
                 <Link href={`/admin/connections/${meta.id}`} className="btn btn-ghost btn-sm">Manage</Link>
               </>
             : <Link href="/admin/connections/new?type=meta_ads" className="btn btn-primary btn-sm">Connect Meta</Link>}
+        />
+      </IntegrationGroup>
+
+      <IntegrationGroup id="int-ai" title="AI" description="The models that write posts and draw their featured images.">
+        <AiAgencyCards
+          initialProvider={ai?.ai_provider ?? 'anthropic'}
+          initialModel={ai?.ai_model ?? ''}
+          initialAiKey={ai?.ai_api_key ? SECRET_MASK : ''}
+          initialImageKey={ai?.openai_api_key ? SECRET_MASK : ''}
+          initialImageModel={ai?.image_model ?? null}
+        />
+        <IntegrationRow
+          sub
+          logo={<span className="ui-tile ui-tile--sm ui-tile--accent" aria-hidden><ChartLineUp size={15} /></span>}
+          name="AI spend"
+          description="What writing and images cost, by client, task and model."
+          actions={<Link href="/admin/usage" className="btn btn-ghost btn-sm">Open Usage</Link>}
         />
       </IntegrationGroup>
 

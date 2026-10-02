@@ -9,19 +9,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { CheckCircle, Clock, ImageSquare, Play, Sparkle, SpeakerHigh, Trash, UploadSimple, WarningCircle } from '@phosphor-icons/react'
+import { CheckCircle, Clock, Play, SpeakerHigh, Trash, UploadSimple, WarningCircle } from '@phosphor-icons/react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
-import IntegrationCard from '@/components/admin/IntegrationCard'
-import IntegrationModal from '@/components/admin/IntegrationModal'
 import NotificationTypeTable from '@/components/admin/NotificationTypeTable'
-import { IntegrationGroup } from '@/components/admin/integrations/IntegrationRow'
 import PageHeader from '@/components/ui/PageHeader'
 import Section from '@/components/ui/Section'
 import Field from '@/components/ui/Field'
 import { SwitchRow } from '@/components/ui/Switch'
 import EmptyState from '@/components/ui/EmptyState'
 import { useTheme } from '@/components/ThemeProvider'
-import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
+import { DEFAULT_IMAGE_MODEL } from '@/lib/content/imageModels'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import { SettingsSkeleton } from './SettingsSkeleton'
@@ -201,60 +198,6 @@ export default function AgencySettings() {
   const [soundTesting,     setSoundTesting]     = useState(false)
   const [testingEmail,   setTestingEmail]   = useState(false)
   const [testEmailMsg,   setTestEmailMsg]   = useState<{ ok: boolean; text: string } | null>(null)
-
-  // ── Integration modals (AI) ───────────────────────────────────────────
-  // Note: Search API (SerpAPI) and Discord are configured on the Integrations
-  // page (/admin/connections) — not here.
-  const [aiModalOpen,        setAiModalOpen]        = useState(false)
-  const [aiModalProvider,    setAiModalProvider]    = useState('')
-  const [aiModalModel,       setAiModalModel]       = useState('')
-  const [aiModalKey,         setAiModalKey]         = useState('')
-  const [aiJustSaved,        setAiJustSaved]        = useState(false)
-
-  const [imgModalOpen,       setImgModalOpen]       = useState(false)
-  const [imgModalKey,        setImgModalKey]        = useState('')
-  const [imgModalModel,      setImgModalModel]      = useState<string>(DEFAULT_IMAGE_MODEL)
-  const [imgJustSaved,       setImgJustSaved]       = useState(false)
-  // The server's note when the key saved but the model could not (migration 227 not applied).
-  const [imgWarning,         setImgWarning]         = useState('')
-
-  function openAiModal()      { setAiModalProvider(form.ai_provider); setAiModalModel(form.ai_model); setAiModalKey(form.ai_api_key);    setAiModalOpen(true) }
-  function openImgModal()     { setImgModalKey(form.openai_api_key); setImgModalModel(resolveImageModel(form.image_model));             setImgModalOpen(true) }
-
-  async function saveAiCredential() {
-    const res = await fetch('/api/admin/settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ai_provider: aiModalProvider, ai_model: aiModalModel, ai_api_key: aiModalKey }),
-    })
-    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Save failed') }
-    setForm(f => ({ ...f, ai_provider: aiModalProvider, ai_model: aiModalModel, ai_api_key: aiModalKey }))
-  }
-
-  async function saveImgCredential() {
-    // The key is always sent. Untouched, it is still the mask, which the route reads as "keep the
-    // stored key"; cleared, it is '', which the route reads as "remove it" (lib/secretMask). Leaving
-    // a blank key out of the request instead made the key impossible to revoke from here.
-    //
-    // The model is sent only when it changed, so saving a key never depends on migration 227.
-    const patch: Record<string, string> = { openai_api_key: imgModalKey }
-    const modelChanged = imgModalModel !== resolveImageModel(form.image_model)
-    if (modelChanged) patch.image_model = imgModalModel
-    const res = await fetch('/api/admin/settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    const d = await res.json().catch(() => ({})) as { error?: string; warning?: string }
-    if (!res.ok) throw new Error(d.error || 'Save failed')
-    // Into the form only once the server has accepted it, so Cancel or a failed save leaves the
-    // saved model showing rather than one that was never stored. A warning means the model did not
-    // stick, so the form keeps the one that will actually be used.
-    setForm(f => ({
-      ...f,
-      openai_api_key: imgModalKey,
-      ...(modelChanged && !d.warning ? { image_model: imgModalModel } : {}),
-    }))
-    setImgWarning(d.warning ?? '')
-  }
 
   /** Saves one field on its own (uploads, the sync switch), outside the Save bar. */
   async function saveNow(patch: Partial<Settings>, what: string) {
@@ -629,110 +572,6 @@ export default function AgencySettings() {
           </Section>
         </>)}
 
-        {panel('ai', <>
-          <IntegrationGroup id="se-ai" title="Content AI" description="The keys and models that write posts and draw featured images. Each saves from its own dialog.">
-            <IntegrationCard
-              icon={<Sparkle size={20} weight="duotone" />}
-              name="Writing"
-              description="Provider, model and key for posts and topic suggestions."
-              isConnected={!!form.ai_api_key}
-              connectedLabel={form.ai_api_key ? `${form.ai_provider} / ${form.ai_model || 'default'}` : undefined}
-              onConfigure={openAiModal}
-              justConnected={aiJustSaved}
-            />
-            <IntegrationCard
-              icon={<ImageSquare size={20} weight="duotone" />}
-              name="Featured images"
-              description="An OpenAI key and image model, separate from the writing key."
-              isConnected={!!form.openai_api_key}
-              connectedLabel={form.openai_api_key ? `Key saved · ${resolveImageModel(form.image_model)}` : undefined}
-              onConfigure={openImgModal}
-              justConnected={imgJustSaved}
-            />
-          </IntegrationGroup>
-          {imgWarning && <div className="ui-notice ui-notice--warning" role="status" style={{ margin: 0 }}>{imgWarning}</div>}
-
-          <IntegrationModal
-            open={aiModalOpen}
-            onClose={() => setAiModalOpen(false)}
-            onSaved={() => { setAiJustSaved(true); setTimeout(() => setAiJustSaved(false), 2000) }}
-            title="Writing AI"
-            icon={<Sparkle size={20} weight="duotone" />}
-            isConnected={!!form.ai_api_key}
-            howTo={
-              <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li><strong>OpenAI:</strong> in <strong>platform.openai.com → API keys</strong>, create a secret key (<code>sk-…</code>). Use the model <code>gpt-4o</code> or <code>gpt-4o-mini</code>.</li>
-                <li><strong>Anthropic:</strong> in <strong>console.anthropic.com → API keys</strong>, create a key. Use the model <code>claude-sonnet-4-6</code>.</li>
-                <li>The master writing prompt is in <Link href="/admin/content?tab=settings">Content → Settings</Link>.</li>
-              </ol>
-            }
-            onSave={saveAiCredential}
-          >
-            <Field label="Provider" id="se-ai-provider">
-              <select id="se-ai-provider" className="input" value={aiModalProvider} onChange={e => setAiModalProvider(e.target.value)}>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-              </select>
-            </Field>
-            <Field label="Model" id="se-ai-model">
-              <input id="se-ai-model" className="input" type="text" value={aiModalModel} onChange={e => setAiModalModel(e.target.value)}
-                placeholder={aiModalProvider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'} />
-            </Field>
-            <Field label="API key" id="se-ai-key" hint="Stored on the server and never shown to clients.">
-              <input id="se-ai-key" className="input" type="password" value={aiModalKey} onChange={e => setAiModalKey(e.target.value)}
-                placeholder="Paste the key" autoComplete="off" aria-describedby="se-ai-key-hint" />
-            </Field>
-          </IntegrationModal>
-
-          <IntegrationModal
-            open={imgModalOpen}
-            onClose={() => setImgModalOpen(false)}
-            onSaved={() => { setImgJustSaved(true); setTimeout(() => setImgJustSaved(false), 2000) }}
-            title="Featured images (OpenAI)"
-            icon={<ImageSquare size={20} weight="duotone" />}
-            isConnected={!!form.openai_api_key}
-            howTo={
-              <ol style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>In <strong>platform.openai.com → API keys</strong>, create a secret key (<code>sk-…</code>).</li>
-                <li>OpenAI may ask the organization to complete <strong>API Organization Verification</strong> before its GPT Image models can be used.</li>
-                <li>This key is only used for featured images; it’s separate from the writing key.</li>
-              </ol>
-            }
-            onSave={saveImgCredential}
-          >
-            <Field
-              label="OpenAI API key"
-              id="img-openai-key"
-              hint={form.openai_api_key ? 'Used only for featured images. Clear the field and save to remove the key.' : 'Used only for featured images.'}
-            >
-              <input id="img-openai-key" className="input" type="password" value={imgModalKey} onChange={e => setImgModalKey(e.target.value)}
-                placeholder="sk-…" autoComplete="off" aria-describedby="img-openai-key-hint" />
-            </Field>
-            <Field
-              label="Model"
-              id="img-model"
-              hint="Each one is asked for the same 1536×1024 PNG, so switching needs nothing else changed. Cost is recorded from what OpenAI reports and shows on the Usage page."
-            >
-              <select id="img-model" className="input" value={imgModalModel} onChange={e => setImgModalModel(e.target.value)} aria-describedby="img-model-hint">
-                {Object.entries(IMAGE_MODELS).map(([id, m]) => (
-                  <option key={id} value={id}>{m.label}{id === DEFAULT_IMAGE_MODEL ? ' (default)' : ''}</option>
-                ))}
-              </select>
-            </Field>
-          </IntegrationModal>
-
-          <Section
-            title="AI spend"
-            description="What writing and images cost, by client, task and model, is on the Usage page."
-            actions={<Link href="/admin/usage" className="btn btn-secondary btn-sm">Open usage</Link>}
-          />
-          <Section
-            title="Search API"
-            description="The SerpApi key for competitor research lives in Integrations, with your other connections."
-            actions={<Link href="/admin/connections" className="btn btn-secondary btn-sm">Open integrations</Link>}
-          />
-        </>)}
-
         {panel('sync', <>
           <Section title="Ad data" description="Google Ads and Meta Ads. Hourly keeps Ad Fuel balances close to real time.">
             <div className="ui-grid-2">
@@ -958,9 +797,6 @@ export default function AgencySettings() {
           </Section>
         </>)}
 
-        {/* The AI tab has nothing that waits for Save (each key saves from its dialog), so the bar
-            only shows there when another tab has changes waiting or there's a result to read. */}
-        {(activeTab !== 'ai' || dirty || saving || saved || error) && (
         <div className={`se-savebar${dirty || saving || saved || error ? ' se-savebar--live' : ''}`}>
           <span
             className={`se-savestate${error ? ' se-savestate--error' : saved ? ' se-savestate--ok' : dirty ? ' se-savestate--dirty' : ''}`}
@@ -976,7 +812,6 @@ export default function AgencySettings() {
             {saving ? 'Saving…' : 'Save settings'}
           </button>
         </div>
-        )}
       </form>
     </div>
   )

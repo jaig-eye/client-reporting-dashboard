@@ -1431,7 +1431,7 @@ export async function POST(request: NextRequest) {
     const provider = (agencySettings as Record<string, unknown> | null)?.ai_provider ?? 'anthropic'
     console.error('[generate] ai_api_key is null/empty. Row exists:', !!agencySettings, 'provider:', provider, 'openai_key_set:', !!agencySettings?.openai_api_key)
     return NextResponse.json({
-      error: `AI not configured. The "${provider}" API key (ai_api_key) is missing in Agency Settings. Note: the image key (openai_api_key) is separate and does not power content generation.`,
+      error: `AI isn’t set up. The "${provider}" writing key (ai_api_key) is missing: add it under Integrations, AI. The featured-image key (openai_api_key) is separate and doesn’t write posts.`,
     }, { status: 400 })
   }
 

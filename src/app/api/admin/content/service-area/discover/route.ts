@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   const gscConnectionId = (gscConnRes.data as { id: string } | null)?.id
 
   if (!agencySettings?.ai_api_key) {
-    return NextResponse.json({ error: 'AI not configured — add an API key in Agency Settings' }, { status: 400 })
+    return NextResponse.json({ error: 'AI isn’t set up. Add a writing key under Integrations, AI.' }, { status: 400 })
   }
 
   // Fetch GSC data from last 90 days grouped by query + page

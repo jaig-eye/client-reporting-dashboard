@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
   const apiKey   = settings?.ai_api_key as string | null
 
   if (!apiKey) {
-    return NextResponse.json({ error: 'AI not configured — add an API key in Agency Settings' }, { status: 400 })
+    return NextResponse.json({ error: 'AI isn’t set up. Add a writing key under Integrations, AI.' }, { status: 400 })
   }
 
   const prompt = `Analyze the following website content and return a JSON object with the keys below.
