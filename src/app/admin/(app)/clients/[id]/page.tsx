@@ -29,6 +29,7 @@ import ClientIntegrationCards from '@/components/admin/ClientIntegrationCards'
 import ClientContentTabPanel from '@/components/admin/ClientContentTabPanel'
 import type { GscData } from '@/components/admin/ClientContentTabPanel'
 import OverviewTab from './OverviewTab'
+import ProfileTab from './ProfileTab'
 import BillingTab from './BillingTab'
 import PageHeader from '@/components/ui/PageHeader'
 import Section from '@/components/ui/Section'
@@ -44,6 +45,7 @@ export const dynamic = 'force-dynamic'
 
 const TABS = [
   { id: 'overview',    label: 'Overview'     },
+  { id: 'profile',     label: 'Profile'      },
   { id: 'sources',     label: 'Integrations' },
   { id: 'performance', label: 'Metrics'      },
   { id: 'content',     label: 'Content'      },
@@ -93,8 +95,8 @@ export default async function ClientDetailPage({
   const client = clientRes.data as Client | null
   if (!client) notFound()
 
-  // Overview-tab data (contacts, admin users — stats are lazy-loaded client-side)
-  const [contactsRes, adminUsersRes] = activeTab === 'overview'
+  // Overview and Profile data (contacts, admin users — the Overview's stats are lazy-loaded client-side)
+  const [contactsRes, adminUsersRes] = activeTab === 'overview' || activeTab === 'profile'
     ? await Promise.all([
         db.from('client_contacts').select('*').eq('client_id', id).order('created_at'),
         db.from('users').select('id, name, email, avatar_url').eq('is_active', true).order('name'),
@@ -195,19 +197,28 @@ export default async function ClientDetailPage({
       {activeTab === 'overview' && (
         <OverviewTab
           clientId={id}
+          accountManager={adminUsers.find(u => u.id === client.account_manager_id) ?? null}
+          temperature={(client as unknown as { temperature?: ClientTemperature | null }).temperature ?? null}
+          lastContactedAt={(client as unknown as { last_contacted_at?: string | null }).last_contacted_at ?? null}
+          contactStaleDays={(client as unknown as { contact_stale_days?: number | null }).contact_stale_days ?? null}
+          agencyStaleDays={agencySettings?.contact_stale_days ?? 14}
+          contacts={contacts}
+          dashboardToken={client.dashboard_token}
+        />
+      )}
+
+      {/* ── PROFILE ──────────────────────────────────────────────────── */}
+      {activeTab === 'profile' && (
+        <ProfileTab
+          clientId={id}
           name={client.name}
           address={client.address ?? null}
           phone={client.phone ?? null}
           website={client.website ?? null}
           logoUrl={client.logo_url ?? null}
           accountManagerId={client.account_manager_id ?? null}
-          temperature={(client as unknown as { temperature?: ClientTemperature | null }).temperature ?? null}
-          lastContactedAt={(client as unknown as { last_contacted_at?: string | null }).last_contacted_at ?? null}
-          contactStaleDays={(client as unknown as { contact_stale_days?: number | null }).contact_stale_days ?? null}
-          agencyStaleDays={agencySettings?.contact_stale_days ?? 14}
           adminUsers={adminUsers}
           contacts={contacts}
-          dashboardToken={client.dashboard_token}
         />
       )}
 

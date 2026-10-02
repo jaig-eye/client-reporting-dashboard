@@ -34,6 +34,12 @@ export const CLIENT_TAB_SKELETONS = {
       <div className="ui-stack"><SkCard><SkText lines={4} /></SkCard><SkCard /></div>
     </div>
   ),
+  profile: (
+    <div className="ui-grid-side">
+      <SectionSkeleton rows={4} />
+      <div className="ui-stack"><div className="card" style={{ padding: 0 }}><SkRows rows={3} /></div><SectionSkeleton rows={2} /></div>
+    </div>
+  ),
   sources: (
     <div className="ui-stack" style={{ maxWidth: 760 }}>
       <div className="card" style={{ padding: 0 }}><SkRows rows={5} /></div>

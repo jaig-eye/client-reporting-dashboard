@@ -1,41 +1,27 @@
 'use client'
 
-// Client → Overview, the tab a client page opens on. Two columns: the client on the left (the
-// numbers at a glance, business info, contacts, relationship, account manager, quick links) and a
-// wide workspace on the right, with notes first and the latest invoices and Ad Fuel lines on tabs.
+// Client → Overview, the tab a client page opens on. Two columns: a narrow one on the left (the
+// numbers at a glance, the relationship, the people, quick links) and a wide workspace on the
+// right, with notes first and the latest invoices and Ad Fuel lines on tabs. Business info and the
+// editing of contacts and the account manager live on the Profile tab; People here only reads them.
 // On a tablet or phone it's one column, with the workspace straight after the numbers.
 
 import '@/styles/admin/client-overview.css'
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { PencilSimple, Plus, Trash, ArrowSquareOut, CaretRight, Copy, Check, Receipt, RocketLaunch } from '@phosphor-icons/react'
+import { ArrowSquareOut, CaretRight, Copy, Check, Receipt, RocketLaunch } from '@phosphor-icons/react'
 import ClientNotesStream from '@/components/admin/ClientNotesStream'
 import Section from '@/components/ui/Section'
 import { PillTabs } from '@/components/ui/PillTabs'
 import EmptyState from '@/components/ui/EmptyState'
 import { copyText } from '@/components/ui/ActionMenu'
-import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import StatusBadge from '@/components/ui/StatusBadge'
 import { Sk, SkRows } from '@/components/ui/Skeleton'
-import ClientLogoUpload from './ClientLogoUpload'
 import ClientRelationshipCard from './ClientRelationshipCard'
 import { InvoiceRow, LedgerRow, fmtMoney, type Invoice, type LedgerEntry } from './BillingTab'
 import type { ClientTemperature } from '@/lib/types'
-
-interface AdminUser {
-  id:         string
-  name:       string
-  email:      string
-  avatar_url?: string | null
-}
-
-interface Contact {
-  id:    string
-  name:  string
-  email: string | null
-  phone: string | null
-  role:  string
-}
+import { CONTACT_ROLE, initials, type AdminUser, type Contact } from './people'
 
 interface Stats {
   adFuelBalance:        number | null
@@ -47,17 +33,12 @@ interface Stats {
 
 interface Props {
   clientId:         string
-  name:             string
-  address:          string | null
-  phone:            string | null
-  website:          string | null
-  logoUrl:          string | null
-  accountManagerId: string | null
+  /** The account manager, when one is assigned. */
+  accountManager:   AdminUser | null
   temperature:      ClientTemperature | null
   lastContactedAt:  string | null
   contactStaleDays: number | null
   agencyStaleDays:  number
-  adminUsers:       AdminUser[]
   contacts:         Contact[]
   /** Signs the client's dashboard and ad library links, under Quick links (the header's ⋯ menu
    *  builds the same two). No token, no links. */
@@ -73,22 +54,8 @@ function fmt$(n: number | null): string {
   return n < 0 ? '-' + formatted : formatted
 }
 
-function normalizeUrl(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : `https://${url}`
-}
-
-function initials(name: string): string {
-  return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?'
-}
-
-const ROLE: Record<string, { label: string; tone: StatusTone }> = {
-  primary: { label: 'Primary', tone: 'info' },
-  billing: { label: 'Billing', tone: 'warning' },
-}
-
 export default function OverviewTab({
-  clientId, name, address, phone, website, logoUrl,
-  accountManagerId, adminUsers, contacts: initialContacts,
+  clientId, accountManager, contacts,
   temperature, lastContactedAt, contactStaleDays, agencyStaleDays, dashboardToken,
 }: Props) {
   const router = useRouter()
@@ -116,113 +83,11 @@ export default function OverviewTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Business info editing ─────────────────────────────────────────────────
-  const [editingBiz,    setEditingBiz]    = useState(false)
-  const [bizForm,       setBizForm]       = useState({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
-  const [displayLogoUrl, setDisplayLogoUrl] = useState(logoUrl ?? '')
-  const [bizSaving,  setBizSaving]  = useState(false)
-  const [bizError,   setBizError]   = useState('')
-
-  async function saveBiz(e: React.FormEvent) {
-    e.preventDefault()
-    setBizSaving(true)
-    setBizError('')
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          name:     bizForm.name     || undefined,
-          address:  bizForm.address  || null,
-          phone:    bizForm.phone    || null,
-          website:  bizForm.website  || null,
-          logo_url: bizForm.logoUrl  || null,
-        }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Save failed')
-      setEditingBiz(false)
-      router.refresh()
-    } catch (err) {
-      setBizError(err instanceof Error ? err.message : 'Error saving')
-    } finally {
-      setBizSaving(false)
-    }
-  }
-
-  function cancelBiz() {
-    setEditingBiz(false)
-    setBizError('')
-    setBizForm({ name, address: address ?? '', phone: phone ?? '', website: website ?? '', logoUrl: logoUrl ?? '' })
-  }
-
-  // ── Account manager ───────────────────────────────────────────────────────
-  const [mgr,       setMgr]       = useState(accountManagerId)
-  const [mgrSaving, setMgrSaving] = useState(false)
-
-  async function saveManager(newId: string | null) {
-    const prev = mgr
-    setMgr(newId)
-    setMgrSaving(true)
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ account_manager_id: newId }),
-      })
-      if (!res.ok) throw new Error('Save failed')
-      router.refresh()
-    } catch {
-      setMgr(prev)
-    } finally {
-      setMgrSaving(false)
-    }
-  }
-
-  const currentMgr = adminUsers.find(u => u.id === mgr) ?? null
-
-  // ── Contacts ──────────────────────────────────────────────────────────────
-  const [contacts,      setContacts]      = useState<Contact[]>(initialContacts)
-  const [addingContact, setAddingContact] = useState(false)
-  const [contactForm,   setContactForm]   = useState({ name: '', email: '', phone: '', role: 'contact' })
-  const [contactSaving, setContactSaving] = useState(false)
-  const [contactError,  setContactError]  = useState('')
-
-  async function addContact(e: React.FormEvent) {
-    e.preventDefault()
-    if (!contactForm.name.trim()) return
-    setContactSaving(true)
-    setContactError('')
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}/contacts`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          name:  contactForm.name.trim(),
-          email: contactForm.email.trim() || null,
-          phone: contactForm.phone.trim() || null,
-          role:  contactForm.role,
-        }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      const created = await res.json()
-      setContacts(prev => [...prev, created])
-      setContactForm({ name: '', email: '', phone: '', role: 'contact' })
-      setAddingContact(false)
-    } catch (err) {
-      setContactError(err instanceof Error ? err.message : 'Error')
-    } finally {
-      setContactSaving(false)
-    }
-  }
-
-  async function deleteContact(contactId: string) {
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' })
-      if (res.ok) setContacts(prev => prev.filter(c => c.id !== contactId))
-    } catch {
-      // leave contact in list on network failure
-    }
-  }
+  // ── People: the main contacts first, then billing, then the rest ──────────
+  const ROLE_ORDER: Record<string, number> = { primary: 0, billing: 1 }
+  const people = [...contacts].sort((a, b) => (ROLE_ORDER[a.role] ?? 2) - (ROLE_ORDER[b.role] ?? 2))
+  const shownPeople = people.slice(0, 3)
+  const profileHref = `/admin/clients/${clientId}?tab=profile`
 
   // ── Billing data (invoices + ledger) ─────────────────────────────────────
   const [invoices,       setInvoices]       = useState<Invoice[]>([])
@@ -307,166 +172,6 @@ export default function OverviewTab({
           </Section>
         </div>
 
-        <div className="co-ov-biz">
-          <Section
-            title="Business info"
-            description={editingBiz ? 'The name, address and links shown on the client’s dashboard and reports.' : undefined}
-            actions={!editingBiz && (
-              <button type="button" onClick={() => setEditingBiz(true)} className="btn btn-secondary btn-sm">
-                <PencilSimple size={14} aria-hidden />Edit
-              </button>
-            )}
-          >
-            {editingBiz ? (
-              <form onSubmit={saveBiz} className="ui-stack" style={{ gap: 14 }}>
-                {bizError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{bizError}</div>}
-                <div className="co-fields">
-                  {([
-                    { key: 'name',    label: 'Business name', required: true,  type: 'text' },
-                    { key: 'phone',   label: 'Phone',         required: false, type: 'tel'  },
-                    { key: 'address', label: 'Address',       required: false, type: 'text' },
-                    { key: 'website', label: 'Website',       required: false, type: 'text' },
-                  ] as const).map(f => (
-                    <div key={f.key} className="co-field">
-                      <label className="co-label" htmlFor={`biz-${f.key}`}>{f.label}</label>
-                      <input
-                        id={`biz-${f.key}`}
-                        className="input"
-                        type={f.type}
-                        value={bizForm[f.key]}
-                        onChange={e => setBizForm(v => ({ ...v, [f.key]: e.target.value }))}
-                        required={f.required}
-                        placeholder={f.key === 'website' ? 'example.com' : undefined}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div>
-                  <p className="co-label">Logo</p>
-                  <ClientLogoUpload
-                    clientId={clientId}
-                    currentLogoUrl={displayLogoUrl}
-                    onUpload={url => { setDisplayLogoUrl(url); setBizForm(v => ({ ...v, logoUrl: url })) }}
-                  />
-                </div>
-
-                <div className="co-divider" />
-                <div className="co-actions">
-                  <button type="submit" disabled={bizSaving} className="btn btn-primary btn-sm">
-                    {bizSaving ? 'Saving…' : 'Save changes'}
-                  </button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={cancelBiz}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <>
-                {displayLogoUrl && <img src={displayLogoUrl} alt={`${name} logo`} className="co-biz-logo" />}
-                <dl className="co-facts">
-                  <Fact label="Business name" value={name} strong />
-                  <Fact label="Phone" value={phone} />
-                  <Fact label="Address" value={address} />
-                  <Fact label="Website" value={website} href={website ? normalizeUrl(website) : undefined} />
-                </dl>
-              </>
-            )}
-          </Section>
-        </div>
-
-        <div className="co-ov-contacts">
-          <Section
-            title="Contacts"
-            description="Who we talk to at the client, and who gets the bills."
-            flush
-            actions={!addingContact && (
-              <button type="button" onClick={() => setAddingContact(true)} className="btn btn-secondary btn-sm">
-                <Plus size={14} weight="bold" aria-hidden />Add contact
-              </button>
-            )}
-          >
-            {contacts.length === 0 && !addingContact && (
-              <p className="co-empty">No contacts yet. Add the client’s main contact and whoever pays the invoices.</p>
-            )}
-
-            {contacts.map(contact => {
-              const role = ROLE[contact.role]
-              return (
-                <div key={contact.id} className="ui-row co-money-row">
-                  <span className="co-avatar" aria-hidden>{initials(contact.name)}</span>
-                  <span className="ui-row-text">
-                    <span className="ui-row-title">
-                      {contact.name}
-                      {role
-                        ? <StatusBadge tone={role.tone} dot={false}>{role.label}</StatusBadge>
-                        : <StatusBadge dot={false}>Contact</StatusBadge>}
-                    </span>
-                    {(contact.email || contact.phone) && (
-                      <span className="ui-row-sub co-row-sub">
-                        {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
-                        {contact.email && contact.phone && <span className="co-dot" aria-hidden />}
-                        {contact.phone && <span className="co-nowrap">{contact.phone}</span>}
-                      </span>
-                    )}
-                  </span>
-                  <span className="ui-row-actions">
-                    <button
-                      type="button"
-                      onClick={() => deleteContact(contact.id)}
-                      className="co-iconbtn co-iconbtn--danger"
-                      aria-label={`Remove ${contact.name}`}
-                      title="Remove contact"
-                    >
-                      <Trash size={15} aria-hidden />
-                    </button>
-                  </span>
-                </div>
-              )
-            })}
-
-            {addingContact && (
-              <div className="co-section-pad" style={{ paddingTop: contacts.length > 0 ? 12 : 0 }}>
-                <form onSubmit={addContact} className="co-subform">
-                  <p className="co-subform-title">New contact</p>
-                  {contactError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{contactError}</div>}
-                  <div className="co-fields">
-                    <div className="co-field">
-                      <label className="co-label" htmlFor="contact-name">Name</label>
-                      <input id="contact-name" className="input" value={contactForm.name} onChange={e => setContactForm(v => ({ ...v, name: e.target.value }))} required placeholder="Full name" autoFocus />
-                    </div>
-                    <div className="co-field">
-                      <label className="co-label" htmlFor="contact-role">Role</label>
-                      <select id="contact-role" className="input" value={contactForm.role} onChange={e => setContactForm(v => ({ ...v, role: e.target.value }))}>
-                        <option value="contact">Contact</option>
-                        <option value="primary">Primary</option>
-                        <option value="billing">Billing</option>
-                      </select>
-                    </div>
-                    <div className="co-field">
-                      <label className="co-label" htmlFor="contact-email">Email</label>
-                      <input id="contact-email" className="input" type="email" value={contactForm.email} onChange={e => setContactForm(v => ({ ...v, email: e.target.value }))} placeholder="name@example.com" />
-                    </div>
-                    <div className="co-field">
-                      <label className="co-label" htmlFor="contact-phone">Phone</label>
-                      <input id="contact-phone" className="input" type="tel" value={contactForm.phone} onChange={e => setContactForm(v => ({ ...v, phone: e.target.value }))} placeholder="(555) 555-5555" />
-                    </div>
-                  </div>
-                  <div className="co-actions">
-                    <button type="submit" disabled={contactSaving} className="btn btn-primary btn-sm">
-                      {contactSaving ? 'Adding…' : 'Add contact'}
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm"
-                      onClick={() => { setAddingContact(false); setContactError(''); setContactForm({ name: '', email: '', phone: '', role: 'contact' }) }}>
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </Section>
-        </div>
-
         <div className="co-ov-rel">
           <ClientRelationshipCard
             clientId={clientId}
@@ -477,34 +182,55 @@ export default function OverviewTab({
           />
         </div>
 
-        <div className="co-ov-mgr">
-          <Section title="Account manager" description="Who looks after this client day to day.">
-            {currentMgr ? (
-              <div className="co-person">
-                <span className="co-avatar co-avatar--lg" aria-hidden>
-                  {currentMgr.avatar_url ? <img src={currentMgr.avatar_url} alt="" /> : initials(currentMgr.name)}
-                </span>
-                <span className="co-person-text">
-                  <span className="co-person-name">{currentMgr.name}</span>
-                  <span className="co-person-sub">{currentMgr.email}</span>
-                </span>
-              </div>
+        <div className="co-ov-people">
+          <Section
+            title="People"
+            flush
+            actions={<Link href={profileHref} className="co-link">Profile<CaretRight size={12} weight="bold" aria-hidden /></Link>}
+          >
+            {!accountManager && people.length === 0 ? (
+              <p className="co-empty">No contacts or account manager yet. <Link href={profileHref}>Add them on the Profile tab</Link>.</p>
             ) : (
-              <p className="co-hint" style={{ margin: '0 0 12px' }}>No one assigned yet.</p>
+              <>
+                {accountManager && (
+                  <div className="ui-row">
+                    <span className="co-avatar" aria-hidden>
+                      {accountManager.avatar_url ? <img src={accountManager.avatar_url} alt="" /> : initials(accountManager.name)}
+                    </span>
+                    <span className="ui-row-text">
+                      <span className="ui-row-title">{accountManager.name}</span>
+                      <span className="ui-row-sub">Account manager</span>
+                    </span>
+                  </div>
+                )}
+                {shownPeople.map(contact => {
+                  const role = CONTACT_ROLE[contact.role]
+                  return (
+                    <div key={contact.id} className="ui-row">
+                      <span className="co-avatar" aria-hidden>{initials(contact.name)}</span>
+                      <span className="ui-row-text">
+                        <span className="ui-row-title">
+                          {contact.name}
+                          {role && <StatusBadge tone={role.tone} dot={false}>{role.label}</StatusBadge>}
+                        </span>
+                        {(contact.email || contact.phone) && (
+                          <span className="ui-row-sub co-row-sub">
+                            {contact.email && <a href={`mailto:${contact.email}`}>{contact.email}</a>}
+                            {contact.email && contact.phone && <span className="co-dot" aria-hidden />}
+                            {contact.phone && <a href={`tel:${contact.phone}`} className="co-nowrap">{contact.phone}</a>}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
+                {people.length > shownPeople.length && (
+                  <p className="co-more">
+                    <Link href={profileHref}>{people.length - shownPeople.length} more on the Profile tab</Link>
+                  </p>
+                )}
+              </>
             )}
-            <label className="sr-only" htmlFor="account-manager">Account manager</label>
-            <select
-              id="account-manager"
-              className="input co-select"
-              value={mgr ?? ''}
-              onChange={e => saveManager(e.target.value || null)}
-              disabled={mgrSaving}
-            >
-              <option value="">Unassigned</option>
-              {adminUsers.map(u => (
-                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
-              ))}
-            </select>
           </Section>
         </div>
 
@@ -609,21 +335,6 @@ function QuickLink({ label, url }: { label: string; url: string }) {
           <ArrowSquareOut size={15} aria-hidden />
         </a>
       </span>
-    </div>
-  )
-}
-
-function Fact({ label, value, strong, href }: { label: string; value: string | null; strong?: boolean; href?: string }) {
-  return (
-    <div className="co-fact">
-      <dt>{label}</dt>
-      {!value ? (
-        <dd className="co-fact-empty">Not set</dd>
-      ) : href ? (
-        <dd><a href={href} target="_blank" rel="noopener noreferrer">{value}<ArrowSquareOut size={12} aria-label="opens in a new tab" /></a></dd>
-      ) : (
-        <dd style={strong ? { fontWeight: 600 } : undefined}>{value}</dd>
-      )}
     </div>
   )
 }
