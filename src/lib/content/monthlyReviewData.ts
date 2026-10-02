@@ -118,9 +118,19 @@ export async function getMonthlyReviewData(
 
   const clientNameMap = new Map(clients.map(c => [c.id as string, c.name as string]))
 
-  const wpClientIds = new Set(
-    connections.filter(c => c.connectors?.type === 'wordpress').map(c => c.client_id as string)
-  )
+  // Which platform a post goes to: its own saved site when that site is its client's, else the
+  // client's WordPress site, else its BigCommerce store, else none. "No WordPress site" used to
+  // mean BigCommerce, so a client with no site at all was shown as a BigCommerce client.
+  type Platform = 'wordpress' | 'bigcommerce'
+  const siteType = (c: Record<string, any>): Platform | null => // eslint-disable-line @typescript-eslint/no-explicit-any
+    c.connectors?.type === 'wordpress' || c.connectors?.type === 'bigcommerce' ? c.connectors.type : null
+  const platformFor = (clientId: string, connectionId: string | null): Platform | null => {
+    const own = connections.filter(c => c.client_id === clientId && siteType(c))
+    const saved = connectionId ? own.find(c => c.id === connectionId) : undefined
+    if (saved) return siteType(saved)
+    if (own.some(c => siteType(c) === 'wordpress')) return 'wordpress'
+    return own.length > 0 ? 'bigcommerce' : null
+  }
 
   const posts: MonthlyReviewPost[] = postsRawArr.map(p => ({
     id:                  String(p.id),
@@ -142,7 +152,8 @@ export async function getMonthlyReviewData(
     published_url:       p.published_url ? String(p.published_url) : null,
     bc_post_id:          p.bc_post_id    != null ? Number(p.bc_post_id) : null,
     bc_store_hash:       p.bc_store_hash ? String(p.bc_store_hash) : null,
-    isBc:                !wpClientIds.has(p.client_id as string),
+    platform:            platformFor(String(p.client_id), p.connection_id ? String(p.connection_id) : null),
+    isBc:                platformFor(String(p.client_id), p.connection_id ? String(p.connection_id) : null) === 'bigcommerce',
 
     // These are fetched by the SELECT above but were not being mapped through.
     // MonthlyReviewPostCard is the ONLY consumer of QualityFindings, so dropping

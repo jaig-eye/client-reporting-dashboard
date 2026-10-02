@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed }     from '@/lib/auth'
+import { connectionAllowedForPost, FOREIGN_CONNECTION_ERROR } from '@/lib/content/postConnection'
 
 function countWords(html: string)    { return html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length }
 function countHeadings(html: string) { return (html.match(/<h[2-4][^>]*>/gi) || []).length }
@@ -175,7 +176,7 @@ export async function PATCH(request: NextRequest) {
   if (body.slug            !== undefined) updates.slug               = body.slug
   if (body.targetKeyword   !== undefined) updates.target_keyword     = body.targetKeyword
   if (body.suggestedTags   !== undefined) updates.suggested_tags     = body.suggestedTags
-  if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId
+  if (body.connectionId      !== undefined) updates.connection_id      = body.connectionId || null
   if (body.wpAuthorId        !== undefined) updates.wp_author_id       = body.wpAuthorId
   if (body.featuredImageUrl  !== undefined) {
     updates.featured_image_url = body.featuredImageUrl
@@ -197,6 +198,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   const db = createAdminClient()
+  if (updates.connection_id !== undefined && !(await connectionAllowedForPost(db, id, updates.connection_id as string | null)))
+    return NextResponse.json({ error: FOREIGN_CONNECTION_ERROR }, { status: 400 })
+
   let { error } = await db.from('content_posts').update(updates).eq('id', id)
 
   // Deploy-order fallback. The release columns arrive in migration 214, and naming a column

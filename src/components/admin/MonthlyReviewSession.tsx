@@ -497,7 +497,9 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       <ContentPostEditor
         postId={editorPostId}
         defaultConnectionId={editorPost.connection_id ?? null}
-        sites={allSites}
+        // Only this post's client. Handing over every client's sites let the editor offer, and
+        // pre-select, another client's store for a client with no site of its own.
+        sites={allSites.filter(s => s.clientId === editorPost.client_id)}
         onClose={() => setEditorPostId(null)}
         onUpdate={() => setEditorPostId(null)}
         onSaved={() => router.refresh()}

@@ -1,7 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Books, ArrowCircleRight, ArrowClockwise, CheckCircle, XCircle, WarningCircle, CaretDown, X, LinkBreak, ArrowBendDownRight, ArrowDown, ArrowUp, MagnifyingGlass } from '@phosphor-icons/react'
+import { Sparkle, Books, ArrowCircleRight, ArrowClockwise, CheckCircle, XCircle, WarningCircle, CaretDown, X, LinkBreak, ArrowBendDownRight, ArrowDown, ArrowUp, MagnifyingGlass } from '@phosphor-icons/react'
 import '@/styles/admin/pipeline.css'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 import { Sk, SkText } from '@/components/ui/Skeleton'
@@ -420,8 +421,18 @@ interface TopicBreakdown {
   competitors_researched?: string[] | null
 }
 
+function siteLabel(s: Site): string {
+  const where = s.siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  return s.connectorType === 'bigcommerce'
+    ? `BigCommerce store${where ? ` (${where})` : ''}`
+    : `${where || s.siteName} (WordPress)`
+}
+
 export default function ContentPostEditor({ postId, defaultConnectionId, sites, onClose, onUpdate, onSaved, onRegenerateStart, onRegenerateDone, onRegenerateError, onMonthlyApprove, onMonthlyDiscard, onMonthlyRegenerate, autoScanLinks, topicBreakdown }: Props) {
   const [post,            setPost]            = useState<PostDetail | null>(null)
+  // The sites this post may go to: its own client's. The list passed in should already be just
+  // those; this holds even if a caller hands over more.
+  const ownSites = post ? sites.filter(s => s.clientId === post.clientId) : []
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
   const [savedFlash,      setSavedFlash]      = useState(false)
@@ -589,9 +600,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         setCategoryIds(data.wpCategoryIds ?? [])
         setFeaturedImageUrl(data.featuredImageUrl ?? '')
         setImageCandidates(data.imageCandidates ?? [])
-        // Seed connection: post's stored connection > schedule default > first BC site > first any site
-        const autoSite = sites.find(s => s.connectorType === 'bigcommerce') ?? sites[0]
-        setConnectionId(data.postConnectionId ?? defaultConnectionId ?? autoSite?.connectionId ?? '')
+        // Seed the site: the post's own, else the client's schedule default, else the client's
+        // only site. Never a guess beyond that, and never a site of another client: with no
+        // site of its own this used to pre-select the first BigCommerce store in the list,
+        // which was another client's.
+        const own   = sites.filter(s => s.clientId === data.clientId)
+        const owned = (cid: string | null | undefined) => (cid && own.some(s => s.connectionId === cid) ? cid : null)
+        setConnectionId(owned(data.postConnectionId) ?? owned(defaultConnectionId) ?? (own.length === 1 ? own[0].connectionId : ''))
 
         // Default publish status: draft_only mode always overrides; otherwise use target date
         if (data.schedulePublishMode === 'draft_only') {
@@ -924,14 +939,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
     setApproving(true)
     setError('')
     try {
-      const activeSite    = connectionId ? sites.find(s => s.connectionId === connectionId) : null
+      const activeSite    = connectionId ? ownSites.find(s => s.connectionId === connectionId) : null
       const isBigCommerce = activeSite?.connectorType === 'bigcommerce'
 
       if (!activeSite) {
         // Open the section that holds the fix and say where it is. The old copy named a
         // "Settings tab", which this drawer has never had — the control is in Publish, below.
         openSection('publish')
-        setError('Choose a site connection under Publish below, then approve.')
+        setError(ownSites.length === 0
+          ? 'This client has no site connected yet. Connect one under the client’s Integrations, then approve.'
+          : 'Choose a site under Publish below, then approve.')
         setApproving(false)
         return
       }
@@ -1029,8 +1046,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       })
       if (!saveRes.ok) throw new Error((await saveRes.json().catch(() => ({}))).error || 'Failed to save')
 
-      const activeSite = sites.find(s => s.connectionId === connectionId)
-      if (!activeSite) throw new Error('Selected connection not found — refresh and try again')
+      const activeSite = ownSites.find(s => s.connectionId === connectionId)
+      if (!activeSite) throw new Error(ownSites.length === 0 ? 'This client has no site connected yet.' : 'Choose a site under Publish first.')
 
       const isBigCommerce = activeSite.connectorType === 'bigcommerce'
       const route = isBigCommerce
@@ -1294,7 +1311,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // Shared with the pipeline and monthly-review cards rather than reimplemented here, which is
   // how the two definitions drifted apart in the first place.
   const isOnSite = post ? postIsOnSite(post) : false
-  const isBc = (connectionId ? sites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
+  const isBc = (connectionId ? ownSites.find(s => s.connectionId === connectionId) : null)?.connectorType === 'bigcommerce'
 
   /**
    * Is the live article behind what this row holds?
@@ -1388,7 +1405,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               <X size={13} weight="bold" aria-hidden />Close preview
             </button>
           </div>
-          <iframe srcDoc={previewSrcdoc} title="Post Preview" style={{ flex: 1, border: 'none', width: '100%' }} />
+          <iframe srcDoc={previewSrcdoc} title="Post preview" style={{ flex: 1, border: 'none', width: '100%' }} />
         </div>
       )}
 
@@ -1690,11 +1707,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
                       style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
-                      <Books size={14} weight="bold" />
+                      <Books size={14} weight="bold" aria-hidden />
                       Image library
                     </button>
                     <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                      {generatingImage ? 'Generating…' : <><Sparkle size={14} aria-hidden />Generate with AI</>}
                     </button>
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
                       {imageUploadingMsg || 'Upload'}
@@ -1702,7 +1719,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     <div style={{ flex: 1 }} />
                     <button
                       type="button" onClick={() => { setFeaturedImageUrl(''); markDirty() }}
-                      className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}
+                      className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red-fg)' }}
                     >
                       Remove
                     </button>
@@ -1722,11 +1739,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       type="button" onClick={() => setLibraryOpen(true)} className="btn btn-primary"
                       style={{ fontSize: '0.8125rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
-                      <Books size={14} weight="bold" />
+                      <Books size={14} weight="bold" aria-hidden />
                       Open image library{imageCandidates.length > 0 ? ` · ${imageCandidates.length}` : ''}
                     </button>
                     <button type="button" onClick={handleGenerateImage} disabled={generatingImage} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-                      {generatingImage ? 'Generating…' : '✦ Generate with AI'}
+                      {generatingImage ? 'Generating…' : <><Sparkle size={14} aria-hidden />Generate with AI</>}
                     </button>
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
                       {imageUploadingMsg || 'Upload'}
@@ -1922,17 +1939,24 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <CollapsibleSection title="Publish" open={openSections.has('publish')} onToggle={() => toggleSection('publish')}>
               {/* Site connection selector */}
               <div className="mb-4">
-                <label style={labelStyle}>Site</label>
-                <select value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
-                  <option value="">— Select a site —</option>
-                  {sites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName} ({s.clientName})</option>)}
-                </select>
+                <label style={labelStyle} htmlFor="pe-site">Site</label>
+                {ownSites.length === 0 ? (
+                  <p id="pe-site" style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                    No site connected. The post waits here until this client has one.{' '}
+                    {post && <Link href={`/admin/clients/${post.clientId}?tab=sources`} style={{ color: 'var(--accent-fg)' }}>Connect a site</Link>}
+                  </p>
+                ) : (
+                  <select id="pe-site" value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
+                    <option value="">Choose a site</option>
+                    {ownSites.map(s => <option key={s.connectionId} value={s.connectionId}>{siteLabel(s)}</option>)}
+                  </select>
+                )}
               </div>
 
               {/* Author + publish status */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
                 <div>
-                  <label style={labelStyle}>{isBc ? 'Author Name' : 'WP Author'}</label>
+                  <label style={labelStyle}>{isBc ? 'Author name' : 'WP Author'}</label>
                   {isBc ? (
                     <input
                       type="text"
@@ -1962,11 +1986,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 </div>
               </div>
 
-              {/* WP Categories */}
+              {/* WordPress categories */}
               {categories.length > 0 && (
                 <div className="mb-4">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>WP Categories</label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>WordPress categories</label>
                     <button
                       type="button"
                       onClick={refreshCategories}
@@ -2157,7 +2181,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 <ArrowClockwise size={14} weight="bold" />
                 Regenerate
               </button>
-              <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red)' }}>
+              <button type="button" onClick={handleReject} className="btn btn-secondary" style={{ fontSize: '0.8125rem', color: 'var(--red-fg)' }}>
                 Reject
               </button>
             </div>

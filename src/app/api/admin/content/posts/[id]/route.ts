@@ -10,6 +10,7 @@ import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity } from '@/lib/activity'
 import { suppressSlots } from '@/lib/content/slotSuppression'
 import { recheckPostQuality } from '@/lib/content/recheckQuality'
+import { connectionAllowedForPost, FOREIGN_CONNECTION_ERROR } from '@/lib/content/postConnection'
 
 const ALLOWED_STATUSES =['pending', 'for_review', 'approved', 'rejected', 'published', 'draft_saved']
 
@@ -61,7 +62,7 @@ export async function PATCH(
   if (body.wpStatus        !== undefined) update.wp_status        = body.wpStatus
   if (body.authorId        !== undefined) update.wp_author_id     = body.authorId
   if (body.categoryIds     !== undefined) update.wp_category_ids  = body.categoryIds
-  if (body.connectionId    !== undefined) update.connection_id    = body.connectionId
+  if (body.connectionId    !== undefined) update.connection_id    = body.connectionId || null
   // The editor has sent this on every save since the BigCommerce byline input shipped; there
   // was no field here to receive it, so it was silently dropped and the article published
   // under the client-level author instead.
@@ -71,6 +72,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
   const db = createAdminClient()
+
+  if (update.connection_id !== undefined && !(await connectionAllowedForPost(db, id, update.connection_id as string | null)))
+    return NextResponse.json({ error: FOREIGN_CONNECTION_ERROR }, { status: 400 })
 
   // Release the client-media attachment link only when the featured image genuinely CHANGED.
   //

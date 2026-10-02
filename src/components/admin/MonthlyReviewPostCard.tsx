@@ -31,6 +31,8 @@ export interface MonthlyReviewPost {
   published_url:       string | null
   bc_post_id:          number | null
   bc_store_hash:       string | null
+  /** The client's site the post goes to; null when the client has none connected yet. */
+  platform:            'wordpress' | 'bigcommerce' | null
   isBc:                boolean
   /** Set when the CMS copy was last written. See migration 200. */
   last_pushed_at?:     string | null
@@ -157,7 +159,7 @@ export default function MonthlyReviewPostCard({
           )}
           <span className="mr-fact">{post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}</span>
           {post.content && <span className="mr-fact">{wordCount(post.content).toLocaleString()} words</span>}
-          <span className="mr-fact">{post.isBc ? 'BigCommerce' : 'WordPress'}</span>
+          <span className="mr-fact">{post.platform === 'bigcommerce' ? 'BigCommerce' : post.platform === 'wordpress' ? 'WordPress' : 'No site connected'}</span>
           {SHOW_NON_BLOG_CONTENT_TYPES && post.content_type && (
             <StatusBadge tone={post.content_type === 'blog' ? 'neutral' : 'info'} dot={false}>{TYPE_LABEL[post.content_type] ?? 'Page'}</StatusBadge>
           )}
