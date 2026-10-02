@@ -6,7 +6,7 @@ const I = require(path.join(process.env.WT, 'src/lib/content/generatePostImage.t
 
 // ── The planning window (calendar/generate without a start date, and the cron) ──────────────
 
-const weekly = { frequency: 'weekly', dayOfWeek: 1, weeksAhead: 4, monthlyPublishDay: null }
+const weekly = { frequency: 'weekly', dayOfWeek: 1, weeksAhead: 4 }
 
 test('a start date three months back still plans the next weeks_ahead dates from today', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
@@ -23,17 +23,17 @@ test('the window is one cadence cycle per weeks_ahead, at least one', () => {
   assert.equal(S.leadWindowDays('weekly', 0), 7)
 })
 
-test('monthly on a fixed day plans weeks_ahead months', (t) => {
+test('monthly on the first Monday plans weeks_ahead months', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
   assert.deepEqual(
-    S.windowSlots({ frequency: 'monthly', dayOfWeek: 1, weeksAhead: 2, monthlyPublishDay: 25, scheduleStartDate: '2026-01-25' }),
-    ['2026-10-25', '2026-11-25'],
+    S.windowSlots({ frequency: 'monthly', dayOfWeek: 1, weeksAhead: 2, scheduleStartDate: '2026-01-25' }),
+    ['2026-10-05', '2026-11-02'],
   )
 })
 
 // ── Biweekly runs on the client's own fortnight ──────────────────────────────────────────────
 
-const biweekly = { frequency: 'biweekly', dayOfWeek: 1, weeksAhead: 4, monthlyPublishDay: null, scheduleStartDate: '2026-09-09' }
+const biweekly = { frequency: 'biweekly', dayOfWeek: 1, weeksAhead: 4, scheduleStartDate: '2026-09-09' }
 
 test('biweekly dates keep one fortnight whichever day the cron runs on', (t) => {
   // Start 2026-09-09 (a Wednesday): the series is the Mondays from 09-14, every 14 days.
@@ -41,7 +41,7 @@ test('biweekly dates keep one fortnight whichever day the cron runs on', (t) => 
   for (const now of ['2026-10-01T12:00:00Z', '2026-10-04T19:00:00Z', '2026-10-05T01:00:00Z', '2026-10-11T19:00:00Z']) {
     t.mock.timers.reset()
     t.mock.timers.enable({ apis: ['Date'], now: new Date(now) })
-    const got = S.computeFutureSlots('biweekly', 1, 9, null, biweekly.scheduleStartDate)
+    const got = S.computeFutureSlots('biweekly', 1, 9, biweekly.scheduleStartDate)
     assert.ok(got.length >= 3, now)
     for (const d of got) assert.ok(series.has(d), `${d} (run at ${now}) is off the client's fortnight`)
   }
@@ -54,7 +54,7 @@ test('the biweekly window never holds two consecutive weeks', (t) => {
 
 test('biweekly with no start date keeps its old anchor: the next publish weekday after today', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
-  assert.deepEqual(S.computeFutureSlots('biweekly', 1, 5, null, null), ['2026-10-05', '2026-10-19', '2026-11-02'])
+  assert.deepEqual(S.computeFutureSlots('biweekly', 1, 5, null), ['2026-10-05', '2026-10-19', '2026-11-02'])
 })
 
 test('alignToFortnight moves only an off-week date, by a week', () => {

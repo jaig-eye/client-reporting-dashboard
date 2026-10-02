@@ -22,7 +22,7 @@ function stubDb({ settings, global = null, topics = [], suppressed = [] }) {
   }
 }
 
-const weekly = { schedule_frequency: 'weekly', schedule_day_of_week: 1, weeks_ahead: 4, monthly_publish_day: null, schedule_start_date: null, posts_per_run: 1, auto_generate: true }
+const weekly = { schedule_frequency: 'weekly', schedule_day_of_week: 1, weeks_ahead: 4, schedule_start_date: null, posts_per_run: 1, auto_generate: true }
 
 test('a full four-week window answers with the Monday after it, picked up when it enters the window', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
@@ -38,4 +38,22 @@ test('an open date inside the window is filled on the next run; a suppressed one
 
 test('no schedule row means no answer', async () => {
   assert.equal(await S.nextOpenSlot(stubDb({ settings: null }), 'c'), null)
+})
+
+test('monthly is the first of the publish weekday, whatever day the run happens on', (t) => {
+  assert.equal(S.firstWeekdayOfMonth(2026, 9, 1), 5)   // October 2026 starts on a Thursday: first Monday the 5th
+  assert.equal(S.firstWeekdayOfMonth(2026, 9, 4), 1)   // first Thursday is the 1st itself
+  assert.equal(S.firstWeekdayOfMonth(2026, 1, 0), 1)   // February 2026 starts on a Sunday
+  // Two runs a week apart plan the same dates: no anchor, so nothing to drift.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
+  const first = S.computeFutureSlots('monthly', 1, 12)
+  assert.deepEqual(first, ['2026-10-05', '2026-11-02', '2026-12-07'])
+  t.mock.timers.setTime(new Date('2026-10-08T12:00:00Z').getTime())
+  assert.deepEqual(S.computeFutureSlots('monthly', 1, 12).slice(0, 2), ['2026-11-02', '2026-12-07'])
+})
+
+test('the fixed monthly dates are unchanged', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-01T12:00:00Z') })
+  assert.deepEqual(S.computeFutureSlots('monthly_mid', 1, 9), ['2026-10-15', '2026-11-15'])
+  assert.deepEqual(S.computeFutureSlots('monthly_end', 3, 9), ['2026-10-28', '2026-11-28'])
 })

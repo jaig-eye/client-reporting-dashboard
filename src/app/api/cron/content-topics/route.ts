@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
   // Load all clients with auto_generate enabled
   const { data: settingsRows } = await db
     .from('content_settings')
-    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, monthly_publish_day, schedule_start_date, posts_per_run')
+    .select('client_id, schedule_frequency, schedule_day_of_week, weeks_ahead, auto_approve_topics, auto_push_posts, generate_service_pages, generate_regular_pages, schedule_start_date, posts_per_run')
     .eq('auto_generate', true)
     .not('client_id', 'is', null)
 
@@ -162,7 +162,6 @@ export async function GET(request: NextRequest) {
       weeks_ahead           = 1,
       generate_service_pages = false,
       generate_regular_pages = false,
-      monthly_publish_day   = null,
       schedule_start_date   = null,
       posts_per_run         = 1,
     } = row as {
@@ -174,7 +173,6 @@ export async function GET(request: NextRequest) {
       auto_push_posts:        boolean
       generate_service_pages: boolean
       generate_regular_pages: boolean
-      monthly_publish_day:    number | null
       schedule_start_date:    string | null
       posts_per_run:          number | null
     }
@@ -223,8 +221,7 @@ export async function GET(request: NextRequest) {
     // The dates inside the client's lead window — the same definition calendar/generate plans from.
     const leadWindow = leadWindowDays(frequency, weeks_ahead)
     const slots = windowSlots({
-      frequency, dayOfWeek, weeksAhead: weeks_ahead,
-      monthlyPublishDay: monthly_publish_day, scheduleStartDate: schedule_start_date,
+      frequency, dayOfWeek, weeksAhead: weeks_ahead, scheduleStartDate: schedule_start_date,
     })
 
     // ── Priority set: the oldest active set with keywords waiting takes the date ──
@@ -829,27 +826,20 @@ export async function GET(request: NextRequest) {
           const saLeadWindow = saCycle * 8 // 8-cycle look-ahead (same as wizard default)
           const saWeeksToScan = Math.ceil(saLeadWindow / 7) + 1
 
-          // Look up this client's monthly anchor. saFrequency DEFAULTS to 'monthly'
-          // here, so without an anchor this branch fell straight through to
-          // now.getUTCDate() — the original drifting-anchor bug — and a service-area
-          // client would have produced the same once-a-month burst of consecutive
-          // dates. The SA settings row has no anchor columns of its own, so it comes
-          // from the client's content_settings, the same source the blog branch uses.
-          let saMonthlyDay: number | null = null
-          let saStartDate:  string | null = null
+          // The SA settings row has no start date of its own; a biweekly service-area schedule
+          // keeps to the client's fortnight, read from its content_settings like the blog branch.
+          let saStartDate: string | null = null
           {
             const { data: saAnchor } = await db
               .from('content_settings')
-              .select('monthly_publish_day, schedule_start_date')
+              .select('schedule_start_date')
               .eq('client_id', saClientId)
               .maybeSingle()
-            const a = saAnchor as { monthly_publish_day: number | null; schedule_start_date: string | null } | null
-            saMonthlyDay = a?.monthly_publish_day ?? null
-            saStartDate  = a?.schedule_start_date ?? null
+            saStartDate = (saAnchor as { schedule_start_date: string | null } | null)?.schedule_start_date ?? null
           }
 
           const saSlots = computeFutureSlots(
-            saFrequency, saDayOfWeek, saWeeksToScan, saMonthlyDay, saStartDate,
+            saFrequency, saDayOfWeek, saWeeksToScan, saStartDate,
           ).filter(slot => {
             const daysOut = Math.round((new Date(slot + 'T00:00:00Z').getTime() - Date.now()) / 86_400_000)
             return daysOut > 0 && daysOut <= saLeadWindow
