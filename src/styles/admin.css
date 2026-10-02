@@ -272,7 +272,8 @@
 }
 .ui-tab:hover { color: var(--text-primary); }
 .ui-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.ui-tab[aria-selected="true"], .ui-tab[aria-current="page"] {
+/* aria-checked: the same strip as a radio group (choose one, nothing navigates). */
+.ui-tab[aria-selected="true"], .ui-tab[aria-current="page"], .ui-tab[aria-checked="true"] {
   background: var(--bg-surface); color: var(--text-primary); font-weight: 600;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 1px var(--border-subtle);
 }
@@ -351,6 +352,48 @@
 @media (max-width: 1023px) { .ui-sk-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ui-sk-stat { padding: 16px; }
 .ui-sk-rows .ui-row { padding: 14px; }
+
+/* ── Switch ────────────────────────────────────────────────────────────────── */
+/* The input stays a real checkbox (role=switch): it takes the keyboard focus and submits nothing. */
+
+.ui-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
+.ui-switch input { position: absolute; left: 0; opacity: 0; width: 36px; height: 20px; margin: 0; cursor: pointer; }
+.ui-switch-track {
+  position: relative; flex-shrink: 0; width: 36px; height: 20px; border-radius: var(--radius-pill);
+  background: var(--bg-muted); box-shadow: inset 0 0 0 1px var(--border); transition: background 0.18s;
+}
+.ui-switch-track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--bg-surface); box-shadow: var(--shadow-sm); transition: transform 0.18s var(--ease-out);
+}
+.ui-switch input:checked + .ui-switch-track { background: var(--accent); box-shadow: none; }
+.ui-switch input:checked + .ui-switch-track::after { transform: translateX(16px); }
+.ui-switch input:focus-visible + .ui-switch-track { box-shadow: var(--ring); }
+.ui-switch input:disabled + .ui-switch-track { opacity: 0.55; }
+.ui-switch:has(input:disabled) { cursor: default; }
+@media (prefers-reduced-motion: reduce) { .ui-switch-track, .ui-switch-track::after { transition: none; } }
+
+/* A setting: what it is on the left, its control on the right; extra controls drop in underneath. */
+.ui-setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 16px; padding: 14px 0; }
+.ui-setting + .ui-setting { border-top: 1px solid var(--border-subtle); }
+.ui-setting:first-child { padding-top: 0; }
+.ui-setting:last-child { padding-bottom: 0; }
+.ui-setting-text { min-width: 0; }
+.ui-setting-title { margin: 0; font-size: 0.875rem; font-weight: 600; line-height: 1.35; color: var(--text-primary); }
+.ui-setting-desc { margin: 2px 0 0; max-width: 62ch; font-size: 0.78rem; line-height: 1.5; color: var(--text-muted); }
+.ui-setting-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ui-setting-more { grid-column: 1 / -1; padding-top: 12px; }
+
+/* ── Field: a label, the control, and a hint underneath ──────────────────────── */
+
+.ui-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ui-field-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.ui-field-hint { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--text-muted); }
+.ui-field-error { margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--red-fg); }
+.ui-fields { display: flex; flex-direction: column; gap: 18px; }
+/* An input with a unit after it ("14 days"). */
+.ui-affix { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-muted); }
+.ui-affix .input { width: 96px; }
 
 /* ── Layout helpers ───────────────────────────────────────────────────────── */
 

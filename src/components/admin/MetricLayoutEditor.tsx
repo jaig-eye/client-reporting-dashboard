@@ -3,13 +3,14 @@
 // MetricLayoutEditor — editor for all dashboard metric layouts.
 // Used in Admin → Settings → Layouts tab.
 //
-// Outer tabs: Summary Page | Paid Ads | Search Ads | Shopping | Meta Media
-// Inner sub-tabs (Summary + Paid Ads only): Lead Gen | Ecom
+// Outer tabs (pill tabs): Summary page | Paid ads | Search ads | Shopping | Meta media
+// Inner choice (Summary, Paid ads, Meta media): Lead gen | Ecommerce
 // Sections per tab:
 //   - KPI Cards, Top Metrics, Table Columns (all tabs)
 //   - Platform Cards (Summary tab only — Google Ads card + Meta Ads card)
 
 import { useState } from 'react'
+import { PillTabs } from '@/components/ui/PillTabs'
 import {
   ALL_METRIC_KEYS,
   DASHBOARD_METRIC_KEYS,
@@ -52,11 +53,11 @@ type OuterTab = 'summary' | 'paid_ads' | 'google_search' | 'google_shopping' | '
 type InnerTab = 'lead_gen' | 'ecom'
 
 const OUTER_TABS: { id: OuterTab; label: string }[] = [
-  { id: 'summary',         label: 'Summary Page' },
-  { id: 'paid_ads',        label: 'Paid Ads' },
-  { id: 'google_search',   label: 'Search Ads' },
+  { id: 'summary',         label: 'Summary page' },
+  { id: 'paid_ads',        label: 'Paid ads' },
+  { id: 'google_search',   label: 'Search ads' },
   { id: 'google_shopping', label: 'Shopping' },
-  { id: 'meta_media',      label: 'Meta Media' },
+  { id: 'meta_media',      label: 'Meta media' },
 ]
 
 export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }: Props) {
@@ -116,51 +117,24 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
 
   return (
     <div>
-      {/* Outer tabs */}
-      <div style={{ display: 'flex', gap: 2, marginBottom: '1.25rem', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
-        {OUTER_TABS.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setOuterTab(t.id)}
-            style={{
-              padding: '0.375rem 0.875rem', border: 'none', background: 'transparent',
-              fontSize: '0.8125rem', fontWeight: outerTab === t.id ? 600 : 400,
-              color: outerTab === t.id ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: outerTab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
-              cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Which dashboard page, then (where it differs) which kind of client. */}
+      <div style={{ marginBottom: '1rem' }}>
+        <PillTabs items={OUTER_TABS} activeId={outerTab} onSelect={id => setOuterTab(id as OuterTab)} label="Dashboard page" />
       </div>
 
-      {/* Inner sub-tabs (Summary, Paid Ads, Meta Media) */}
       {hasInnerTabs && (
-        <div style={{ display: 'flex', gap: 4, marginBottom: '1rem' }}>
-          {(['lead_gen', 'ecom'] as InnerTab[]).map(t => {
-            const active = outerTab === 'meta_media' ? metaInnerTab === t : innerTab === t
-            const onClick = outerTab === 'meta_media' ? () => setMetaInnerTab(t) : () => setInnerTab(t)
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={onClick}
-                style={{
-                  padding: '0.25rem 0.75rem', borderRadius: 6,
-                  fontSize: '0.75rem', fontWeight: active ? 600 : 400,
-                  border: '1px solid',
-                  borderColor: active ? 'var(--blue)' : 'var(--border)',
-                  background: active ? 'var(--blue-subtle, rgba(59,130,246,0.08))' : 'transparent',
-                  color: active ? 'var(--blue)' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-              >
-                {t === 'lead_gen' ? 'Lead Gen' : 'Ecom'}
-              </button>
-            )
-          })}
+        <div className="ui-tabs" style={{ marginBottom: '1.25rem', alignSelf: 'flex-start' }}>
+          <div className="ui-tabs-track" role="radiogroup" aria-label="Kind of client">
+            {(['lead_gen', 'ecom'] as InnerTab[]).map(t => {
+              const active = outerTab === 'meta_media' ? metaInnerTab === t : innerTab === t
+              const onClick = outerTab === 'meta_media' ? () => setMetaInnerTab(t) : () => setInnerTab(t)
+              return (
+                <button key={t} type="button" role="radio" aria-checked={active} className="ui-tab" onClick={onClick}>
+                  {t === 'lead_gen' ? 'Lead gen' : 'Ecommerce'}
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -170,7 +144,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
         {outerTab === 'summary' && (
           <>
             <LayoutSection
-              title="KPI Cards"
+              title="KPI cards"
               description="Shown with sparklines in the top row (typically 3)"
               items={summaryLayout.kpi_cards}
               allKeys={DASHBOARD_METRIC_KEYS}
@@ -178,7 +152,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateSummaryLayout(innerTab, { kpi_cards: items as MetricKey[] })}
             />
             <LayoutSection
-              title="Top Metrics"
+              title="Top metrics"
               description="Shown without sparklines below KPI row (typically 4)"
               items={summaryLayout.top_metrics}
               allKeys={DASHBOARD_METRIC_KEYS}
@@ -186,13 +160,13 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateSummaryLayout(innerTab, { top_metrics: items as MetricKey[] })}
             />
             <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
-              <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>Platform Summary Cards</p>
+              <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' }}>Platform summary cards</p>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
                 Metrics shown in the compact platform cards on the Summary page (up to 4 each)
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <div className="ui-grid-2" style={{ gap: '1.25rem' }}>
                 <LayoutSection
-                  title="Google Ads Card"
+                  title="Google Ads card"
                   description="Metrics in the Google Ads summary card"
                   items={summaryLayout.platform_google_metrics ?? ['spend', 'conversions', 'ctr']}
                   allKeys={ALL_PLATFORM_CARD_KEYS}
@@ -200,7 +174,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
                   onChange={items => updateSummaryLayout(innerTab, { platform_google_metrics: items as PlatformCardKey[] })}
                 />
                 <LayoutSection
-                  title="Meta Ads Card"
+                  title="Meta Ads card"
                   description="Metrics in the Meta Ads summary card"
                   items={summaryLayout.platform_meta_metrics ?? ['spend', 'impressions', 'ctr']}
                   allKeys={ALL_PLATFORM_CARD_KEYS}
@@ -216,7 +190,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
         {outerTab === 'paid_ads' && (
           <>
             <LayoutSection
-              title="KPI Cards"
+              title="KPI cards"
               description="Shown at top of campaign/adset pages (typically 4)"
               items={paidAdsLayout.kpi_cards}
               allKeys={DASHBOARD_METRIC_KEYS}
@@ -224,7 +198,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePaidAdsLayout(innerTab, { kpi_cards: items as MetricKey[] })}
             />
             <LayoutSection
-              title="Top Metrics"
+              title="Top metrics"
               description="Secondary metrics row (typically 4)"
               items={paidAdsLayout.top_metrics}
               allKeys={DASHBOARD_METRIC_KEYS}
@@ -232,7 +206,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePaidAdsLayout(innerTab, { top_metrics: items as MetricKey[] })}
             />
             <LayoutSection
-              title="Table Columns"
+              title="Table columns"
               description="Campaign table columns in display order"
               items={paidAdsLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
@@ -240,7 +214,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePaidAdsLayout(innerTab, { table_columns: items as ColumnKey[] })}
             />
             <LayoutSection
-              title="Ad Set Columns"
+              title="Ad set columns"
               description="Columns shown in the ad set breakdown table on campaign detail pages"
               items={paidAdsLayout.adgroup_table_columns ?? (innerTab === 'ecom' ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN).adgroup_table_columns!}
               allKeys={ALL_ADGROUP_COLUMN_KEYS}
@@ -248,7 +222,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePaidAdsLayout(innerTab, { adgroup_table_columns: items })}
             />
             <LayoutSection
-              title="Ads Columns"
+              title="Ad columns"
               description="Columns shown in the individual ads table on ad set detail pages"
               items={paidAdsLayout.ads_table_columns ?? (innerTab === 'ecom' ? DEFAULT_PAID_ADS_ECOM : DEFAULT_PAID_ADS_LEAD_GEN).ads_table_columns!}
               allKeys={ALL_AD_COLUMN_KEYS}
@@ -265,7 +239,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               Applied to Google Search campaign pages. Includes search-specific metrics like Impression Share.
             </p>
             <LayoutSection
-              title="KPI Cards"
+              title="KPI cards"
               description="Top-row metrics for Search campaign pages"
               items={googleSearchLayout.kpi_cards}
               allKeys={SEARCH_ADS_METRIC_KEYS}
@@ -273,7 +247,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_search', { kpi_cards: items })}
             />
             <LayoutSection
-              title="Top Metrics"
+              title="Top metrics"
               description="Secondary metrics for Search campaign pages"
               items={googleSearchLayout.top_metrics}
               allKeys={SEARCH_ADS_METRIC_KEYS}
@@ -281,7 +255,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_search', { top_metrics: items })}
             />
             <LayoutSection
-              title="Table Columns"
+              title="Table columns"
               description="Campaign table columns for Search pages"
               items={googleSearchLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
@@ -289,7 +263,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_search', { table_columns: items })}
             />
             <LayoutSection
-              title="Ad Group Columns"
+              title="Ad group columns"
               description="Columns shown in the ad group breakdown table"
               items={googleSearchLayout.adgroup_table_columns ?? DEFAULT_GOOGLE_SEARCH_LAYOUT.adgroup_table_columns!}
               allKeys={ALL_ADGROUP_COLUMN_KEYS}
@@ -306,7 +280,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               Applied to Google Shopping and Performance Max campaign pages.
             </p>
             <LayoutSection
-              title="KPI Cards"
+              title="KPI cards"
               description="Top-row metrics for Shopping campaign pages"
               items={googleShoppingLayout.kpi_cards}
               allKeys={SHOPPING_METRIC_KEYS}
@@ -314,7 +288,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_shopping', { kpi_cards: items })}
             />
             <LayoutSection
-              title="Top Metrics"
+              title="Top metrics"
               description="Secondary metrics for Shopping campaign pages"
               items={googleShoppingLayout.top_metrics}
               allKeys={SHOPPING_METRIC_KEYS}
@@ -322,7 +296,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_shopping', { top_metrics: items })}
             />
             <LayoutSection
-              title="Table Columns"
+              title="Table columns"
               description="Campaign table columns for Shopping pages"
               items={googleShoppingLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
@@ -330,7 +304,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updatePlatformLayout('google_shopping', { table_columns: items })}
             />
             <LayoutSection
-              title="Ad Group Columns"
+              title="Ad group columns"
               description="Columns shown in the ad group breakdown table"
               items={googleShoppingLayout.adgroup_table_columns ?? DEFAULT_GOOGLE_SHOPPING_LAYOUT.adgroup_table_columns!}
               allKeys={ALL_ADGROUP_COLUMN_KEYS}
@@ -347,7 +321,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               Applied to Meta Awareness / Reach / Video Views campaign pages. Focuses on media metrics.
             </p>
             <LayoutSection
-              title="KPI Cards"
+              title="KPI cards"
               description="Top-row metrics for Meta media campaign pages"
               items={metaMediaLayout.kpi_cards}
               allKeys={META_MEDIA_METRIC_KEYS}
@@ -355,7 +329,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateMetaMediaLayout(metaInnerTab, { kpi_cards: items })}
             />
             <LayoutSection
-              title="Top Metrics"
+              title="Top metrics"
               description="Secondary metrics for Meta media campaign pages"
               items={metaMediaLayout.top_metrics}
               allKeys={META_MEDIA_METRIC_KEYS}
@@ -363,7 +337,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateMetaMediaLayout(metaInnerTab, { top_metrics: items })}
             />
             <LayoutSection
-              title="Table Columns"
+              title="Table columns"
               description="Campaign table columns for Meta media pages"
               items={metaMediaLayout.table_columns}
               allKeys={ALL_COLUMN_KEYS}
@@ -371,7 +345,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateMetaMediaLayout(metaInnerTab, { table_columns: items })}
             />
             <LayoutSection
-              title="Ad Set Columns"
+              title="Ad set columns"
               description="Columns shown in the ad set breakdown table"
               items={metaMediaLayout.adgroup_table_columns ?? (metaInnerTab === 'ecom' ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN).adgroup_table_columns!}
               allKeys={ALL_ADGROUP_COLUMN_KEYS}
@@ -379,7 +353,7 @@ export default function MetricLayoutEditor({ value, onChange, defaultInnerTab }:
               onChange={items => updateMetaMediaLayout(metaInnerTab, { adgroup_table_columns: items })}
             />
             <LayoutSection
-              title="Ads Columns"
+              title="Ad columns"
               description="Columns shown in the individual ads table"
               items={metaMediaLayout.ads_table_columns ?? (metaInnerTab === 'ecom' ? DEFAULT_META_MEDIA_ECOM : DEFAULT_META_MEDIA_LEAD_GEN).ads_table_columns!}
               allKeys={ALL_AD_COLUMN_KEYS}

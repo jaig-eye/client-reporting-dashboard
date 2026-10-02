@@ -621,7 +621,7 @@ export default function SitesPage() {
             </p>
           </div>
           <div className="st-audit-controls">
-            <label className="st-switch">
+            <label className="ui-switch">
               <input
                 type="checkbox"
                 role="switch"
@@ -629,7 +629,7 @@ export default function SitesPage() {
                 disabled={running}
                 onChange={e => handleAuditToggle(site.id, e.target.checked, site.audit_scope ?? 'key')}
               />
-              <span className="st-switch-track" aria-hidden />
+              <span className="ui-switch-track" aria-hidden />
               Weekly audit
             </label>
             <label className="st-scope">

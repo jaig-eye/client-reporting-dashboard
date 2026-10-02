@@ -1,7 +1,15 @@
 'use client'
 
+// Who hears about what: one row per event, one column per channel (agency Discord, the team email,
+// the account manager, the client's Discord). A table on a desktop; on a phone each event stacks
+// and its channels become labelled switches. Styles: styles/admin/settings.css (.nt-*).
+
 import { useCallback, useEffect, useState } from 'react'
+import Switch from '@/components/ui/Switch'
+import { Sk } from '@/components/ui/Skeleton'
 import type { NotifConfig, NotifSettings } from '@/lib/notificationConfig'
+
+type Channel = 'agency' | 'email' | 'manager' | 'client'
 
 interface NotifRow {
   key:         string
@@ -12,141 +20,105 @@ interface NotifRow {
   hasEmail:    boolean  // global team email
   hasManager:  boolean  // account manager email
   hasClient:   boolean  // per-client Discord
-  isBc?:       boolean  // BigCommerce-specific row (visual grouping)
+  isBc?:       boolean  // BigCommerce only (the label says so)
 }
+
+const CHANNELS: { id: Channel; label: string; has: (r: NotifRow) => boolean }[] = [
+  { id: 'agency',  label: 'Agency Discord',  has: r => r.hasAgency  },
+  { id: 'email',   label: 'Team email',      has: r => r.hasEmail   },
+  { id: 'manager', label: 'Account manager', has: r => r.hasManager },
+  { id: 'client',  label: 'Client Discord',  has: r => r.hasClient  },
+]
 
 // Each row exposes ONLY the channels that actually have a send wired (verified against
 // every getNotif(...) gate in the codebase) so there are no dead toggles.
 const GROUPS: { title: string; rows: NotifRow[] }[] = [
   {
-    title: 'Uptime & SSL',
+    title: 'Uptime and SSL',
     rows: [
-      { key: 'uptime_down',      label: 'Site DOWN alert',        description: 'Fires when a monitored site fails the flap threshold', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
-      { key: 'uptime_recovered', label: 'Site recovered',         description: 'Fires when a previously down site comes back up',      hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
-      { key: 'ssl_expiry',       label: 'SSL expiring / expired', description: 'Fires when a certificate is within 30 days of expiry', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
+      { key: 'uptime_down',      label: 'Site down',               description: 'A monitored site fails enough checks in a row to count as down', hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'uptime_recovered', label: 'Site recovered',          description: 'A site that was down is answering again',                         hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: true  },
+      { key: 'ssl_expiry',       label: 'SSL expiring or expired', description: 'A certificate is within 30 days of expiring',                     hasAgency: true,  hasEmail: true,  hasManager: false, hasClient: false },
     ],
   },
   {
     title: 'Content',
     rows: [
-      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once per month when posts are generated and ready to approve',  hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
-      { key: 'content_mid_month_check', label: 'Mid-month pending reminder', description: 'After the 10th if posts are still unapproved',                   hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
-      { key: 'content_bc_post_due',     label: 'BC post due tomorrow',       description: 'BigCommerce post due within 24 h with no publish ID',            hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
-      { key: 'content_sa_auto_pushed',  label: 'SA pages auto-pushed',       description: 'Service area pages automatically pushed to WordPress / BC',       hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
-      { key: 'content_bc_sa_due',       label: 'BC service area page due',   description: 'BC SA page due tomorrow and not yet published',                   hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
-      { key: 'content_topics_generated', label: 'Topics generated',          description: 'Emailed at most once per day when new topic ideas are ready to approve', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
-      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post / SA generated', description: 'When a new post or SA page is ready for review (email at most once per day; per-client Discord per event)', hasAgency: false, hasEmail: true, hasManager: false, hasClient: true },
-      { key: 'content_post_published',  label: 'Content published to WP / BC', description: 'Sent to the client Discord when a post or SA page is approved and uploaded', hasAgency: false, hasEmail: false, hasManager: false, hasClient: true  },
+      { key: 'content_monthly_review',  label: 'Monthly review ready',       description: 'Once a month, when posts are generated and ready to approve',  hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_mid_month_check', label: 'Posts still waiting',        description: 'After the 10th, if posts are still unapproved',                hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_bc_post_due',     label: 'BigCommerce post due tomorrow', description: 'Due within 24 hours and not published yet',                 hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_sa_auto_pushed',  label: 'Service area pages pushed',  description: 'Service area pages went to WordPress or BigCommerce on their own', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false },
+      { key: 'content_bc_sa_due',       label: 'BigCommerce service area page due', description: 'Due tomorrow and not published yet',                    hasAgency: true,  hasEmail: false, hasManager: false, hasClient: false, isBc: true },
+      { key: 'content_topics_generated', label: 'Topics generated',          description: 'New topic ideas are ready to approve (email at most once a day)', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'content_post_generated', linkedKeys: ['content_sa_generated'], label: 'Post or service area page generated', description: 'Ready for review (email at most once a day; client Discord for each one)', hasAgency: false, hasEmail: true, hasManager: false, hasClient: true },
+      { key: 'content_post_published',  label: 'Content published',          description: 'A post or service area page was approved and uploaded',       hasAgency: false, hasEmail: false, hasManager: false, hasClient: true  },
     ],
   },
   {
-    title: 'Ad Management',
+    title: 'Ads',
     rows: [
-      { key: 'ad_fuel_low',     label: 'Ad Fuel low / depleted',  description: 'Balance dropped below threshold or hit zero',        hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
-      { key: 'ad_fuel_paused',  label: 'Campaigns auto-paused',   description: 'Ad Fuel balance went negative and campaigns paused', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
-      { key: 'ad_fuel_resumed', label: 'Campaigns auto-resumed',  description: 'Balance restored and campaigns re-enabled',          hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
-      { key: 'bc_daily_sales',  label: 'BigCommerce daily sales', description: 'Daily sales summary sent to client channel',         hasAgency: false, hasEmail: false, hasManager: false, hasClient: true, isBc: true },
+      { key: 'ad_fuel_low',     label: 'Ad Fuel low or empty',    description: 'The balance dropped below its threshold or hit zero', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'ad_fuel_paused',  label: 'Campaigns paused',        description: 'The balance went negative, so campaigns were paused', hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'ad_fuel_resumed', label: 'Campaigns resumed',       description: 'The balance was topped up and campaigns restarted',   hasAgency: true,  hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'bc_daily_sales',  label: 'BigCommerce daily sales', description: 'A daily sales summary for the client',                hasAgency: false, hasEmail: false, hasManager: false, hasClient: true, isBc: true },
     ],
   },
   {
-    title: 'Email Workflow',
+    title: 'Email workflow',
     rows: [
-      { key: 'email_submitted', label: 'New email submitted',   description: 'An email campaign was submitted for review',              hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
-      { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved — includes who approved it', hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
-      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'Client has not submitted required emails this week',      hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'email_submitted', label: 'Email submitted',       description: 'An email campaign was submitted for review',            hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'email_approved',  label: 'Email approved',        description: 'An email campaign was approved, with who approved it',  hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
+      { key: 'email_reminder',  label: 'Weekly email reminder', description: 'A client hasn’t submitted this week’s required emails',  hasAgency: true, hasEmail: false, hasManager: false, hasClient: true },
     ],
   },
   {
     title: 'Metrics',
     rows: [
-      { key: 'metric_alerts', label: 'Metric alerts', description: 'Daily / weekly ad-metric change digest', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'metric_alerts', label: 'Metric alerts', description: 'The daily and weekly digest of big changes in ad metrics', hasAgency: false, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
   {
-    title: 'Sync & Integration',
+    title: 'Sync and integrations',
     rows: [
-      { key: 'sync_connector_error', label: 'Connector auth error', description: 'An OAuth token expired or was revoked', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'sync_connector_error', label: 'Connection needs signing in again', description: 'A connection’s access expired or was revoked', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
   {
     // hasClient is false on purpose: this is about OUR follow-up discipline.
     // "Nobody has called them in 30 days" must never reach the client's channel.
-    title: 'Client Comms',
+    title: 'Client check-ins',
     rows: [
-      { key: 'client_contact_stale', label: 'Client due a check-in', description: 'Daily digest of clients past their contact window', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
+      { key: 'client_contact_stale', label: 'Client due a check-in', description: 'A daily list of clients past their contact window', hasAgency: true, hasEmail: true, hasManager: false, hasClient: false },
     ],
   },
 ]
 
-// ── Toggle pill ────────────────────────────────────────────────────────────────
-
-function Toggle({ checked, disabled, onChange, color }: {
-  checked:   boolean
-  disabled?: boolean
-  onChange:  (v: boolean) => void
-  color:     'amber' | 'blue' | 'purple' | 'green'
-}) {
-  const activeColor =
-    color === 'amber'  ? '#d97706' :
-    color === 'blue'   ? '#2563eb' :
-    color === 'purple' ? '#7c3aed' : '#16a34a'
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => !disabled && onChange(!checked)}
-      style={{
-        width:        36,
-        height:       20,
-        borderRadius: 999,
-        background:   checked && !disabled ? activeColor : 'var(--bg-subtle)',
-        border:       `1px solid ${checked && !disabled ? activeColor : 'var(--border)'}`,
-        cursor:       disabled ? 'not-allowed' : 'pointer',
-        position:     'relative',
-        transition:   'background 0.15s, border-color 0.15s',
-        opacity:      disabled ? 0.4 : 1,
-        flexShrink:   0,
-        padding:      0,
-      }}
-    >
-      <span style={{
-        position:     'absolute',
-        top:          2,
-        left:         checked ? 18 : 2,
-        width:        14,
-        height:       14,
-        borderRadius: '50%',
-        background:   'white',
-        transition:   'left 0.15s',
-        boxShadow:    '0 1px 2px rgba(0,0,0,0.2)',
-      }} />
-    </button>
-  )
-}
-
-// ── Main component ─────────────────────────────────────────────────────────────
+const DEFAULT: NotifSettings = { agency: true, email: false, manager: false, client: true }
 
 export default function NotificationTypeTable() {
-  const [saved,   setSaved]   = useState<NotifConfig | null>(null)
-  const [local,   setLocal]   = useState<NotifConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving,  setSaving]  = useState(false)
-  const [error,   setError]   = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  const [saved,     setSaved]     = useState<NotifConfig | null>(null)
+  const [local,     setLocal]     = useState<NotifConfig | null>(null)
+  const [loading,   setLoading]   = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [saving,    setSaving]    = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+  const [success,   setSuccess]   = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true)
+    setLoadError(false)
     fetch('/api/admin/notification-settings')
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then((d: { config: NotifConfig }) => {
         setSaved(d.config)
         setLocal(d.config)
       })
-      .catch(() => setError('Failed to load notification settings'))
+      // Without the saved config every switch would show a default, and saving would write those
+      // defaults over the real choices, so a failed load shows no switches at all.
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [])
-
-  const DEFAULT: NotifSettings = { agency: true, email: false, manager: false, client: true }
+  useEffect(load, [load])
 
   const getEffective = useCallback((key: string): NotifSettings => {
     const raw = local?.[key] as Record<string, boolean> | undefined
@@ -175,7 +147,7 @@ export default function NotificationTypeTable() {
     }
   }, [local])
 
-  function set(key: string, field: 'agency' | 'email' | 'manager' | 'client', value: boolean, linkedKeys?: string[]) {
+  function set(key: string, field: Channel, value: boolean, linkedKeys?: string[]) {
     const base = local ?? {} as NotifConfig
     const cur  = getEffective(key)
     const next: NotifConfig = { ...base, [key]: { ...cur, [field]: value } }
@@ -204,150 +176,92 @@ export default function NotificationTypeTable() {
       setSuccess(true)
       setTimeout(() => setSuccess(false), 4500)
     } catch {
-      setError('Failed to save. Please try again.')
+      setError('The channel changes weren’t saved. Check your connection and try again.')
     } finally {
       setSaving(false)
     }
   }
 
-  if (loading) return <div style={{ color: 'var(--text-muted)', padding: '8px 0', fontSize: 13 }}>Loading…</div>
-
-  const COL_W = 72
-
-  return (
-    <div>
-      {/* Channel legend */}
-      <div style={{ display: 'flex', gap: 14, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#d97706', display: 'inline-block', flexShrink: 0 }} />
-          Agency Discord
-        </span>
-        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#2563eb', display: 'inline-block', flexShrink: 0 }} />
-          Global Emails
-        </span>
-        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />
-          Acc Manager
-        </span>
-        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#16a34a', display: 'inline-block', flexShrink: 0 }} />
-          Client Discord
-        </span>
-      </div>
-
-      {/* Dirty banner */}
-      {isDirty && (
-        <div style={{ background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span>Unsaved changes</span>
-          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <div style={{ background: '#fef2f2', border: '1px solid var(--red)', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: 'var(--red)' }}>
-          {error}
-        </div>
-      )}
-
-      {success && !isDirty && (
-        <div style={{ background: '#f0fdf4', border: '1px solid #16a34a', borderRadius: 8, padding: '0.625rem 0.875rem', marginBottom: 12, fontSize: 13, color: '#15803d', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 500 }}>
-          <span style={{ fontSize: 15 }}>✓</span> Notification settings saved
-        </div>
-      )}
-
-      {/* Groups */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {GROUPS.map(group => (
-          <div key={group.title} className="card" style={{ overflow: 'hidden' }}>
-            {/* Group header */}
-            <div style={{ padding: '0.625rem 1rem', borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                {group.title}
-              </span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#d97706', width: COL_W, textAlign: 'center' }}>Agency</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#2563eb', width: COL_W, textAlign: 'center' }}>Emails</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7c3aed', width: COL_W, textAlign: 'center' }}>Mgr</span>
-                <span style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#16a34a', width: COL_W, textAlign: 'center' }}>Client</span>
-              </div>
-            </div>
-
-            {/* Rows */}
-            {group.rows.map((row, i) => {
-              // For merged rows: if the primary key was never persisted, fall back to
-              // the first linked key's values so the UI reflects the actual saved state.
-              const eff    = (!local?.[row.key] && row.linkedKeys?.[0])
-                ? getEffective(row.linkedKeys[0])
-                : getEffective(row.key)
-              const isLast = i === group.rows.length - 1
-              return (
-                <div
-                  key={row.key}
-                  style={{
-                    display:             'grid',
-                    gridTemplateColumns: '1fr auto',
-                    padding:             '0.75rem 1rem',
-                    gap:                 8,
-                    borderBottom:        isLast ? 'none' : '1px solid var(--border)',
-                    alignItems:          'center',
-                    borderLeft:          row.isBc ? '3px solid #f59e0b' : '3px solid transparent',
-                    background:          row.isBc ? 'rgba(245, 158, 11, 0.04)' : undefined,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {row.isBc && (
-                        <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', borderRadius: 3, padding: '1px 4px', lineHeight: 1.4, flexShrink: 0 }}>
-                          BC
-                        </span>
-                      )}
-                      {row.label}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)', marginTop: 1 }}>{row.description}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    {/* Agency Discord */}
-                    <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
-                      {row.hasAgency ? (
-                        <Toggle checked={eff.agency} onChange={v => set(row.key, 'agency', v, row.linkedKeys)} color="amber" />
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
-                      )}
-                    </div>
-                    {/* Global Emails */}
-                    <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
-                      {row.hasEmail ? (
-                        <Toggle checked={eff.email} onChange={v => set(row.key, 'email', v, row.linkedKeys)} color="blue" />
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
-                      )}
-                    </div>
-                    {/* Acc Manager */}
-                    <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
-                      {row.hasManager ? (
-                        <Toggle checked={eff.manager} onChange={v => set(row.key, 'manager', v, row.linkedKeys)} color="purple" />
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
-                      )}
-                    </div>
-                    {/* Client Discord */}
-                    <div style={{ width: COL_W, display: 'flex', justifyContent: 'center' }}>
-                      {row.hasClient ? (
-                        <Toggle checked={eff.client} onChange={v => set(row.key, 'client', v, row.linkedKeys)} color="green" />
-                      ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>—</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+  if (loading) {
+    return (
+      <div className="nt-sk" aria-busy="true" aria-label="Loading notification channels">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="nt-sk-row">
+            <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><Sk w="40%" h={12} /><Sk w="70%" h={10} /></span>
+            <Sk w={36} h={20} r={999} /><Sk w={36} h={20} r={999} className="ui-hide-sm" />
           </div>
         ))}
       </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>
+        <span>The notification channels didn’t load, so they can’t be changed right now.</span>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={load}>Try again</button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {isDirty && (
+        <div className="ui-notice ui-notice--warning" role="status">
+          <span>Channel changes aren’t saved yet. They save separately from the rest of this page.</span>
+          <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save channels'}
+          </button>
+        </div>
+      )}
+      {error && <div className="ui-notice ui-notice--danger" role="alert">{error}</div>}
+      {success && !isDirty && <div className="ui-notice ui-notice--success" role="status">Channels saved.</div>}
+
+      <table className="nt">
+        <thead>
+          <tr>
+            <th scope="col" className="nt-event">Event</th>
+            {CHANNELS.map(c => <th key={c.id} scope="col" className="nt-ch">{c.label}</th>)}
+          </tr>
+        </thead>
+        {GROUPS.map(group => (
+          <tbody key={group.title}>
+            <tr className="nt-group">
+              <th scope="colgroup" colSpan={CHANNELS.length + 1}>{group.title}</th>
+            </tr>
+            {group.rows.map(row => {
+              // For merged rows: if the primary key was never persisted, fall back to
+              // the first linked key's values so the UI reflects the actual saved state.
+              const eff = (!local?.[row.key] && row.linkedKeys?.[0])
+                ? getEffective(row.linkedKeys[0])
+                : getEffective(row.key)
+              return (
+                <tr key={row.key} className="nt-row">
+                  <th scope="row" className="nt-event">
+                    <span className="nt-label">{row.label}</span>
+                    <span className="nt-desc">{row.description}</span>
+                  </th>
+                  {CHANNELS.map(c => (
+                    <td key={c.id} className={`nt-ch${c.has(row) ? '' : ' nt-ch--none'}`}>
+                      {c.has(row) ? (
+                        <Switch
+                          checked={eff[c.id]}
+                          onChange={v => set(row.key, c.id, v, row.linkedKeys)}
+                          label={<span className="nt-ch-label">{c.label}<span className="sr-only">: {row.label}</span></span>}
+                        />
+                      ) : (
+                        <span className="nt-none" title={`${row.label} can’t be sent to ${c.label}`}>
+                          <span aria-hidden>–</span><span className="sr-only">Not available</span>
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        ))}
+      </table>
     </div>
   )
 }

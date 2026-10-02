@@ -200,23 +200,6 @@
 .st-dial--bad  { --st-tone: var(--red); }
 .st-dial--none > span { font-size: 0.8rem; color: var(--text-faint); }
 
-/* A switch. The input stays real (role=switch) and takes the keyboard focus. */
-.st-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
-.st-switch input { position: absolute; opacity: 0; width: 36px; height: 20px; margin: 0; cursor: pointer; }
-.st-switch-track {
-  position: relative; flex-shrink: 0; width: 36px; height: 20px; border-radius: var(--radius-pill);
-  background: var(--bg-muted); box-shadow: inset 0 0 0 1px var(--border); transition: background 0.18s;
-}
-.st-switch-track::after {
-  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--bg-surface); box-shadow: var(--shadow-sm); transition: transform 0.18s var(--ease-out);
-}
-.st-switch input:checked + .st-switch-track { background: var(--accent); box-shadow: none; }
-.st-switch input:checked + .st-switch-track::after { transform: translateX(16px); }
-.st-switch input:focus-visible + .st-switch-track { box-shadow: var(--ring); }
-.st-switch input:disabled + .st-switch-track { opacity: 0.55; }
-.st-switch:has(input:disabled) { cursor: default; }
-
 .st-scope { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-muted); }
 .st-scope .input { width: auto; min-height: 32px; padding: 0.25rem 0.5rem; font-size: 0.8125rem; cursor: pointer; }
 
@@ -378,5 +361,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .st-panel, .st-scrim, .st-dialog, .st-spin { animation: none; }
-  .st-row, .st-list, .st-expand svg, .st-switch-track, .st-switch-track::after, .st-domain svg { transition: none; }
+  .st-row, .st-list, .st-expand svg, .st-domain svg { transition: none; }
 }
