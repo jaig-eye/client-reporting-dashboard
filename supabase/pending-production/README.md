@@ -4,10 +4,19 @@ Migrations in `supabase/migrations/` that have **not** been applied to productio
 no migration history table — migrations are applied by hand — so this list was checked against the
 live schema (columns and tables in `information_schema`), not taken on trust.
 
-**Checked 2026-10-01: nothing pending.** 189, 190, 191 and 222–229 are all in production and none
-are left in this folder. The last ones applied by hand were 226 (`agency_settings.dataforseo_monthly_budget`),
+**Checked 2026-10-01:** 189, 190, 191 and 222–229 are all in production and none are left in this
+folder. The last ones applied by hand were 226 (`agency_settings.dataforseo_monthly_budget`),
 227 (`agency_settings.image_model`), 228 (RLS on the SEO tables) and 229
-(`content_settings.plan_generation`).
+(`content_settings.plan_generation`). Still to apply:
+
+| File | What it adds | What stays broken without it |
+|---|---|---|
+| `230_schedule_hold.sql` | `content_settings.schedule_hold_since`, and sets it for monthly clients with blog topics planned on a date that isn't the first of their weekday | No schedule hold: a schedule change still plans the new dates on top of the old plan. And Monthly moves to the first of a weekday on deploy, so without the hold the cron plans every monthly client's new dates on top of its current plan within two hours |
+
+Additive and idempotent: one new column, and the UPDATE only touches rows whose hold is empty.
+
+Apply it **before** deploying `fix/hold-plan-on-schedule-change`. The code tolerates the column
+being absent, but monthly clients are only protected once it exists.
 
 A new migration goes here as well as in `supabase/migrations/` until it is applied, with a line on
 what it adds and what stays broken without it.
