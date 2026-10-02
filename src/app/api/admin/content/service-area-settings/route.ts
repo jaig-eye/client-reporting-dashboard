@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies }                   from 'next/headers'
 import { createAdminClient }         from '@/lib/supabase/server'
 import { isAdminAuthed }             from '@/lib/auth'
+import { connectionBelongsToClient, FOREIGN_CONNECTION_ERROR } from '@/lib/content/postConnection'
 
 const ALLOWED = [
   'connection_id', 'slug_structure', 'service_pages', 'service_areas',
@@ -53,6 +54,9 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
+  if ('connection_id' in patch && !(await connectionBelongsToClient(db, clientId, (patch.connection_id as string | null) || null))) {
+    return NextResponse.json({ error: FOREIGN_CONNECTION_ERROR }, { status: 400 })
+  }
   const { data, error } = await db
     .from('service_area_settings')
     .upsert(patch, { onConflict: 'client_id' })

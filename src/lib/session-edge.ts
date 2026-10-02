@@ -13,6 +13,8 @@ interface EdgeSessionPayload {
   v: number
   isSuperAdmin?: boolean
   userId?: string
+  /** The account's role when the session was signed. lib/sessionRevocation reads the current one. */
+  role?: string
   /** Issued-at, unix seconds. Compared against the account's password_changed_at
    *  by lib/sessionRevocation.ts to evict sessions minted before a rotation. */
   iat?: number

@@ -10,5 +10,6 @@ export default async function Home() {
   // Verify the signed token — the old raw-password comparison never matches now.
   if (isAdminAuthed(adminSession)) redirect('/admin')
   if (clientToken) redirect('/dashboard')
-  redirect('/access')
+  // Signed out with no dashboard link: the login, not the client's "link expired" page.
+  redirect('/admin')
 }

@@ -4,6 +4,7 @@ import { readResearchLocation } from '@/lib/connectors/dataforseo'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                   from '@/lib/activity'
 import { parseBody }                     from '@/lib/apiError'
+import { connectionBelongsToClient, FOREIGN_CONNECTION_ERROR } from '@/lib/content/postConnection'
 
 /**
  * GET /api/admin/content/client-settings?client_id=X
@@ -125,6 +126,10 @@ export async function PUT(request: NextRequest) {
   }
 
   const db = createAdminClient()
+
+  if ('connection_id' in row && !(await connectionBelongsToClient(db, String(client_id), (row.connection_id as string | null) || null))) {
+    return NextResponse.json({ error: FOREIGN_CONNECTION_ERROR }, { status: 400 })
+  }
 
   // A moved research location changes what a live rank check measures, so each tracked keyword's
   // next read must be a fresh baseline rather than a "movement" across two markets. Compared

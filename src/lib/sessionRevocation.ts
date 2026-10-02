@@ -37,6 +37,8 @@ interface UserState {
   active: boolean
   /** password_changed_at as unix seconds, or null when unset/column absent. */
   changedSec: number | null
+  /** users.role now, so a demotion to viewer takes effect without a new sign-in. */
+  role: string | null
 }
 
 interface CacheEntry extends UserState { at: number }
@@ -82,14 +84,14 @@ async function fetchUserState(
   // code can reach production first. Without the retry PostgREST 400s on the
   // unknown column, this returns indeterminate, and revocation silently stops
   // being enforced with nothing in the logs.
-  let res = await get('is_active,password_changed_at')
+  let res = await get('is_active,password_changed_at,role')
   if (res && res.status === 400) {
     console.warn('[sessionRevocation] password_changed_at missing (migration 195 not applied) — is_active only')
-    res = await get('is_active')
+    res = await get('is_active,role')
   }
   if (!res || !res.ok) return null
 
-  let rows: Array<{ is_active?: boolean; password_changed_at?: string | null }>
+  let rows: Array<{ is_active?: boolean; password_changed_at?: string | null; role?: string | null }>
   try {
     rows = await res.json()
   } catch {
@@ -97,7 +99,7 @@ async function fetchUserState(
   }
 
   // No row means the account was deleted. That IS a definite revocation.
-  if (!Array.isArray(rows) || rows.length === 0) return { active: false, changedSec: null }
+  if (!Array.isArray(rows) || rows.length === 0) return { active: false, changedSec: null, role: null }
 
   const row = rows[0]
   let changedSec: number | null = null
@@ -105,7 +107,18 @@ async function fetchUserState(
     const ms = new Date(row.password_changed_at).getTime()
     if (Number.isFinite(ms)) changedSec = Math.floor(ms / 1000)
   }
-  return { active: row.is_active !== false, changedSec }
+  return { active: row.is_active !== false, changedSec, role: row.role ?? null }
+}
+
+/**
+ * Whether this session belongs to a read-only viewer, by the account's current role (read with
+ * the revocation check, so call isSessionRevoked first; it fills the cache) and else the role the
+ * token was signed with. Super-admin sessions carry no userId and are never viewers.
+ */
+export function isReadOnlyViewer(userId: string | undefined, tokenRole: string | undefined): boolean {
+  if (!userId) return false
+  const role = cache.get(userId)?.role ?? tokenRole ?? null
+  return role === 'viewer'
 }
 
 /**

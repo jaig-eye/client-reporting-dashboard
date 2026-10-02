@@ -11,6 +11,27 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export const FOREIGN_CONNECTION_ERROR = 'That site belongs to a different client. Choose one of this client’s own sites.'
 
 /**
+ * Whether a connection belongs to a client. Null (no site) always may. For the settings that seed
+ * new posts' site (a client's content settings and service-area settings): a foreign id saved
+ * there was copied onto every post generated afterwards, past the per-post check below.
+ */
+export async function connectionBelongsToClient(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: SupabaseClient<any>,
+  clientId: string,
+  connectionId: string | null,
+): Promise<boolean> {
+  if (!connectionId) return true
+  const { data } = await db
+    .from('client_connections')
+    .select('id')
+    .eq('id', connectionId)
+    .eq('client_id', clientId)
+    .maybeSingle()
+  return data != null
+}
+
+/**
  * Whether `connectionId` may be saved on post `postId`: null (no site) always may; a connection
  * only when it belongs to the post's client. False when the post or the connection can't be read.
  */

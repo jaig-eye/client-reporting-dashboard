@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAdminSessionEdge } from './lib/session-edge'
-import { isSessionRevoked } from './lib/sessionRevocation'
+import { isSessionRevoked, isReadOnlyViewer } from './lib/sessionRevocation'
 import { clearCookie } from './lib/clearSession'
 
 /**
@@ -21,6 +21,18 @@ const COOKIE_AUTHED_API_PREFIXES = ['/api/admin', '/api/upload', '/api/sync']
 function isGuardedApiPath(pathname: string): boolean {
   return COOKIE_AUTHED_API_PREFIXES.some(p => pathname === p || pathname.startsWith(`${p}/`))
 }
+
+/**
+ * The only changes a read-only viewer may make: their own profile and password, and the post
+ * editor's link check, which reads the links and writes nothing. Everything else that isn't a
+ * read is refused below, at one call site, because most routes gate on isAdminAuthed() alone
+ * (a signature check that never looks at the role) and only a handful used requireWriteAdmin():
+ * a viewer could edit, approve and publish posts, change schedules and run AI generation.
+ */
+const VIEWER_WRITABLE = [
+  /^\/api\/admin\/users\/me(\/password)?$/,
+  /^\/api\/admin\/content\/posts\/[^/]+\/scan-links$/,
+]
 
 /**
  * Origins allowed to make STATE-CHANGING calls to /api/admin/*. The admin cookie is
@@ -78,6 +90,17 @@ export async function middleware(request: NextRequest) {
       clearCookie(res, 'admin_session')
       return res
     }
+    // Read-only viewers can look but not change anything (see VIEWER_WRITABLE).
+    if (
+      token && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS'
+      && isReadOnlyViewer(token.userId, token.role)
+      && !VIEWER_WRITABLE.some(re => re.test(pathname))
+    ) {
+      return new NextResponse(
+        JSON.stringify({ error: 'Your account is read-only, so it can’t make changes. Ask an admin.' }),
+        { status: 403, headers: { 'content-type': 'application/json' } },
+      )
+    }
     return NextResponse.next()
   }
 
@@ -96,7 +119,10 @@ export async function middleware(request: NextRequest) {
     if (clientToken) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
-    return NextResponse.redirect(new URL('/access', request.url))
+    // Nobody signed in and no dashboard link: the main URL is the agency's front door, so it
+    // opens the login. /access ("link expired or invalid") is for a client whose dashboard link
+    // failed, and /dashboard without a link still goes there.
+    return NextResponse.redirect(new URL('/admin', request.url))
   }
 
   // /dashboard/* — requires client_token; if admin session present without token, go to /admin

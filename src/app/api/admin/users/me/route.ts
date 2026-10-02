@@ -25,7 +25,14 @@ export async function PATCH(req: NextRequest) {
   if (email        !== undefined) update.email        = (email as string).toLowerCase().trim()
   if (avatar_url   !== undefined) update.avatar_url   = avatar_url
   if (theme        !== undefined) update.theme        = theme
-  if (accent_color !== undefined) update.accent_color = accent_color ?? null
+  if (accent_color !== undefined) {
+    // A colour or nothing. The value is written into an inline script on every admin page
+    // (ThemeScript), so anything else is refused rather than stored.
+    if (accent_color !== null && !(typeof accent_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(accent_color))) {
+      return NextResponse.json({ error: 'The accent colour must be a hex colour like #2563eb.' }, { status: 400 })
+    }
+    update.accent_color = accent_color
+  }
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
