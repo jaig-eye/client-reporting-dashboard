@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Fingerprint, PaperPlaneTilt, CalendarBlank, PencilSimpleLine, Sparkle } from '@phosphor-icons/react'
 import type { ClientScheduleSettings, SiteOption } from '@/lib/content/types'
+import { planningWindowLabel } from '@/lib/content/cadence'
 import ClientContentSettingsForm, { SettingsLoadError } from '@/components/admin/ClientContentSettingsForm'
 
 type SettingsSection = 'brand' | 'publishing' | 'schedule' | 'writing'
@@ -557,8 +558,14 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label htmlFor="cs-weeks-ahead" hint="how many upcoming publish dates to keep planned; 4 on a monthly schedule is four months">Publish dates ahead</Label>
-            <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
+            <Label htmlFor="cs-weeks-ahead" hint="how many upcoming publish dates to keep planned">Publish dates ahead</Label>
+            <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} aria-describedby="cs-weeks-ahead-means" />
+            {/* What the number works out to on this cadence: 4 is four weeks weekly, four months monthly. */}
+            <p id="cs-weeks-ahead-means" style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+              {form.schedule_frequency
+                ? <>Plans <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{planningWindowLabel(form.schedule_frequency, form.weeks_ahead ?? 6)}</strong> on this schedule</>
+                : 'Counted on the agency default schedule'}
+            </p>
           </div>
           <div>
             <Label htmlFor="cs-start-date" hint="first date the schedule generates from">Start date</Label>

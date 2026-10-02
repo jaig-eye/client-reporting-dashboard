@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import SitemapPaste from '@/components/admin/SitemapPaste'
 import MarketLine from './MarketLine'
-import { cadenceLabel } from '@/lib/content/cadence'
+import { cadenceLabel, planningWindowLabel } from '@/lib/content/cadence'
 import { SERVICES_HELP, RESEARCH_FIELDS_NOTE } from '@/lib/content/researchCopy'
 import KeywordChipInput, { splitPhrases } from '@/components/admin/KeywordChipInput'
 import KeywordResearchPanel, { type ResearchKeyword } from '@/components/admin/KeywordResearchPanel'
@@ -1610,12 +1610,16 @@ function StepSchedule({
         <Field label="Publish dates ahead" htmlFor="wiz-weeks-ahead">
           <input
             id="wiz-weeks-ahead" type="number" min={1} max={24}
-            title="How many upcoming publish dates the planner keeps topics ready for: 4 on a monthly schedule is four months"
+            title="How many upcoming publish dates the planner keeps topics ready for"
             value={schedule.weeksAhead || ''}
             onChange={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
             onBlur={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(1, Number(e.target.value) || 4)) })}
             style={inputStyle}
+            aria-describedby="wiz-weeks-ahead-means"
           />
+          <p id="wiz-weeks-ahead-means" style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+            Plans <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{planningWindowLabel(schedule.frequency, schedule.weeksAhead || 1)}</strong> on this schedule
+          </p>
         </Field>
         <Field label="Start Date" htmlFor="wiz-start-date">
           <input
@@ -2086,7 +2090,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
 
   const summaryRows = [
     { label: 'Schedule',      value: freqLabel },
-    { label: 'Weeks ahead',   value: String(schedule.weeksAhead) },
+    { label: 'Plans',         value: `${schedule.weeksAhead} publish dates, ${planningWindowLabel(schedule.frequency, schedule.weeksAhead)}` },
     { label: 'Publish time',  value: schedule.publishTime },
     { label: 'Sitemap pages', value: pagesCount > 0 ? String(pagesCount) : '—' },
   ]
