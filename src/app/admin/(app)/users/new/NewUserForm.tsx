@@ -5,8 +5,13 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
+import Field from '@/components/ui/Field'
 
 export default function NewUserForm() {
+  const router = useRouter()
   const [form, setForm] = useState({
     name:     '',
     email:    '',
@@ -20,137 +25,75 @@ export default function NewUserForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (form.password.length < 8) {
-      setError('Password must be at least 8 characters')
+      setError('The temporary password needs at least 8 characters.')
       return
     }
     setLoading(true)
     setError('')
-    const res = await fetch('/api/admin/users', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(form),
-    })
-    const data = await res.json()
-    if (data.error) {
-      setError(data.error)
+    try {
+      const res = await fetch('/api/admin/users', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(form),
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok || data.error) {
+        setError(data.error || 'The user wasn’t created. Try again.')
+        setLoading(false)
+      } else {
+        router.push('/admin/users')
+        router.refresh()
+      }
+    } catch {
+      setError('The user wasn’t created. Check your connection and try again.')
       setLoading(false)
-    } else {
-      window.location.href = '/admin/users'
     }
   }
 
   return (
-    <div className="max-w-md">
-      <div className="flex items-center gap-2 mb-6 text-sm">
-        <Link href="/admin/users" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Users
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>New User</span>
-      </div>
+    <div className="us-page">
+      <PageHeader
+        back={{ href: '/admin/users', label: 'Users' }}
+        title="Add a user"
+        description="They sign in with their email and the temporary password, then choose their own."
+      />
 
-      <div className="card p-6">
-        <h1 className="text-base font-semibold mb-5" style={{ color: 'var(--text-primary)' }}>
-          Add User
-        </h1>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Full Name
-            </label>
-            <input
-              className="input"
-              required
-              placeholder="Jane Smith"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            />
+      <form onSubmit={handleSubmit} className="ui-stack">
+        <Section title="Their details">
+          <div className="ui-fields">
+            <Field label="Full name" id="nu-name">
+              <input id="nu-name" className="input" required placeholder="Jane Smith" autoComplete="off"
+                value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            </Field>
+            <Field label="Email" id="nu-email">
+              <input id="nu-email" className="input" type="email" required placeholder="jane@agency.com" autoComplete="off"
+                value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            </Field>
+            <Field label="Username" id="nu-username" hint="Optional. A shorter name they can sign in with instead of their email.">
+              <input id="nu-username" className="input" type="text" placeholder="jane" autoComplete="off" aria-describedby="nu-username-hint"
+                value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+            </Field>
+            <Field label="Temporary password" id="nu-password" hint="At least 8 characters. The first time they sign in, we email them a code to choose their own.">
+              <input id="nu-password" className="input" type="password" required minLength={8} autoComplete="new-password" aria-describedby="nu-password-hint"
+                value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            </Field>
+            <Field label="Role" id="nu-role" hint={form.role === 'admin' ? 'Full access, including adding users.' : 'Can look at everything and change nothing.'}>
+              <select id="nu-role" className="input" aria-describedby="nu-role-hint"
+                value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'viewer' }))}>
+                <option value="admin">Admin</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </Field>
           </div>
+        </Section>
 
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Email Address
-            </label>
-            <input
-              className="input"
-              type="email"
-              required
-              placeholder="jane@agency.com"
-              value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            />
-          </div>
+        {error && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{error}</div>}
 
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Username
-              <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
-                — optional, for login shortcut
-              </span>
-            </label>
-            <input
-              className="input"
-              type="text"
-              placeholder="e.g. rob"
-              value={form.username}
-              onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Temporary password
-              <span className="ml-1 font-normal" style={{ color: 'var(--text-faint)' }}>
-                — min. 8 characters
-              </span>
-            </label>
-            <input
-              className="input"
-              type="password"
-              required
-              minLength={8}
-              placeholder="Temporary password"
-              value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-            />
-            <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-              The first time they sign in, they’ll be emailed a code to choose their own password.
-            </p>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Role
-            </label>
-            <select
-              className="input"
-              value={form.role}
-              onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'viewer' }))}
-            >
-              <option value="admin">Admin — full access, including adding users</option>
-              <option value="viewer">Viewer — read-only access</option>
-            </select>
-          </div>
-
-          {error && (
-            <p className="text-sm" style={{ color: 'var(--red)' }}>{error}</p>
-          )}
-
-          <div className="flex gap-3 pt-1">
-            <Link href="/admin/users" className="btn btn-secondary flex-1 justify-center">
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn btn-primary flex-1 justify-center"
-            >
-              {loading ? 'Creating…' : 'Create User'}
-            </button>
-          </div>
-        </form>
-      </div>
+        <div className="us-actions">
+          <Link href="/admin/users" className="btn btn-secondary">Cancel</Link>
+          <button type="submit" disabled={loading} className="btn btn-primary">{loading ? 'Adding…' : 'Add user'}</button>
+        </div>
+      </form>
     </div>
   )
 }

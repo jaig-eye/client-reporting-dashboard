@@ -169,7 +169,9 @@ export default function ActionMenu({ items, label, width = 252, trigger, align =
                       type="button"
                       className="ui-menu-main"
                       disabled={item.disabled}
-                      onClick={() => { item.onSelect?.(); close() }}
+                      // Focus goes back to the ⋯ button first, so whatever the action opens (a dialog)
+                      // returns focus there when it closes, instead of to the page's top.
+                      onClick={() => { close(true); item.onSelect?.() }}
                     >{inner}</button>
                   )}
                   {item.copy && (

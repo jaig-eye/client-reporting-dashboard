@@ -1,11 +1,13 @@
 // Edit User — /admin/users/[id]
 // Super admin only. Edit name, email, role, active status, and reset password.
 
+import '@/styles/admin/users.css'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminSession } from '@/lib/auth'
 import { notFound, redirect } from 'next/navigation'
-import Link from 'next/link'
 import type { User } from '@/lib/types'
+import PageHeader from '@/components/ui/PageHeader'
+import Avatar from '@/components/ui/Avatar'
 import EditUserForm from './EditUserForm'
 
 export const dynamic = 'force-dynamic'
@@ -25,21 +27,19 @@ export default async function EditUserPage({
     .from('users')
     .select('id, name, email, username, role, is_active, avatar_url, created_at')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (!data) notFound()
   const user = data as User
 
   return (
-    <div className="max-w-md">
-      <div className="flex items-center gap-2 mb-6 text-sm">
-        <Link href="/admin/users" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-          Users
-        </Link>
-        <span style={{ color: 'var(--border)' }}>/</span>
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{user.name}</span>
-      </div>
-
+    <div className="us-page">
+      <PageHeader
+        back={{ href: '/admin/users', label: 'Users' }}
+        leading={<Avatar name={user.name} url={user.avatar_url} size={44} muted={!user.is_active} />}
+        title={user.name}
+        description={user.email}
+      />
       <EditUserForm user={user} />
     </div>
   )

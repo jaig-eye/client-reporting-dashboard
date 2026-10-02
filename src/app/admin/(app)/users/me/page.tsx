@@ -1,10 +1,13 @@
 // My Profile — /admin/users/me
 // Regular admins update their name, email, avatar, and password here.
-// Super admin is redirected — their account is environment-based and not editable.
+// Super admin sees why there's nothing to edit — their account is environment-based.
 
+import '@/styles/admin/users.css'
 import { getAdminSession } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { createAdminClient } from '@/lib/supabase/server'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
 import ProfileForm  from './ProfileForm'
 import McpTokens   from './McpTokens'
 
@@ -17,25 +20,12 @@ export default async function MyProfilePage() {
   if (!session) redirect('/admin/login')
   if (session.isSuperAdmin) {
     return (
-      <div>
-        <div className="page-header">
-          <h1 className="page-title">My Profile</h1>
-        </div>
-        <div className="max-w-lg">
-          <div className="card p-6">
-            <h2 className="section-title mb-2">Super Admin Account</h2>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Your super admin account is managed via the{' '}
-              <code
-                className="rounded px-1 py-0.5 font-mono text-xs"
-                style={{ background: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}
-              >
-                ADMIN_PASSWORD
-              </code>{' '}
-              environment variable. Account details are not editable here.
-            </p>
-          </div>
-        </div>
+      <div className="us-page">
+        <PageHeader title="Your profile" />
+        <Section
+          title="Super admin account"
+          description={<>This account is set by the <code>ADMIN_PASSWORD</code> environment variable on the server, so there’s nothing to change here.</>}
+        />
       </div>
     )
   }
@@ -46,20 +36,12 @@ export default async function MyProfilePage() {
     .from('users')
     .select('id, name, email, avatar_url')
     .eq('id', session.userId!)
-    .single()
+    .maybeSingle()
 
   return (
-    <div>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">My Profile</h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Update your display name, password, and avatar.
-          </p>
-        </div>
-      </div>
-
-      <div className="max-w-lg space-y-6">
+    <div className="us-page">
+      <PageHeader title="Your profile" description="Your name, photo and password, and your Claude Code access." />
+      <div className="ui-stack">
         <ProfileForm
           userId={session.userId!}
           initialName={user?.name ?? ''}
@@ -67,6 +49,15 @@ export default async function MyProfilePage() {
           initialAvatarUrl={user?.avatar_url ?? ''}
         />
         <McpTokens appUrl={process.env.NEXT_PUBLIC_APP_URL ?? 'https://dash.golaunchlocal.com'} />
+        <Section
+          title="Sign out"
+          description="Ends your session in this browser."
+          actions={
+            <form action="/api/auth/admin-logout" method="POST">
+              <button type="submit" className="btn btn-secondary btn-sm">Sign out</button>
+            </form>
+          }
+        />
       </div>
     </div>
   )

@@ -1,15 +1,28 @@
 'use client'
 
 // Profile editing form for regular admin users.
-// Supports: display name, email, avatar upload, password change.
+// Supports: display name, email, avatar upload, password change. Each section reports its own
+// result next to its own button.
 
 import { useState } from 'react'
+import { CheckCircle, UploadSimple } from '@phosphor-icons/react'
+import Section from '@/components/ui/Section'
+import Field from '@/components/ui/Field'
+import Avatar from '@/components/ui/Avatar'
 
 interface Props {
   userId:           string
   initialName:      string
   initialEmail:     string
   initialAvatarUrl: string
+}
+
+type Status = { state: 'idle' | 'saving' | 'saved' } | { state: 'error'; message: string }
+
+function Result({ status, saved }: { status: Status; saved: string }) {
+  if (status.state === 'saved') return <span className="us-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />{saved}</span>
+  if (status.state === 'error') return <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0, flexBasis: '100%' }}>{status.message}</div>
+  return null
 }
 
 export default function ProfileForm({ initialName, initialEmail, initialAvatarUrl }: Props) {
@@ -19,12 +32,13 @@ export default function ProfileForm({ initialName, initialEmail, initialAvatarUr
   const [currentPw, setCurrentPw] = useState('')
   const [newPw,     setNewPw]     = useState('')
   const [confirmPw, setConfirmPw] = useState('')
-  const [status,    setStatus]    = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
-  const [errorMsg,  setErrorMsg]  = useState('')
+  const [profile,   setProfile]   = useState<Status>({ state: 'idle' })
+  const [password,  setPassword]  = useState<Status>({ state: 'idle' })
   const [uploading, setUploading] = useState(false)
 
   async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
     setUploading(true)
     try {
@@ -33,11 +47,10 @@ export default function ProfileForm({ initialName, initialEmail, initialAvatarUr
       form.append('folder', 'avatars')
       const res = await fetch('/api/upload', { method: 'POST', body: form })
       const data = await res.json()
-      if (data.url) setAvatarUrl(data.url)
+      if (data.url) { setAvatarUrl(data.url); setProfile({ state: 'idle' }) }
       else throw new Error(data.error || 'Upload failed')
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Upload failed')
-      setStatus('error')
+      setProfile({ state: 'error', message: `The photo didn’t upload${err instanceof Error ? `: ${err.message}` : '.'}` })
     } finally {
       setUploading(false)
     }
@@ -45,8 +58,7 @@ export default function ProfileForm({ initialName, initialEmail, initialAvatarUr
 
   async function handleProfileSave(e: React.FormEvent) {
     e.preventDefault()
-    setStatus('saving')
-    setErrorMsg('')
+    setProfile({ state: 'saving' })
     try {
       const res = await fetch('/api/admin/users/me', {
         method:  'PATCH',
@@ -54,23 +66,20 @@ export default function ProfileForm({ initialName, initialEmail, initialAvatarUr
         body:    JSON.stringify({ name, email, avatar_url: avatarUrl }),
       })
       if (!res.ok) {
-        const d = await res.json()
-        throw new Error(d.error || 'Failed to save')
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Your profile wasn’t saved. Try again.')
       }
-      setStatus('success')
-      setTimeout(() => setStatus('idle'), 3000)
+      setProfile({ state: 'saved' })
     } catch (err) {
-      setStatus('error')
-      setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
+      setProfile({ state: 'error', message: err instanceof Error ? err.message : 'Your profile wasn’t saved. Try again.' })
     }
   }
 
   async function handlePasswordChange(e: React.FormEvent) {
     e.preventDefault()
-    if (newPw !== confirmPw) { setErrorMsg('Passwords do not match'); setStatus('error'); return }
-    if (newPw.length < 10)   { setErrorMsg('Password must be at least 10 characters'); setStatus('error'); return }
-    setStatus('saving')
-    setErrorMsg('')
+    if (newPw !== confirmPw) { setPassword({ state: 'error', message: 'The two new passwords don’t match.' }); return }
+    if (newPw.length < 10)   { setPassword({ state: 'error', message: 'The new password needs at least 10 characters.' }); return }
+    setPassword({ state: 'saving' })
     try {
       const res = await fetch('/api/admin/users/me/password', {
         method:  'POST',
@@ -78,118 +87,77 @@ export default function ProfileForm({ initialName, initialEmail, initialAvatarUr
         body:    JSON.stringify({ current_password: currentPw, new_password: newPw }),
       })
       if (!res.ok) {
-        const d = await res.json()
-        throw new Error(d.error || 'Failed to change password')
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Your password wasn’t changed. Try again.')
       }
       setCurrentPw(''); setNewPw(''); setConfirmPw('')
-      setStatus('success')
-      setTimeout(() => setStatus('idle'), 3000)
+      setPassword({ state: 'saved' })
     } catch (err) {
-      setStatus('error')
-      setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
+      setPassword({ state: 'error', message: err instanceof Error ? err.message : 'Your password wasn’t changed. Try again.' })
     }
   }
 
   return (
-    <div className="space-y-6">
-      {status === 'success' && (
-        <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--green-subtle)', border: '1px solid #bbf7d0', color: 'var(--green)' }}>
-          Saved successfully.
-        </div>
-      )}
-      {status === 'error' && errorMsg && (
-        <div className="rounded-xl px-4 py-3 text-sm"
-          style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', color: 'var(--red)' }}>
-          {errorMsg}
-        </div>
-      )}
-
-      {/* Profile info */}
-      <form onSubmit={handleProfileSave} className="card p-6">
-        <h2 className="section-title mb-4">Profile Information</h2>
-        <div className="space-y-4">
-
-          {/* Avatar */}
-          <div>
-            <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
-              Profile Photo
-            </label>
-            <div className="flex items-center gap-4">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" className="h-14 w-14 rounded-full object-cover flex-shrink-0" />
-              ) : (
-                <div
-                  className="h-14 w-14 rounded-full flex items-center justify-center text-white text-lg font-semibold flex-shrink-0"
-                  style={{ background: 'var(--blue)' }}
-                >
-                  {name.charAt(0).toUpperCase() || '?'}
-                </div>
-              )}
-              <div>
-                <label className="btn btn-secondary cursor-pointer" style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}>
-                  {uploading ? 'Uploading…' : 'Upload Photo'}
-                  <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} disabled={uploading} />
+    <>
+      <form onSubmit={handleProfileSave}>
+        <Section title="Profile" description="How you appear to your team in the admin.">
+          <div className="ui-fields">
+            <Field label="Photo" hint="JPG, PNG or WebP, up to 4 MB. It’s saved when you save your profile.">
+              <div className="us-photo">
+                <Avatar name={name || '?'} url={avatarUrl} size={56} />
+                <label className="btn btn-secondary btn-sm" style={{ cursor: uploading ? 'default' : 'pointer' }}>
+                  <UploadSimple size={14} aria-hidden />
+                  {uploading ? 'Uploading…' : avatarUrl ? 'Replace photo' : 'Upload photo'}
+                  <input type="file" accept="image/*" className="sr-only" onChange={handleAvatarUpload} disabled={uploading} />
                 </label>
-                <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>JPG, PNG, WebP — max 4MB</p>
+                {avatarUrl && <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAvatarUrl('')}>Remove</button>}
               </div>
+            </Field>
+            <Field label="Name" id="me-name">
+              <input id="me-name" className="input" placeholder="Your name" autoComplete="name"
+                value={name} onChange={e => { setName(e.target.value); setProfile({ state: 'idle' }) }} />
+            </Field>
+            <Field label="Email" id="me-email">
+              <input id="me-email" className="input" type="email" placeholder="you@agency.com" autoComplete="email"
+                value={email} onChange={e => { setEmail(e.target.value); setProfile({ state: 'idle' }) }} />
+            </Field>
+            <div className="us-actions">
+              <Result status={profile} saved="Profile saved" />
+              <button type="submit" className="btn btn-primary" disabled={profile.state === 'saving' || uploading}>
+                {profile.state === 'saving' ? 'Saving…' : 'Save profile'}
+              </button>
             </div>
           </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Display Name
-            </label>
-            <input className="input" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-              Email
-            </label>
-            <input className="input" type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)} />
-          </div>
-        </div>
-        <div className="mt-4">
-          <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
-            {status === 'saving' ? 'Saving…' : 'Save Profile'}
-          </button>
-        </div>
+        </Section>
       </form>
 
-      {/* Password change */}
-      <form onSubmit={handlePasswordChange} className="card p-6">
-        <h2 className="section-title mb-1">Change Password</h2>
-        <p className="section-desc mb-4">Minimum 10 characters.</p>
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Current Password</label>
-            <input className="input" type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} required />
+      <form onSubmit={handlePasswordChange}>
+        <Section title="Password" description="At least 10 characters.">
+          <div className="ui-fields">
+            <Field label="Current password" id="me-pw-current">
+              <input id="me-pw-current" className="input" type="password" required autoComplete="current-password"
+                value={currentPw} onChange={e => setCurrentPw(e.target.value)} />
+            </Field>
+            <div className="ui-grid-2">
+              <Field label="New password" id="me-pw-new">
+                <input id="me-pw-new" className="input" type="password" required minLength={10} autoComplete="new-password"
+                  value={newPw} onChange={e => setNewPw(e.target.value)} />
+              </Field>
+              <Field label="New password again" id="me-pw-confirm">
+                <input id="me-pw-confirm" className="input" type="password" required minLength={10} autoComplete="new-password"
+                  value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
+              </Field>
+            </div>
+            <div className="us-actions">
+              <Result status={password} saved="Password changed" />
+              <button type="submit" className="btn btn-primary" disabled={password.state === 'saving'}>
+                {password.state === 'saving' ? 'Changing…' : 'Change password'}
+              </button>
+            </div>
           </div>
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>New Password</label>
-            <input className="input" type="password" value={newPw} onChange={e => setNewPw(e.target.value)} minLength={10} required />
-          </div>
-          <div>
-            <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>Confirm New Password</label>
-            <input className="input" type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} minLength={10} required />
-          </div>
-        </div>
-        <div className="mt-4">
-          <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
-            {status === 'saving' ? 'Changing…' : 'Change Password'}
-          </button>
-        </div>
+        </Section>
       </form>
 
-      {/* Sign out */}
-      <div className="card p-6">
-        <h2 className="section-title mb-1">Sign Out</h2>
-        <p className="section-desc mb-4">Sign out of this admin session.</p>
-        <form action="/api/auth/admin-logout" method="POST">
-          <button type="submit" className="btn btn-danger">Sign Out</button>
-        </form>
-      </div>
-    </div>
+    </>
   )
 }

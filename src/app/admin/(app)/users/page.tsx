@@ -2,14 +2,31 @@
 // Admins and the super admin can add users. Editing, force-resetting and deleting other
 // accounts stays with the super admin; everyone else can edit only their own profile.
 
+import '@/styles/admin/users.css'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminSession } from '@/lib/auth'
 import Link from 'next/link'
+import { Plus, UsersThree } from '@phosphor-icons/react/dist/ssr'
 import type { User } from '@/lib/types'
-import DeleteUserButton from './DeleteUserButton'
-import ForceResetButton from './ForceResetButton'
+import PageHeader from '@/components/ui/PageHeader'
+import StatusBadge from '@/components/ui/StatusBadge'
+import EmptyState from '@/components/ui/EmptyState'
+import Avatar from '@/components/ui/Avatar'
+import UserRowActions from './UserRowActions'
 
 export const dynamic = 'force-dynamic'
+
+/** "Today", "Yesterday", "Sep 29", or "Apr 25, 2025" for another year. */
+function signedIn(iso: string | null | undefined): string {
+  if (!iso) return 'Never signed in'
+  const d = new Date(iso)
+  const now = new Date()
+  const days = Math.floor((new Date(now.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 864e5)
+  if (days <= 0) return 'Signed in today'
+  if (days === 1) return 'Signed in yesterday'
+  const sameYear = d.getFullYear() === now.getFullYear()
+  return `Signed in ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })}`
+}
 
 export default async function UsersPage() {
   const session = await getAdminSession()
@@ -35,163 +52,76 @@ export default async function UsersPage() {
   // can set that account's password, which would let one admin sign in as another and act
   // under their name in the activity log.
   const canAddUsers = isSuperAdmin || session?.role === 'admin'
+  const addButton = canAddUsers && (
+    <Link href="/admin/users/new" className="btn btn-primary"><Plus size={15} weight="bold" aria-hidden />Add user</Link>
+  )
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Users</h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {isSuperAdmin
-              ? 'Create and manage accounts for your team.'
-              : canAddUsers
-                ? 'Your team’s accounts. You can add new ones.'
-                : 'Your team’s accounts.'}
-          </p>
-        </div>
-        {canAddUsers && (
-          <Link href="/admin/users/new" className="btn btn-primary">
-            + Add User
-          </Link>
-        )}
-      </div>
+      <PageHeader
+        title="Users"
+        description={isSuperAdmin
+          ? 'Everyone on your team who can sign in to the admin.'
+          : canAddUsers ? 'Everyone on your team who can sign in. You can add people.' : 'Everyone on your team who can sign in.'}
+        actions={addButton}
+      />
 
       {isSuperAdmin && (
-        <div
-          className="mb-4 rounded-xl px-4 py-3 text-sm"
-          style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: 'var(--blue)' }}
-        >
-          You are signed in as <strong>Super Admin</strong>. Your account is managed via
-          environment configuration and does not appear in this list.
+        <div className="ui-notice ui-notice--info">
+          You’re signed in as the super admin. That account is set in the server’s configuration, so it isn’t listed here.
         </div>
       )}
 
-      <div className="card overflow-hidden">
+      <div className="card" style={{ padding: users.length ? '0 0 4px' : 0, overflow: 'hidden' }}>
         {users.length === 0 ? (
-          <div className="p-10 text-center">
-            <p className="text-sm mb-1 font-medium" style={{ color: 'var(--text-primary)' }}>
-              No users yet
-            </p>
-            <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-              Create accounts for your team so they can sign in with email and password.
-            </p>
-            {canAddUsers && (
-              <Link href="/admin/users/new" className="btn btn-primary">
-                + Add User
-              </Link>
-            )}
-          </div>
+          <EmptyState icon={<UsersThree size={22} weight="duotone" />} title="No users yet" actions={addButton}>
+            Add your team so they can sign in with their email and a password.
+          </EmptyState>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Last Login</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <div className="us-head" aria-hidden>
+              <span>Name</span><span>Role</span><span>Status</span><span>Last signed in</span><span />
+            </div>
+            <ul className="us-list" aria-label="Users">
               {users.map(user => {
-                const initials = user.name.split(' ').map((p: string) => p[0]).join('').toUpperCase().slice(0, 2)
                 const isMe = session?.userId === user.id
-
                 return (
-                  <tr key={user.id}>
-                    <td>
-                      <div className="flex items-center gap-3">
-                        {user.avatar_url ? (
-                          <img src={user.avatar_url} alt={user.name}
-                            className="h-8 w-8 rounded-full object-cover flex-shrink-0" />
-                        ) : (
-                          <div
-                            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
-                            style={{ background: 'var(--blue)' }}
-                          >
-                            {initials}
-                          </div>
-                        )}
-                        <div>
-                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {user.name}
-                            {isMe && (
-                              <span className="ml-1.5 text-xs font-normal" style={{ color: 'var(--text-faint)' }}>
-                                (you)
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
-                            {user.email}
-                          </p>
-                        </div>
+                  <li key={user.id} className="us-row">
+                    <div className="us-who">
+                      <Avatar name={user.name} url={user.avatar_url} size={36} muted={!user.is_active} />
+                      <div className="us-who-text">
+                        <p className="us-name"><span>{user.name}</span>{isMe && <span className="us-you">You</span>}</p>
+                        <p className="us-email" title={user.email}>{user.email}</p>
                       </div>
-                    </td>
-                    <td>
-                      <span className={`badge ${user.role === 'admin' ? 'badge-blue' : 'badge-gray'}`}>
-                        {user.role}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${user.is_active ? 'badge-green' : 'badge-gray'}`}>
-                        {user.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                      {user.must_reset_password && (
-                        <span
-                          className="badge badge-gray ml-1.5"
-                          title="Cannot sign in until they set a new password"
-                        >
-                          Reset pending
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {user.last_login_at
-                          ? new Date(user.last_login_at).toLocaleDateString('en-US', {
-                              month: 'short', day: 'numeric', year: 'numeric'
-                            })
-                          : 'Never'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2 justify-end">
-                        {isSuperAdmin ? (
-                          <Link
-                            href={`/admin/users/${user.id}`}
-                            className="btn btn-secondary"
-                            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-                          >
-                            Edit
-                          </Link>
-                        ) : isMe ? (
-                          <Link
-                            href="/admin/users/me"
-                            className="btn btn-secondary"
-                            style={{ padding: '0.375rem 0.75rem', fontSize: '0.8rem' }}
-                          >
-                            Edit Profile
-                          </Link>
-                        ) : null}
-
-                        {isSuperAdmin && !isMe && (
-                          <ForceResetButton
-                            userId={user.id}
-                            userName={user.name}
-                            alreadyPending={user.must_reset_password === true}
-                          />
-                        )}
-
-                        {isSuperAdmin && (
-                          <DeleteUserButton userId={user.id} userName={user.name} />
+                    </div>
+                    <div className="us-meta">
+                      <div className="us-role">
+                        <StatusBadge tone={user.role === 'admin' ? 'info' : 'neutral'} dot={false}>
+                          {user.role === 'admin' ? 'Admin' : user.role === 'viewer' ? 'Viewer' : user.role}
+                        </StatusBadge>
+                      </div>
+                      <div className="us-status">
+                        {user.is_active
+                          ? <StatusBadge tone="success">Active</StatusBadge>
+                          : <StatusBadge tone="neutral" title="This account can’t sign in">Inactive</StatusBadge>}
+                        {user.must_reset_password && (
+                          <StatusBadge tone="warning" title="Can’t sign in until they set a new password">Reset pending</StatusBadge>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                      <div className="us-seen">{signedIn(user.last_login_at)}</div>
+                    </div>
+                    <div className="us-act">
+                      {isSuperAdmin ? (
+                        <UserRowActions userId={user.id} userName={user.name} isMe={isMe} resetPending={user.must_reset_password === true} />
+                      ) : isMe ? (
+                        <Link href="/admin/users/me" className="btn btn-secondary btn-sm">Edit</Link>
+                      ) : null}
+                    </div>
+                  </li>
                 )
               })}
-            </tbody>
-          </table>
+            </ul>
+          </>
         )}
       </div>
     </div>

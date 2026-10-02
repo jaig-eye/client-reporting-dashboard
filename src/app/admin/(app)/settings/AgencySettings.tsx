@@ -1045,7 +1045,7 @@ function ThemeControls() {
 
         <div className="ui-field">
           <span className="ui-field-label" id="se-accent-label">Accent color</span>
-          <div className="se-swatches" role="radiogroup" aria-labelledby="se-accent-label">
+          <div className="ui-swatches" role="radiogroup" aria-labelledby="se-accent-label">
             {ACCENT_PRESETS.map(preset => (
               <button
                 key={preset.value}
@@ -1054,20 +1054,20 @@ function ThemeControls() {
                 aria-checked={accentColor === preset.value}
                 aria-label={preset.label}
                 title={preset.label}
-                className="se-swatch"
+                className="ui-swatch"
                 style={{ '--sw': preset.value } as React.CSSProperties}
                 onClick={() => setAccent(preset.value)}
               />
             ))}
             <input
               type="color"
-              className="se-swatch-custom"
+              className="ui-swatch-custom"
               value={accentColor || '#2563eb'}
               onChange={e => setAccent(e.target.value)}
               aria-label="Custom accent color"
               title="Custom color"
             />
-            <span className="se-swatch-value">{accentColor}</span>
+            <span className="ui-swatch-value">{accentColor}</span>
           </div>
         </div>
       </div>

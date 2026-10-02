@@ -1,6 +1,7 @@
 // New User — /admin/users/new
 // Admins and the super admin. Viewers are sent back to the list.
 
+import '@/styles/admin/users.css'
 import { redirect } from 'next/navigation'
 import { getAdminSession } from '@/lib/auth'
 import NewUserForm from './NewUserForm'

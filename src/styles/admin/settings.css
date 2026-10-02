@@ -26,18 +26,6 @@
 }
 .se-color .input { max-width: 160px; font-variant-numeric: tabular-nums; }
 
-/* Accent presets. */
-.se-swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.se-swatch {
-  width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%; cursor: pointer;
-  background: var(--sw); box-shadow: inset 0 0 0 1px var(--border);
-  transition: box-shadow 0.15s;
-}
-.se-swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--text-primary); }
-.se-swatch:focus-visible { outline: none; box-shadow: var(--ring); }
-.se-swatch-custom { width: 28px; height: 28px; padding: 2px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-surface); cursor: pointer; }
-.se-swatch-value { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-
 /* What a schedule means, in words. */
 .se-says {
   display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px; border-radius: var(--radius-sm);
