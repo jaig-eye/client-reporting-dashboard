@@ -97,3 +97,20 @@ test('schedule in words', () => {
   assert.equal(C.planningWindowLabel('monthly', 1), '1 month ahead')
   assert.equal(C.planningWindowLabel('daily', null), '1 day ahead')
 })
+
+test('open dates the planner hasn’t had a run for wait for the next run, not flagged as behind', () => {
+  const now = new Date('2026-10-02T19:20:00Z')        // the last run was 18:00 UTC
+  // Space Coast: switched to monthly with four months ahead at 18:30, so Dec 7 and Jan 4 are new.
+  assert.deepEqual(F.splitOpenDates(['2026-12-07', '2027-01-04'], 112, '2026-10-02T18:30:00Z', now),
+    { behind: [], waiting: ['2026-12-07', '2027-01-04'] })
+  // The same dates with the schedule saved yesterday: they have been in the window for weeks.
+  assert.deepEqual(F.splitOpenDates(['2026-12-07'], 112, '2026-10-01T09:00:00Z', now), { behind: ['2026-12-07'], waiting: [] })
+  // No save since: a date that entered the window before 18:00 is behind, one that entered after waits.
+  assert.deepEqual(F.splitOpenDates(['2026-10-30', '2026-11-01'], 28, null, now), { behind: ['2026-10-30'], waiting: ['2026-11-01'] })
+})
+
+test('open dates are listed, not just counted', () => {
+  assert.deepEqual(F.openDatesIn(['2026-12-07', '2027-01-04'], [], [], 1), ['2026-12-07', '2027-01-04'])
+  assert.deepEqual(F.openDatesIn(['2026-10-05', '2026-10-12'], ['2026-10-05'], ['2026-10-12'], 1), [])
+})
+

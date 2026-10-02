@@ -1607,10 +1607,10 @@ function StepSchedule({
             style={inputStyle}
           />
         </Field>
-        <Field label="Weeks Ahead" htmlFor="wiz-weeks-ahead">
+        <Field label="Publish dates ahead" htmlFor="wiz-weeks-ahead">
           <input
             id="wiz-weeks-ahead" type="number" min={1} max={24}
-            title="How many publish dates the planner keeps topics ready for"
+            title="How many upcoming publish dates the planner keeps topics ready for: 4 on a monthly schedule is four months"
             value={schedule.weeksAhead || ''}
             onChange={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
             onBlur={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(1, Number(e.target.value) || 4)) })}
