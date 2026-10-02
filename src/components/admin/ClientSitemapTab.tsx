@@ -1,8 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import '@/styles/admin/pipeline.css'
 import SitemapPaste from '@/components/admin/SitemapPaste'
-import { Star, MinusCircle, MapPin, GearSix } from '@phosphor-icons/react'
+import { Star, MinusCircle, MapPin, GearSix, Plus, X, ArrowClockwise, CheckCircle, TreeStructure } from '@phosphor-icons/react'
+import Section from '@/components/ui/Section'
+import Field from '@/components/ui/Field'
+import { SwitchRow } from '@/components/ui/Switch'
+import EmptyState from '@/components/ui/EmptyState'
+import { Sk } from '@/components/ui/Skeleton'
 
 type SitemapPage = {
   url:           string
@@ -27,12 +33,15 @@ function isBlogUrl(url: string): boolean {
   }
 }
 
-function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+/** A page's on/off flag (priority, excluded, service page): a real toggle button that says what it is
+ *  and whether it is on, with the icon filled when it is. */
+function Flag({ on, label, onLabel, disabled, onClick, icon }: {
+  on: boolean; label: string; onLabel: string; disabled: boolean; onClick: () => void; icon: (on: boolean) => React.ReactNode
+}) {
   return (
-    <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
-      {children}
-      {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
-    </label>
+    <button type="button" className={`sm-flag${on ? ' sm-flag--on' : ''}`} aria-pressed={on} aria-label={on ? onLabel : label} title={on ? onLabel : label} disabled={disabled} onClick={onClick}>
+      {icon(on)}
+    </button>
   )
 }
 
@@ -44,7 +53,6 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const [notes,   setNotes]   = useState<string | null>(null)
   const [search,  setSearch]  = useState('')
   const [saving,  setSaving]  = useState<Set<string>>(new Set())
-  const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
   // url → display index, captured at load. See snapshotOrder / the render sort.
   const [displayOrder, setDisplayOrder] = useState<Map<string, number>>(new Map())
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -253,8 +261,10 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
   const excludedCount    = pages.filter(p => p.isExcluded).length
   const servicePageCount = pages.filter(p => p.isServicePage).length
 
+  const sitemapCount = sitemapUrls.filter(Boolean).length
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <div className="ui-stack" style={{ gap: 20 }}>
 
       {/* Every sub-tab names itself in the same shape: title, then one line. */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -265,280 +275,194 @@ export default function ClientSitemapTab({ clientId }: { clientId: string }) {
       </div>
 
       {/* ── Sitemaps & Internal Links ─────────────────────────────────────── */}
-      <div className="card p-6 space-y-4">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <h3 className="section-title" style={{ marginBottom: 2 }}>Sitemaps &amp; Internal Links</h3>
-            {/* Folded away, the state still has to be readable — otherwise the gear hides whether
-                anything is set at all. */}
-            <p className="section-desc" style={{ margin: 0 }}>
-              {sitemapUrls.filter(Boolean).length || 0} sitemap{sitemapUrls.filter(Boolean).length === 1 ? '' : 's'}
-              {' · '}{manualLinks.length} always-include link{manualLinks.length === 1 ? '' : 's'}
-              {excludeProducts ? ' · product pages skipped' : ''}
-            </p>
-          </div>
+      <Section
+        title="Sitemaps and fixed links"
+        // Folded away, the state still has to be readable — otherwise the gear hides whether
+        // anything is set at all.
+        description={<>
+          {sitemapCount} sitemap{sitemapCount === 1 ? '' : 's'}, {manualLinks.length} link{manualLinks.length === 1 ? '' : 's'} in every post
+          {excludeProducts ? ', product pages skipped' : ''}.
+        </>}
+        actions={
           <button
             type="button"
             onClick={() => setConfigOpen(v => !v)}
             aria-expanded={configOpen}
-            aria-label={configOpen ? 'Hide sitemap settings' : 'Sitemap settings'}
-            title={configOpen ? 'Hide settings' : 'Settings'}
-            className="btn btn-secondary"
-            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.7rem', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            className="btn btn-secondary btn-sm"
           >
-            <GearSix size={15} weight="duotone" />
-            {configOpen ? 'Hide' : 'Settings'}
+            <GearSix size={15} aria-hidden />
+            {configOpen ? 'Hide' : 'Change'}
           </button>
-        </div>
-
+        }
+      >
         {configOpen && (
-        <>
+          <div className="ui-fields">
+            {configError && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{configError}</div>}
 
-        {configError && <p style={{ fontSize: '0.8125rem', color: 'var(--red)', margin: 0 }}>{configError}</p>}
-
-        {/* Ecommerce escape hatch. Off by default because on a store the product
-            page is usually the most valuable thing an article can link to — the
-            round-robin quota in the parser is what handles catalogue scale, so
-            this is only for clients whose SKUs are not useful link targets. */}
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={excludeProducts}
-            onChange={e => setExcludeProducts(e.target.checked)}
-            style={{ width: 15, height: 15, marginTop: 2, flexShrink: 0 }}
-          />
-          <span>
-            <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-              Skip individual product pages
-            </span>
-            <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
-              {excludeProducts
-                ? 'Product sitemaps are ignored. Category and collection sitemaps are still included — those are strong link targets.'
-                : 'Products are included. Every sub-sitemap gets a fair share of the 500-page cache, so a large catalogue cannot crowd out your service pages and articles. Turn this on only if individual products are not worth linking to.'}
-            </span>
-          </span>
-        </label>
-
-        <div>
-          <Label hint="for internal link suggestions">Sitemap URLs</Label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {sitemapUrls.map((url, i) => (
-              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input className="input" type="url" style={{ flex: 1 }} value={url} onChange={e => updateSitemap(i, e.target.value)} placeholder="https://example.com/sitemap.xml" />
-                <button type="button" onClick={() => removeSitemap(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+            <Field label="Sitemaps" hint="Where the list of pages below comes from.">
+              <div className="sm-list">
+                {sitemapUrls.map((url, i) => (
+                  <div key={i} className="sm-list-row">
+                    <input className="input" type="url" value={url} onChange={e => updateSitemap(i, e.target.value)} placeholder="https://example.com/sitemap.xml" aria-label={`Sitemap ${i + 1}`} />
+                    <button type="button" className="ui-x" onClick={() => removeSitemap(i)} aria-label={`Remove sitemap ${i + 1}`}><X size={14} weight="bold" aria-hidden /></button>
+                  </div>
+                ))}
+                <button type="button" onClick={addSitemap} className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }}><Plus size={13} weight="bold" aria-hidden />Add a sitemap</button>
               </div>
-            ))}
-            <button type="button" onClick={addSitemap} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Sitemap</button>
-          </div>
-        </div>
+            </Field>
 
-        <div>
-          <Label hint="included as internal links in every generated post">Always-Include Links</Label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-            {manualLinks.map((link, i) => (
-              <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input className="input" type="url" style={{ flex: 2 }} value={link.url} onChange={e => updateManualLink(i, 'url', e.target.value)} placeholder="https://example.com/services" />
-                <input className="input" style={{ flex: 1 }} value={link.label} onChange={e => updateManualLink(i, 'label', e.target.value)} placeholder="Label" />
-                <button type="button" onClick={() => removeManualLink(i)} style={{ flexShrink: 0, fontSize: '0.75rem', color: 'var(--text-faint)', padding: '0.25rem 0.5rem', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+            <Field label="Links in every post" hint="Added as internal links to every post written for this client.">
+              <div className="sm-list">
+                {manualLinks.map((link, i) => (
+                  <div key={i} className="sm-list-row">
+                    <input className="input" type="url" style={{ flex: 2 }} value={link.url} onChange={e => updateManualLink(i, 'url', e.target.value)} placeholder="https://example.com/services" aria-label={`Link ${i + 1} address`} />
+                    <input className="input" style={{ flex: 1 }} value={link.label} onChange={e => updateManualLink(i, 'label', e.target.value)} placeholder="Link text" aria-label={`Link ${i + 1} text`} />
+                    <button type="button" className="ui-x" onClick={() => removeManualLink(i)} aria-label={`Remove link ${i + 1}`}><X size={14} weight="bold" aria-hidden /></button>
+                  </div>
+                ))}
+                <button type="button" onClick={addManualLink} className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }}><Plus size={13} weight="bold" aria-hidden />Add a link</button>
               </div>
-            ))}
-            <button type="button" onClick={addManualLink} className="btn btn-secondary" style={{ alignSelf: 'flex-start', fontSize: '0.75rem', padding: '0.3rem 0.75rem' }}>+ Add Link</button>
-          </div>
-        </div>
+            </Field>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 4 }}>
-          <button
-            type="button"
-            onClick={saveConfig}
-            disabled={configSaving}
-            className="btn btn-primary"
-            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
-          >
-            {configSaving ? 'Saving…' : configSaved ? 'Saved ✓' : 'Save'}
-          </button>
-          <span className="text-xs" style={{ color: 'var(--text-faint)' }}>
-            Sitemaps give the writer page context for internal linking.
-          </span>
-        </div>
-        </>
+            {/* Ecommerce escape hatch. Off by default because on a store the product
+                page is usually the most valuable thing an article can link to — the
+                round-robin quota in the parser is what handles catalogue scale, so
+                this is only for clients whose SKUs are not useful link targets. */}
+            <div>
+              <SwitchRow
+                title="Skip individual product pages"
+                description={excludeProducts
+                  ? 'Product sitemaps are ignored. Category and collection sitemaps still count; those are strong link targets.'
+                  : 'Products are included. Every sitemap gets a fair share of the 500-page cache, so a big catalogue can’t crowd out service pages and articles. Turn this on only if single products aren’t worth linking to.'}
+                checked={excludeProducts}
+                onChange={setExcludeProducts}
+              />
+            </div>
+
+            <div className="ui-saverow">
+              <button type="button" onClick={saveConfig} disabled={configSaving} className="btn btn-primary">
+                {configSaving ? 'Saving…' : 'Save'}
+              </button>
+              {configSaved && <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
+            </div>
+          </div>
         )}
-      </div>
+      </Section>
 
       {/* ── Sitemap Pages ───────────────────────────────────────────────────── */}
-      <div>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Sitemap Pages
-          </h3>
-          <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Star pages to prioritize for internal linking. Minus-circle to exclude from AI context entirely.
-            {pages.length > 0 && (
-              <span> — {pages.length} pages · {priorityCount} starred · {excludedCount} excluded · {servicePageCount} service pages</span>
-            )}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+      <Section
+        title="Pages"
+        description={<>
+          Star the pages posts should link to most; exclude the ones they never should.
+          {pages.length > 0 && <> {pages.length} pages: {priorityCount} starred, {excludedCount} excluded, {servicePageCount} service pages.</>}
+        </>}
+        actions={<>
           {blogCandidates.length > 0 && (
             <button
+              type="button"
               onClick={bulkExcludeBlogs}
               disabled={bulkBusy}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem' }}
-              title="Exclude all detected blog/news/article URLs from AI linking context"
+              className="btn btn-secondary btn-sm"
+              title="Exclude every page that looks like a blog post, news item or article"
             >
-              {bulkBusy ? 'Excluding…' : `Exclude ${blogCandidates.length} blog${blogCandidates.length !== 1 ? 's' : ''}`}
+              {bulkBusy ? 'Excluding…' : `Exclude ${blogCandidates.length} blog post${blogCandidates.length !== 1 ? 's' : ''}`}
             </button>
           )}
-          <button onClick={fetchFromSitemap} disabled={fetching} className="btn btn-secondary" style={{ fontSize: '0.8125rem' }}>
-            {fetching ? 'Fetching…' : '↻ Refresh from Sitemap'}
+          <button type="button" onClick={fetchFromSitemap} disabled={fetching} className="btn btn-secondary btn-sm">
+            <ArrowClockwise size={14} aria-hidden />{fetching ? 'Reading the sitemap…' : 'Refresh from sitemap'}
           </button>
+        </>}
+        flush={sorted.length > 0 && !loading}
+      >
+        <div className="sm-tools">
+          {error && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{error}</div>}
+
+          <SitemapPaste
+            clientId={clientId}
+            onImported={(list, n) => {
+              const data = list as SitemapPage[]
+              setPages(data)
+              snapshotOrder(data)
+              setNotes(n)
+              setError('')
+            }}
+          />
+
+          {notes && <p className="ui-field-hint" style={{ margin: 0 }}>{notes}</p>}
+
+          <div className="sm-legend" aria-label="Key">
+            <span><Star size={13} weight="fill" className="sm-on" aria-hidden />Starred: posts link to these first</span>
+            <span><MinusCircle size={13} weight="fill" className="sm-muted" aria-hidden />Excluded: posts never link to these</span>
+            <span><MapPin size={13} weight="fill" className="sm-on" aria-hidden />Service page: parent for service area pages</span>
+          </div>
+
+          {pages.length > 0 && (
+            <input
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search pages"
+              aria-label="Search pages"
+              className="input"
+              style={{ maxWidth: 360 }}
+            />
+          )}
         </div>
-      </div>
 
-      {error && (
-        <p style={{ fontSize: '0.8125rem', color: 'var(--red)', marginBottom: 12 }}>{error}</p>
-      )}
-
-      <div style={{ marginBottom: 12 }}>
-        <SitemapPaste
-          clientId={clientId}
-          onImported={(list, n) => {
-            const data = list as SitemapPage[]
-            setPages(data)
-            snapshotOrder(data)
-            setNotes(n)
-            setError('')
-          }}
-        />
-      </div>
-
-      {notes && (
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 12 }}>{notes}</p>
-      )}
-
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          <Star size={13} weight="fill" color="#6366f1" />
-          Priority — preferred for internal links
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          <MinusCircle size={13} weight="fill" color="#9ca3af" />
-          Excluded — AI will not link to these
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          <MapPin size={13} weight="fill" color="#059669" />
-          Service Page — used as parent for service area sub-pages
-        </div>
-      </div>
-
-      {/* Search */}
-      {pages.length > 0 && (
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search pages…"
-          className="input"
-          style={{ marginBottom: 12, maxWidth: 400, fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
-        />
-      )}
-
-      {loading ? (
-        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Loading…</p>
-      ) : sorted.length === 0 ? (
-        <div className="card p-6" style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: 0 }}>
-            {pages.length === 0
-              ? 'No pages yet. Click "Refresh from Sitemap" to load pages from this client\'s configured sitemaps.'
-              : 'No pages match your search.'}
-          </p>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Page</th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 200 }}>Title</th>
-                <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 60 }}>Priority</th>
-                <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 60 }}>Exclude</th>
-                <th style={{ padding: '6px 10px', textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 70 }}>Svc Page</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((page, i) => (
-                <tr key={page.url}
-                  onMouseEnter={() => setHoveredUrl(page.url)}
-                  onMouseLeave={() => setHoveredUrl(null)}
-                  style={{
-                    borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
-                    opacity: page.isExcluded ? 0.45 : 1,
-                    background: hoveredUrl === page.url
-                      ? 'var(--bg-subtle)'
-                      : page.isPriority ? 'rgba(99,102,241,0.04)' : 'transparent',
-                    transition: 'background 0.1s',
-                  }}>
-                  <td style={{ padding: '7px 10px', color: 'var(--text-primary)', maxWidth: 0 }}>
-                    <a href={page.url} target="_blank" rel="noopener noreferrer"
-                      style={{ color: 'var(--blue)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                      {page.url}
-                    </a>
-                  </td>
-                  <td style={{ padding: '7px 10px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
-                    {page.title ?? '—'}
-                  </td>
-                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>
-                    <button
-                      onClick={() => toggleFlag(page.url, 'is_priority', page.isPriority)}
-                      disabled={saving.has(page.url)}
-                      title={page.isPriority ? 'Remove priority' : 'Mark as priority'}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 3, lineHeight: 1 }}
-                    >
-                      <Star
-                        size={16}
-                        weight={page.isPriority ? 'fill' : 'regular'}
-                        color={page.isPriority ? '#6366f1' : '#d1d5db'}
-                      />
-                    </button>
-                  </td>
-                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>
-                    <button
-                      onClick={() => toggleFlag(page.url, 'is_excluded', page.isExcluded)}
-                      disabled={saving.has(page.url)}
-                      title={page.isExcluded ? 'Remove exclusion' : 'Exclude from AI'}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 3, lineHeight: 1 }}
-                    >
-                      <MinusCircle
-                        size={16}
-                        weight={page.isExcluded ? 'fill' : 'regular'}
-                        color={page.isExcluded ? '#9ca3af' : '#d1d5db'}
-                      />
-                    </button>
-                  </td>
-                  <td style={{ padding: '7px 10px', textAlign: 'center' }}>
-                    <button
-                      onClick={() => toggleFlag(page.url, 'is_service_page', page.isServicePage)}
-                      disabled={saving.has(page.url)}
-                      title={page.isServicePage ? 'Remove service page flag' : 'Mark as service category page'}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 3, lineHeight: 1 }}
-                    >
-                      <MapPin
-                        size={16}
-                        weight={page.isServicePage ? 'fill' : 'regular'}
-                        color={page.isServicePage ? '#059669' : '#d1d5db'}
-                      />
-                    </button>
-                  </td>
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '6px 20px 16px' }} aria-busy="true" aria-label="Loading pages">
+            {[0, 1, 2, 3, 4].map(i => <span key={i} style={{ display: 'flex', gap: 16, alignItems: 'center' }}><Sk w={`${48 - i * 5}%`} h={12} /><Sk w="22%" h={11} /><Sk w={16} h={16} r={4} style={{ marginLeft: 'auto' }} /><Sk w={16} h={16} r={4} /><Sk w={16} h={16} r={4} /></span>)}
+          </div>
+        ) : sorted.length === 0 ? (
+          pages.length === 0 ? (
+            <EmptyState icon={<TreeStructure size={22} weight="duotone" />} title="No pages yet">
+              Refresh from sitemap reads this client’s sitemaps. If their site blocks it, paste the sitemap instead.
+            </EmptyState>
+          ) : (
+            <p className="ui-field-hint" style={{ margin: 0, padding: '4px 0 8px' }}>No pages match “{search}”.</p>
+          )
+        ) : (
+          <div className="ui-scroll-x">
+            <table className="ui-table sm-table">
+              <thead>
+                <tr>
+                  <th>Page</th>
+                  <th className="ui-hide-sm">Title</th>
+                  <th className="sm-flag-col">Star</th>
+                  <th className="sm-flag-col">Exclude</th>
+                  <th className="sm-flag-col">Service</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      </div>
+              </thead>
+              <tbody>
+                {sorted.map(page => (
+                  <tr key={page.url} className={`${page.isExcluded ? 'sm-row--excluded' : ''}${page.isPriority ? ' sm-row--starred' : ''}`}>
+                    <td className="sm-url-cell">
+                      <a href={page.url} target="_blank" rel="noopener noreferrer" title={page.url}>{page.url.replace(/^https?:\/\/[^/]+/, '') || '/'}</a>
+                      <div className="sm-title-sm ui-only-sm">{page.title ?? ''}</div>
+                    </td>
+                    <td className="sm-title-cell ui-hide-sm" title={page.title ?? undefined}>{page.title ?? '–'}</td>
+                    <td className="sm-flag-col">
+                      <Flag on={page.isPriority} label="Star this page" onLabel="Starred: unstar" disabled={saving.has(page.url)}
+                        onClick={() => toggleFlag(page.url, 'is_priority', page.isPriority)}
+                        icon={on => <Star size={16} weight={on ? 'fill' : 'regular'} />} />
+                    </td>
+                    <td className="sm-flag-col">
+                      <Flag on={page.isExcluded} label="Exclude this page" onLabel="Excluded: include again" disabled={saving.has(page.url)}
+                        onClick={() => toggleFlag(page.url, 'is_excluded', page.isExcluded)}
+                        icon={on => <MinusCircle size={16} weight={on ? 'fill' : 'regular'} />} />
+                    </td>
+                    <td className="sm-flag-col">
+                      <Flag on={page.isServicePage} label="Mark as a service page" onLabel="Service page: unmark" disabled={saving.has(page.url)}
+                        onClick={() => toggleFlag(page.url, 'is_service_page', page.isServicePage)}
+                        icon={on => <MapPin size={16} weight={on ? 'fill' : 'regular'} />} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
     </div>
   )
 }

@@ -7,6 +7,12 @@
 // the sibling Settings tab; this tab reads a few settings from `contentSettings`.
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import Link from 'next/link'
+import { CaretDown, CaretRight, Plus } from '@phosphor-icons/react'
+import StatusBadge from '@/components/ui/StatusBadge'
+import Section from '@/components/ui/Section'
+import Dialog, { ConfirmDialog } from '@/components/ui/Dialog'
+import { Sk } from '@/components/ui/Skeleton'
 import type { SiteOption } from '@/lib/content/types'
 import ContentPostEditor from '@/components/admin/ContentPostEditor'
 import NewPostModal from '@/components/admin/NewPostModal'
@@ -220,15 +226,13 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
     else showToast('Cleanup failed', 'error')
   }
 
-  async function purgeItem(kind: 'topic' | 'post', id: string) {
-    // This hard-deletes a post AND its topic on the server and cannot be undone, so it asks
-    // first — every softer action on this page already confirms, and the monthly review card
-    // confirms before the same call.
-    if (!window.confirm(
-      'Delete this permanently? The scheduled item and its draft are both removed, and the '
-      + 'date is left empty so nothing regenerates into it. This cannot be undone.',
-    )) return
+  // This hard-deletes a post AND its topic on the server and cannot be undone, so it asks
+  // first — every softer action on this page already confirms, and the monthly review card
+  // confirms before the same call. The question is a dialog now, not window.confirm.
+  const [purgeAsk, setPurgeAsk] = useState<{ kind: 'topic' | 'post'; id: string } | null>(null)
+  function purgeItem(kind: 'topic' | 'post', id: string) { setPurgeAsk({ kind, id }) }
 
+  async function doPurge(kind: 'topic' | 'post', id: string) {
     setPurgeLoading(p => ({ ...p, [id]: true }))
     const url = kind === 'topic' ? `/api/admin/content/topics/${id}` : `/api/admin/content/posts/${id}`
     try {
@@ -495,13 +499,15 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       {/* ── AI Content Plan + New Post controls ────────────────────────────── */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'stretch' }}>
         {aiConfigured && dataLoading ? (
-          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true" aria-label="Loading the content plan">
+            <Sk w={140} h={14} /><Sk w="80%" h={11} />
+          </div>
         ) : aiConfigured && planStarted ? (
           <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: `3px solid ${autoGenerate ? 'var(--green)' : 'var(--amber)'}`, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                 <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>Content plan</span>
-                <span className={`badge ${autoGenerate ? 'badge-green' : 'badge-amber'}`} style={{ fontSize: '0.68rem' }}>{autoGenerate ? 'Running' : 'Paused'}</span>
+                <StatusBadge tone={autoGenerate ? 'success' : 'warning'}>{autoGenerate ? 'Running' : 'Paused'}</StatusBadge>
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {publishes}.{' '}
@@ -522,7 +528,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             </div>
           </div>
         ) : aiConfigured && !idleChecked && topics.length === 0 ? (
-          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', fontSize: '0.8rem', color: 'var(--text-faint)' }}>Loading the content plan…</div>
+          <div className="card" style={{ flex: 1, minWidth: 280, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true" aria-label="Loading the content plan">
+            <Sk w={140} h={14} /><Sk w="80%" h={11} />
+          </div>
         ) : aiConfigured ? (
           <div className="card" style={{ flex: 1, minWidth: 280, borderLeft: '3px solid var(--blue)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
@@ -540,11 +548,12 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             </button>
           </div>
         ) : (
-          <div style={{ flex: 1, padding: '10px 14px', fontSize: '0.8125rem', color: 'var(--text-faint)', background: 'var(--bg-subtle)', borderRadius: 6, border: '1px solid var(--border)' }}>
-            AI not configured — add a provider in Agency Settings to generate content plans
+          <div className="ui-notice ui-notice--info" style={{ flex: 1, margin: 0 }}>
+            <span>Content plans need an AI provider. Add one in Agency settings, then come back to start the plan.</span>
+            <Link href="/admin/settings?tab=ai" className="btn btn-secondary btn-sm">Set up AI</Link>
           </div>
         )}
-        <button className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>+ New Post</button>
+        <button type="button" className="btn btn-secondary" onClick={() => setShowNewPost(true)} style={{ whiteSpace: 'nowrap', flexShrink: 0, alignSelf: 'flex-start' }}><Plus size={14} weight="bold" aria-hidden />New post</button>
       </div>
 
       {/* ── A plan picking topics in the background ───────────────────────── */}
@@ -562,10 +571,10 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       {/* ── Publish-to sites ───────────────────────────────────────────────── */}
       {clientSites.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Publish to:</span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Publishes to</span>
           {clientSites.map(site => (
             <span key={site.connectionId} style={{ display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} aria-hidden />
               {site.siteName}
             </span>
           ))}
@@ -581,22 +590,16 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
       />
 
       {/* ── Content Calendar (cards) ───────────────────────────────────────── */}
-      <div className="card p-6">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <h4 className="section-title" style={{ margin: 0 }}>Content Calendar</h4>
-        </div>
-
-        {!dataLoading && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, padding: '8px 12px', background: 'var(--bg-subtle)', borderRadius: 6 }}>
-            <ContentStatusBar counts={statusCounts} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0, marginLeft: 12 }}>{topics.length + posts.length} items</span>
-          </div>
-        )}
+      <Section title="Calendar" description="Every publish date, with its topic or post.">
+        {!dataLoading && <ContentStatusBar counts={statusCounts} total={topics.length + posts.length} />}
 
         {dataLoading ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true" aria-label="Loading the calendar">
+            <Sk h={36} r={8} />
+            {[0, 1, 2].map(i => <div key={i} className="pl-card"><Sk w={46} h={34} r={4} /><span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><Sk w={`${70 - i * 12}%`} h={12} /><Sk w="30%" h={10} /></span><Sk w={90} h={22} r={999} /></div>)}
+          </div>
         ) : model.allItems.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--text-faint)', padding: '1rem 0' }}>No topics yet. Start the plan above to fill the first publish dates.</p>
+          <p className="sd-empty" style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No topics yet. Start the plan above to fill the first publish dates.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {model.recentKeys.map(dateKey => {
@@ -614,19 +617,21 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
                 <div key={dateKey}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: 'var(--text-primary)' }}>{dateKey === 'unscheduled' ? 'Unscheduled' : fmtDate(dateKey)}</span>
-                    <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: approvedInGroup >= 1 ? 'var(--green)' : 'var(--border)' }} />
-                    <span style={{ fontSize: '0.68rem', color: approvedInGroup >= 1 ? 'var(--green)' : 'var(--text-faint)' }}>{approvedInGroup >= 1 ? '✓' : '0/1'}</span>
+                    {/* Only a date with topics has an approval to report; a written post speaks for itself. */}
+                    {topicsInGroup.length > 0 && (
+                      <span style={{ fontSize: '0.72rem', color: approvedInGroup >= 1 ? 'var(--green-fg)' : 'var(--text-faint)' }}>{approvedInGroup >= 1 ? 'Topic approved' : 'Topic not approved yet'}</span>
+                    )}
                     <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                     {generatableIds.length > 0 && (
-                      <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.68rem' }} disabled={!!slotGenerating[dateKey]}
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={!!slotGenerating[dateKey]}
                         onClick={() => generateForSlot(dateKey, generatableIds)}>
-                        {slotGenerating[dateKey] ? 'Generating…' : `Generate (${generatableIds.length})`}
+                        {slotGenerating[dateKey] ? 'Writing…' : `Write ${generatableIds.length === 1 ? 'it' : `all ${generatableIds.length}`} now`}
                       </button>
                     )}
                     {showCleanup && (
-                      <button className="btn btn-secondary btn-sm" style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}
-                        onClick={() => cleanSlot(staleTopicIds)} title="Remove stale topics — a post has already been generated for this slot">
-                        Clean up ({staleTopicIds.length})
+                      <button type="button" className="btn btn-ghost btn-sm"
+                        onClick={() => cleanSlot(staleTopicIds)} title="A post is already written for this date, so its leftover topics can go">
+                        Clear {staleTopicIds.length} leftover topic{staleTopicIds.length === 1 ? '' : 's'}
                       </button>
                     )}
                   </div>
@@ -640,10 +645,9 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             {/* Archived */}
             {model.archivedKeys.length > 0 && (
               <div>
-                <button style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                  onClick={() => setShowArchived(r => !r)}>
-                  <span style={{ fontSize: '0.6rem' }}>{showArchived ? '▼' : '▶'}</span>
-                  {showArchived ? 'Hide' : 'Show'} Archived ({model.archivedCount} items — older than 2 months)
+                <button type="button" className="btn btn-ghost btn-sm" aria-expanded={showArchived} onClick={() => setShowArchived(r => !r)}>
+                  {showArchived ? <CaretDown size={12} weight="bold" aria-hidden /> : <CaretRight size={12} weight="bold" aria-hidden />}
+                  {showArchived ? 'Hide' : 'Show'} older than two months ({model.archivedCount})
                 </button>
                 {showArchived && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 12, opacity: 0.85 }}>
@@ -673,84 +677,92 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
             )}
 
             {/* Toggles */}
-            <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {model.publishedItems.length > 0 && (
-                <button style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }} onClick={() => setShowPublished(v => !v)}>
-                  {showPublished ? 'Hide' : 'Show'} Published ({model.publishedItems.length})
+                <button type="button" className="btn btn-ghost btn-sm" aria-expanded={showPublished} onClick={() => setShowPublished(v => !v)}>
+                  {showPublished ? 'Hide' : 'Show'} published ({model.publishedItems.length})
                 </button>
               )}
               {model.rejectedCount > 0 && (
-                <button style={{ fontSize: '0.72rem', color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }} onClick={() => setShowRejected(r => !r)}>
-                  {showRejected ? 'Hide' : 'Show'} Rejected ({model.rejectedCount})
+                <button type="button" className="btn btn-ghost btn-sm" aria-expanded={showRejected} onClick={() => setShowRejected(r => !r)}>
+                  {showRejected ? 'Hide' : 'Show'} rejected ({model.rejectedCount})
                 </button>
               )}
             </div>
           </div>
         )}
-      </div>
+      </Section>
 
       {/* ── Generate-Plan modal ────────────────────────────────────────────── */}
-      {calendarModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(2px)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }} onClick={() => setCalendarModalOpen(false)}>
-          <div style={{ background: 'var(--bg-surface)', borderRadius: '0.75rem', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.125rem 1.375rem', borderBottom: '1px solid var(--border)' }}>
-              <span className="font-semibold text-sm">{planMode === 'regenerate' ? 'Regenerate the content plan' : 'Start the content plan'}</span>
-              <button type="button" aria-label="Close" onClick={() => setCalendarModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }}>✕</button>
-            </div>
-            <form onSubmit={generateCalendar} style={{ padding: '1.375rem' }}>
-              <p style={{ margin: '0 0 0.875rem', fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                {planMode === 'regenerate'
-                  ? <>New topics are chosen automatically for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
-                  : <>Topics for these dates are chosen automatically, from Search Console, rankings and your ticked keywords. You can edit or reject any of them in the calendar.</>}
-              </p>
-              <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 14, rowGap: 10, margin: 0, fontSize: '0.8125rem' }}>
-                <dt style={{ color: 'var(--text-muted)' }}>Schedule</dt>
-                <dd style={{ margin: 0, color: 'var(--text-primary)' }}>{cadence}</dd>
-                <dt style={{ color: 'var(--text-muted)' }}>Topics for</dt>
-                <dd style={{ margin: 0, color: planError ? 'var(--red)' : 'var(--text-primary)', lineHeight: 1.6 }}>
-                  {planError
-                    ? <>{planError}{' '}<button type="button" onClick={() => void openPlan(planMode)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Try again</button></>
-                    : !plan
-                      ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
-                      : plan.dates.length === 0
-                        ? (planMode === 'regenerate'
-                          ? 'Every upcoming date already has a topic. Delete the ones you don’t want, then regenerate.'
-                          : 'Every upcoming date already has a topic.')
-                        : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(' · ')}
-                </dd>
-                <dt style={{ color: 'var(--text-muted)' }}>After that</dt>
-                <dd style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                  {autoGenerate
-                    ? 'New topics are picked automatically as later dates get closer.'
-                    : 'Automatic planning is off, so later dates won’t get topics on their own.'}
-                </dd>
-              </dl>
-              {onOpenSettings && (
-                <p style={{ margin: '1rem 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  The schedule and start date come from{' '}
-                  <button type="button" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', font: 'inherit' }}>Content settings</button>.
-                  {' '}Change them there first if they aren&apos;t right.
-                </p>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '1.25rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
-                  {generating
-                    ? 'Generating topics…'
-                    : plan && plan.posts > 0
-                      ? `Generate ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
-                      : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={calendarModalOpen}
+        onClose={() => setCalendarModalOpen(false)}
+        title={planMode === 'regenerate' ? 'Regenerate the content plan' : 'Start the content plan'}
+        busy={generating}
+        footer={<>
+          <button type="button" className="btn btn-secondary" onClick={() => setCalendarModalOpen(false)} disabled={generating}>Cancel</button>
+          <button type="submit" form="cp-plan" className="btn btn-primary" disabled={generating || !plan || plan.posts === 0}>
+            {generating
+              ? 'Picking topics…'
+              : plan && plan.posts > 0
+                ? `Pick ${plan.posts} topic${plan.posts === 1 ? '' : 's'}`
+                : planMode === 'regenerate' ? 'Regenerate plan' : 'Start plan'}
+          </button>
+        </>}
+      >
+        <form id="cp-plan" onSubmit={generateCalendar}>
+          <p className="ui-dialog-text" style={{ margin: '0 0 14px' }}>
+            {planMode === 'regenerate'
+              ? <>New topics are chosen for the dates below, including dates whose posts you deleted or rejected. Topics already in the calendar stay as they are.</>
+              : <>Topics for these dates are chosen from Search Console, rankings and the keywords you ticked. You can edit or reject any of them in the calendar.</>}
+          </p>
+          <dl className="cp-plan-facts">
+            <dt>Schedule</dt>
+            <dd>{cadence}</dd>
+            <dt>Topics for</dt>
+            <dd className={planError ? 'cp-plan-error' : undefined}>
+              {planError
+                ? <>{planError}{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={() => void openPlan(planMode)}>Try again</button></>
+                : !plan
+                  ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
+                  : plan.dates.length === 0
+                    ? (planMode === 'regenerate'
+                      ? 'Every upcoming date already has a topic. Delete the ones you don’t want, then regenerate.'
+                      : 'Every upcoming date already has a topic.')
+                    : plan.dates.map(d => plan.cleared.includes(d) ? `${fmtShort(d)} (cleared)` : fmtShort(d)).join(', ')}
+            </dd>
+            <dt>After that</dt>
+            <dd>
+              {autoGenerate
+                ? 'New topics are picked automatically as later dates get closer.'
+                : 'Automatic planning is off, so later dates won’t get topics on their own.'}
+            </dd>
+          </dl>
+          {onOpenSettings && (
+            <p className="ui-field-hint" style={{ margin: '14px 0 0' }}>
+              The schedule and start date come from{' '}
+              <button type="button" className="cp-inline-link" onClick={() => { setCalendarModalOpen(false); onOpenSettings() }}>Content settings</button>.
+              {' '}Change them there first if they aren’t right.
+            </p>
+          )}
+        </form>
+      </Dialog>
 
       {/* ── New Post modal ─────────────────────────────────────────────────── */}
       {showNewPost && (
         <NewPostModal presetClientId={clientId} presetClientName={clientName} onClose={() => setShowNewPost(false)} onCreated={loadPipeline} />
       )}
+
+      <ConfirmDialog
+        open={purgeAsk !== null}
+        onClose={() => setPurgeAsk(null)}
+        title="Delete this permanently?"
+        confirmLabel="Delete permanently"
+        tone="danger"
+        onConfirm={() => { const a = purgeAsk; setPurgeAsk(null); if (a) void doPurge(a.kind, a.id) }}
+      >
+        <p>The scheduled item and its draft are both removed, and the date is left empty so nothing is written into it again. This can’t be undone.</p>
+      </ConfirmDialog>
 
       {/* ── Toast ──────────────────────────────────────────────────────────── */}
       {toast && (

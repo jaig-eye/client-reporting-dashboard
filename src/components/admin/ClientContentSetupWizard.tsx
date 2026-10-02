@@ -1,5 +1,10 @@
 'use client'
 
+import '@/styles/admin/pipeline.css'
+import { CalendarBlank, MagnifyingGlass, PencilLine, Check, Minus } from '@phosphor-icons/react'
+import StatusBadge from '@/components/ui/StatusBadge'
+import { Sk } from '@/components/ui/Skeleton'
+import Link from 'next/link'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import SitemapPaste from '@/components/admin/SitemapPaste'
 import MarketLine from './MarketLine'
@@ -761,41 +766,21 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(3px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 2000, padding: '1rem',
-      }}
-    >
-      <div style={{
-        background: 'var(--bg-surface)',
-        borderRadius: 16,
-        maxWidth: 680,
-        width: '100%',
-        maxHeight: '92vh',
-        overflowY: 'auto',
-        boxShadow: '0 32px 100px rgba(0,0,0,0.3)',
-        display: 'flex', flexDirection: 'column',
-      }}>
+    <div className="wz-scrim">
+      <div className="wz-panel" role="dialog" aria-modal="true" aria-label={`Content setup for ${clientName}`}>
         {/* Header */}
         <div style={{
           padding: '1.25rem 1.5rem 0',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <StepDots current={step} total={TOTAL_STEPS} />
-          <button
-            onClick={handleSkip}
-            style={{ background: 'none', border: 'none', fontSize: '0.75rem', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 8px', borderRadius: 4 }}
-          >
-            Skip Setup
+          <button type="button" onClick={handleSkip} className="btn btn-ghost btn-sm">
+            Skip setup
           </button>
         </div>
 
         {settingsLoadFailed && (
-          <div role="alert" style={{ margin: '1rem 1.5rem 0', padding: '0.625rem 0.875rem', borderRadius: 8, border: '1px solid var(--red)', background: 'var(--red-subtle)', color: 'var(--red)', fontSize: '0.8125rem' }}>
+          <div role="alert" className="ui-notice ui-notice--danger" style={{ margin: '1rem 1.5rem 0' }}>
             This client’s saved settings couldn’t be loaded. You can look through the steps, but nothing will be saved — close the wizard and open it again.
           </div>
         )}
@@ -903,32 +888,19 @@ export default function ClientContentSetupWizard({ clientId, clientName, onCompl
 
         {/* Footer nav */}
         {step < 9 && (
-          <div style={{
-            padding: '1rem 1.5rem 1.25rem',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-            borderTop: '1px solid var(--border)',
-          }}>
-            <button
-              onClick={back}
-              disabled={step === 1}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.875rem', opacity: step === 1 ? 0.3 : 1 }}
-            >
-              ← Back
+          <div className="wz-foot">
+            <button type="button" onClick={back} disabled={step === 1} className="btn btn-secondary" style={{ visibility: step === 1 ? 'hidden' : undefined }}>
+              Back
             </button>
             {leaveWarned && picksDirty && (
               <p role="alert" style={{ margin: 0, flex: '1 1 200px', fontSize: '0.8125rem', color: 'var(--amber)', lineHeight: 1.4 }}>
                 Your ticks aren&apos;t saved. Press <strong>Save selection</strong> first, or leave without them.
               </p>
             )}
-            <button
-              onClick={next}
-              className="btn btn-primary"
-              style={{ fontSize: '0.875rem' }}
-            >
+            <button type="button" onClick={next} className="btn btn-primary">
               {leaveWarned && picksDirty
-                ? 'Leave without saving →'
-                : step === 7 || (step === 8 && !hasDfs) ? 'Skip →' : 'Continue →'}
+                ? 'Leave without saving'
+                : step === 7 || (step === 8 && !hasDfs) ? 'Skip this step' : 'Continue'}
             </button>
           </div>
         )}
@@ -949,8 +921,8 @@ function StepDots({ current, total }: { current: number; total: number }) {
             width: i + 1 === current ? 20 : 8,
             height: 8,
             borderRadius: 4,
-            background: i + 1 <= current ? 'var(--blue)' : 'var(--border)',
-            transition: 'all 0.25s ease',
+            background: i + 1 <= current ? 'var(--accent)' : 'var(--border)',
+            transition: 'width 0.25s ease, background 0.25s ease',
           }}
         />
       ))}
@@ -987,35 +959,17 @@ function Field({ label, htmlFor, children, drivesResearch }: {
 }) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <label htmlFor={htmlFor} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+      <label htmlFor={htmlFor} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
         {label}
         {drivesResearch && (
-          <span
-            title="Read by keyword research: changing this changes what we find."
-            style={{
-              fontSize: '0.5625rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-              padding: '1px 6px', borderRadius: 999,
-              background: 'var(--blue-subtle)', color: 'var(--blue)',
-            }}
-          >
-            research
+          <span title="Read by keyword research: changing this changes what we find.">
+            <StatusBadge tone="info" dot={false}>Used for research</StatusBadge>
           </span>
         )}
       </label>
       {children}
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '0.5rem 0.625rem', borderRadius: 6,
-  border: '1px solid var(--border)', fontSize: '0.875rem',
-  background: 'var(--bg-surface)', color: 'var(--text-primary)',
-  boxSizing: 'border-box',
-}
-
-const taStyle: React.CSSProperties = {
-  ...inputStyle, minHeight: 80, resize: 'vertical' as const, fontFamily: 'inherit',
 }
 
 // ─── Step 1: Welcome ──────────────────────────────────────────────────────────
@@ -1026,14 +980,14 @@ function StepWelcome({ clientName, hasGsc, wpUrl }: { clientName: string; hasGsc
       <StepTitle>Let&apos;s set up content for {clientName}</StepTitle>
       <StepSub>This wizard guides you through configuring the AI content pipeline. It only takes a few minutes.</StepSub>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div className="wz-cards">
         {[
-          { icon: '🗓', title: 'Set a Schedule', body: 'Choose how often posts should publish and configure automation.' },
-          { icon: '🔍', title: 'Research Topics', body: 'AI will find the best keyword opportunities based on GSC and competitor data.' },
-          { icon: '✍', title: 'Generate Posts', body: 'Full-length, SEO-optimised posts written with the client\'s brand voice.' },
+          { icon: <CalendarBlank size={18} weight="duotone" />, title: 'Set a schedule', body: 'Choose how often posts publish, and what happens on its own.' },
+          { icon: <MagnifyingGlass size={18} weight="duotone" />, title: 'Research topics', body: 'Find the best keyword openings from Search Console and competitors.' },
+          { icon: <PencilLine size={18} weight="duotone" />, title: 'Write posts', body: 'Full-length, search-ready posts in the client\'s own voice.' },
         ].map(c => (
           <div key={c.title} style={{ padding: '1rem', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-subtle)' }}>
-            <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>{c.icon}</div>
+            <span className="ui-tile ui-tile--accent" style={{ marginBottom: 8 }} aria-hidden>{c.icon}</span>
             <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: 4, color: 'var(--text-primary)' }}>{c.title}</div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{c.body}</div>
           </div>
@@ -1085,7 +1039,7 @@ function StepWpConnect({
   if (isConnected) {
     return (
       <div>
-        <StepTitle>WordPress Connected</StepTitle>
+        <StepTitle>WordPress is connected</StepTitle>
         <StepSub>Your client&apos;s WordPress site is already connected and ready for publishing.</StepSub>
         <style>{`
           @keyframes wp-slide-in { from { transform:translateY(6px); opacity:0 } to { transform:translateY(0); opacity:1 } }
@@ -1111,9 +1065,6 @@ function StepWpConnect({
             <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: 2 }}>{wpUrl}</div>
           </div>
         </div>
-        <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-          Click <strong>Continue</strong> to proceed to the next step.
-        </p>
       </div>
     )
   }
@@ -1163,7 +1114,7 @@ function StepWpConnect({
             </div>
           </div>
           <p style={{ marginTop: 16, fontSize: '0.8125rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Connection saved. Click <strong>Continue</strong> to proceed.
+            Connection saved.
           </p>
         </>
       ) : (
@@ -1175,7 +1126,7 @@ function StepWpConnect({
               value={siteUrlInput}
               onChange={e => setSiteUrlInput(e.target.value)}
               placeholder="https://example.com"
-              style={inputStyle}
+              className="input"
             />
           </Field>
           <Field label="WordPress Username" htmlFor="wiz-wp-user">
@@ -1185,7 +1136,7 @@ function StepWpConnect({
               value={username}
               onChange={e => setUsername(e.target.value)}
               placeholder="Admin username"
-              style={inputStyle}
+              className="input"
               autoComplete="username"
             />
           </Field>
@@ -1196,7 +1147,7 @@ function StepWpConnect({
               value={appPassword}
               onChange={e => setAppPassword(e.target.value)}
               placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
-              style={inputStyle}
+              className="input"
               autoComplete="new-password"
             />
           </Field>
@@ -1257,7 +1208,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
           onChange={e => setAnalyzeUrl(e.target.value)}
           aria-label="Website URL to analyze"
           placeholder="https://example.com"
-          style={{ ...inputStyle, flex: 1 }}
+          className="input" style={{ flex: 1 }}
         />
         <button
           onClick={onAnalyze}
@@ -1281,7 +1232,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
             {RESEARCH_FIELDS_NOTE}
           </p>
           <Field label="Business Background" htmlFor="wiz-business-background">
-            <textarea id="wiz-business-background" value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} style={taStyle} />
+            <textarea id="wiz-business-background" value={brand.business_background} onChange={e => setBrand({ ...brand, business_background: e.target.value })} className="input wz-ta" />
           </Field>
           <Field label="What they sell" htmlFor="wiz-services" drivesResearch>
             <KeywordChipInput
@@ -1295,7 +1246,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
             </p>
           </Field>
           <Field label="Target Audience" htmlFor="wiz-target-audience">
-            <input id="wiz-target-audience" type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} style={inputStyle} />
+            <input id="wiz-target-audience" type="text" value={brand.target_audience} onChange={e => setBrand({ ...brand, target_audience: e.target.value })} className="input" />
           </Field>
 
           <Field label="Service Areas" htmlFor="wiz-service-areas" drivesResearch>
@@ -1314,7 +1265,7 @@ function StepBrandAnalysis({ analyzeUrl, setAnalyzeUrl, onAnalyze, analyzing, an
               first service area already names, and in production not one client had ever set it.
               The market is derived from the first service area and shown under it. */}
           <Field label="Brand Voice" htmlFor="wiz-brand-voice">
-            <input id="wiz-brand-voice" type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} style={inputStyle} placeholder="Professional, approachable, trustworthy" />
+            <input id="wiz-brand-voice" type="text" value={brand.brand_voice} onChange={e => setBrand({ ...brand, brand_voice: e.target.value })} className="input" placeholder="Professional, approachable, trustworthy" />
           </Field>
         </div>
       )}
@@ -1336,24 +1287,24 @@ function StepEeat({ brand, setBrand }: { brand: BrandDna; setBrand: (b: BrandDna
       <StepTitle>Trust &amp; credibility signals</StepTitle>
       <StepSub>These help the AI write with real authority. E-E-A-T signals significantly improve content quality and rankings for local businesses.</StepSub>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+      <div className="ui-grid-2" style={{ gap: '0 16px' }}>
         <Field label="Year Founded" htmlFor="wiz-founded-year">
-          <input id="wiz-founded-year" type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} style={inputStyle} placeholder="2003" />
+          <input id="wiz-founded-year" type="number" min={1800} max={new Date().getFullYear()} value={brand.founded_year} onChange={e => setBrand({ ...brand, founded_year: e.target.value })} className="input" placeholder="2003" />
         </Field>
         <Field label="Phone Number" htmlFor="wiz-phone">
-          <input id="wiz-phone" type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} style={inputStyle} placeholder="(555) 123-4567" />
+          <input id="wiz-phone" type="text" value={brand.phone_number} onChange={e => setBrand({ ...brand, phone_number: e.target.value })} className="input" placeholder="(555) 123-4567" />
         </Field>
         <Field label="Number of Reviews" htmlFor="wiz-reviews">
-          <input id="wiz-reviews" type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} style={inputStyle} placeholder="200+ Google reviews" />
+          <input id="wiz-reviews" type="text" value={brand.review_count} onChange={e => setBrand({ ...brand, review_count: e.target.value })} className="input" placeholder="200+ Google reviews" />
         </Field>
         <Field label="Owner / Operator Name" htmlFor="wiz-owner">
-          <input id="wiz-owner" type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} style={inputStyle} placeholder="John Smith" />
+          <input id="wiz-owner" type="text" value={brand.owner_details} onChange={e => setBrand({ ...brand, owner_details: e.target.value })} className="input" placeholder="John Smith" />
         </Field>
         <Field label="Licenses / Certifications" htmlFor="wiz-licenses">
-          <input id="wiz-licenses" type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} style={inputStyle} placeholder="Licensed, Bonded, Insured" />
+          <input id="wiz-licenses" type="text" value={brand.licenses} onChange={e => setBrand({ ...brand, licenses: e.target.value })} className="input" placeholder="Licensed, Bonded, Insured" />
         </Field>
         <Field label="Guarantees / Warranties" htmlFor="wiz-guarantees">
-          <input id="wiz-guarantees" type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} style={inputStyle} placeholder="100% satisfaction guarantee" />
+          <input id="wiz-guarantees" type="text" value={brand.guarantees} onChange={e => setBrand({ ...brand, guarantees: e.target.value })} className="input" placeholder="100% satisfaction guarantee" />
         </Field>
       </div>
 
@@ -1461,7 +1412,7 @@ function StepSitemap({ clientId, sitemapUrl, setSitemapUrl, onFetch, onPasted, f
           onChange={e => setSitemapUrl(e.target.value)}
           aria-label="Sitemap URL"
           placeholder="https://example.com/sitemap.xml"
-          style={{ ...inputStyle, flex: 1 }}
+          className="input" style={{ flex: 1 }}
         />
         <button
           onClick={onFetch}
@@ -1582,17 +1533,17 @@ function StepSchedule({
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+      <div className="ui-grid-2" style={{ gap: '0 16px' }}>
         {needsDay && (
           <Field label="Day of Week" htmlFor="wiz-day-of-week">
-            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} style={inputStyle}>
+            <select id="wiz-day-of-week" value={schedule.dayOfWeek} onChange={e => setSchedule({ ...schedule, dayOfWeek: Number(e.target.value) })} className="input">
               {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
             </select>
           </Field>
         )}
         {isMonthly && (
           <Field label="Day of the Month" htmlFor="wiz-month-day">
-            <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} style={inputStyle}>
+            <select id="wiz-month-day" value={schedule.frequency} onChange={e => setSchedule({ ...schedule, frequency: e.target.value })} className="input">
               {MONTHLY_DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
             </select>
           </Field>
@@ -1603,7 +1554,7 @@ function StepSchedule({
             value={schedule.postsPerRun || ''}
             onChange={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(0, Number(e.target.value) || 0)) })}
             onBlur={e => setSchedule({ ...schedule, postsPerRun: Math.min(10, Math.max(1, Number(e.target.value) || 1)) })}
-            style={inputStyle}
+            className="input"
           />
         </Field>
         <Field label="Weeks Ahead" htmlFor="wiz-weeks-ahead">
@@ -1613,7 +1564,7 @@ function StepSchedule({
             value={schedule.weeksAhead || ''}
             onChange={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
             onBlur={e => setSchedule({ ...schedule, weeksAhead: Math.min(24, Math.max(1, Number(e.target.value) || 4)) })}
-            style={inputStyle}
+            className="input"
           />
         </Field>
         <Field label="Start Date" htmlFor="wiz-start-date">
@@ -1622,11 +1573,11 @@ function StepSchedule({
             title="The first publish date the schedule counts from"
             value={schedule.startDate}
             onChange={e => setSchedule({ ...schedule, startDate: e.target.value })}
-            style={inputStyle}
+            className="input"
           />
         </Field>
         <Field label="Publish Time" htmlFor="wiz-publish-time">
-          <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} style={inputStyle} />
+          <input id="wiz-publish-time" type="time" value={schedule.publishTime} onChange={e => setSchedule({ ...schedule, publishTime: e.target.value })} className="input" />
         </Field>
       </div>
 
@@ -1664,7 +1615,7 @@ function StepSchedule({
             onChange={e => setImagePrompt(e.target.value)}
             aria-label="Featured image style"
             placeholder="e.g. Outdoor lifestyle photo, warm tones, no text overlays"
-            style={inputStyle}
+            className="input"
           />
         )}
       </div>
@@ -1686,10 +1637,8 @@ function StepContentTypes({
   return (
     <div>
       <StepTitle>
-        Additional Content Types
-        <span className="badge badge-amber" style={{ marginLeft: 10, verticalAlign: 'middle', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', borderRadius: 999 }}>
-          Coming soon
-        </span>
+        Other content types
+        <span style={{ marginLeft: 10, verticalAlign: 'middle', display: 'inline-flex' }}><StatusBadge tone="neutral" dot={false}>Coming soon</StatusBadge></span>
       </StepTitle>
       <StepSub>
         AI-generated Service Pages and Regular Pages alongside blog posts. Not switched on yet —
@@ -1828,16 +1777,16 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
           Integrations tab and come back, or skip: everything else here is already set up, and you
           can add your own keywords by hand on the Keywords tab at any time.
         </StepSub>
-        <a
+        <Link
           // The Integrations tab's id is `sources`; ?tab=integrations matched nothing and landed
           // on Overview.
           href={`/admin/clients/${clientId}?tab=sources`}
           target="_blank" rel="noopener noreferrer"
           className="btn btn-secondary"
-          style={{ display: 'inline-block', fontSize: '0.875rem', marginTop: 4 }}
+          style={{ marginTop: 4 }}
         >
-          Open Integrations →
-        </a>
+          Open Integrations
+        </Link>
       </div>
     )
   }
@@ -1955,7 +1904,9 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
             </p>
           )}
           {phase === 'loading' && !research ? (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)', margin: 0 }}>Loading the saved list…</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} aria-busy="true" aria-label="Loading the saved list">
+              {[0, 1, 2, 3].map(i => <span key={i} style={{ display: 'flex', gap: 10, alignItems: 'center' }}><Sk w={16} h={16} r={4} /><Sk w={`${60 - i * 8}%`} h={12} /></span>)}
+            </div>
           ) : keywords.length === 0 ? (
             !researching && (
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: 0 }}>
@@ -2018,7 +1969,7 @@ function StepResearch({ research, phase, outcome, clientId, servicesText, seeds,
                 )}
                 {localPack.length > 0 && (
                   <div style={{ marginTop: competitors.length ? 12 : 0 }}>
-                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 650, color: 'var(--text-muted)', marginBottom: 6 }}>
                       Top rated in the map pack
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2099,7 +2050,7 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
 
   return (
     <div>
-      <StepTitle>Setup complete!</StepTitle>
+      <StepTitle>Setup is complete</StepTitle>
       <StepSub>
         {/* "Running" only when it is: a paused plan said "already running" above a Paused badge. */}
         {planActive
@@ -2122,9 +2073,9 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+      <div className="ui-grid-2" style={{ gap: 12, marginBottom: 20 }}>
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
-          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Schedule Summary</div>
+          <div style={{ fontSize: '0.8125rem', fontWeight: 650, color: 'var(--text-primary)', marginBottom: 10 }}>The schedule</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {summaryRows.map(r => (
               <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem' }}>
@@ -2136,12 +2087,12 @@ function StepReady({ clientName, brand, schedule, pagesCount, hasGsc, hasResearc
         </div>
 
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '1rem' }}>
-          <div style={{ fontSize: '0.6875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 10 }}>What we have for this client</div>
+          <div style={{ fontSize: '0.8125rem', fontWeight: 650, color: 'var(--text-primary)', marginBottom: 10 }}>What we have for this client</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {statusChecks.map(c => (
               <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem' }}>
                 <span style={{ width: 18, height: 18, borderRadius: '50%', background: c.ok ? 'var(--green-subtle)' : 'var(--bg-subtle)', color: c.ok ? 'var(--green)' : 'var(--text-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', flexShrink: 0, fontWeight: 700 }}>
-                  {c.ok ? '✓' : '—'}
+                  {c.ok ? <Check size={11} weight="bold" aria-label="yes" /> : <Minus size={11} weight="bold" aria-label="no" />}
                 </span>
                 <span style={{ color: c.ok ? 'var(--text-primary)' : 'var(--text-faint)' }}>{c.label}</span>
               </div>

@@ -20,7 +20,7 @@ interface Props {
 type Status = { state: 'idle' | 'saving' | 'saved' } | { state: 'error'; message: string }
 
 function Result({ status, saved }: { status: Status; saved: string }) {
-  if (status.state === 'saved') return <span className="us-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />{saved}</span>
+  if (status.state === 'saved') return <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />{saved}</span>
   if (status.state === 'error') return <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0, flexBasis: '100%' }}>{status.message}</div>
   return null
 }

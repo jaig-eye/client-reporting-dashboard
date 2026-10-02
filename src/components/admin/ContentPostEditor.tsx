@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Books, ArrowCircleRight, ArrowClockwise } from '@phosphor-icons/react'
+import { Books, ArrowCircleRight, ArrowClockwise, CheckCircle, XCircle, WarningCircle, CaretDown, X, LinkBreak, ArrowBendDownRight, ArrowDown, ArrowUp, MagnifyingGlass } from '@phosphor-icons/react'
+import '@/styles/admin/pipeline.css'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 import CollapsibleSection from '@/components/admin/CollapsibleSection'
 import { viewLiveUrl, isPublicPermalink, isOnSite as postIsOnSite } from '@/lib/content/postLinks'
 import RegenerateDialog, { type RegenerateRequest } from '@/components/admin/RegenerateDialog'
@@ -1261,8 +1263,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // ── Styles ──────────────────────────────────────────────────────────────────
   const Check = ({ ok, warn }: { ok: boolean; warn?: boolean }) => (
-    <span style={{ color: ok ? 'var(--green)' : warn ? 'var(--amber, #f59e0b)' : 'var(--red)', fontWeight: 600, marginRight: 4, fontSize: '0.75rem' }}>
-      {ok ? '✓' : '✗'}
+    <span className={`pe-mark ${ok ? 'pe-mark--ok' : warn ? 'pe-mark--warn' : 'pe-mark--bad'}`} aria-label={ok ? 'Passed' : warn ? 'Worth a look' : 'Failed'}>
+      {ok ? <CheckCircle size={14} weight="fill" /> : warn ? <WarningCircle size={14} weight="fill" /> : <XCircle size={14} weight="fill" />}
     </span>
   )
 
@@ -1357,6 +1359,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   // inside a template literal inside JSX is three levels of quoting to get wrong at once.
   const previewImgSrc      = proxiedImageSrc(featuredImageUrl, connectionId).replace(/"/g, '&quot;')
   const previewImgFallback = featuredImageUrl.replace(/"/g, '&quot;')
+  // The preview is a stand-in for the client's own site, which is a light page whatever the admin's
+  // theme, so this document keeps its own colours. Everything around it uses the theme.
   const previewSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;max-width:780px;margin:2rem auto;padding:0 1.5rem;line-height:1.8;color:#1a1a1a;background:#fff}
     h1{font-size:2rem;line-height:1.3;margin-bottom:.5rem;color:#111}
@@ -1380,7 +1384,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ flex: 1, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Preview — {title || 'Untitled'}</span>
             <button type="button" onClick={() => setShowPreview(false)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
-              ✕ Close Preview
+              <X size={13} weight="bold" aria-hidden />Close preview
             </button>
           </div>
           <iframe srcDoc={previewSrcdoc} title="Post Preview" style={{ flex: 1, border: 'none', width: '100%' }} />
@@ -1399,21 +1403,21 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         {/* Header */}
         <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
           <h2 style={{ flex: 1, fontSize: '1rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>
-            Review Post
+            Review post
           </h2>
           {isDirty && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--amber, #f59e0b)', fontWeight: 500 }}>
-              ● Unsaved changes
+            <span style={{ fontSize: '0.7rem', color: 'var(--amber-fg)', fontWeight: 500 }}>
+              Unsaved changes
             </span>
           )}
           {post && (
-            <span className={`badge ${post.status === 'for_review' ? 'badge-amber' : post.status === 'approved' ? 'badge-blue' : post.status === 'published' ? 'badge-green' : post.status === 'draft_saved' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: '0.6875rem' }}>
-              {post.status === 'draft_saved' ? 'Scheduled' : post.status === 'for_review' ? 'For Review' : post.status}
-            </span>
+            <StatusBadge tone={({ for_review: 'warning', approved: 'info', draft_saved: 'info', published: 'success' } as Record<string, StatusTone>)[post.status] ?? 'neutral'}>
+              {post.status === 'draft_saved' ? 'Scheduled' : post.status === 'for_review' ? 'For review' : post.status.charAt(0).toUpperCase() + post.status.slice(1).replace(/_/g, ' ')}
+            </StatusBadge>
           )}
           {(topicBreakdown ?? fetchedBreakdown) && (
             <button type="button" onClick={() => setShowStrategy(v => !v)} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
-              Strategy {showStrategy ? '▴' : '▾'}
+              Strategy <CaretDown size={11} weight="bold" aria-hidden style={{ transform: showStrategy ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
             </button>
           )}
           {isNarrow && (
@@ -1423,11 +1427,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           )}
           {isOnSite && !post?.wpPostId && !post?.bcPostId && (
             <button type="button" onClick={handleRetry} disabled={retrying || regenInProgress} title={regenInProgress ? regenBlockedTitle : undefined} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}>
-              {retrying ? 'Pushing…' : 'Retry Push'}
+              {retrying ? 'Pushing…' : 'Retry push'}
             </button>
           )}
-          <button type="button" onClick={onClose} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }} aria-label="Close">
-            ✕
+          <button type="button" onClick={onClose} className="btn btn-secondary btn-sm" style={{ padding: '0 8px' }} aria-label="Close">
+            <X size={14} weight="bold" aria-hidden />
           </button>
         </div>
 
@@ -1439,19 +1443,21 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               if (!bd) return null
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {/* One neutral style: the old per-field colours meant nothing (competition was red
+                      whether it was high or low), and their light tints glared in dark mode. */}
                   {([
-                    { key: 'keyword_opportunity', label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-                    { key: 'ranking_strategy',    label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-                    { key: 'audience_intent',     label: 'Audience Intent',     color: '#059669', bg: '#ecfdf5' },
-                    { key: 'why_now',             label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-                    { key: 'competition_level',   label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-                  ] as Array<{ key: keyof TopicBreakdown; label: string; color: string; bg: string }>).map(({ key, label, color, bg }) => {
+                    { key: 'keyword_opportunity', label: 'Keyword opportunity' },
+                    { key: 'ranking_strategy',    label: 'Ranking strategy' },
+                    { key: 'audience_intent',     label: 'Audience intent' },
+                    { key: 'why_now',             label: 'Why now' },
+                    { key: 'competition_level',   label: 'Competition' },
+                  ] as Array<{ key: keyof TopicBreakdown; label: string }>).map(({ key, label }) => {
                     const val = bd[key]
                     if (!val || typeof val !== 'string') return null
                     return (
-                      <div key={key} style={{ borderRadius: 8, border: `1px solid ${color}30`, background: bg, padding: '0.625rem 0.875rem' }}>
-                        <div style={{ fontSize: '0.6875rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>{val}</div>
+                      <div key={key} className="pe-why">
+                        <div className="pe-why-label">{label}</div>
+                        <div className="pe-why-text">{val}</div>
                       </div>
                     )
                   })}
@@ -1481,7 +1487,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
             {/* Left: live rendered preview (wide screens only) */}
             {!isNarrow && (
-              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: '#fff' }}>
+              // The preview document (previewSrcdoc) imitates a client's site, so it keeps its own light
+              // page; the pane around it follows the theme.
+              <div style={{ flex: '1 1 55%', borderRight: '1px solid var(--border)', minWidth: 0, background: 'var(--bg-subtle)' }}>
                 <iframe srcDoc={previewSrcdoc} title="Live preview" style={{ width: '100%', height: '100%', border: 'none' }} />
               </div>
             )}
@@ -1496,9 +1504,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
             {/* On Site banner */}
             {isOnSite && (
-              <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid var(--green)', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '1rem' }}>
+              <div className="pe-onsite">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.8125rem' }}>✓ On Site</span>
+                  <span className="pe-onsite-label"><CheckCircle size={15} weight="fill" aria-hidden />On the site</span>
                   {post && <PostSiteLinks post={post as unknown as PostLinkInput} fontSize={13} />}
                 </div>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
@@ -1513,7 +1521,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <CollapsibleSection title="Content" open={openSections.has('content')} onToggle={() => toggleSection('content')}>
               {/* H1 Title */}
               <div className="mb-4">
-                <label style={labelStyle}>H1 Title</label>
+                <label style={labelStyle}>H1 title</label>
                 <input type="text" value={title} onChange={e => { setTitle(e.target.value); markDirty() }} style={inputStyle} placeholder="Post H1 title" />
               </div>
 
@@ -1536,9 +1544,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       type="button"
                       onClick={handleScanLinks}
                       disabled={linkScan === 'scanning'}
-                      style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, cursor: linkScan === 'scanning' ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: linkScan === 'scanning' ? 0.65 : 1 }}
+                      className="btn btn-secondary btn-sm"
                     >
-                      {linkScan === 'scanning' ? '⟳ Scanning…' : '🔗 Scan links & phone numbers'}
+                      <MagnifyingGlass size={13} aria-hidden />{linkScan === 'scanning' ? 'Checking…' : 'Check links and phone numbers'}
                     </button>
                   ) : (() => {
                     const brokenCount = linkScan.links.filter(l => !l.ok).length
@@ -1549,24 +1557,24 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                         {/* An article with no links is neutral, not a pass — "✓ All 0 links OK"
                             reads as a check that ran and succeeded, when nothing was checked.
                             Same treatment the phone readout gets below. */}
-                        <span style={{ fontSize: '0.72rem', color: linkScan.links.length === 0 ? 'var(--text-faint)' : brokenCount > 0 ? '#dc2626' : '#16a34a' }}>
+                        <span className={`pe-scan ${linkScan.links.length === 0 ? '' : brokenCount > 0 ? 'pe-scan--bad' : 'pe-scan--ok'}`}>
                           {linkScan.links.length === 0
                             ? 'No links'
                             : brokenCount === 0
-                              ? `✓ All ${linkScan.links.length} link${linkScan.links.length !== 1 ? 's' : ''} OK`
-                              : `⚠ ${brokenCount} broken link${brokenCount !== 1 ? 's' : ''} — see below`}
+                              ? <><CheckCircle size={13} weight="fill" aria-hidden />All {linkScan.links.length} link{linkScan.links.length !== 1 ? 's' : ''} work</>
+                              : <><WarningCircle size={13} weight="fill" aria-hidden />{brokenCount} broken link{brokenCount !== 1 ? 's' : ''}, listed below</>}
                         </span>
                         {/* Finding none is neutral, not a pass. Plenty of posts legitimately
                             carry no number, and colouring that green would claim a check
                             that never had anything to check. */}
-                        <span style={{ fontSize: '0.72rem', color: phones.length === 0 ? 'var(--text-faint)' : badPhones > 0 ? '#b45309' : '#16a34a' }}>
+                        <span className={`pe-scan ${phones.length === 0 ? '' : badPhones > 0 ? 'pe-scan--warn' : 'pe-scan--ok'}`}>
                           {phones.length === 0
                             ? 'No phone numbers'
                             : badPhones === 0
-                              ? `✓ ${phones.length} phone number${phones.length !== 1 ? 's' : ''} valid`
-                              : `⚠ ${badPhones} of ${phones.length} phone number${phones.length !== 1 ? 's' : ''} to check — see below`}
+                              ? <><CheckCircle size={13} weight="fill" aria-hidden />{phones.length === 1 ? 'The phone number looks right' : `All ${phones.length} phone numbers look right`}</>
+                              : <><WarningCircle size={13} weight="fill" aria-hidden />{badPhones} of {phones.length} phone number{phones.length !== 1 ? 's' : ''} to check, listed below</>}
                         </span>
-                        <button type="button" onClick={handleScanLinks} style={{ fontSize: '0.68rem', padding: '1px 6px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', color: 'var(--text-faint)' }}>re-scan</button>
+                        <button type="button" onClick={handleScanLinks} className="btn btn-ghost btn-sm">Check again</button>
                       </>
                     )
                   })()}
@@ -1581,22 +1589,19 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 const broken = linkScan.links.filter(l => !l.ok)
                 if (broken.length === 0) return null
                 return (
-                  <div className="mb-4" style={{ border: '1px solid #fca5a5', borderRadius: 6, background: '#fff1f2', padding: '0.625rem 0.75rem' }}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      🔗 {broken.length} broken link{broken.length !== 1 ? 's' : ''} — click to jump
+                  <div className="mb-4 pe-issues pe-issues--bad">
+                    <div className="pe-issues-head">
+                      <LinkBreak size={14} weight="bold" aria-hidden />{broken.length} broken link{broken.length !== 1 ? 's' : ''}. Show takes you to each one.
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {broken.map((l, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, fontSize: '0.75rem', color: l.redirected ? '#b45309' : '#dc2626', wordBreak: 'break-all' }}>
-                            {l.redirected ? '↪' : '✗'} {l.url}{l.status ? ` (${l.status})` : l.error ? ` (${l.error})` : ''}
+                          <span className={`pe-issue ${l.redirected ? 'pe-issue--warn' : ''}`}>
+                            {l.redirected ? <ArrowBendDownRight size={13} weight="bold" aria-label="Redirects" /> : <XCircle size={13} weight="fill" aria-label="Broken" />}
+                            <span>{l.url}{l.status ? ` (${l.status})` : l.error ? ` (${l.error})` : ''}</span>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => jumpToLink(l.url)}
-                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', color: '#dc2626', flexShrink: 0, whiteSpace: 'nowrap' }}
-                          >
-                            Jump ↓
+                          <button type="button" onClick={() => jumpToLink(l.url)} className="btn btn-secondary btn-sm">
+                            <ArrowDown size={12} weight="bold" aria-hidden />Show
                           </button>
                         </div>
                       ))}
@@ -1612,22 +1617,19 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 const bad = (linkScan.phones ?? []).filter(p => !p.valid)
                 if (bad.length === 0) return null
                 return (
-                  <div className="mb-4" style={{ border: '1px solid #fcd34d', borderRadius: 6, background: '#fffbeb', padding: '0.625rem 0.75rem' }}>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#b45309', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      {bad.length} phone number{bad.length !== 1 ? 's' : ''} to check — click to jump
+                  <div className="mb-4 pe-issues pe-issues--warn">
+                    <div className="pe-issues-head">
+                      <WarningCircle size={14} weight="fill" aria-hidden />{bad.length} phone number{bad.length !== 1 ? 's' : ''} to check. Show takes you to each one.
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {bad.map((p, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, fontSize: '0.75rem', color: '#b45309', wordBreak: 'break-all' }}>
-                            ✗ {p.raw} ({p.digits.length} digit{p.digits.length !== 1 ? 's' : ''})
+                          <span className="pe-issue pe-issue--warn">
+                            <WarningCircle size={13} weight="fill" aria-hidden />
+                            <span>{p.raw} ({p.digits.length} digit{p.digits.length !== 1 ? 's' : ''})</span>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => jumpToPhone(p.raw)}
-                            style={{ fontSize: '0.7rem', padding: '2px 7px', background: '#fff', border: '1px solid #fcd34d', borderRadius: 4, cursor: 'pointer', color: '#b45309', flexShrink: 0, whiteSpace: 'nowrap' }}
-                          >
-                            Jump ↓
+                          <button type="button" onClick={() => jumpToPhone(p.raw)} className="btn btn-secondary btn-sm">
+                            <ArrowDown size={12} weight="bold" aria-hidden />Show
                           </button>
                         </div>
                       ))}
@@ -1725,12 +1727,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             </CollapsibleSection>
 
             {/* ── SECTION: SEO & Meta ───────────────────────────────────────── */}
-            <CollapsibleSection title="SEO & Meta" open={openSections.has('seo')} onToggle={() => toggleSection('seo')}>
+            <CollapsibleSection title="SEO and meta" open={openSections.has('seo')} onToggle={() => toggleSection('seo')}>
               {/* SEO Title */}
               <div className="mb-4">
                 <label style={labelStyle}>
-                  SEO Title
-                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 60 ? 'var(--amber, #f59e0b)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
+                  SEO title
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: seoTitle.length > 60 ? 'var(--amber-fg)' : seoTitle.length > 0 ? 'var(--green)' : 'var(--text-faint)' }}>
                     {seoTitle.length}/60
                   </span>
                 </label>
@@ -1740,12 +1742,12 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* Focus Keyword + URL Slug */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
                 <div>
-                  <label style={labelStyle}>Focus Keyword</label>
+                  <label style={labelStyle}>Focus keyword</label>
                   <input type="text" value={targetKeyword} onChange={e => { setTargetKeyword(e.target.value); markDirty() }} style={inputStyle} placeholder="Primary keyword" />
                 </div>
                 <div>
                   <label style={labelStyle}>
-                    URL Slug
+                    Slug
                     {slug && <span style={{ fontWeight: 400, marginLeft: 6, color: slug.length > 130 ? 'var(--red)' : 'var(--text-faint)' }}>{slug.length} chars</span>}
                   </label>
                   <input type="text" value={slug} onChange={e => { setSlug(e.target.value); markDirty() }} style={inputStyle} placeholder="url-friendly-slug" />
@@ -1765,7 +1767,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   {tags.map(tag => (
                     <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 500, padding: '0.1rem 0.5rem', borderRadius: 4, background: 'var(--bg-muted)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
                       {tag}
-                      <button type="button" onClick={() => removeTag(tag)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: '0.75rem', padding: 0, lineHeight: 1 }}>×</button>
+                      <button type="button" onClick={() => removeTag(tag)} aria-label={`Remove tag ${tag}`} style={{ display: 'inline-flex', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', padding: 0 }}><X size={11} weight="bold" aria-hidden /></button>
                     </span>
                   ))}
                   <input id="tag-input" type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={handleTagInputKeyDown} placeholder={tags.length === 0 ? 'Type tag, press Enter…' : ''} style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: '0.8125rem', color: 'var(--text-primary)', minWidth: 120, flex: 1 }} />
@@ -1787,8 +1789,8 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* Meta description */}
               <div className="mb-4">
                 <label style={labelStyle}>
-                  Meta Description
-                  <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber, #f59e0b)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
+                  Meta description
+                  <span style={{ fontWeight: 400, marginLeft: 6, color: liveMetaLen > 160 ? 'var(--amber-fg)' : liveMetaLen >= 150 ? 'var(--green)' : 'var(--text-faint)' }}>
                     {liveMetaLen}/160
                   </span>
                 </label>
@@ -1798,18 +1800,16 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               {/* SEO checklist */}
               <div className="card mb-4" style={{ padding: '0.875rem 1rem', background: 'var(--bg-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '0.5rem' }}>
-                  <p style={{ fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, color: 'var(--text-faint)', margin: 0 }}>SEO Checklist</p>
+                  <p style={{ fontSize: '0.8125rem', fontWeight: 650, color: 'var(--text-primary)', margin: 0 }}>SEO checklist</p>
                   {keywordRank?.current_position != null ? (
                     <span
                       title="Current keyword rank (DataForSEO)"
-                      style={{
-                        fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999,
-                        background: keywordRank.current_position <= 3 ? '#dcfce7' : keywordRank.current_position <= 10 ? '#fef3c7' : 'var(--bg-muted)',
-                        color: keywordRank.current_position <= 3 ? '#166534' : keywordRank.current_position <= 10 ? '#92400e' : 'var(--text-muted)',
-                      }}
+                      className={`pe-rank ${keywordRank.current_position <= 3 ? 'pe-rank--top' : keywordRank.current_position <= 10 ? 'pe-rank--near' : ''}`}
                     >
-                      Rank #{keywordRank.current_position}
-                      {keywordRank.position_delta ? (keywordRank.position_delta > 0 ? ` ▲${Math.abs(keywordRank.position_delta)}` : ` ▼${Math.abs(keywordRank.position_delta)}`) : ''}
+                      Rank {keywordRank.current_position}
+                      {keywordRank.position_delta ? (keywordRank.position_delta > 0
+                        ? <><ArrowUp size={10} weight="bold" aria-label="up" />{Math.abs(keywordRank.position_delta)}</>
+                        : <><ArrowDown size={10} weight="bold" aria-label="down" />{Math.abs(keywordRank.position_delta)}</>) : null}
                     </span>
                   ) : keywordRank?.movement === 'dropped' ? (
                     <span
@@ -1865,7 +1865,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       }}>
                         <span>{passed.length}/{checks.length} passed</span>
                         {failed.length > 0 && (
-                          <span style={{ color: 'var(--amber, #b45309)', fontWeight: 700 }}>
+                          <span style={{ color: 'var(--amber-fg)', fontWeight: 700 }}>
                             · {failed.length} to look at
                           </span>
                         )}
@@ -1909,7 +1909,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             <CollapsibleSection title="Publish" open={openSections.has('publish')} onToggle={() => toggleSection('publish')}>
               {/* Site connection selector */}
               <div className="mb-4">
-                <label style={labelStyle}>Site Connection</label>
+                <label style={labelStyle}>Site</label>
                 <select value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
                   <option value="">— Select a site —</option>
                   {sites.map(s => <option key={s.connectionId} value={s.connectionId}>{s.siteName} ({s.clientName})</option>)}
@@ -1992,10 +1992,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                   </div>
                   {/* Auto-category suggestion — shown when no category is explicitly selected */}
                   {categorySuggestion && categoryIds.length === 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${categorySuggestion.isNew ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderRadius: '0.25rem', background: categorySuggestion.isNew ? 'var(--amber-subtle)' : 'var(--green-subtle)', border: `1px solid ${categorySuggestion.isNew ? 'var(--amber-border)' : 'var(--green-border)'}` }}>
                       <span style={{ color: 'var(--text-muted)' }}>Auto:</span>
                       <strong>{categorySuggestion.name}</strong>
-                      <span style={{ color: categorySuggestion.isNew ? '#f59e0b' : '#10b981' }}>
+                      <span style={{ color: categorySuggestion.isNew ? 'var(--amber-fg)' : 'var(--green-fg)' }}>
                         {categorySuggestion.isNew ? '(will create)' : '(existing)'}
                       </span>
                       {!categorySuggestion.isNew && categorySuggestion.id && (
@@ -2046,7 +2046,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
               >
-                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
+                {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save changes'}
               </button>
               <div style={{ flex: 1 }} />
               {/* In monthly review the session owns the regeneration lifecycle (polling,
@@ -2068,8 +2068,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 type="button"
                 onClick={handleMonthlyDiscard}
                 disabled={saving}
-                className="btn btn-sm"
-                style={{ background: '#7f1d1d', borderColor: '#7f1d1d', color: '#fff' }}
+                className="btn btn-sm btn-danger-solid"
               >
                 Discard
               </button>
@@ -2089,13 +2088,10 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                         ? 'This version has not been sent to the site yet — push it'
                         : 'The live article already matches this — edit something to push an update')
                   : undefined}
-                className="btn btn-sm btn-primary"
-                style={{
-                  background: saving ? undefined : '#16a34a', borderColor: '#16a34a',
-                  opacity: nothingToPush || regenInProgress ? 0.55 : 1,
-                }}
+                className="btn btn-sm btn-primary pe-approve"
+                style={{ opacity: nothingToPush || regenInProgress ? 0.55 : 1 }}
               >
-                {saving ? '…' : isOnSite ? 'Push update' : 'Approve →'}
+                {saving ? 'Saving…' : isOnSite ? 'Push update' : 'Approve'}
               </button>
             </div>
           ) : (
@@ -2108,7 +2104,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                 className="btn btn-secondary"
                 style={{ fontSize: '0.8125rem', opacity: isDirty ? 1 : 0.5 }}
               >
-                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save Changes'}
+                {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save changes'}
               </button>
 
               {/* Approve, or push an update to the article already on the site. */}

@@ -41,7 +41,7 @@
 /* Forms (add, edit, your profile): one readable column. */
 .us-page { max-width: 640px; }
 .us-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-.us-saved { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: 0.8125rem; font-weight: 500; color: var(--green-fg); }
+.us-actions .ui-saved { margin-right: auto; }
 .us-photo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
 /* Personal access tokens. */

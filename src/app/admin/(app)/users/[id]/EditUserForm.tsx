@@ -127,7 +127,7 @@ export default function EditUserForm({ user }: { user: User }) {
         {error && <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>{error}</div>}
 
         <div className="us-actions">
-          {saved && <span className="us-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
+          {saved && <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
           <Link href="/admin/users" className="btn btn-secondary">Back to users</Link>
           <button type="submit" disabled={saving} className="btn btn-primary">{saving ? 'Saving…' : 'Save changes'}</button>
         </div>

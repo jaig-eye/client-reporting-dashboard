@@ -6,6 +6,10 @@
 // independently through the partial-update PUT /api/admin/content/client-settings
 // (only the keys a card sends are written), so sections never clobber each other.
 
+import '@/styles/admin/pipeline.css'
+import Switch from '@/components/ui/Switch'
+import { Sk } from '@/components/ui/Skeleton'
+import { CheckCircle, Check } from '@phosphor-icons/react'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -48,37 +52,25 @@ function Label({ children, hint, htmlFor, id }: {
   id?: string
 }) {
   return (
-    <label htmlFor={htmlFor} id={id} className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+    <label htmlFor={htmlFor} id={id} className="ccs-label">
       {children}
-      {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
+      {hint && <span className="ccs-label-hint">{hint}</span>}
     </label>
   )
 }
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-      style={{ background: checked ? 'var(--blue)' : 'var(--bg-muted)', cursor: 'pointer' }}
-    >
-      <span className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-        style={{ transform: checked ? 'translateX(1rem)' : 'translateX(0)' }} />
-    </button>
-  )
+  // The shared switch: a real checkbox with role=switch, on theme colours.
+  return <Switch checked={checked} onChange={onChange} label={label} hideLabel />
 }
 
 // Per-card save button + success/error feedback (one primary CTA per card).
 function SaveRow({ onSave, saving, saved, error }: { onSave: () => void; saving: boolean; saved: boolean; error: string }) {
   return (
-    <div className="flex items-center gap-3">
-      <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-      {saved && <span className="text-xs" style={{ color: 'var(--green)' }} role="status">Saved ✓</span>}
-      {error && <span className="text-xs" style={{ color: 'var(--red)' }} role="alert">{error}</span>}
+    <div className="ui-saverow">
+      <button type="button" className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+      {saved && <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
+      {error && <span className="ui-savefail" role="alert">{error}</span>}
     </div>
   )
 }
@@ -297,7 +289,15 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
   }
 
   if (loading) {
-    return <p className="text-sm" style={{ color: 'var(--text-muted)', padding: '1rem 0' }}>Loading settings…</p>
+    return (
+      <div className="ccs-sk" aria-busy="true" aria-label="Loading settings">
+        <div className="ccs-sk-nav">{[0, 1, 2, 3].map(i => <Sk key={i} h={46} r={8} />)}</div>
+        <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Sk w={160} h={15} /><Sk w="70%" h={11} />
+          {[0, 1, 2].map(i => <span key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><Sk w="22%" h={11} /><Sk h={38} r={8} /></span>)}
+        </div>
+      </div>
+    )
   }
   if (loadError) {
     return <SettingsLoadError message={loadError} onRetry={() => setReloadKey(k => k + 1)} />
@@ -367,7 +367,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
           <Sparkle size={18} weight="duotone" style={{ color: 'var(--text-faint)' }} />
           <span style={{ minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-muted)' }}>
-              Global prompts →
+              Global prompts
             </span>
             <span className="cc-set-desc" style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-faint)' }}>
               Applies to every client
@@ -395,7 +395,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
         </div>
 
         <div>
-          <Label htmlFor="cs-connection">Site Connection</Label>
+          <Label htmlFor="cs-connection">Site</Label>
           <select
             id="cs-connection"
             className="input"
@@ -413,28 +413,28 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
         </div>
 
         {isBc ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="ui-grid-2">
             <div>
-              <Label htmlFor="cs-bc-author" hint="shown as author on BigCommerce blog posts">BC Author Name</Label>
+              <Label htmlFor="cs-bc-author" hint="shown as author on BigCommerce blog posts">BigCommerce author name</Label>
               <input id="cs-bc-author" className="input" type="text" value={bcAuthor} onChange={e => setBcAuthor(e.target.value)} placeholder="e.g. Admin" />
             </div>
             <div>
-              <Label htmlFor="cs-blog-prefix" hint="URL prefix for BigCommerce blog posts">Blog URL Prefix</Label>
+              <Label htmlFor="cs-blog-prefix" hint="URL prefix for BigCommerce blog posts">Blog address prefix</Label>
               <input id="cs-blog-prefix" className="input" type="text" value={blogUrlPrefix} onChange={e => setBlogUrlPrefix(e.target.value)} placeholder="/blog/" />
             </div>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="ui-grid-2">
               <div>
-                <Label htmlFor="cs-author">Default Author</Label>
+                <Label htmlFor="cs-author">Default author</Label>
                 <select id="cs-author" className="input" value={form.default_author_id ?? ''} onChange={e => set('default_author_id', e.target.value ? Number(e.target.value) : null)}>
                   <option value="">— Default —</option>
                   {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </div>
               <div>
-                <Label htmlFor="cs-publish-mode">WP Publish Mode</Label>
+                <Label htmlFor="cs-publish-mode">WordPress publish mode</Label>
                 <select id="cs-publish-mode" className="input" value={form.wp_publish_mode ?? 'scheduled_draft'} onChange={e => set('wp_publish_mode', e.target.value as 'scheduled_draft' | 'draft_only')}>
                   <option value="scheduled_draft">Scheduled Draft</option>
                   <option value="draft_only">Draft Only</option>
@@ -442,7 +442,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
               </div>
             </div>
             <div>
-              <Label id="cs-categories-label" hint="applied to every new post from this client">Default WP Categories</Label>
+              <Label id="cs-categories-label" hint="applied to every new post from this client">Default WordPress categories</Label>
               {categories.length === 0 ? (
                 <p className="text-xs" style={{ color: 'var(--text-faint)' }}>
                   {effectiveConn ? 'No categories found for this site.' : 'Select a site connection to choose categories.'}
@@ -454,13 +454,8 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
                     return (
                       <button key={c.id} type="button" onClick={() => toggleCategory(c.id)}
                         aria-pressed={on}
-                        style={{
-                          fontSize: '0.75rem', padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
-                          border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
-                          background: on ? 'var(--blue-subtle, rgba(37,99,235,0.1))' : 'transparent',
-                          color: on ? 'var(--blue)' : 'var(--text-muted)', fontWeight: on ? 600 : 400,
-                        }}>
-                        {on ? '✓ ' : ''}{c.name}
+                        className="ccs-chip">
+                        {on && <Check size={12} weight="bold" aria-hidden />}{c.name}
                       </button>
                     )
                   })}
@@ -508,7 +503,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
       {activeSection === 'schedule' && (
       <div className="card p-6 space-y-4">
         <div>
-          <h2 className="section-title" style={{ marginBottom: 0 }}>Schedule &amp; Automation</h2>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Schedule and automation</h2>
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically. Each publishing window gets the number of posts set below.</p>
         </div>
 
@@ -554,7 +549,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="ui-grid-2">
           <div>
             <Label htmlFor="cs-weeks-ahead" hint="how many publish dates to plan ahead">Weeks ahead</Label>
             <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
@@ -616,7 +611,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="ui-grid-2">
           <div>
             <Label htmlFor="cs-writing-instructions">Writing instructions</Label>
             <textarea id="cs-writing-instructions" className="input" rows={5} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8125rem', resize: 'vertical' }}

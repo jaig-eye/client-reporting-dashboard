@@ -189,10 +189,6 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .cs-prompt { resize: vertical; min-height: 120px; }
 .cs-vars { display: flex; flex-wrap: wrap; gap: 4px; }
 .cs-vars code { padding: 1px 6px; border-radius: var(--radius-xs); font-size: 0.72rem; background: var(--bg-muted); color: var(--text-secondary); }
-.cs-save { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.cs-saved, .cs-failed { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8125rem; font-weight: 500; }
-.cs-saved { color: var(--green-fg); }
-.cs-failed { color: var(--red-fg); }
 
 /* ── Silo detail: the authority planner (/admin/content/silos/[id]) ─────────── */
 
@@ -214,9 +210,6 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .sd-table td { vertical-align: middle; }
 .sd-table select.input { width: auto; min-height: 32px; padding: 4px 28px 4px 8px; font-size: 0.78rem; }
 .sd-url { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; color: var(--link, var(--accent)); }
-.sd-x { display: inline-flex; padding: 4px; border: none; border-radius: var(--radius-xs); background: none; color: var(--text-faint); cursor: pointer; }
-.sd-x:hover { color: var(--red); background: var(--red-subtle); }
-.sd-x:focus-visible { outline: none; box-shadow: var(--ring); }
 .sd-score-good { color: var(--green-fg); font-weight: 650; }
 .sd-score-ok   { color: var(--amber-fg); font-weight: 650; }
 
@@ -259,3 +252,51 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .sd-heads { display: flex; flex-direction: column; gap: 4px; font-size: 0.8125rem; }
 .sd-heads .sd-h3 { padding-left: 16px; }
 .sd-heads b { margin-right: 6px; font-size: 0.7rem; font-weight: 650; color: var(--text-faint); }
+
+/* ── Rationale (components/admin/RationaleModal) ────────────────────────────── */
+
+.ra { font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary); }
+.ra-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 12px; color: var(--text-primary); }
+.ra-k { margin-right: 4px; color: var(--text-muted); }
+.ra-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.ra-chips .ui-status { text-transform: none; }
+.ra-lead { margin: 0 0 14px; font-size: 0.875rem; line-height: 1.6; color: var(--text-primary); }
+.ra-suggested { margin: 0 0 4px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--bg-subtle); color: var(--text-primary); }
+.ra-part { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.ra-part-title { margin: 0 0 10px; font-size: 0.875rem; font-weight: 650; color: var(--text-primary); }
+.ra-fields { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.ra-fields > div { padding-left: 12px; box-shadow: inset 2px 0 0 var(--border); }
+.ra-fields dt { font-size: 0.75rem; font-weight: 650; color: var(--text-muted); }
+.ra-fields dd { margin: 1px 0 0; color: var(--text-primary); }
+.ra-block + .ra-block { margin-top: 12px; }
+.ra-sub { margin: 0 0 4px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
+.ra-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; color: var(--text-primary); }
+.ra-list--plain { color: var(--text-secondary); }
+.ra-note { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text-primary); }
+.ra-urls { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; overflow-wrap: anywhere; }
+.ra-urls a { color: var(--link, var(--accent)); }
+.ra-score { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.ra-score-num {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 50%;
+  font-size: 1.2rem; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.ra-score-num--good { background: var(--green-subtle); color: var(--green-fg); box-shadow: inset 0 0 0 2px var(--green); }
+.ra-score-num--ok   { background: var(--amber-subtle); color: var(--amber-fg); box-shadow: inset 0 0 0 2px var(--amber); }
+.ra-score-num--bad  { background: var(--red-subtle);   color: var(--red-fg);   box-shadow: inset 0 0 0 2px var(--red); }
+.ra-score-word { margin: 0; font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+.ra-checks { margin: 0 0 10px; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 16px; }
+@media (max-width: 479px) { .ra-checks { grid-template-columns: minmax(0, 1fr); } }
+.ra-check { display: flex; align-items: center; gap: 6px; }
+.ra-check--ok svg { color: var(--green); }
+.ra-check--no svg { color: var(--red); }
+.ra-check--no { color: var(--text-primary); }
+.ra-issues { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.ra-issue { display: flex; align-items: flex-start; gap: 6px; font-size: 0.78rem; }
+.ra-issue svg { flex-shrink: 0; margin-top: 3px; }
+.ra-issue--bad  { color: var(--red-fg); }
+.ra-issue--warn { color: var(--amber-fg); }
+.ra-context { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ra-context li { display: inline-flex; align-items: center; gap: 5px; }
+.ra-have { color: var(--text-primary); }
+.ra-have svg { color: var(--green); }
+.ra-missing { color: var(--text-faint); }

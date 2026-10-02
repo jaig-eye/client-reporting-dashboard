@@ -94,12 +94,12 @@ async function putJson(url: string, body: unknown): Promise<void> {
 /** The save button and what happened, beside each other at the foot of a section. */
 function SaveRow({ label, status, onSave }: { label: string; status: SaveState; onSave: () => void }) {
   return (
-    <div className="cs-save">
+    <div className="ui-saverow">
       <button type="button" className="btn btn-primary" onClick={onSave} disabled={status.state === 'saving'}>
         {status.state === 'saving' ? 'Saving…' : label}
       </button>
-      {status.state === 'saved' && <span className="cs-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
-      {status.state === 'error' && <span className="cs-failed" role="alert"><WarningCircle size={16} weight="fill" aria-hidden />{status.message}</span>}
+      {status.state === 'saved' && <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
+      {status.state === 'error' && <span className="ui-savefail" role="alert"><WarningCircle size={16} weight="fill" aria-hidden />{status.message}</span>}
     </div>
   )
 }

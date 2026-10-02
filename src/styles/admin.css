@@ -506,6 +506,16 @@
 }
 .ui-section-desc a:hover, .ui-ph-desc a:hover, .ui-field-hint a:hover, .ui-setting-desc a:hover, .ui-empty-text a:hover, .ui-notice a:hover { text-decoration-thickness: 2px; }
 
+/* ── Small shared pieces: a remove button, and a save button with what happened ── */
+
+.ui-x { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; padding: 6px; border: none; border-radius: var(--radius-xs); background: none; color: var(--text-faint); cursor: pointer; }
+.ui-x:hover { color: var(--red); background: var(--red-subtle); }
+.ui-x:focus-visible { outline: none; box-shadow: var(--ring); }
+.ui-saverow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ui-saved, .ui-savefail { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8125rem; font-weight: 500; }
+.ui-saved { color: var(--green-fg); }
+.ui-savefail { color: var(--red-fg); }
+
 /* ── Layout helpers ───────────────────────────────────────────────────────── */
 
 .ui-stack { display: flex; flex-direction: column; gap: 16px; }

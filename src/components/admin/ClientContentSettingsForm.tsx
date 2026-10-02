@@ -1,5 +1,8 @@
 'use client'
 
+import Switch from '@/components/ui/Switch'
+import { Sk } from '@/components/ui/Skeleton'
+import { CheckCircle, Sparkle, X, WarningCircle } from '@phosphor-icons/react'
 import { useState, useEffect } from 'react'
 import { SERVICES_HELP, SERVICE_AREAS_HELP, FOUNDED_YEAR_HELP, PHONE_HELP, CTA_HELP } from '@/lib/content/researchCopy'
 import KeywordChipInput from '@/components/admin/KeywordChipInput'
@@ -54,9 +57,9 @@ function Label({ children, hint, help, htmlFor }: {
   help?: string
 }) {
   const label = (
-    <label htmlFor={htmlFor} className={help ? 'text-xs font-medium' : 'block text-xs font-medium mb-1'} style={{ color: 'var(--text-muted)' }}>
+    <label htmlFor={htmlFor} className={help ? 'ccs-label ccs-label--inline' : 'ccs-label'}>
       {children}
-      {hint && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> — {hint}</span>}
+      {hint && <span className="ccs-label-hint">{hint}</span>}
     </label>
   )
   if (!help) return label
@@ -87,25 +90,6 @@ export function SettingsLoadError({ message, onRetry }: { message: string; onRet
       </p>
       <button type="button" className="btn btn-secondary" onClick={onRetry}>Retry</button>
     </div>
-  )
-}
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none"
-      style={{ background: checked ? 'var(--blue)' : 'var(--bg-muted)' }}
-    >
-      <span
-        className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform"
-        style={{ transform: checked ? 'translateX(1rem)' : 'translateX(0)' }}
-      />
-    </button>
   )
 }
 
@@ -269,7 +253,12 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
   }
 
 
-  if (loading) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+  if (loading) return (
+    <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }} aria-busy="true" aria-label="Loading brand DNA">
+      <Sk w={160} h={15} /><Sk w="60%" h={11} /><Sk h={90} r={8} />
+      <span className="ui-grid-2"><Sk h={38} r={8} /><Sk h={38} r={8} /></span>
+    </div>
+  )
   if (loadError) return <SettingsLoadError message={loadError} onRetry={() => setReloadKey(k => k + 1)} />
 
   return (
@@ -279,17 +268,17 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
       <div className="card p-6 space-y-4">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <h3 className="section-title" style={{ marginBottom: 2 }}>Business Context</h3>
+            <h3 className="section-title" style={{ marginBottom: 2 }}>Business context</h3>
             <p className="section-desc" style={{ margin: 0 }}>Used to give the AI background on this client&rsquo;s business for content generation.</p>
           </div>
           <button
             type="button"
-            className="btn btn-secondary"
-            style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+            className="btn btn-secondary btn-sm"
+            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             onClick={() => autoFill()}
             disabled={aiLoading}
           >
-            {aiLoading ? 'Analyzing…' : '✦ Auto-fill with AI'}
+            <Sparkle size={14} weight="fill" aria-hidden />{aiLoading ? 'Reading the site…' : 'Fill in with AI'}
           </button>
         </div>
 
@@ -297,9 +286,9 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
         {showSiteInput && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {aiBlocked && (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--amber, #f59e0b)', margin: 0, lineHeight: 1.4 }}>
-              ⚠ Your site is blocking automated access (likely Cloudflare or security rules). Enter your site URL below to try again, or fill in your business info manually.
-            </p>
+            <div className="ui-notice ui-notice--warning" style={{ margin: 0 }}>
+              <span>The site is blocking automated reads, probably Cloudflare or a security rule. Enter its address below to try again, paste its text, or fill the fields in by hand.</span>
+            </div>
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
@@ -317,21 +306,22 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
               onClick={() => autoFill(siteUrlInput)}
               disabled={aiLoading || !siteUrlInput.trim()}
             >
-              {aiLoading ? 'Analyzing…' : 'Analyze Site'}
+              {aiLoading ? 'Reading…' : 'Read the site'}
             </button>
             <button
               type="button"
               className="btn btn-secondary"
-              style={{ fontSize: '0.8125rem', padding: '0.375rem 0.625rem' }}
+              aria-label="Close"
               onClick={() => { setShowSiteInput(false); setAiBlocked(false) }}
-            >✕</button>
+            ><X size={14} weight="bold" aria-hidden /></button>
           </div>
           {/* Paste text fallback — shown when site is blocking automated fetches */}
           {aiBlocked && (
             <div style={{ marginTop: 8 }}>
               <button
                 type="button"
-                style={{ fontSize: '0.8125rem', color: 'var(--blue)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                className="cp-inline-link"
+                style={{ fontSize: '0.8125rem' }}
                 onClick={() => setShowSiteText(s => !s)}
               >
                 {showSiteText ? 'Hide' : 'Or paste your website text instead'}
@@ -354,7 +344,7 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
                     onClick={() => autoFill(undefined, siteTextInput)}
                     disabled={aiLoading || !siteTextInput.trim()}
                   >
-                    {aiLoading ? 'Analyzing…' : 'Analyze Text'}
+                    {aiLoading ? 'Reading…' : 'Read this text'}
                   </button>
                 </div>
               )}
@@ -365,32 +355,32 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
 
         {/* AI suggestion banner */}
         {aiSuggested && (
-          <div style={{ background: '#fefce8', border: '1px solid #fde047', borderRadius: 6, padding: '0.625rem 0.875rem', fontSize: '0.8125rem', color: '#854d0e' }}>
-            ✦ AI-generated suggestions applied — review each field before saving.
+          <div className="ui-notice ui-notice--info" role="status" style={{ margin: 0 }}>
+            <span><Sparkle size={13} weight="fill" aria-hidden style={{ display: 'inline-block', verticalAlign: -1, marginRight: 6 }} />Filled in with AI. Check each field before you save.</span>
           </div>
         )}
         {aiError && (
-          <div style={{ background: 'var(--red-subtle)', border: '1px solid #fecaca', borderRadius: 6, padding: '0.5rem 0.75rem', fontSize: '0.8125rem', color: 'var(--red)' }}>
-            {aiError}
+          <div className="ui-notice ui-notice--danger" role="alert" style={{ margin: 0 }}>
+            <span><WarningCircle size={14} weight="fill" aria-hidden style={{ display: 'inline-block', verticalAlign: -2, marginRight: 6 }} />{aiError}</span>
           </div>
         )}
 
         <div>
-          <Label htmlFor="bd-business-background" hint="What does this business do?">Business Background</Label>
+          <Label htmlFor="bd-business-background" hint="What does this business do?">Business background</Label>
           <textarea id="bd-business-background" className="input" rows={4} style={{ width: '100%' }} value={form.business_background} onChange={e => setField('business_background', e.target.value)} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="ui-grid-2">
           <div>
             <Label htmlFor="bd-services" help={SERVICES_HELP}>What they sell</Label>
             <KeywordChipInput id="bd-services" value={form.services} onChange={v => setField('services', v)} placeholder="Plumbing, HVAC, Electrical…" />
           </div>
           <div>
-            <Label htmlFor="bd-target-audience">Target Audience</Label>
+            <Label htmlFor="bd-target-audience">Target audience</Label>
             <input id="bd-target-audience" className="input" style={{ width: '100%' }} value={form.target_audience} onChange={e => setField('target_audience', e.target.value)} />
           </div>
           <div>
-            <Label htmlFor="bd-service-areas" hint="strongest first" help={SERVICE_AREAS_HELP}>Service Areas</Label>
+            <Label htmlFor="bd-service-areas" hint="strongest first" help={SERVICE_AREAS_HELP}>Service areas</Label>
             <KeywordChipInput
               id="bd-service-areas"
               value={form.geographic_focus}
@@ -401,7 +391,7 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             <MarketLine geographicFocus={form.geographic_focus} />
           </div>
           <div>
-            <Label htmlFor="bd-brand-voice">Brand Voice</Label>
+            <Label htmlFor="bd-brand-voice">Brand voice</Label>
             <input id="bd-brand-voice" className="input" style={{ width: '100%' }} value={form.brand_voice} onChange={e => setField('brand_voice', e.target.value)} />
           </div>
         </div>
@@ -411,12 +401,12 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             now, and this screen is only about who the business is. */}
 
         <div>
-          <Label htmlFor="bd-phone" hint="used when referencing phone in content" help={PHONE_HELP}>Phone Number</Label>
+          <Label htmlFor="bd-phone" hint="used when referencing phone in content" help={PHONE_HELP}>Phone number</Label>
           <input id="bd-phone" className="input" type="tel" style={{ width: '50%' }} value={form.phone_number} onChange={e => setField('phone_number', e.target.value)} placeholder="(321) 555-5555" />
         </div>
 
         <div>
-          <Label htmlFor="bd-cta" hint="one per line" help={CTA_HELP}>Call-to-Action Options</Label>
+          <Label htmlFor="bd-cta" hint="one per line" help={CTA_HELP}>Calls to action</Label>
           <textarea
             id="bd-cta"
             className="input"
@@ -432,7 +422,7 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
       {/* ── Trust & Credibility (E-E-A-T) ────────────────────────────────── */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="p-6 pb-4">
-          <h2 className="section-title" style={{ marginBottom: 0 }}>Trust &amp; Credibility</h2>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Trust and credibility</h2>
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>What makes this business worth believing.</p>
         </div>
 
@@ -462,79 +452,79 @@ export default function ClientContentSettingsForm({ clientId }: { clientId: stri
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 eeat-grid">
+          <div className="ui-grid-2 eeat-grid">
             <div>
-              <Label htmlFor="bd-founded-year" help={FOUNDED_YEAR_HELP}>Year Founded</Label>
+              <Label htmlFor="bd-founded-year" help={FOUNDED_YEAR_HELP}>Year founded</Label>
               <input id="bd-founded-year" className="input" type="number" min={1800} max={new Date().getFullYear()} style={{ width: '100%' }} value={eeat.founded_year} onChange={e => setEeatField('founded_year', e.target.value)} placeholder="e.g. 2003" />
             </div>
             <div>
-              <Label htmlFor="bd-reviews">Reviews (count &amp; rating)</Label>
+              <Label htmlFor="bd-reviews">Reviews (count and rating)</Label>
               <input id="bd-reviews" className="input" style={{ width: '100%' }} value={eeat.review_count} onChange={e => setEeatField('review_count', e.target.value)} placeholder="e.g. 4.9 stars · 387 reviews" />
             </div>
             <div>
-              <Label htmlFor="bd-licenses">Licenses &amp; Certifications</Label>
+              <Label htmlFor="bd-licenses">Licenses and certifications</Label>
               <textarea id="bd-licenses" className="input" rows={2} style={{ width: '100%' }} value={eeat.licenses} onChange={e => setEeatField('licenses', e.target.value)} placeholder="e.g. FL State Licensed HVAC #CAC1234" />
             </div>
             <div>
-              <Label htmlFor="bd-insurance">Insurance &amp; Bonding</Label>
+              <Label htmlFor="bd-insurance">Insurance and bonding</Label>
               <input id="bd-insurance" className="input" style={{ width: '100%' }} value={eeat.insurance} onChange={e => setEeatField('insurance', e.target.value)} placeholder="e.g. Fully insured & bonded" />
             </div>
             <div>
-              <Label htmlFor="bd-awards">Awards &amp; Recognition</Label>
+              <Label htmlFor="bd-awards">Awards and recognition</Label>
               <textarea id="bd-awards" className="input" rows={2} style={{ width: '100%' }} value={eeat.awards} onChange={e => setEeatField('awards', e.target.value)} placeholder="e.g. Angie's List Super Service Award 2023" />
             </div>
             <div>
-              <Label htmlFor="bd-owner">Owner / Founder</Label>
+              <Label htmlFor="bd-owner">Owner or founder</Label>
               <textarea id="bd-owner" className="input" rows={2} style={{ width: '100%' }} value={eeat.owner_details} onChange={e => setEeatField('owner_details', e.target.value)} placeholder="e.g. Family-owned by John Smith since 2002" />
             </div>
             <div>
-              <Label htmlFor="bd-team">Team Experience</Label>
+              <Label htmlFor="bd-team">Team experience</Label>
               <textarea id="bd-team" className="input" rows={2} style={{ width: '100%' }} value={eeat.team_experience} onChange={e => setEeatField('team_experience', e.target.value)} placeholder="e.g. Average 12 years field experience per tech" />
             </div>
             <div>
-              <Label htmlFor="bd-guarantees">Service Guarantees</Label>
+              <Label htmlFor="bd-guarantees">Service guarantees</Label>
               <textarea id="bd-guarantees" className="input" rows={2} style={{ width: '100%' }} value={eeat.guarantees} onChange={e => setEeatField('guarantees', e.target.value)} placeholder="e.g. 100% satisfaction guarantee, 10-yr workmanship" />
             </div>
             <div>
-              <Label htmlFor="bd-brands">Brands / Products Used</Label>
+              <Label htmlFor="bd-brands">Brands and products used</Label>
               <textarea id="bd-brands" className="input" rows={2} style={{ width: '100%' }} value={eeat.brands_used} onChange={e => setEeatField('brands_used', e.target.value)} placeholder="e.g. Carrier, Trane, Lennox equipment" />
             </div>
             <div>
-              <Label htmlFor="bd-financing">Financing Options</Label>
+              <Label htmlFor="bd-financing">Financing options</Label>
               <input id="bd-financing" className="input" style={{ width: '100%' }} value={eeat.financing_options} onChange={e => setEeatField('financing_options', e.target.value)} placeholder="e.g. 12-month 0% financing available" />
             </div>
             <div>
               <Label htmlFor="bd-warranties">Warranties</Label>
               <textarea id="bd-warranties" className="input" rows={2} style={{ width: '100%' }} value={eeat.warranties} onChange={e => setEeatField('warranties', e.target.value)} placeholder="e.g. 5-yr parts, 10-yr labor on new systems" />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingTop: '1.25rem' }}>
-              <Toggle label="24/7 emergency service available" checked={eeat.emergency_availability} onChange={v => setEeatField('emergency_availability', v)} />
-              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>24/7 Emergency Service Available</span>
+            {/* .eeat-grid makes each cell a column, so this centres vertically and starts on the left. */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '1.25rem' }}>
+              <Switch label="24/7 emergency service available" checked={eeat.emergency_availability} onChange={v => setEeatField('emergency_availability', v)} />
             </div>
           </div>
 
           <div>
-            <Label htmlFor="bd-case-studies">Case Studies / Notable Projects</Label>
+            <Label htmlFor="bd-case-studies">Case studies and notable projects</Label>
             <textarea id="bd-case-studies" className="input" rows={3} style={{ width: '100%' }} value={eeat.case_studies} onChange={e => setEeatField('case_studies', e.target.value)} placeholder="e.g. Replaced 200+ units in HOA communities, completed commercial projects for..." />
           </div>
           <div>
-            <Label htmlFor="bd-before-after">Before / After Proof</Label>
+            <Label htmlFor="bd-before-after">Before-and-after proof</Label>
             <textarea id="bd-before-after" className="input" rows={2} style={{ width: '100%' }} value={eeat.before_after_proof} onChange={e => setEeatField('before_after_proof', e.target.value)} placeholder="e.g. Before/after photos of installs available, documented energy savings" />
           </div>
           <div>
-            <Label htmlFor="bd-objections" hint="helps AI address real concerns in content">Common Customer Objections</Label>
+            <Label htmlFor="bd-objections" hint="helps AI address real concerns in content">Common customer objections</Label>
             <textarea id="bd-objections" className="input" rows={3} style={{ width: '100%' }} value={eeat.common_objections} onChange={e => setEeatField('common_objections', e.target.value)} placeholder="e.g. Price concerns, timing uncertainty, DIY temptation..." />
           </div>
         </div>
       </div>
 
       {/* ── Save ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Brand DNA'}
+      <div className="ui-saverow">
+        <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save brand DNA'}
         </button>
-        {saved && <span className="text-xs" style={{ color: 'var(--green)' }}>Saved ✓</span>}
-        {error && <span className="text-xs" style={{ color: 'var(--red)' }}>{error}</span>}
+        {saved && <span className="ui-saved" role="status"><CheckCircle size={16} weight="fill" aria-hidden />Saved</span>}
+        {error && <span className="ui-savefail" role="alert">{error}</span>}
       </div>
     </div>
   )

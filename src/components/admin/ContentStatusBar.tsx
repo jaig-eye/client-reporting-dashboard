@@ -23,40 +23,31 @@ export function computeStatusCounts(
   }
 }
 
-const STATUS_CONFIG: { key: keyof StatusCounts; label: string; dot: string; pulse: boolean }[] = [
-  { key: 'scheduled',  label: 'Pending',    dot: '#f59e0b', pulse: false },
-  { key: 'approved',   label: 'Approved',   dot: '#2563eb', pulse: false },
-  { key: 'generating', label: 'Generating', dot: '#f97316', pulse: true  },
-  { key: 'forReview',  label: 'For Review', dot: '#10b981', pulse: false },
-  { key: 'published',  label: 'Published',  dot: '#059669', pulse: false },
-  { key: 'rejected',   label: 'Rejected',   dot: '#ef4444', pulse: false },
+// One colour per kind of state, from the theme: amber needs someone, blue is on its way, green is
+// on the site, red was turned down. The word always sits beside the dot.
+const STATUS_CONFIG: { key: keyof StatusCounts; label: string; tone: string; pulse: boolean }[] = [
+  { key: 'scheduled',  label: 'Pending',    tone: 'var(--amber)', pulse: false },
+  { key: 'approved',   label: 'Approved',   tone: 'var(--blue)',  pulse: false },
+  { key: 'generating', label: 'Generating', tone: 'var(--blue)',  pulse: true  },
+  { key: 'forReview',  label: 'For review', tone: 'var(--amber)', pulse: false },
+  { key: 'published',  label: 'Published',  tone: 'var(--green)', pulse: false },
+  { key: 'rejected',   label: 'Rejected',   tone: 'var(--red)',   pulse: false },
 ]
 
-export default function ContentStatusBar({ counts }: { counts: StatusCounts }) {
-  const hasGenerating = counts.generating > 0
+export default function ContentStatusBar({ counts, total }: { counts: StatusCounts; total?: number }) {
   return (
-    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-      {hasGenerating && (
-        <style>{`@keyframes csb-pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-      )}
-      {STATUS_CONFIG.map(({ key, label, dot, pulse }) => {
+    <div className="pl-statusbar" role="list" aria-label="Items by status">
+      {STATUS_CONFIG.map(({ key, label, tone, pulse }) => {
         const count = counts[key]
         if (key === 'rejected' && count === 0) return null
         return (
-          <span
-            key={key}
-            style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: '0.8125rem', opacity: count === 0 ? 0.4 : 1 }}
-          >
-            <span style={{
-              width: 8, height: 8, borderRadius: '50%', background: dot,
-              display: 'inline-block', flexShrink: 0,
-              ...(pulse && count > 0 ? { animation: 'csb-pulse 1.5s ease-in-out infinite' } : {}),
-            }} />
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{count}</span>
-            <span style={{ color: 'var(--text-faint)' }}>{label}</span>
+          <span key={key} role="listitem" className={`pl-statusbar-item${count === 0 ? ' pl-statusbar-item--zero' : ''}`}>
+            <span className={`pl-statusbar-dot${pulse && count > 0 ? ' pl-statusbar-dot--live' : ''}`} style={{ '--tone': tone } as React.CSSProperties} aria-hidden />
+            <b>{count}</b> {label}
           </span>
         )
       })}
+      {total != null && <span className="pl-statusbar-total">{total} item{total === 1 ? '' : 's'}</span>}
     </div>
   )
 }

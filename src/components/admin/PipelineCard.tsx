@@ -3,8 +3,11 @@
 // Per-client pipeline card — the card/review presentation of a single pipeline
 // item (a topic slot or a generated post), styled after MonthlyReviewPostCard.
 // Purely presentational: ClientPipeline owns all state and passes callbacks.
+// Styles: styles/admin/pipeline.css (.pl-*).
 
-import { Check, X, PencilSimple, ArrowClockwise, Play, ArrowRight, Trash } from '@phosphor-icons/react'
+import '@/styles/admin/pipeline.css'
+import { Check, X, PencilSimple, ArrowClockwise, Play, Trash, Article, CaretDown, ArrowUp, ArrowDown, WarningCircle } from '@phosphor-icons/react'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import ClientImage from '@/components/admin/ClientImage'
 import PriorityTag from '@/components/admin/PriorityTag'
@@ -74,13 +77,15 @@ export type RowItem =
 
 export type DisplayStatus = 'pending' | 'approved' | 'generating' | 'generated' | 'published' | 'rejected'
 
-export const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; bg: string; color: string; dot: string }> = {
-  pending:    { label: 'Pending',        bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
-  approved:   { label: '✓ Approved',     bg: 'var(--blue-subtle)',  color: 'var(--blue)',  dot: '#2563eb' },
-  generating: { label: 'Generating',     bg: 'var(--amber-subtle)', color: 'var(--amber)', dot: '#f59e0b' },
-  generated:  { label: 'Ready to Review', bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#10b981' },
-  published:  { label: '✓ Live',         bg: 'var(--green-subtle)', color: 'var(--green)', dot: '#059669' },
-  rejected:   { label: 'Rejected',       bg: 'var(--red-subtle)',   color: 'var(--red)',   dot: '#ef4444' },
+// Amber needs someone, blue is on its way, green is on the site. "Ready to review" was green,
+// which read as done when it is the one state waiting on a person.
+export const DISPLAY_STATUS_CONFIG: Record<DisplayStatus, { label: string; tone: StatusTone }> = {
+  pending:    { label: 'Pending',         tone: 'warning' },
+  approved:   { label: 'Approved',        tone: 'info'    },
+  generating: { label: 'Generating',      tone: 'info'    },
+  generated:  { label: 'Ready to review', tone: 'warning' },
+  published:  { label: 'Live',            tone: 'success' },
+  rejected:   { label: 'Rejected',        tone: 'danger'  },
 }
 
 export function getTopicDisplayStatus(t: Topic): DisplayStatus {
@@ -104,40 +109,35 @@ export function fmtDate(iso: string | null): string {
   return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
-function scoreColor(s: SeoScore | null): string {
-  if (!s) return 'var(--text-faint)'
-  if (s.overall >= 80) return 'var(--green)'
-  if (s.overall >= 60) return 'var(--amber)'
-  return 'var(--red)'
+function scoreClass(s: SeoScore | null): string {
+  if (!s) return ''
+  if (s.overall >= 80) return 'pl-good'
+  if (s.overall >= 60) return 'pl-ok'
+  return 'pl-bad'
 }
 
-// Keyword rank color: top 3 green, top 10 amber, else muted.
-function rankColor(pos: number): string {
-  if (pos <= 3)  return 'var(--green)'
-  if (pos <= 10) return 'var(--amber)'
-  return 'var(--text-muted)'
-}
-// Movement arrow: positive delta = improved (moved toward #1).
-function rankArrow(delta: number | null | undefined): string {
-  if (!delta) return ''
-  return delta > 0 ? ' ▲' : ' ▼'
+// Keyword rank: top 3 good, top 10 close, else plain.
+function rankClass(pos: number): string {
+  if (pos <= 3)  return 'pl-good'
+  if (pos <= 10) return 'pl-ok'
+  return ''
 }
 
 export function StatusPill({ status, generating }: { status: DisplayStatus; generating?: boolean }) {
   const cfg = DISPLAY_STATUS_CONFIG[status]
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 999, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
-      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: cfg.dot, animation: generating ? 'pulse 1.2s ease-in-out infinite' : undefined }} />
-      {cfg.label}
+    <span className={generating ? 'pl-generating' : undefined} style={{ flexShrink: 0 }}>
+      <StatusBadge tone={cfg.tone}>{cfg.label}</StatusBadge>
     </span>
   )
 }
 
 // ── Icon action button ──────────────────────────────────────────────────────────
-function IconBtn({ label, color, disabled, onClick, children }: { label: string; color: string; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+// The label is the name (aria-label) and the tooltip; the tint only echoes it.
+type IconTone = 'go' | 'ok' | 'warn' | 'danger' | 'quiet'
+function IconBtn({ label, tone, disabled, onClick, children }: { label: string; tone: IconTone; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button className="btn btn-secondary" aria-label={label} title={label} disabled={disabled}
-      style={{ padding: '3px 7px', color, display: 'inline-flex', alignItems: 'center', cursor: disabled ? 'default' : 'pointer' }}
+    <button type="button" className={`btn btn-secondary btn-sm pl-icon pl-icon--${tone}`} aria-label={label} title={label} disabled={disabled}
       onClick={e => { e.stopPropagation(); onClick() }}>
       {children}
     </button>
@@ -175,22 +175,17 @@ interface Props {
 // broken thumbnails.
 function Thumb({ url, connectionId }: { url: string | null; connectionId?: string | null }) {
   return url
-    ? <ClientImage src={url} alt="" connectionId={connectionId} loading="lazy" style={{ width: 44, height: 34, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
-    : <div style={{ width: 44, height: 34, borderRadius: 4, flexShrink: 0, background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: 'var(--text-faint)' }}>◧</div>
+    ? <ClientImage src={url} alt="" connectionId={connectionId} loading="lazy" className="pl-thumb" />
+    : <span className="pl-thumb" aria-hidden><Article size={17} /></span>
 }
 
 // Compact live/edit link row for on-site posts.
 function LiveLinks({ post }: { post: Post }) {
   return (
-    <div style={{ display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap', fontSize: 11 }} onClick={e => e.stopPropagation()}>
-      <PostSiteLinks post={post} fontSize={11} />
+    <div className="pl-extra">
+      <PostSiteLinks post={post} fontSize={11.5} />
     </div>
   )
-}
-
-const cardShell: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 12, padding: '9px 12px',
-  border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-surface)',
 }
 
 export default function PipelineCard(props: Props) {
@@ -211,58 +206,49 @@ export default function PipelineCard(props: Props) {
     const fromSet     = post.silo ?? topic?.silo ?? null
     const fromKeyword = post.silo_keyword ?? topic?.silo_keyword ?? null
     return (
-      <div style={cardShell}>
+      <article className="pl-card" aria-label={post.title ?? topic?.topic ?? 'Post being written'}>
         <Thumb url={post.featured_image_url} connectionId={props.connectionId} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); props.onReview(post) }}
-            title="Open the review panel"
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: 0,
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}
-          >
-            {post.title ?? topic?.topic ?? '(generating…)'}
+        <div className="pl-body">
+          <button type="button" className="pl-title" onClick={e => { e.stopPropagation(); props.onReview(post) }} title="Open the review panel">
+            {post.title ?? topic?.topic ?? 'Being written…'}
           </button>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-            {fmtDate(post.target_publish_date)}
-            {post.word_count ? ` · ${post.word_count.toLocaleString()}w` : ''}
-            {post.bc_post_id ? ' · BC' : post.wp_post_id ? ' · WP' : ''}
-            {post.seo_score ? <span style={{ marginLeft: 6, fontWeight: 600, color: scoreColor(post.seo_score) }}>SEO {post.seo_score.overall}</span> : null}
+          <div className="pl-facts">
+            <span className="pl-fact">{fmtDate(post.target_publish_date)}</span>
+            {post.word_count ? <span className="pl-fact">{post.word_count.toLocaleString()} words</span> : null}
+            {post.bc_post_id ? <span className="pl-fact">BigCommerce</span> : post.wp_post_id ? <span className="pl-fact">WordPress</span> : null}
+            {post.seo_score ? <span className={`pl-fact ${scoreClass(post.seo_score)}`}>SEO {post.seo_score.overall}</span> : null}
             {post.keyword_rank?.current_position != null ? (
-              <span style={{ marginLeft: 6, fontWeight: 600, color: rankColor(post.keyword_rank.current_position) }}
-                title="Current keyword rank (DataForSEO)">
-                #{post.keyword_rank.current_position}{rankArrow(post.keyword_rank.position_delta)}
+              <span className={`pl-fact pl-rank ${rankClass(post.keyword_rank.current_position)}`} title="Current keyword rank (DataForSEO)">
+                Rank {post.keyword_rank.current_position}
+                {post.keyword_rank.position_delta ? (post.keyword_rank.position_delta > 0
+                  ? <ArrowUp size={11} weight="bold" aria-label="up" />
+                  : <ArrowDown size={11} weight="bold" aria-label="down" />) : null}
               </span>
             ) : post.keyword_rank?.movement === 'dropped' ? (
-              <span style={{ marginLeft: 6, fontWeight: 600, color: 'var(--red)' }}
+              <span className="pl-fact pl-rank pl-bad"
                 title={`Dropped out of the tracked results${post.keyword_rank.previous_position != null ? ` (was #${post.keyword_rank.previous_position})` : ''}`}>
-                ⚠ dropped
+                <WarningCircle size={12} weight="fill" aria-hidden />Dropped out
               </span>
             ) : null}
           </div>
           {fromSet && (
-            <div style={{ marginTop: 4 }}>
+            <div className="pl-extra">
               <PriorityTag setName={fromSet.name} keyword={fromKeyword?.keyword} size="sm" />
             </div>
           )}
           {onSite && <LiveLinks post={post} />}
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+        <div className="pl-actions">
           <StatusPill status={ds} />
-          <button className="btn btn-sm btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-            onClick={() => props.onReview(post)}>
-            <ArrowRight size={12} weight="bold" /> {post.status === 'draft_saved' || post.status === 'published' ? 'Edit' : 'Review'}
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => props.onReview(post)}>
+            {post.status === 'draft_saved' || post.status === 'published' ? 'Edit' : 'Review'}
           </button>
-          <IconBtn label="Delete" color="var(--text-faint)" disabled={purging}
+          <IconBtn label="Delete permanently" tone="quiet" disabled={purging}
             onClick={() => props.onPurge(item.kind === 'topic' ? 'topic' : 'post', item.kind === 'topic' ? (topic as Topic).id : post.id)}>
-            <Trash size={13} />
+            <Trash size={14} />
           </IconBtn>
         </div>
-      </div>
+      </article>
     )
   }
 
@@ -273,98 +259,97 @@ export default function PipelineCard(props: Props) {
   const hasDetail = !!(t.keyword_opportunity || t.ranking_strategy || t.audience_intent || t.why_now || t.competition_level || t.page_to_support || t.competitors_researched)
 
   return (
-    <div style={{ ...cardShell, flexDirection: 'column', alignItems: 'stretch', gap: 8, background: 'var(--bg-subtle)', borderLeft: hasError ? '2px solid #f59e0b' : cardShell.border as string }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div
-          style={{ flex: 1, minWidth: 0, cursor: hasDetail ? 'pointer' : 'default' }}
-          onClick={() => { if (hasDetail && !editing) props.onToggleExpand() }}
-        >
+    <article className={`pl-card pl-card--slot${hasError ? ' pl-card--error' : ''}`} aria-label={t.topic}>
+      <div className="pl-row pl-row--slot">
+        <div className="pl-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <StatusPill status={ds} generating={t.status === 'generating'} />
-            {hasError && <span title={t.generation_error ?? ''} style={{ fontSize: 12, color: '#f59e0b', cursor: 'help', lineHeight: 1 }}>⚠</span>}
+            {hasError && (
+              <span className="pl-error-icon" title={t.generation_error ?? ''}>
+                <WarningCircle size={15} weight="fill" aria-hidden /><span className="sr-only">Writing failed: {t.generation_error}</span>
+              </span>
+            )}
           </div>
-          <div style={{ fontWeight: 500, fontSize: 13.5, color: 'var(--text-primary)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {t.topic}
-            {hasDetail && <span style={{ fontSize: 10, marginLeft: 5, opacity: 0.5 }}>{expanded ? '▲' : '▾'}</span>}
-          </div>
+          {hasDetail ? (
+            <button type="button" className="pl-title" style={{ marginTop: 4 }} aria-expanded={expanded} onClick={() => { if (!editing) props.onToggleExpand() }}>
+              {t.topic}<CaretDown size={11} weight="bold" aria-hidden />
+            </button>
+          ) : (
+            <p className="pl-title pl-title--plain" style={{ marginTop: 4 }}>{t.topic}</p>
+          )}
           {t.target_keyword && (
-            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 }}>
+            <div className="pl-keyword">
               {t.target_keyword}
-              {t.cluster_group && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)', background: 'var(--bg-muted)', padding: '0 5px', borderRadius: 3 }}>{t.cluster_group}</span>}
+              {t.cluster_group && <span className="pl-cluster">{t.cluster_group}</span>}
             </div>
           )}
           {/* Where this topic came from: which set of priority topics, and the exact keyword it
               used. Without this, a priority topic is indistinguishable from an ad-hoc one once it
-              reaches the queue. Named the way the Pipeline's Priority topics section names it, in
-              theme colours — the violet hex this used stayed the same in dark mode. */}
+              reaches the queue. */}
           {t.silo && (
-            <div style={{ marginTop: 4 }}>
+            <div className="pl-extra">
               <PriorityTag setName={t.silo.name} keyword={t.silo_keyword?.keyword} size="sm" />
             </div>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(t.target_publish_date)}</div>
-        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+        <div className="pl-date">{fmtDate(t.target_publish_date)}</div>
+        <div className="pl-actions">
           {hasError && (
-            <IconBtn label="Retry generation" color="#f59e0b" disabled={loading} onClick={() => props.onRetry(t.id)}><ArrowClockwise size={13} weight="bold" /></IconBtn>
+            <IconBtn label="Try writing it again" tone="warn" disabled={loading} onClick={() => props.onRetry(t.id)}><ArrowClockwise size={14} weight="bold" /></IconBtn>
           )}
           {t.status === 'approved' && (
-            <IconBtn label="Generate post now" color="var(--blue)" onClick={() => props.onGenerate(t.id)}><Play size={13} weight="fill" /></IconBtn>
+            <IconBtn label="Write the post now" tone="go" onClick={() => props.onGenerate(t.id)}><Play size={14} weight="fill" /></IconBtn>
           )}
           {!['approved', 'generating', 'generated'].includes(t.status) && (
-            <IconBtn label="Approve topic" color="var(--green)" disabled={loading} onClick={() => props.onApprove(t.id)}><Check size={13} weight="bold" /></IconBtn>
+            <IconBtn label="Approve topic" tone="ok" disabled={loading} onClick={() => props.onApprove(t.id)}><Check size={14} weight="bold" /></IconBtn>
           )}
           {!['generating', 'generated', 'rejected'].includes(t.status) && (
-            <IconBtn label="Edit title" color="var(--text-muted)" onClick={() => editing ? props.onCancelEdit() : props.onOpenEdit(t)}><PencilSimple size={13} /></IconBtn>
+            <IconBtn label={editing ? 'Stop editing' : 'Edit title'} tone="quiet" onClick={() => editing ? props.onCancelEdit() : props.onOpenEdit(t)}><PencilSimple size={14} /></IconBtn>
           )}
           {!['generating', 'generated'].includes(t.status) && (
-            <IconBtn label="Generate a different topic idea" color="var(--text-muted)" disabled={loading} onClick={() => props.onRegenerateTopic(t.id)}><ArrowClockwise size={13} /></IconBtn>
+            <IconBtn label="Suggest a different topic" tone="quiet" disabled={loading} onClick={() => props.onRegenerateTopic(t.id)}><ArrowClockwise size={14} /></IconBtn>
           )}
           {!['generating', 'generated'].includes(t.status) && t.status !== 'rejected' && (
-            <IconBtn label="Reject topic" color="var(--red)" disabled={loading} onClick={() => props.onReject(t.id)}><X size={13} weight="bold" /></IconBtn>
+            <IconBtn label="Reject topic" tone="danger" disabled={loading} onClick={() => props.onReject(t.id)}><X size={14} weight="bold" /></IconBtn>
           )}
-          <IconBtn label="Permanently delete" color="var(--text-faint)" disabled={purging} onClick={() => props.onPurge('topic', t.id)}><Trash size={13} /></IconBtn>
+          <IconBtn label="Delete permanently" tone="quiet" disabled={purging} onClick={() => props.onPurge('topic', t.id)}><Trash size={14} /></IconBtn>
         </div>
       </div>
 
-      {/* Expandable SEO brief */}
+      {/* The why behind the topic */}
       {expanded && hasDetail && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
-          {([
-            { key: 'keyword_opportunity' as const, label: 'Keyword Opportunity', color: '#2563eb', bg: '#eff6ff' },
-            { key: 'ranking_strategy'    as const, label: 'Ranking Strategy',    color: '#7c3aed', bg: '#f5f3ff' },
-            { key: 'audience_intent'     as const, label: 'Audience Intent',     color: '#059669', bg: '#f0fdf4' },
-            { key: 'why_now'             as const, label: 'Why Now',             color: '#d97706', bg: '#fffbeb' },
-            { key: 'competition_level'   as const, label: 'Competition',         color: '#dc2626', bg: '#fef2f2' },
-          ]).filter(s => t[s.key]).map(({ key, label, color, bg }) => (
-            <div key={key} style={{ borderLeft: `3px solid ${color}`, background: bg, borderRadius: '0 4px 4px 0', padding: '4px 8px' }}>
-              <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color, marginBottom: 2 }}>{label}</p>
-              <p style={{ fontSize: 12.5, color: '#374151', lineHeight: 1.4 }}>{t[key] as string}</p>
-            </div>
-          ))}
+        <div className="pl-detail">
+          <dl>
+            {([
+              { key: 'keyword_opportunity' as const, label: 'Keyword opportunity' },
+              { key: 'ranking_strategy'    as const, label: 'Ranking strategy' },
+              { key: 'audience_intent'     as const, label: 'Audience intent' },
+              { key: 'why_now'             as const, label: 'Why now' },
+              { key: 'competition_level'   as const, label: 'Competition' },
+            ]).filter(f => t[f.key]).map(({ key, label }) => (
+              <div key={key}><dt>{label}</dt><dd>{t[key] as string}</dd></div>
+            ))}
+          </dl>
           {t.page_to_support && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              <span style={{ fontWeight: 600 }}>Supporting: </span>
-              <a href={t.page_to_support} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>{t.page_to_support}</a>
-            </div>
+            <p style={{ margin: 0 }}><span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Supports </span><a href={t.page_to_support} target="_blank" rel="noopener noreferrer">{t.page_to_support}</a></p>
           )}
           {typeof t.seo_brief?.cannibalization_warning === 'string' && t.seo_brief.cannibalization_warning && (
-            <div style={{ fontSize: 12, color: 'var(--amber)', background: 'var(--amber-subtle)', padding: '4px 8px', borderRadius: 4 }}>⚠ {t.seo_brief.cannibalization_warning}</div>
+            <div className="ui-notice ui-notice--warning" style={{ margin: 0 }}>{t.seo_brief.cannibalization_warning}</div>
           )}
         </div>
       )}
 
       {/* Inline edit */}
       {editing && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
-          <input className="input" value={editTitle} onChange={e => props.onEditTitleChange(e.target.value)} placeholder="Topic title" style={{ fontSize: 13.5 }} autoFocus />
-          <textarea className="input" rows={2} value={editNotes} onChange={e => props.onEditNotesChange(e.target.value)} placeholder="Direction notes (optional) — the angle to take if regenerating" style={{ fontSize: 13, resize: 'vertical' }} />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => props.onSaveEdit(t.id)} disabled={loading}>Save</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => props.onCancelEdit()}>Cancel</button>
+        <div className="pl-edit">
+          <input className="input" value={editTitle} onChange={e => props.onEditTitleChange(e.target.value)} placeholder="Topic title" aria-label="Topic title" autoFocus />
+          <textarea className="input" rows={2} value={editNotes} onChange={e => props.onEditNotesChange(e.target.value)} placeholder="Direction notes (optional): the angle to take if it’s written again" aria-label="Direction notes" style={{ resize: 'vertical' }} />
+          <div className="pl-edit-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => props.onSaveEdit(t.id)} disabled={loading}>Save</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => props.onCancelEdit()}>Cancel</button>
           </div>
         </div>
       )}
-    </div>
+    </article>
   )
 }

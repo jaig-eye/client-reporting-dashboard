@@ -365,7 +365,7 @@ function KeywordsTab({
                             : '–'}
                         </td>
                         <td>
-                          <button type="button" className="sd-x" onClick={() => setDeleting(kw)} aria-label={`Delete “${kw.keyword}”`} title="Delete">
+                          <button type="button" className="ui-x" onClick={() => setDeleting(kw)} aria-label={`Delete “${kw.keyword}”`} title="Delete">
                             <X size={14} weight="bold" aria-hidden />
                           </button>
                         </td>
