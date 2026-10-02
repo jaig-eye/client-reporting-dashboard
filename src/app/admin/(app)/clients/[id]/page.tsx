@@ -207,6 +207,7 @@ export default async function ClientDetailPage({
           agencyStaleDays={agencySettings?.contact_stale_days ?? 14}
           adminUsers={adminUsers}
           contacts={contacts}
+          dashboardToken={client.dashboard_token}
         />
       )}
 
