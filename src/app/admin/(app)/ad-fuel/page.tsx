@@ -11,6 +11,7 @@ import Section from '@/components/ui/Section'
 import EmptyState from '@/components/ui/EmptyState'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 import { PillTabs } from '@/components/ui/PillTabs'
+import Dialog, { ConfirmDialog } from '@/components/ui/Dialog'
 import { Sk, SkTable, SkRows } from '@/components/ui/Skeleton'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -448,18 +449,6 @@ export default function AdFuelPage() {
   useEffect(() => { fetchDashboard() }, [fetchDashboard])
   useEffect(() => { if (tab === 'ledger') fetchLedger() }, [tab, fetchLedger])
 
-  // Escape closes whichever dialog is open.
-  useEffect(() => {
-    if (!clientEditModal && !showAddModal) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setClientEditModal(null)
-      setShowAddModal(false)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [clientEditModal, showAddModal])
-
   // Populate settings form when a client is selected in settings tab
   useEffect(() => {
     if (!settingsClientId) { setSettingsForm({ billDay: '', historicBillDay: '', monthlyBudget: '', adFuelAlertThreshold: '' }); return }
@@ -531,31 +520,41 @@ export default function AdFuelPage() {
     fetchDashboard()
   }
 
-  // ── Delete ledger entry ─────────────────────────────────────────────────────
-  async function deleteEntry(id: string, isAchPending?: boolean) {
-    if (!confirm(`Delete this ${isAchPending ? 'pending ACH' : 'ledger'} entry?`)) return
-    if (isAchPending) {
-      await fetch(`/api/admin/ad-fuel/pending-ach?id=${id}`, { method: 'DELETE' })
-    } else {
-      await fetch(`/api/admin/ad-fuel/ledger/${id}`, { method: 'DELETE' })
-    }
-    setSelectedIds(s => { const n = new Set(s); n.delete(id); return n })
-    fetchLedger()
-    fetchDashboard()
+  // ── Delete ledger entries ───────────────────────────────────────────────────
+  // Both deletes ask first, in a ConfirmDialog (they used window.confirm). A failed delete throws,
+  // so the dialog says so and stays open.
+  const [deleteAsk, setDeleteAsk] = useState<{ kind: 'one'; id: string; ach: boolean } | { kind: 'bulk' } | null>(null)
+
+  function deleteEntry(id: string, isAchPending?: boolean) {
+    setDeleteAsk({ kind: 'one', id, ach: !!isAchPending })
   }
 
-  // ── Bulk delete ─────────────────────────────────────────────────────────────
-  async function bulkDelete() {
-    if (selectedIds.size === 0) return
-    if (!confirm(`Delete ${selectedIds.size} selected entr${selectedIds.size === 1 ? 'y' : 'ies'}?`)) return
-    setBulkDeleting(true)
-    await fetch('/api/admin/ad-fuel/ledger', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: Array.from(selectedIds) }),
-    })
-    setSelectedIds(new Set())
-    setBulkDeleting(false)
+  function bulkDelete() {
+    if (selectedIds.size > 0) setDeleteAsk({ kind: 'bulk' })
+  }
+
+  async function confirmDelete() {
+    if (!deleteAsk) return
+    if (deleteAsk.kind === 'one') {
+      const { id, ach } = deleteAsk
+      const res = await fetch(ach ? `/api/admin/ad-fuel/pending-ach?id=${id}` : `/api/admin/ad-fuel/ledger/${id}`, { method: 'DELETE' }).catch(() => null)
+      if (!res?.ok) throw new Error('The entry couldn’t be deleted. Try again.')
+      setSelectedIds(s => { const n = new Set(s); n.delete(id); return n })
+    } else {
+      setBulkDeleting(true)
+      try {
+        const res = await fetch('/api/admin/ad-fuel/ledger', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: Array.from(selectedIds) }),
+        }).catch(() => null)
+        if (!res?.ok) throw new Error('The entries couldn’t be deleted. Try again.')
+        setSelectedIds(new Set())
+      } finally {
+        setBulkDeleting(false)
+      }
+    }
+    setDeleteAsk(null)
     fetchLedger()
     fetchDashboard()
   }
@@ -1195,26 +1194,20 @@ export default function AdFuelPage() {
       )}
 
       {/* ── CLIENT EDIT MODAL (click row on dashboard) ───────────────────────── */}
-      {clientEditModal && (
-        <div className="af-scrim" onClick={() => setClientEditModal(null)}>
-          <div
-            className="af-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="af-edit-title"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="af-modal-head">
-              <div>
-                <h2 className="af-modal-title" id="af-edit-title">{clientEditModal.clientName}</h2>
-                <p className="af-modal-sub">Ad Fuel billing, alerts and auto-pause</p>
-              </div>
-              <button type="button" className="af-iconbtn af-iconbtn--plain" onClick={() => setClientEditModal(null)} aria-label="Close">
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-
-            <div className="af-modal-body af-form">
+      <Dialog
+        open={!!clientEditModal}
+        onClose={() => setClientEditModal(null)}
+        title={clientEditModal?.clientName ?? ''}
+        description="Ad Fuel billing, alerts and auto-pause"
+        busy={clientEditSaving}
+        bodyClassName="af-form"
+        footer={<>
+          <button type="button" onClick={() => setClientEditModal(null)} className="btn btn-secondary" disabled={clientEditSaving}>Cancel</button>
+          <button type="button" onClick={saveClientEdit} disabled={clientEditSaving} className="btn btn-primary">
+            {clientEditSaving ? 'Saving…' : 'Save changes'}
+          </button>
+        </>}
+      >
               <div className="af-form-grid">
                 <div className="af-field">
                   <label className="af-label" htmlFor="af-edit-bill">Bill day <span className="af-opt">1–31</span></label>
@@ -1224,7 +1217,6 @@ export default function AdFuelPage() {
                     value={clientEditForm.billDay}
                     onChange={e => setClientEditForm(f => ({ ...f, billDay: e.target.value }))}
                     className="input"
-                    autoFocus
                   />
                 </div>
                 <div className="af-field">
@@ -1318,42 +1310,40 @@ export default function AdFuelPage() {
               </div>
 
               {clientEditError && <div className="ui-notice ui-notice--danger" role="alert">{clientEditError}</div>}
-            </div>
+      </Dialog>
 
-            <div className="af-modal-foot">
-              <button type="button" onClick={() => setClientEditModal(null)} className="btn btn-secondary">Cancel</button>
-              <button type="button" onClick={saveClientEdit} disabled={clientEditSaving} className="btn btn-primary">
-                {clientEditSaving ? 'Saving…' : 'Save changes'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── DELETE CONFIRM ─────────────────────────────────────────────────────── */}
+      <ConfirmDialog
+        open={!!deleteAsk}
+        tone="danger"
+        title={deleteAsk?.kind === 'bulk'
+          ? `Delete ${selectedIds.size} ${selectedIds.size === 1 ? 'entry' : 'entries'}?`
+          : deleteAsk?.ach ? 'Delete this pending ACH payment?' : 'Delete this ledger entry?'}
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        onClose={() => setDeleteAsk(null)}
+        onConfirm={confirmDelete}
+      >
+        {deleteAsk?.kind === 'bulk'
+          ? 'They come off the ledger, and the Ad Fuel balances are worked out again without them. This can’t be undone.'
+          : 'It comes off the ledger, and the Ad Fuel balance is worked out again without it. This can’t be undone.'}
+      </ConfirmDialog>
 
       {/* ── ADD ENTRY MODAL ───────────────────────────────────────────────────── */}
-      {showAddModal && (
-        <div className="af-scrim" onClick={() => setShowAddModal(false)}>
-          <div
-            className="af-modal af-modal--wide"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="af-add-title"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="af-modal-head">
-              <div>
-                <h2 className="af-modal-title" id="af-add-title">Add ledger entry</h2>
-                <p className="af-modal-sub">A payment or adjustment, in Ad Fuel dollars.</p>
-              </div>
-              <button type="button" className="af-iconbtn af-iconbtn--plain" onClick={() => setShowAddModal(false)} aria-label="Close">
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-
-            <div className="af-modal-body af-form">
+      <Dialog
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        title="Add ledger entry"
+        description="A payment or adjustment, in Ad Fuel dollars."
+        bodyClassName="af-form"
+        footer={<>
+          <button type="button" onClick={() => setShowAddModal(false)} className="btn btn-secondary">Cancel</button>
+          <button type="button" onClick={submitAdd} className="btn btn-primary">Add entry</button>
+        </>}
+      >
               <div className="af-field">
                 <label className="af-label" htmlFor="af-add-client">Client</label>
-                <select id="af-add-client" value={addForm.client_id} onChange={e => setAddForm(f => ({ ...f, client_id: e.target.value }))} className="input" autoFocus>
+                <select id="af-add-client" value={addForm.client_id} onChange={e => setAddForm(f => ({ ...f, client_id: e.target.value }))} className="input">
                   <option value="">Select a client…</option>
                   {rows.map(r => <option key={r.clientId} value={r.clientId}>{r.clientName}</option>)}
                 </select>
@@ -1396,15 +1386,7 @@ export default function AdFuelPage() {
               </div>
 
               {addError && <div className="ui-notice ui-notice--danger" role="alert">{addError}</div>}
-            </div>
-
-            <div className="af-modal-foot">
-              <button type="button" onClick={() => setShowAddModal(false)} className="btn btn-secondary">Cancel</button>
-              <button type="button" onClick={submitAdd} className="btn btn-primary">Add entry</button>
-            </div>
-          </div>
-        </div>
-      )}
+      </Dialog>
     </div>
   )
 }

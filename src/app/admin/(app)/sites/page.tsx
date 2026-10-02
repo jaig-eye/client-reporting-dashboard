@@ -6,7 +6,7 @@
 
 import '@/styles/admin/sites.css'
 import Link from 'next/link'
-import { useState, useEffect, useCallback, useMemo, useRef, useId, type ReactNode, type FormEvent } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   GlobeSimple, Plus, MagnifyingGlass, ArrowClockwise, PencilSimple, TrashSimple, X, CaretDown,
   ArrowUpRight, Code, ShoppingBagOpen, Buildings, IdentificationCard, Info, Copy, Check,
@@ -18,6 +18,7 @@ import BrandLogo from '@/components/ui/BrandLogo'
 import Tile from '@/components/ui/Tile'
 import EmptyState from '@/components/ui/EmptyState'
 import ActionMenu, { copyText, type ActionMenuItem } from '@/components/ui/ActionMenu'
+import Dialog, { ConfirmDialog } from '@/components/ui/Dialog'
 import { PillTabs } from '@/components/ui/PillTabs'
 import { Sk, SkRows } from '@/components/ui/Skeleton'
 
@@ -156,87 +157,6 @@ function SourceMark({ source }: { source: string }) {
 }
 const SOURCE_LABEL: Record<string, string> = { Profile: 'client profile', WordPress: 'WordPress connection', GSC: 'Search Console property' }
 
-// ─── dialog shell: focus in, Tab kept inside, Escape out, focus back where it was ─────────────
-
-function useDialogFocus(onClose: () => void, locked: boolean, returnFocus?: string) {
-  const ref = useRef<HTMLDivElement>(null)
-  const returnRef = useRef(returnFocus)
-  returnRef.current = returnFocus
-  const closeRef = useRef(onClose)
-  closeRef.current = onClose
-  const lockedRef = useRef(locked)
-  lockedRef.current = locked
-
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
-    const root = ref.current
-    const first = root?.querySelector<HTMLElement>('[data-autofocus]') ?? root?.querySelector<HTMLElement>('input, select, textarea, button')
-    first?.focus()
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { if (!lockedRef.current) { e.stopPropagation(); closeRef.current() } return }
-      if (e.key !== 'Tab' || !ref.current) return
-      const f = Array.from(ref.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])'))
-      if (!f.length) return
-      const a = f[0], z = f[f.length - 1]
-      if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus() }
-      else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-      // Opened from a ⋯ menu item, the opener has gone with the menu: go back to the menu's button.
-      const back = opener && opener !== document.body && opener.isConnected ? opener
-        : returnRef.current ? document.querySelector<HTMLElement>(returnRef.current) : null
-      back?.focus?.()
-    }
-  }, [])
-  return ref
-}
-
-function Dialog({ title, description, onClose, locked = false, size, role = 'dialog', children, footer, onSubmit, returnFocus }: {
-  title: string
-  description?: ReactNode
-  onClose: () => void
-  /** While a save runs, Escape and the backdrop don't close it. */
-  locked?: boolean
-  size?: 'sm'
-  role?: 'dialog' | 'alertdialog'
-  children?: ReactNode
-  footer: ReactNode
-  /** Makes the dialog a form, so Enter in a field submits. */
-  onSubmit?: () => void
-  /** Where focus goes on close when the element that opened it no longer exists (a selector). */
-  returnFocus?: string
-}) {
-  const ref = useDialogFocus(onClose, locked, returnFocus)
-  const titleId = useId()
-  const body = (
-    <>
-      <header className="st-dialog-head">
-        <div className="st-dialog-titles">
-          <h2 className="st-dialog-title" id={titleId}>{title}</h2>
-          {description && <p className="st-dialog-desc">{description}</p>}
-        </div>
-        <button type="button" className="st-dialog-close" onClick={onClose} disabled={locked} aria-label="Close"><X size={16} weight="bold" /></button>
-      </header>
-      {children && <div className="st-dialog-body">{children}</div>}
-      <footer className="st-dialog-foot">{footer}</footer>
-    </>
-  )
-  return (
-    <div className="st-scrim" onMouseDown={e => { if (e.target === e.currentTarget && !locked) onClose() }}>
-      <div ref={ref} role={role} aria-modal="true" aria-labelledby={titleId} className={`st-dialog${size ? ` st-dialog--${size}` : ''}`}>
-        {onSubmit
-          ? <form onSubmit={(e: FormEvent) => { e.preventDefault(); onSubmit() }} style={{ display: 'contents' }}>{body}</form>
-          : body}
-      </div>
-    </div>
-  )
-}
-
 // ─── page ─────────────────────────────────────────────────────────────────────
 
 export default function SitesPage() {
@@ -268,8 +188,6 @@ export default function SitesPage() {
 
   // Delete confirm
   const [deleteId,    setDeleteId]    = useState<string | null>(null)
-  const [deleting,    setDeleting]    = useState(false)
-  const [deleteError, setDeleteError] = useState('')
 
   // Audit expand / data
   const [openAuditId,  setOpenAuditId]  = useState<string | null>(null)
@@ -483,17 +401,12 @@ export default function SitesPage() {
     setSaving(false)
   }
 
+  // A failure throws, and ConfirmDialog shows it and stays open.
   async function handleDelete(id: string) {
-    setDeleting(true)
-    setDeleteError('')
-    try {
-      const res = await fetch(`/api/admin/sites/${id}`, { method: 'DELETE' })
-      if (res.ok) { setDeleteId(null); refreshAll() }
-      else setDeleteError('The site couldn’t be deleted. Try again.')
-    } catch {
-      setDeleteError('The site couldn’t be deleted. Try again.')
-    }
-    setDeleting(false)
+    const res = await fetch(`/api/admin/sites/${id}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) throw new Error('The site couldn’t be deleted. Try again.')
+    setDeleteId(null)
+    refreshAll()
   }
 
   async function handleAuditToggle(siteId: string, enabled: boolean, scope: string) {
@@ -574,7 +487,7 @@ export default function SitesPage() {
         : { key: 'audit', label: 'Turn on weekly audit', sub: 'Audits now, then every Monday', icon: <ListChecks size={15} />, disabled: running,
             onSelect: () => { if (openAuditId !== site.id) toggleAudit(site.id); handleAuditToggle(site.id, true, site.audit_scope ?? 'key') } },
       { key: 'delete', label: 'Delete site', sub: 'Removes it and its check history', icon: <TrashSimple size={15} />, danger: true, separated: true,
-        onSelect: () => { setDeleteError(''); setDeleteId(site.id) } },
+        onSelect: () => setDeleteId(site.id) },
     ]
   }
 
@@ -1033,16 +946,16 @@ export default function SitesPage() {
       </div>
 
       {/* Add / Edit */}
-      {modalOpen && (
-        <Dialog
+      <Dialog
+          open={modalOpen}
           title={editSite ? 'Edit site' : 'Add site'}
-          returnFocus={editSite ? `[data-site="${editSite.id}"] .ui-menu-trigger` : undefined}
           description={editSite ? bareUrl(editSite.url) : 'Once it’s added, we check its uptime every 2 minutes and its SSL certificate weekly.'}
           onClose={() => setModalOpen(false)}
-          locked={saving}
+          busy={saving}
           onSubmit={handleSave}
+          bodyClassName="st-form"
           footer={<>
-            {saveError && <p className="st-form-error" role="alert">{saveError}</p>}
+            {saveError && <p className="ui-dialog-error" role="alert">{saveError}</p>}
             <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={saving || !canSave}>
               {saving ? 'Saving…' : editSite ? 'Save changes' : 'Add site'}
@@ -1051,7 +964,7 @@ export default function SitesPage() {
         >
           <div className="st-field">
             <label className="st-field-label" htmlFor="st-f-name">Name</label>
-            <input id="st-f-name" data-autofocus className="input" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Harbor Dental Studio" />
+            <input id="st-f-name" className="input" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Harbor Dental Studio" />
           </div>
           <div className="st-field">
             <label className="st-field-label" htmlFor="st-f-client">Client <span className="st-field-opt">Optional</span></label>
@@ -1143,28 +1056,20 @@ export default function SitesPage() {
             <label className="st-field-label" htmlFor="st-f-notes">Notes <span className="st-field-opt">Optional</span></label>
             <textarea id="st-f-notes" className="input" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} />
           </div>
-        </Dialog>
-      )}
+      </Dialog>
 
       {/* Delete confirm */}
-      {deleteId && (
-        <Dialog
-          size="sm"
-          role="alertdialog"
-          title={siteToDelete ? `Delete ${siteToDelete.name}?` : 'Delete this site?'}
-          description="This permanently deletes the site and all its check history. It can’t be undone."
-          onClose={() => setDeleteId(null)}
-          returnFocus={`[data-site="${deleteId}"] .ui-menu-trigger`}
-          locked={deleting}
-          footer={<>
-            {deleteError && <p className="st-form-error" role="alert">{deleteError}</p>}
-            <button type="button" className="btn btn-secondary" data-autofocus onClick={() => setDeleteId(null)} disabled={deleting}>Cancel</button>
-            <button type="button" className="btn btn-danger" onClick={() => handleDelete(deleteId)} disabled={deleting}>
-              <TrashSimple size={15} aria-hidden />{deleting ? 'Deleting…' : 'Delete site'}
-            </button>
-          </>}
-        />
-      )}
+      <ConfirmDialog
+        open={!!deleteId}
+        tone="danger"
+        title={siteToDelete ? `Delete ${siteToDelete.name}?` : 'Delete this site?'}
+        confirmLabel="Delete site"
+        busyLabel="Deleting…"
+        onClose={() => setDeleteId(null)}
+        onConfirm={() => deleteId ? handleDelete(deleteId) : undefined}
+      >
+        This permanently deletes the site and all its check history. It can’t be undone.
+      </ConfirmDialog>
     </div>
   )
 }

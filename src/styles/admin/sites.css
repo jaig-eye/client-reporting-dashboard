@@ -292,34 +292,8 @@
 
 /* ── Dialogs ──────────────────────────────────────────────────────────────── */
 
-.st-scrim {
-  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px;
-  background: color-mix(in srgb, black 46%, transparent); animation: st-fade 0.16s ease-out;
-}
-.st-dialog {
-  display: flex; flex-direction: column; width: min(560px, 100%); max-height: calc(100dvh - 32px);
-  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
-  animation: st-rise 0.2s var(--ease-out);
-}
-.st-dialog--sm { width: min(400px, 100%); }
-.st-dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border-subtle); }
-.st-dialog-titles { flex: 1; min-width: 0; }
-.st-dialog-title { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); }
-.st-dialog-desc { margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
-.st-dialog-close {
-  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin: -4px -6px 0 0;
-  border: none; border-radius: var(--radius-sm); background: none; color: var(--text-muted); cursor: pointer;
-}
-.st-dialog-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-.st-dialog-close:focus-visible { outline: none; box-shadow: var(--ring); }
-.st-dialog-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
-.st-dialog-foot {
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
-  padding: 14px 20px; border-top: 1px solid var(--border-subtle);
-}
-.st-dialog-foot .st-form-error { margin-right: auto; }
-.st-dialog--sm .st-dialog-head { border-bottom: none; padding-bottom: 6px; }
-.st-dialog--sm .st-dialog-foot { border-top: none; padding-top: 10px; }
+/* The add / edit form inside the shared Dialog. */
+.st-form { display: flex; flex-direction: column; gap: 16px; }
 
 .st-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .st-field-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
@@ -339,18 +313,9 @@
 .st-suggest:focus-visible { outline: none; box-shadow: var(--ring); }
 .st-suggest-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .st-suggest-src { flex-shrink: 0; color: var(--text-muted); }
-.st-form-error { margin: 0; font-size: 0.8125rem; color: var(--red-fg); }
 
-@keyframes st-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes st-rise { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 639px) {
-  .st-scrim { align-items: flex-end; padding: 0; }
-  .st-dialog { width: 100%; max-height: 92dvh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: none; }
-  .st-dialog--sm { width: 100%; }
-  .st-dialog-head, .st-dialog-body, .st-dialog-foot { padding-left: 16px; padding-right: 16px; }
-  .st-dialog-foot { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  .st-dialog-foot .btn { flex: 1 1 auto; justify-content: center; }
   .st-fieldrow { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -360,6 +325,6 @@
 @keyframes st-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .st-panel, .st-scrim, .st-dialog, .st-spin { animation: none; }
+  .st-panel, .st-spin { animation: none; }
   .st-row, .st-list, .st-expand svg, .st-domain svg { transition: none; }
 }

@@ -251,40 +251,15 @@ a.co-stat:focus-visible { outline: none; box-shadow: var(--ring); }
 .co-notes-sk { display: flex; flex-direction: column; gap: 6px; }
 .co-notes-sk > span { border-radius: var(--radius); }
 
-/* ── Dialog (expanded note) ─────────────────────────────────────────────── */
+/* ── Expanded note (inside the shared Dialog) ───────────────────────────── */
 
-.co-scrim {
-  position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center;
-  padding: 16px; background: rgba(15, 23, 42, 0.5); animation: co-fade 0.16s ease-out;
-}
-.co-dialog {
-  display: flex; flex-direction: column; width: 100%; max-width: 560px; max-height: min(84vh, 760px);
-  border-radius: var(--radius-lg); background: var(--bg-elevated); box-shadow: var(--shadow-lg), 0 0 0 1px var(--border);
-  animation: co-rise 0.2s var(--ease-out);
-}
-.co-dialog:focus { outline: none; }
-.co-dialog-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 18px 14px; border-bottom: 1px solid var(--border-subtle); }
-.co-dialog-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.co-dialog-title { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); overflow-wrap: anywhere; }
-.co-dialog-title--empty { color: var(--text-muted); font-weight: 500; }
-.co-dialog-tools { display: flex; gap: 2px; flex-shrink: 0; }
-.co-dialog-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.co-note-body { display: flex; flex-direction: column; gap: 12px; }
+.co-note-body textarea.input { line-height: 1.6; resize: vertical; }
+.co-edit-title { font-weight: 600; }
+.co-untitled { color: var(--text-muted); font-weight: 500; }
 .co-dialog-content { margin: 0; font-size: 0.875rem; line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
-.co-dialog-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-  padding: 12px 18px; border-top: 1px solid var(--border-subtle);
-}
-.co-dialog-meta { min-width: 0; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
-.co-dialog-foot .ui-notice { margin: 0; width: 100%; }
-.co-dialog textarea.input { line-height: 1.6; resize: vertical; }
-@media (max-width: 639px) {
-  .co-scrim { align-items: flex-end; padding: 0; }
-  .co-dialog { max-width: none; max-height: 92vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
-  .co-dialog-foot .co-actions { width: 100%; justify-content: flex-end; }
-}
-@keyframes co-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes co-rise { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .co-scrim, .co-dialog { animation: none; } }
+.co-dialog-meta { margin: 4px 0 0; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); }
+.co-note-kind { display: inline-flex; margin-top: 4px; }
 
 /* ── Billing tab ──────────────────────────────────────────────────────────── */
 
@@ -303,5 +278,3 @@ a.co-stat:focus-visible { outline: none; box-shadow: var(--ring); }
 /* The global focus ring uses --accent-subtle, a fixed light tint that reads as a white patch in
    dark mode; --accent-soft is mixed from the accent and holds in both themes. */
 .co-scope .input:focus, .co-scope .input:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
-.co-dialog-head-text .input { align-self: stretch; }
-:root[data-theme="dark"] .co-scrim { background: rgba(0, 0, 0, 0.62); }

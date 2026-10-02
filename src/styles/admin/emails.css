@@ -53,34 +53,9 @@
 
 /* ── Dialogs ─────────────────────────────────────────────────────────────── */
 
-.em-scrim {
-  position: fixed; inset: 0; z-index: 1000; display: flex;
-  background: rgba(15, 23, 42, 0.5); animation: em-fade 0.16s ease-out;
-}
-.em-scrim--center { align-items: center; justify-content: center; padding: 16px; }
-.em-dialog {
-  display: flex; flex-direction: column; width: 100%; max-width: 560px; max-height: min(90vh, 860px);
-  border-radius: var(--radius-lg); background: var(--bg-elevated); box-shadow: var(--shadow-lg), 0 0 0 1px var(--border);
-  animation: em-rise 0.2s var(--ease-out);
-}
-.em-dialog:focus, .em-sheet:focus { outline: none; }
-.em-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border-subtle); flex-shrink: 0; }
-.em-head-text { flex: 1; min-width: 0; }
-.em-title { margin: 0; font-size: 1.0625rem; font-weight: 650; letter-spacing: -0.015em; line-height: 1.3; color: var(--text-primary); overflow-wrap: anywhere; }
-.em-sub { margin: 3px 0 0; font-size: 0.8125rem; line-height: 1.45; color: var(--text-muted); }
-.em-body { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px; }
-.em-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 14px 20px; border-top: 1px solid var(--border-subtle); flex-shrink: 0; }
-.em-foot-end { display: flex; gap: 8px; margin-left: auto; }
+/* Both dialogs are the shared Dialog; these lay out what goes inside them. */
 
-.em-iconbtn {
-  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: 34px; height: 34px; margin: -4px -6px 0 0; padding: 0; border: none; border-radius: var(--radius-sm);
-  background: none; color: var(--text-muted); cursor: pointer;
-}
-.em-iconbtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.em-iconbtn:focus-visible { outline: none; box-shadow: var(--ring); }
-
-.em-steps { display: flex; gap: 6px; padding: 12px 20px 0; flex-shrink: 0; }
+.em-steps { display: flex; gap: 6px; margin: -4px 0 18px; }
 .em-steps span { flex: 1; height: 3px; border-radius: var(--radius-pill); background: var(--bg-muted); transition: background 0.2s; }
 .em-steps span[data-on="true"] { background: var(--accent); }
 
@@ -105,25 +80,18 @@
 .em-drop img { max-width: 100%; max-height: 300px; border-radius: var(--radius-sm); object-fit: contain; }
 .em-drop-title { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
 .em-drop-text { font-size: 0.78rem; }
-.em-frame { display: block; width: 100%; border: none; border-radius: var(--radius); background: var(--bg-surface); box-shadow: 0 0 0 1px var(--border); }
+/* An email is designed for a white page, so the preview stays light in dark mode too: the frame
+   gets a light canvas (a system colour, not a theme one), or dark text lands on a dark sheet. */
+.em-frame { display: block; width: 100%; border: none; border-radius: var(--radius); color-scheme: light; background: Canvas; box-shadow: 0 0 0 1px var(--border); }
 .em-details summary { cursor: pointer; font-size: 0.78rem; font-weight: 500; color: var(--text-muted); }
 .em-details summary:focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--radius-xs); }
 
 @media (max-width: 639px) {
-  .em-scrim--center { align-items: flex-end; padding: 0; }
-  .em-dialog { max-width: none; max-height: 94vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
-  .em-head, .em-body, .em-foot { padding-left: 16px; padding-right: 16px; }
-  .em-steps { padding-left: 16px; padding-right: 16px; }
   .em-scope .btn-sm { min-height: 36px; }
 }
 
-/* The detail view: a sheet from the right, preview on the left, details on the right. */
-.em-sheet {
-  display: flex; flex-direction: column; margin-left: auto; width: 100%; max-width: 960px; height: 100%;
-  background: var(--bg-elevated); box-shadow: var(--shadow-lg), -1px 0 0 var(--border);
-  animation: em-slide 0.24s var(--ease-out);
-}
-.em-detail { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; }
+/* The detail view: preview on the left, details on the right, each scrolling on its own. */
+.ui-dialog-body.em-detail { padding: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr) 380px; }
 .em-preview { min-width: 0; overflow: auto; padding: 20px; background: var(--bg-subtle); border-right: 1px solid var(--border-subtle); }
 .em-preview img { display: block; width: 100%; border-radius: var(--radius); box-shadow: 0 0 0 1px var(--border), var(--shadow-sm); }
 .em-preview .em-frame { height: 640px; }
@@ -150,7 +118,7 @@
 .em-review textarea { resize: vertical; margin-bottom: 10px; background: var(--bg-surface); }
 .em-review-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .em-review-actions .btn { justify-content: center; }
-.em-reviewed { font-size: 0.78rem; color: var(--text-muted); }
+.em-reviewed { display: block; margin-top: 2px; font-size: 0.75rem; color: var(--text-faint); }
 .em-delete { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .em-delete-q { font-size: 0.8125rem; color: var(--text-secondary); margin-right: auto; }
 .em-danger-text, .em-danger-text:hover:not(:disabled) { color: var(--red-fg); }
@@ -165,22 +133,18 @@
 .em-linkbtn--danger:hover { background: var(--red-subtle); }
 
 @media (max-width: 899px) {
-  .em-sheet { overflow-y: auto; }
-  .em-detail { display: block; flex: none; }
+  /* One column: the body scrolls as a whole, under a header that stays put. */
+  .ui-dialog-body.em-detail { display: block; overflow: auto; }
   .em-preview { overflow: visible; border-right: none; border-bottom: 1px solid var(--border-subtle); }
   .em-preview .em-frame { height: 520px; }
   .em-side { overflow: visible; }
 }
 @media (max-width: 639px) {
   .em-preview, .em-side { padding: 16px; }
-  .em-sheet .em-head { padding: 14px 16px 12px; }
   .em-preview .em-frame { height: 460px; }
 }
 
-@keyframes em-fade  { from { opacity: 0; } to { opacity: 1; } }
-@keyframes em-rise  { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
-@keyframes em-slide { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .em-scrim, .em-dialog, .em-sheet { animation: none; } .em-steps span { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .em-steps span { transition: none; } }
 
 /* ── Schedule panel ──────────────────────────────────────────────────────── */
 
@@ -214,7 +178,4 @@
 /* One height for every single-line field, whatever the browser does to date and select boxes. */
 .em-scope input.input:not([type="checkbox"]), .em-scope select.input { height: 38px; padding-top: 0; padding-bottom: 0; }
 .em-scope .em-mono.input { font-size: 0.8125rem; }
-:root[data-theme="dark"] .em-scrim { background: rgba(0, 0, 0, 0.62); }
-@media (max-width: 899px) {
-  .em-sheet .em-head { position: sticky; top: 0; z-index: 2; background: var(--bg-elevated); }
-}
+

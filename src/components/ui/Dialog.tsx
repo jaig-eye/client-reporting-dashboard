@@ -4,12 +4,13 @@
 // want height; both become a bottom sheet on a phone. It portals to <body> so no table or card can
 // clip it, and while open it:
 //   - traps Tab inside itself and focuses the first field, else the main action (or `initialFocus`),
-//   - closes on Escape and on a click outside (not while `busy`),
+//   - closes on Escape and on a click outside (not while `busy`); `onEscape` can step back out of
+//     an edit first instead,
 //   - stops the page behind from scrolling (counted, so a dialog over a dialog unlocks correctly),
 //   - gives focus back to whatever had it when it opened.
 // ConfirmDialog is the common case: a question, what will happen, and one action.
 
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
 
@@ -29,7 +30,7 @@ function unlockScroll() {
 
 export default function Dialog({
   open, onClose, title, description, children, footer, size = 'md', variant = 'center', busy = false,
-  initialFocus, role = 'dialog', leading, bodyClassName,
+  initialFocus, role = 'dialog', leading, actions, bodyClassName, className, onSubmit, onEscape,
 }: {
   open: boolean
   onClose: () => void
@@ -43,13 +44,22 @@ export default function Dialog({
   variant?: 'center' | 'side'
   /** While true the dialog can't be dismissed (a save is running). */
   busy?: boolean
-  /** What to focus on open; otherwise the first field, otherwise the first button. */
-  initialFocus?: RefObject<HTMLElement | null>
+  /** What to focus on open; otherwise the first field, otherwise the main action. 'dialog' focuses
+   *  the panel itself, for a details view whose first field isn't where a reader starts. */
+  initialFocus?: RefObject<HTMLElement | null> | 'dialog'
   /** alertdialog for a question that needs an answer (a destructive confirm). */
   role?: 'dialog' | 'alertdialog'
   /** A logo or icon tile before the title. */
   leading?: ReactNode
+  /** Small buttons in the header, before the close button (pin, edit). */
+  actions?: ReactNode
   bodyClassName?: string
+  /** Extra classes on the panel, for a page's own layout inside it. */
+  className?: string
+  /** Makes the dialog a form: Enter in a field submits, and the footer's submit button works. */
+  onSubmit?: () => void
+  /** What Escape does, when it shouldn't simply close (back out of an edit first). */
+  onEscape?: () => void
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -59,10 +69,12 @@ export default function Dialog({
 
   // Latest values for the listeners, so the effect below runs once per opening.
   const closeRef = useRef(onClose); closeRef.current = onClose
+  const escapeRef = useRef(onEscape); escapeRef.current = onEscape
   const busyRef = useRef(busy); busyRef.current = busy
 
   useEffect(() => {
-    if (!open) return
+    // Waits for the portal: a dialog rendered already open has no panel on its first pass.
+    if (!open || !mounted) return
     const returnTo = document.activeElement as HTMLElement | null
     lockScroll()
     const raf = requestAnimationFrame(() => {
@@ -70,6 +82,7 @@ export default function Dialog({
       if (!panel) return
       // A field first; otherwise the footer's main action (its last button); otherwise anything.
       const footer = Array.from(panel.querySelectorAll<HTMLElement>(`.ui-dialog-foot :is(${FOCUSABLE})`))
+      if (initialFocus === 'dialog') { panel.focus(); return }
       const target = initialFocus?.current
         ?? panel.querySelector<HTMLElement>('.ui-dialog-body :is(input, select, textarea):not([disabled])')
         ?? footer[footer.length - 1]
@@ -84,14 +97,14 @@ export default function Dialog({
         // A dialog stacked on top handles its own Escape.
         if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return
         e.stopPropagation()
-        if (!busyRef.current) closeRef.current()
+        if (!busyRef.current) (escapeRef.current ?? closeRef.current)()
         return
       }
       if (e.key !== 'Tab') return
       const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.offsetParent !== null || el === document.activeElement)
       if (items.length === 0) { e.preventDefault(); panel.focus(); return }
       const first = items[0], last = items[items.length - 1]
-      if (e.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) { e.preventDefault(); last.focus() }
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === panel || !panel.contains(document.activeElement))) { e.preventDefault(); last.focus() }
       else if (!e.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) { e.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKey)
@@ -102,9 +115,27 @@ export default function Dialog({
       // Back to where the person was, if it is still on the page.
       if (returnTo && document.contains(returnTo)) returnTo.focus()
     }
-  }, [open, initialFocus])
+  }, [open, mounted, initialFocus])
 
   if (!open || !mounted) return null
+
+  const content = (
+    <>
+      <header className="ui-dialog-head">
+        {leading}
+        <div className="ui-dialog-heading">
+          <h2 className="ui-dialog-title" id={titleId}>{title}</h2>
+          {description && <div className="ui-dialog-desc" id={descId}>{description}</div>}
+        </div>
+        {actions && <div className="ui-dialog-actions">{actions}</div>}
+        <button type="button" className="ui-dialog-x" onClick={onClose} disabled={busy} aria-label="Close">
+          <X size={16} weight="bold" aria-hidden />
+        </button>
+      </header>
+      {children != null && <div className={`ui-dialog-body${bodyClassName ? ` ${bodyClassName}` : ''}`}>{children}</div>}
+      {footer && <footer className="ui-dialog-foot">{footer}</footer>}
+    </>
+  )
 
   return createPortal(
     <div
@@ -113,7 +144,7 @@ export default function Dialog({
     >
       <div
         ref={panelRef}
-        className={`ui-dialog ui-dialog--${size}${variant === 'side' ? ' ui-dialog--side' : ''}`}
+        className={`ui-dialog ui-dialog--${size}${variant === 'side' ? ' ui-dialog--side' : ''}${className ? ` ${className}` : ''}`}
         role={role}
         aria-modal="true"
         aria-labelledby={titleId}
@@ -121,18 +152,9 @@ export default function Dialog({
         aria-busy={busy || undefined}
         tabIndex={-1}
       >
-        <header className="ui-dialog-head">
-          {leading}
-          <div className="ui-dialog-heading">
-            <h2 className="ui-dialog-title" id={titleId}>{title}</h2>
-            {description && <p className="ui-dialog-desc" id={descId}>{description}</p>}
-          </div>
-          <button type="button" className="ui-dialog-x" onClick={onClose} disabled={busy} aria-label="Close">
-            <X size={16} weight="bold" aria-hidden />
-          </button>
-        </header>
-        {children != null && <div className={`ui-dialog-body${bodyClassName ? ` ${bodyClassName}` : ''}`}>{children}</div>}
-        {footer && <footer className="ui-dialog-foot">{footer}</footer>}
+        {onSubmit
+          ? <form className="ui-dialog-form" onSubmit={(e: FormEvent) => { e.preventDefault(); if (!busy) onSubmit() }}>{content}</form>
+          : content}
       </div>
     </div>,
     document.querySelector('.adm') ?? document.body,

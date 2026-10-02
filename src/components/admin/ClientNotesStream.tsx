@@ -2,10 +2,11 @@
 
 // Client → Overview → Notes: everything worth remembering about a client (calls, logins,
 // decisions), filterable by kind and searchable. A note opens in a dialog to read in full, edit,
-// pin or delete. Rendered as its own Section so the search and Add note sit in the section header.
+// pin or delete (the shared Dialog). Rendered as its own Section so the search and Add note sit in
+// the section header.
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { PushPin, Trash, PencilSimple, X, MagnifyingGlass, Plus } from '@phosphor-icons/react'
+import { PushPin, Trash, PencilSimple, MagnifyingGlass, Plus } from '@phosphor-icons/react'
 import {
   NOTE_TEMPLATES,
   NOTE_TEMPLATE_LIST,
@@ -18,6 +19,7 @@ import { NoteSecretInput, NoteSecretReveal } from './NoteSecretField'
 import Section from '@/components/ui/Section'
 import { PillTabs } from '@/components/ui/PillTabs'
 import { Sk } from '@/components/ui/Skeleton'
+import Dialog from '@/components/ui/Dialog'
 
 interface NoteUser {
   name:       string
@@ -72,41 +74,6 @@ function sortNotes(arr: Note[]): Note[] {
     if (a.pinned !== b.pinned) return b.pinned ? 1 : -1
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
-}
-
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-/**
- * Dialog focus: move focus in on open, keep Tab inside, Escape calls onEscape, give focus back to
- * whatever opened it on close, and stop the page scrolling underneath.
- */
-function useDialogFocus(open: boolean, ref: React.RefObject<HTMLElement>, onEscape: () => void) {
-  const escRef = useRef(onEscape)
-  useEffect(() => { escRef.current = onEscape })
-  useEffect(() => {
-    if (!open) return
-    const opener = document.activeElement as HTMLElement | null
-    const root = ref.current
-    root?.focus()
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); escRef.current(); return }
-      if (e.key !== 'Tab' || !root) return
-      const f = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.getClientRects().length > 0)
-      if (!f.length) return
-      const first = f[0], last = f[f.length - 1]
-      const active = document.activeElement
-      if (e.shiftKey && (active === first || active === root)) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-      if (opener && document.contains(opener)) opener.focus()
-    }
-  }, [open, ref])
 }
 
 export default function ClientNotesStream({
@@ -335,12 +302,11 @@ export default function ClientNotesStream({
 
   const expandedTemplate = expanded ? templateFor(expanded.category) : null
 
-  const dialogRef = useRef<HTMLDivElement>(null)
   function closeExpanded() { setExpanded(null); setEditing(false) }
-  // Escape steps back out of editing first, then closes.
-  useDialogFocus(!!expanded, dialogRef, () => {
-    if (editing) { setEditing(false); setSaveError(null) } else closeExpanded()
-  })
+  function stopEditing() { setEditing(false); setSaveError(null) }
+  // The Edit button goes away once editing starts, so focus moves to the title rather than the page.
+  const editTitleRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (editing) editTitleRef.current?.focus() }, [editing])
 
   return (
     <Section
@@ -521,125 +487,101 @@ export default function ClientNotesStream({
       )}
 
       {/* Expanded note */}
-      {expanded && expandedTemplate && (
-        <div className="co-scrim" onClick={e => { if (e.target === e.currentTarget) closeExpanded() }}>
-          <div
-            ref={dialogRef}
-            className="co-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={expanded.title ?? `${expandedTemplate.label} note`}
-            tabIndex={-1}
+      <Dialog
+        open={!!(expanded && expandedTemplate)}
+        onClose={closeExpanded}
+        // Escape steps back out of editing first, then closes.
+        onEscape={() => { if (editing) stopEditing(); else closeExpanded() }}
+        initialFocus="dialog"
+        title={editing ? 'Edit note' : expanded?.title ?? <span className="co-untitled">Untitled note</span>}
+        description={expandedTemplate && <span className="co-note-kind"><NoteCategoryChip template={expandedTemplate} size="md" /></span>}
+        actions={expanded && <>
+          {!editing && (
+            <button type="button" className="co-iconbtn" onClick={startEdit} aria-label="Edit note" title="Edit note">
+              <PencilSimple size={16} aria-hidden />
+            </button>
+          )}
+          <button
+            type="button"
+            className="co-iconbtn"
+            onClick={() => void togglePin(expanded)}
+            aria-pressed={expanded.pinned}
+            aria-label={expanded.pinned ? 'Unpin note' : 'Pin note to the top'}
+            title={expanded.pinned ? 'Unpin' : 'Pin to the top'}
           >
-            <div className="co-dialog-head">
-              <div className="co-dialog-head-text">
-                <NoteCategoryChip template={expandedTemplate} size="md" />
-                {editing ? (
-                  <input
-                    className="input"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    placeholder="Title (optional)"
-                    aria-label="Title"
-                    style={{ fontWeight: 600 }}
-                  />
-                ) : (
-                  <h2 className={`co-dialog-title${expanded.title ? '' : ' co-dialog-title--empty'}`}>
-                    {expanded.title ?? 'Untitled note'}
-                  </h2>
-                )}
-              </div>
-              <div className="co-dialog-tools">
-                {!editing && (
-                  <button type="button" className="co-iconbtn" onClick={startEdit} aria-label="Edit note" title="Edit note">
-                    <PencilSimple size={16} aria-hidden />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="co-iconbtn"
-                  onClick={() => void togglePin(expanded)}
-                  aria-pressed={expanded.pinned}
-                  aria-label={expanded.pinned ? 'Unpin note' : 'Pin note to the top'}
-                  title={expanded.pinned ? 'Unpin' : 'Pin to the top'}
-                >
-                  <PushPin size={16} weight={expanded.pinned ? 'fill' : 'regular'} aria-hidden />
-                </button>
-                <button type="button" className="co-iconbtn" onClick={closeExpanded} aria-label="Close" title="Close">
-                  <X size={16} aria-hidden />
-                </button>
-              </div>
-            </div>
+            <PushPin size={16} weight={expanded.pinned ? 'fill' : 'regular'} aria-hidden />
+          </button>
+        </>}
+        bodyClassName="co-note-body"
+        footer={expanded && (editing ? <>
+          {saveError && <p className="ui-dialog-error" role="alert">{saveError}</p>}
+          <button type="button" className="btn btn-secondary" onClick={stopEditing}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={() => void saveEdit(expanded)} disabled={editSaving}>
+            {editSaving ? 'Saving…' : 'Save changes'}
+          </button>
+        </> : (
+          <button type="button" className="btn btn-ghost co-danger-text" onClick={() => void deleteNote(expanded.id)}>
+            <Trash size={14} aria-hidden />Delete note
+          </button>
+        ))}
+      >
+        {expanded && expandedTemplate && <>
+          {editing ? (
+            <>
+              <input
+                ref={editTitleRef}
+                className="input co-edit-title"
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                placeholder="Title (optional)"
+                aria-label="Title"
+              />
+              <NoteTemplateFields
+                template={expandedTemplate}
+                values={editFields}
+                onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
+              />
 
-            <div className="co-dialog-body">
-              {editing ? (
-                <>
-                  <NoteTemplateFields
-                    template={expandedTemplate}
-                    values={editFields}
-                    onChange={(k, v) => setEditFields(prev => ({ ...prev, [k]: v }))}
+              {expandedTemplate.hasSecret && (
+                <div>
+                  <NoteSecretInput
+                    hasSecret={!!expanded.has_secret && !editSecretClear}
+                    value={editSecret}
+                    onChange={v => { setEditSecret(v); setEditSecretClear(false) }}
+                    onClear={() => { setEditSecret(''); setEditSecretClear(true) }}
                   />
-
-                  {expandedTemplate.hasSecret && (
-                    <div>
-                      <NoteSecretInput
-                        hasSecret={!!expanded.has_secret && !editSecretClear}
-                        value={editSecret}
-                        onChange={v => { setEditSecret(v); setEditSecretClear(false) }}
-                        onClear={() => { setEditSecret(''); setEditSecretClear(true) }}
-                      />
-                      {editSecretClear && (
-                        <p className="co-hint co-neg">The stored password will be removed when you save.</p>
-                      )}
-                    </div>
+                  {editSecretClear && (
+                    <p className="co-hint co-neg">The stored password will be removed when you save.</p>
                   )}
-                  <textarea
-                    className="input"
-                    value={editContent}
-                    onChange={e => setEditContent(e.target.value)}
-                    aria-label={expandedTemplate.bodyLabel}
-                    rows={8}
-                  />
-                </>
-              ) : (
-                <>
-                  {/* The credential is fetched on demand from the audited reveal
-                      endpoint — it is never part of the note payload. */}
-                  <NoteSecretReveal
-                    clientId={clientId}
-                    noteId={expanded.id}
-                    hasSecret={!!expanded.has_secret}
-                  />
-                  <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
-                  {expanded.content && <p className="co-dialog-content">{expanded.content}</p>}
-                </>
-              )}
-            </div>
-
-            <div className="co-dialog-foot">
-              {editing && saveError && <div className="ui-notice ui-notice--danger" role="alert">{saveError}</div>}
-              <span className="co-dialog-meta">
-                Posted by {expanded.users?.name ?? 'Admin'}, {relativeTime(expanded.created_at)}
-                {expanded.updated_at && <> · edited by {expanded.editor?.name ?? 'Admin'} {relativeTime(expanded.updated_at)}</>}
-              </span>
-              {editing ? (
-                <div className="co-actions">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEditing(false); setSaveError(null) }}>
-                    Cancel
-                  </button>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveEdit(expanded)} disabled={editSaving}>
-                    {editSaving ? 'Saving…' : 'Save changes'}
-                  </button>
                 </div>
-              ) : (
-                <button type="button" className="btn btn-ghost btn-sm co-danger-text" onClick={() => void deleteNote(expanded.id)}>
-                  <Trash size={14} aria-hidden />Delete note
-                </button>
               )}
-            </div>
-          </div>
-        </div>
-      )}
+              <textarea
+                className="input"
+                value={editContent}
+                onChange={e => setEditContent(e.target.value)}
+                aria-label={expandedTemplate.bodyLabel}
+                rows={8}
+              />
+            </>
+          ) : (
+            <>
+              {/* The credential is fetched on demand from the audited reveal
+                  endpoint — it is never part of the note payload. */}
+              <NoteSecretReveal
+                clientId={clientId}
+                noteId={expanded.id}
+                hasSecret={!!expanded.has_secret}
+              />
+              <NoteFieldsReadout template={expandedTemplate} values={expanded.fields ?? {}} />
+              {expanded.content && <p className="co-dialog-content">{expanded.content}</p>}
+            </>
+          )}
+          <p className="co-dialog-meta">
+            Posted by {expanded.users?.name ?? 'Admin'}, {relativeTime(expanded.created_at)}
+            {expanded.updated_at && <>; edited by {expanded.editor?.name ?? 'Admin'} {relativeTime(expanded.updated_at)}</>}
+          </p>
+        </>}
+      </Dialog>
     </Section>
   )
 }

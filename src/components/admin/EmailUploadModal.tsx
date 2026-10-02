@@ -2,13 +2,13 @@
 
 // Add an email campaign in two steps: the details, then what it looks like (a screenshot, the
 // HTML, or a link to an external preview). Content is optional, so an email can go in for review
-// before it's designed. On a phone the dialog rises from the bottom.
+// before it's designed. The shared Dialog, so on a phone it rises from the bottom.
 
 import '@/styles/admin/emails.css'
 import { useState, useRef } from 'react'
-import { X, UploadSimple, ArrowLeft, ArrowRight } from '@phosphor-icons/react'
+import { UploadSimple, ArrowLeft, ArrowRight } from '@phosphor-icons/react'
 import { PillTabs } from '@/components/ui/PillTabs'
-import { useDialogFocus } from './EmailDetailModal'
+import Dialog from '@/components/ui/Dialog'
 import type { EmailClient } from './EmailsClientShell'
 
 interface Props {
@@ -48,8 +48,6 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
   const [error,   setError]   = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const dialogRef = useRef<HTMLDivElement>(null)
-  useDialogFocus(dialogRef, () => { if (!saving) onClose() })
 
   // ── Image upload via Supabase storage (client-side fetch to upload route)
   async function uploadImage(file: File): Promise<string | null> {
@@ -127,31 +125,45 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
   }
 
   return (
-    <div className="em-scrim em-scrim--center" onClick={e => { if (e.target === e.currentTarget && !saving) onClose() }}>
-      <div ref={dialogRef} className="em-dialog em-scope" role="dialog" aria-modal="true" aria-labelledby="em-add-title" tabIndex={-1}>
-        {/* Header */}
-        <div className="em-head">
-          <div className="em-head-text">
-            <h2 className="em-title" id="em-add-title">Add an email</h2>
-            <p className="em-sub">Step {step} of 2: {step === 1 ? 'the details' : 'what it looks like'}</p>
-          </div>
-          <button type="button" className="em-iconbtn" onClick={onClose} aria-label="Close" title="Close">
-            <X size={18} aria-hidden />
-          </button>
-        </div>
+    <Dialog
+      open
+      onClose={onClose}
+      busy={saving}
+      className="em-scope"
+      title="Add an email"
+      description={`Step ${step} of 2: ${step === 1 ? 'the details' : 'what it looks like'}`}
+      footer={<>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => step > 1 ? setStep((step - 1) as Step) : onClose()}
+          disabled={saving}
+        >
+          {step > 1 && <ArrowLeft size={14} aria-hidden />}
+          {step === 1 ? 'Cancel' : 'Back'}
+        </button>
 
+        {step < 2 ? (
+          <button type="submit" form="em-add-details" className="btn btn-primary" disabled={!canProceed()}>
+            Next: the content <ArrowRight size={14} aria-hidden />
+          </button>
+        ) : (
+          <button type="button" className="btn btn-primary" onClick={() => void handleSubmit()} disabled={saving}>
+            {saving ? 'Saving…' : status === 'pending_review' ? 'Send for review' : 'Save draft'}
+          </button>
+        )}
+      </>}
+    >
         <div className="em-steps" aria-hidden>
           {([1, 2] as Step[]).map(s => <span key={s} data-on={s <= step} />)}
         </div>
-
-        <div className="em-body">
           {/* ── Step 1: Details ── */}
           {step === 1 && (
             <form className="em-form" onSubmit={e => { e.preventDefault(); next() }} id="em-add-details">
               <div className="em-fields">
                 <div className="em-field">
                   <label className="em-label" htmlFor="em-client">Client <span className="em-label-note">Required</span></label>
-                  <select id="em-client" className="input" value={clientId} onChange={e => setClientId(e.target.value)} required data-autofocus>
+                  <select id="em-client" className="input" value={clientId} onChange={e => setClientId(e.target.value)} required>
                     <option value="">Choose a client…</option>
                     {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
@@ -274,30 +286,6 @@ export default function EmailUploadModal({ clients, onClose, onCreated }: Props)
           )}
 
           {error && <div className="ui-notice ui-notice--danger" role="alert" style={{ marginTop: 14, marginBottom: 0 }}>{error}</div>}
-        </div>
-
-        {/* Footer nav */}
-        <div className="em-foot">
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => step > 1 ? setStep((step - 1) as Step) : onClose()}
-          >
-            {step > 1 && <ArrowLeft size={14} aria-hidden />}
-            {step === 1 ? 'Cancel' : 'Back'}
-          </button>
-
-          {step < 2 ? (
-            <button type="submit" form="em-add-details" className="btn btn-primary btn-sm" disabled={!canProceed()}>
-              Next: the content <ArrowRight size={14} aria-hidden />
-            </button>
-          ) : (
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleSubmit()} disabled={saving}>
-              {saving ? 'Saving…' : status === 'pending_review' ? 'Send for review' : 'Save draft'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

@@ -453,6 +453,11 @@
 }
 .ui-dialog-x:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
 .ui-dialog-x:focus-visible { outline: none; box-shadow: var(--ring); }
+.ui-dialog-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; min-height: 32px; }
+/* A dialog that is a form: the form takes no box of its own, so head, body and foot lay out as before. */
+.ui-dialog-form { display: contents; }
+/* A save that failed, said in the footer beside the buttons that retry it. */
+.ui-dialog-error { margin: 0 auto 0 0; align-self: center; font-size: 0.8125rem; line-height: 1.4; color: var(--red-fg); }
 .ui-dialog-body { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px; }
 .ui-dialog-text { margin: 0; font-size: 0.875rem; line-height: 1.55; color: var(--text-secondary); }
 .ui-dialog-text p { margin: 0; }
@@ -472,6 +477,8 @@
   .ui-dialog-body { padding: 16px; }
   .ui-dialog-foot { padding: 12px 16px 16px; flex-direction: column-reverse; }
   .ui-dialog-foot .btn { width: 100%; justify-content: center; }
+  /* The footer stacks bottom-up on a phone; the error goes above its buttons. */
+  .ui-dialog-foot .ui-dialog-error { order: 99; margin: 0; text-align: center; }
 }
 @keyframes ui-sheet-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .ui-dialog, .ui-dialog-scrim { animation: none; } }

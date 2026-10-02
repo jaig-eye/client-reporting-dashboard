@@ -1,14 +1,15 @@
 'use client'
 
-// One email campaign, in a sheet from the right: the preview on the left; details, performance,
-// review and delete on the right. Under 900px the two columns stack and the sheet scrolls as one.
-// Also home to the pieces the other email files share: the status badge, the date format and
-// the dialog focus hook.
+// One email campaign, in a sheet from the right (the shared Dialog): the preview on the left;
+// details, performance, review and delete on the right. Under 900px the two columns stack and the
+// sheet scrolls as one. Also home to the pieces the other email files share: the status badge and
+// the date format.
 
 import '@/styles/admin/emails.css'
-import { useState, useEffect, useRef } from 'react'
-import { X, CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, EnvelopeSimple } from '@phosphor-icons/react'
+import { useState, useEffect } from 'react'
+import { CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, EnvelopeSimple } from '@phosphor-icons/react'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import Dialog from '@/components/ui/Dialog'
 
 interface EmailCampaign {
   id:                string
@@ -72,42 +73,6 @@ export function fmtEmailDate(iso: string | null): string {
   })
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
-
-/**
- * Dialog focus: focus moves into the dialog (the [data-autofocus] element, or the dialog itself),
- * Tab stays inside, Escape calls onEscape, focus returns to whatever opened it on close, and the
- * page behind stops scrolling.
- */
-export function useDialogFocus(ref: React.RefObject<HTMLElement>, onEscape: () => void) {
-  const escRef = useRef(onEscape)
-  useEffect(() => { escRef.current = onEscape })
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
-    const root = ref.current
-    const first = root?.querySelector<HTMLElement>('[data-autofocus]') ?? root
-    first?.focus()
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); escRef.current(); return }
-      if (e.key !== 'Tab' || !root) return
-      const f = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => el.getClientRects().length > 0)
-      if (!f.length) return
-      const firstEl = f[0], last = f[f.length - 1]
-      const active = document.activeElement
-      if (e.shiftKey && (active === firstEl || active === root)) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); firstEl.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
-      if (opener && document.contains(opener)) opener.focus()
-    }
-  }, [ref])
-}
-
 function fmt(n: number | null, suffix = ''): string {
   return n != null ? `${n}${suffix}` : '—'
 }
@@ -160,13 +125,12 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
   const [revenue,      setRevenue]        = useState(email.revenue?.toString() ?? '')
   const [savingStats,  setSavingStats]    = useState(false)
 
-  const sheetRef = useRef<HTMLDivElement>(null)
   // Escape backs out of a pending delete or a stats edit before it closes the sheet.
-  useDialogFocus(sheetRef, () => {
+  function onEscape() {
     if (confirmDelete) setConfirmDelete(false)
     else if (editingStats) setEditingStats(false)
     else onClose()
-  })
+  }
 
   async function review(action: 'approve' | 'reject') {
     if (action === 'reject' && !reviewNotes.trim()) {
@@ -231,28 +195,25 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
   ].filter(Boolean).join(', ')
 
   return (
-    <div className="em-scrim" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div ref={sheetRef} className="em-sheet em-scope" role="dialog" aria-modal="true" aria-labelledby="em-detail-title" tabIndex={-1}>
-        {/* Header */}
-        <div className="em-head">
-          <div className="em-head-text">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-              <EmailStatusBadge status={email.status} />
-              {email.reviewed_at && (
-                <span className="em-reviewed">
-                  Reviewed by {email.reviewer?.name ?? 'an admin'}, {fmtEmailDate(email.reviewed_at)}
-                </span>
-              )}
-            </div>
-            <h2 className="em-title" id="em-detail-title">{email.title}</h2>
-            <p className="em-sub">{meta}</p>
-          </div>
-          <button type="button" className="em-iconbtn" onClick={onClose} aria-label="Close" title="Close">
-            <X size={18} aria-hidden />
-          </button>
-        </div>
-
-        <div className="em-detail">
+    <Dialog
+      open
+      onClose={onClose}
+      onEscape={onEscape}
+      // A details view: start on the sheet, not on the assignee picker.
+      initialFocus="dialog"
+      variant="side"
+      size="xl"
+      className="em-scope"
+      bodyClassName="em-detail"
+      title={email.title}
+      description={<>
+        {meta}
+        {email.reviewed_at && (
+          <span className="em-reviewed">Reviewed by {email.reviewer?.name ?? 'an admin'}, {fmtEmailDate(email.reviewed_at)}</span>
+        )}
+      </>}
+      actions={<EmailStatusBadge status={email.status} />}
+    >
           {/* Preview */}
           <div className="em-preview">
             {email.preview_image_url && (
@@ -410,8 +371,6 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
               )}
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }
