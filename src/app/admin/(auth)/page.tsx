@@ -3,11 +3,21 @@
 // Admin Login — /admin
 // Super admin: leave email blank, enter master password.
 // Regular admin: enter email/username + password.
+//
+// While a sign-in is in flight the form is locked: the fields and the button are disabled, the
+// button shows a spinner, a bar runs across the card, and the background answers (LoginCanvas).
+// A successful sign-in stays locked until the dashboard has loaded; it used to unlock in a
+// finally block while the page was still navigating, so the button could be pressed again.
 
-import { Suspense, useState, useEffect, lazy } from 'react'
+import { Suspense, useState, useEffect, useRef, lazy } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { ArrowLeft, WarningCircle } from '@phosphor-icons/react'
+import type { LoginCanvasMode } from '@/components/admin/LoginCanvas'
 
 const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
+
+type Phase = 'idle' | 'busy' | 'success' | 'error'
 
 function AdminLoginForm() {
   const router       = useRouter()
@@ -29,7 +39,9 @@ function AdminLoginForm() {
   const [code,     setCode]     = useState('')
   const [step,     setStep]     = useState<'password' | 'code'>('password')
   const [error,    setError]    = useState('')
-  const [loading,  setLoading]  = useState(false)
+  const [phase,    setPhase]    = useState<Phase>('idle')
+  // A second Enter can land before React re-renders the disabled button; this can't.
+  const inFlight = useRef(false)
   const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
     agency_name: 'LaunchLocal', agency_logo_url: null,
   })
@@ -42,10 +54,18 @@ function AdminLoginForm() {
   }, [])
 
   const isSuperAdmin = email.trim() === ''
+  const locked = phase === 'busy' || phase === 'success'
+
+  /** Typing after an error clears it, and the background calms back down. */
+  function edited() {
+    if (phase === 'error') { setPhase('idle'); setError('') }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
+    if (inFlight.current) return
+    inFlight.current = true
+    setPhase('busy')
     setError('')
     const body: Record<string, string> = { password }
     if (email.trim()) body.email = email.trim()
@@ -53,6 +73,7 @@ function AdminLoginForm() {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15_000)
+    let leaving = false
 
     try {
       const res = await fetch('/api/auth/admin-login', {
@@ -65,9 +86,13 @@ function AdminLoginForm() {
 
       if (res.ok && data.step === 'code') {
         setStep('code')
+        setPhase('idle')
         return
       }
       if (res.ok) {
+        // Stay locked until the dashboard replaces this page.
+        leaving = true
+        setPhase('success')
         router.push(returnUrl)
         return
       }
@@ -81,175 +106,156 @@ function AdminLoginForm() {
         if (data.emailSent) {
           const q = new URLSearchParams({ forced: '1' })
           if (typeof data.email === 'string') q.set('email', data.email)
+          leaving = true
           router.push(`/admin/reset-password?${q.toString()}`)
           return
         }
         // Flagged, but no code could be sent — the message explains why.
         setError(data.error || 'Your password must be reset, but a code could not be emailed. Contact your administrator.')
+        setPhase('error')
         return
       }
 
-      setError(data.error || 'Invalid credentials')
+      setError(data.error || 'That email and password don’t match. Try again.')
+      setPhase('error')
     } catch (err) {
       setError(err instanceof DOMException && err.name === 'AbortError'
-        ? 'Request timed out — please try again.'
-        : 'Network error — please try again.')
+        ? 'The sign-in took too long. Check your connection and try again.'
+        : 'Couldn’t reach the server. Check your connection and try again.')
+      setPhase('error')
     } finally {
       clearTimeout(timeout)
-      setLoading(false)
+      if (!leaving) inFlight.current = false
     }
   }
 
-  return (
-    <div
-      className="min-h-screen flex items-center justify-center"
-      style={{ background: 'var(--bg-base)', position: 'relative' }}
-    >
-      <Suspense fallback={null}><LoginCanvas /></Suspense>
+  const busyLabel = step === 'code' ? 'Verifying' : isSuperAdmin ? 'Sending your code' : 'Signing in'
+  const doneLabel = 'Opening the dashboard'
 
-      <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)', position: 'relative', zIndex: 1 }}>
-        <div className="mb-6">
-          <div className="mb-3">
-            {branding.agency_logo_url ? (
-              <img
-                src={branding.agency_logo_url}
-                alt={branding.agency_name}
-                style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
-              />
-            ) : (
-              /* Reserve the same box so the header does not jump when the logo lands.
-                 Deliberately empty: the initial-letter fallback that used to sit here
-                 rendered on every first paint, before branding had loaded. */
-              <div className="h-9 w-9" aria-hidden="true" />
-            )}
-          </div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            {branding.agency_name}
-          </h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Sign in to access the agency dashboard.
-          </p>
+  return (
+    <main className="au">
+      <Suspense fallback={null}><LoginCanvas mode={phase as LoginCanvasMode} /></Suspense>
+
+      <section className="au-card" aria-labelledby="au-title" aria-busy={locked || undefined}>
+        <div className="au-progress" aria-hidden />
+
+        <div className="au-brand">
+          {branding.agency_logo_url ? (
+            <img src={branding.agency_logo_url} alt={branding.agency_name} className="au-logo" />
+          ) : (
+            <>
+              <span className="au-mark" aria-hidden>{branding.agency_name.charAt(0).toUpperCase()}</span>
+              <span className="au-agency">{branding.agency_name}</span>
+            </>
+          )}
         </div>
 
-        {step === 'code' ? (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                Login code
-              </label>
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                value={code}
-                onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
-                required
-                autoFocus
-                autoComplete="one-time-code"
-                className="input"
-                style={{ letterSpacing: '0.2em', fontSize: '1.25rem', textAlign: 'center' }}
-                placeholder="000000"
-              />
-              <p className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-                Check support@golaunchlocal.com — code expires in 10 minutes.
-              </p>
-            </div>
+        <h1 className="au-title" id="au-title">{step === 'code' ? 'Check your email' : 'Sign in'}</h1>
+        <p className="au-sub">
+          {step === 'code'
+            ? 'We sent a 6-digit code to support@golaunchlocal.com. It expires in 10 minutes.'
+            : 'Every client’s reporting, content and spend, in one place.'}
+        </p>
 
-            {error && (
-              <div
-                className="rounded-lg px-3 py-2 text-sm"
-                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
-              >
-                {error}
+        {/* Announced to screen readers as it changes. */}
+        <p className="sr-only" role="status" aria-live="polite">
+          {phase === 'busy' ? busyLabel : phase === 'success' ? doneLabel : ''}
+        </p>
+
+        <form onSubmit={handleSubmit} className="au-form">
+          <fieldset className="au-fieldset" disabled={locked}>
+            {step === 'code' ? (
+              <div>
+                <label className="au-label" htmlFor="au-code" style={{ marginBottom: 6 }}>Login code</label>
+                <input
+                  id="au-code"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={code}
+                  onChange={e => { setCode(e.target.value.replace(/\D/g, '')); edited() }}
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  className="au-input au-input--code"
+                  placeholder="000000"
+                />
               </div>
+            ) : (
+              <>
+                <div>
+                  <label className="au-label" htmlFor="au-email" style={{ marginBottom: 6 }}>Email or username</label>
+                  <input
+                    id="au-email"
+                    type="text"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); edited() }}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="au-input"
+                    placeholder="you@agency.com"
+                  />
+                </div>
+                <div>
+                  <div className="au-label-row">
+                    <label className="au-label" htmlFor="au-password">Password</label>
+                    {!isSuperAdmin && <Link href="/admin/forgot-password" className="au-link">Forgot password?</Link>}
+                  </div>
+                  <input
+                    id="au-password"
+                    type="password"
+                    value={password}
+                    onChange={e => { setPassword(e.target.value); edited() }}
+                    required
+                    autoComplete="current-password"
+                    className="au-input"
+                    placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
+                  />
+                </div>
+              </>
             )}
+          </fieldset>
 
-            <button
-              type="submit"
-              disabled={loading || code.length !== 6}
-              className="btn btn-primary w-full justify-center"
-              style={{ padding: '0.625rem' }}
-            >
-              {loading ? 'Verifying…' : 'Verify code'}
-            </button>
+          {error && (
+            <p className="au-error" role="alert">
+              <WarningCircle size={16} weight="fill" aria-hidden />{error}
+            </p>
+          )}
 
+          <button
+            type="submit"
+            className="au-btn"
+            disabled={locked || (step === 'code' && code.length !== 6)}
+            aria-busy={locked || undefined}
+          >
+            {locked ? (
+              <><span className="au-spin" aria-hidden />{phase === 'success' ? doneLabel : busyLabel}</>
+            ) : step === 'code' ? 'Verify code' : 'Sign in'}
+          </button>
+
+          {step === 'code' && (
             <button
               type="button"
-              onClick={() => { setStep('password'); setCode(''); setError('') }}
-              className="btn btn-secondary w-full justify-center"
-              style={{ padding: '0.625rem' }}
+              className="au-btn au-btn--ghost"
+              disabled={locked}
+              onClick={() => { setStep('password'); setCode(''); setError(''); setPhase('idle') }}
             >
-              ← Back
+              <ArrowLeft size={16} weight="bold" aria-hidden />Back
             </button>
-          </form>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>
-                Email or username
-              </label>
-              <input
-                type="text"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                autoComplete="username"
-                className="input"
-                placeholder="admin@agency.com or username"
-              />
-            </div>
+          )}
+        </form>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                  Password
-                </label>
-                {!isSuperAdmin && (
-                  <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
-                    Forgot password?
-                  </a>
-                )}
-              </div>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                className="input"
-                placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
-              />
-            </div>
-
-            {error && (
-              <div
-                className="rounded-lg px-3 py-2 text-sm"
-                style={{ background: 'var(--red-subtle)', color: 'var(--red)', border: '1px solid var(--red-border)' }}
-              >
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn btn-primary w-full justify-center"
-              style={{ padding: '0.625rem' }}
-            >
-              {loading ? (isSuperAdmin ? 'Sending code…' : 'Signing in…') : 'Sign in'}
-            </button>
-          </form>
-        )}
-
-        <p className="text-xs mt-5 text-center" style={{ color: 'var(--text-faint)' }}>
+        <p className="au-foot">
           {step === 'code'
-            ? 'Super admin — two-step verification'
+            ? 'Super admin: two-step verification'
             : isSuperAdmin
-              ? 'Super admin mode — full access'
-              : 'Enter your agency email and password'}
+              ? 'Super admin: leave the email empty'
+              : 'Use your agency email and password'}
         </p>
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }
 

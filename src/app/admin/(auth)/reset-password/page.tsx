@@ -79,10 +79,10 @@ function ResetPasswordForm() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-base)', position: 'relative' }}>
+    <div className="au">
       <Suspense fallback={null}><LoginCanvas /></Suspense>
 
-      <div className="card p-8 w-full max-w-sm" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.08)', position: 'relative', zIndex: 1 }}>
+      <div className="au-card">
         <div className="mb-6">
           <div className="mb-3">
             {branding.agency_logo_url ? (

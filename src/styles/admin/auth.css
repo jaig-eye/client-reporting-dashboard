@@ -1,0 +1,141 @@
+/* ═════════════════════════════════════════════════════════════════════════════
+   Signed-out admin pages: login, forgot password, reset password (au- prefix).
+   The 3D scene (LoginCanvas) fills the screen behind a frosted card. Theme tokens only; the
+   accent is the agency's brand colour, set by the (auth) layout before the first paint.
+═════════════════════════════════════════════════════════════════════════════ */
+
+.au {
+  position: relative; isolation: isolate; overflow: hidden;
+  min-height: 100vh; min-height: 100dvh;
+  display: grid; place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(120% 70% at 85% 105%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 60%),
+    radial-gradient(90% 60% at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 55%),
+    var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* The scene, behind everything and never in the way of a tap. */
+.au-canvas { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
+.au-canvas[data-ready] { opacity: 1; }
+.au-canvas canvas { display: block; }
+
+/* ── The card ───────────────────────────────────────────────────────────── */
+
+.au-card {
+  position: relative; width: 100%; max-width: 408px; padding: 34px 30px 26px;
+  border-radius: 22px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg-surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(150%); backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--bg-surface) 60%, transparent) inset,
+    0 30px 90px -30px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 12px 40px -18px color-mix(in srgb, var(--text-primary) 35%, transparent);
+  animation: au-rise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes au-rise { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+
+/* Signing in: an indeterminate bar across the top edge of the card. */
+.au-progress { position: absolute; top: 0; left: 0; right: 0; height: 3px; overflow: hidden; opacity: 0; transition: opacity 0.2s; }
+.au-card[aria-busy="true"] .au-progress { opacity: 1; }
+.au-progress::before {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 45%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: au-sweep 1.05s ease-in-out infinite;
+}
+@keyframes au-sweep { from { transform: translateX(-110%); } to { transform: translateX(240%); } }
+
+.au-brand { display: flex; align-items: center; gap: 12px; min-height: 40px; margin-bottom: 22px; }
+.au-logo { height: 36px; max-width: 160px; object-fit: contain; }
+.au-mark {
+  display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 11px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--text-primary)));
+  color: var(--on-fill); font-weight: 700; font-size: 0.95rem;
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.au-agency { font-size: 0.875rem; font-weight: 600; color: var(--text-secondary); }
+
+.au-title { margin: 0; font-size: 1.625rem; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; color: var(--text-primary); }
+.au-sub { margin: 6px 0 24px; font-size: 0.9rem; line-height: 1.5; color: var(--text-muted); }
+
+/* ── Fields ─────────────────────────────────────────────────────────────── */
+
+.au-form { display: flex; flex-direction: column; gap: 16px; }
+.au-fieldset { display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.au-fieldset:disabled { opacity: 0.75; }
+.au-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.au-label { display: block; font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+.au-link { font-size: 0.8125rem; font-weight: 500; color: var(--accent-fg); text-decoration: none; border-radius: 4px; }
+.au-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.au-link:focus-visible { outline: none; box-shadow: var(--ring); }
+/* 16px text: iOS zooms the page into any smaller field when it's focused. */
+.au-input {
+  width: 100%; min-height: 46px; padding: 0 14px; border-radius: 12px; font: inherit; font-size: 16px;
+  color: var(--text-primary); background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+  border: 1px solid var(--border); transition: border-color 0.15s, box-shadow 0.15s;
+}
+.au-input::placeholder { color: var(--text-faint); }
+.au-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); }
+.au-input--code { text-align: center; letter-spacing: 0.4em; font-size: 1.375rem; font-variant-numeric: tabular-nums; }
+.au-hint { margin: 6px 0 0; font-size: 0.78rem; line-height: 1.45; color: var(--text-muted); }
+
+.au-error {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border-radius: 12px;
+  font-size: 0.8125rem; line-height: 1.45; color: var(--red-fg);
+  background: var(--red-subtle); box-shadow: inset 0 0 0 1px var(--red-border);
+  animation: au-shake 0.36s ease;
+}
+.au-error svg { flex-shrink: 0; margin-top: 1px; }
+@keyframes au-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.au-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 48px; padding: 0 18px; border: 0; border-radius: 12px; cursor: pointer;
+  font: inherit; font-size: 0.95rem; font-weight: 650;
+  color: var(--on-fill);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, var(--text-primary)));
+  box-shadow: 0 10px 26px -12px color-mix(in srgb, var(--accent) 80%, transparent);
+  transition: transform 0.12s, box-shadow 0.2s, opacity 0.2s;
+}
+.au-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 16px 32px -14px color-mix(in srgb, var(--accent) 85%, transparent); }
+.au-btn:active:not(:disabled) { transform: translateY(0); }
+.au-btn:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.au-btn:disabled { cursor: not-allowed; }
+.au-btn[aria-busy="true"] { cursor: progress; }
+.au-btn:disabled:not([aria-busy="true"]) { opacity: 0.55; }
+.au-btn--ghost {
+  color: var(--text-secondary); background: transparent; box-shadow: inset 0 0 0 1px var(--border); font-weight: 550;
+}
+.au-btn--ghost:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-subtle); box-shadow: inset 0 0 0 1px var(--border); }
+
+.au-spin {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor;
+  animation: au-spin 0.7s linear infinite;
+}
+@keyframes au-spin { to { transform: rotate(360deg); } }
+
+.au-foot { margin: 20px 0 0; text-align: center; font-size: 0.78rem; color: var(--text-muted); }
+
+/* ── Phones ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .au { place-items: end center; }
+  /* The card takes the bottom of a phone, so the scene takes the top and fades out into it. */
+  .au-canvas {
+    bottom: auto; height: 64vh; height: 64dvh;
+    -webkit-mask-image: linear-gradient(#000 62%, transparent); mask-image: linear-gradient(#000 62%, transparent);
+  }
+  .au-card { padding: 28px 20px 22px; border-radius: 20px; }
+  .au-title { font-size: 1.45rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .au-card, .au-error { animation: none; }
+  .au-canvas { transition: none; }
+  .au-progress::before { animation-duration: 2.4s; }
+}
