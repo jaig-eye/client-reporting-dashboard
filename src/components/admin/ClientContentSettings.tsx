@@ -34,10 +34,10 @@ const FREQ_OPTS = [
   { value: 'daily',         label: 'Daily' },
   { value: 'weekly',        label: 'Weekly' },
   { value: 'biweekly',      label: 'Every 2 weeks' },
-  { value: 'monthly',       label: 'Monthly (28-day rolling)' },
-  { value: 'monthly_first', label: 'Monthly — 1st of month' },
-  { value: 'monthly_mid',   label: 'Monthly — mid-month (15th)' },
-  { value: 'monthly_end',   label: 'Monthly — end of month (28th)' },
+  { value: 'monthly',       label: 'Monthly (first weekday)' },
+  { value: 'monthly_first', label: 'Monthly (1st)' },
+  { value: 'monthly_mid',   label: 'Monthly (15th)' },
+  { value: 'monthly_end',   label: 'Monthly (28th)' },
 ]
 
 function Label({ children, hint, htmlFor, id }: {
@@ -73,18 +73,25 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 // Per-card save button + success/error feedback (one primary CTA per card).
-function SaveRow({ onSave, saving, saved, error }: { onSave: () => void; saving: boolean; saved: boolean; error: string }) {
+function SaveRow({ onSave, saving, saved, error, note }: { onSave: () => void; saving: boolean; saved: boolean; error: string; note?: string }) {
   return (
-    <div className="flex items-center gap-3">
-      <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-      {saved && <span className="text-xs" style={{ color: 'var(--green)' }} role="status">Saved ✓</span>}
-      {error && <span className="text-xs" style={{ color: 'var(--red)' }} role="alert">{error}</span>}
+    <div>
+      <div className="flex items-center gap-3">
+        <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        {saved && <span className="text-xs" style={{ color: 'var(--green)' }} role="status">Saved ✓</span>}
+        {error && <span className="text-xs" style={{ color: 'var(--red)' }} role="alert">{error}</span>}
+      </div>
+      {note && <p className="text-xs" style={{ margin: '8px 0 0', color: 'var(--text-secondary)', lineHeight: 1.5 }} role="status">{note}</p>}
     </div>
   )
 }
 
-type SaveState = { saving: boolean; saved: boolean; error: string }
+/** note: something the save changed that the person should know, kept until the next save. */
+type SaveState = { saving: boolean; saved: boolean; error: string; note?: string }
 const IDLE: SaveState = { saving: false, saved: false, error: '' }
+
+// What a schedule save that moved the publish dates did to automatic planning (lib/content/scheduleHold).
+const HOLD_NOTE = 'Automatic planning is paused: topics are still planned on dates the new schedule doesn’t use, so no new dates are planned until you press Regenerate plan on the Pipeline. The planned topics stay where they are.'
 
 export default function ClientContentSettings({ clientId, clientName, sites, sectionRequest = null }: Props) {
   const router = useRouter()
@@ -206,7 +213,8 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
   }, [effectiveConn])
 
   const isBc = clientSites.find(s => s.connectionId === effectiveConn)?.connectorType === 'bigcommerce'
-  const showDayPicker = form.schedule_frequency === 'weekly' || form.schedule_frequency === 'biweekly'
+  // Monthly publishes on the first of the chosen weekday, so it takes the day picker too.
+  const showDayPicker = form.schedule_frequency === 'weekly' || form.schedule_frequency === 'biweekly' || form.schedule_frequency === 'monthly'
 
   // ── Saves (each PUTs only its disjoint keys) ────────────────────────────────
   async function putFields(fields: Record<string, unknown>, setState: (s: SaveState) => void) {
@@ -216,9 +224,11 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: clientId, ...fields }),
       })
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save')
-      setState({ saving: false, saved: true, error: '' })
-      setTimeout(() => setState({ saving: false, saved: false, error: '' }), 2500)
+      const data = await res.json().catch(() => ({})) as { error?: string; schedule_hold?: boolean | null }
+      if (!res.ok) throw new Error(data.error || 'Failed to save')
+      const note = data.schedule_hold ? HOLD_NOTE : undefined
+      setState({ saving: false, saved: true, error: '', note })
+      setTimeout(() => setState({ saving: false, saved: false, error: '', note }), 2500)
       // The Pipeline tab stays mounted beside this one and reads cadence and automation from the
       // server-rendered settings. Without a refresh it kept saying "Running · weekly" after the
       // schedule was changed here. This keeps local state; it only re-reads the page's data.
@@ -541,7 +551,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
               </span>
             </div>
             {showDayPicker && (<>
-              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>on</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{form.schedule_frequency === 'monthly' ? 'on the first' : 'on'}</span>
               <select className="input" aria-label="Publish day" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
                 {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
               </select>

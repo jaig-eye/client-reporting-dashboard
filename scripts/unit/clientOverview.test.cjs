@@ -5,7 +5,7 @@ const C = require(path.join(process.env.WT, 'src/lib/content/cadence.ts'))
 
 // A healthy running client: nothing to flag.
 const ok = (over = {}) => ({
-  autoGenerate: true, frequency: 'weekly', monthlyPublishDay: null, scheduleStartDate: '2026-08-03',
+  autoGenerate: true, frequency: 'weekly', scheduleStartDate: '2026-08-03',
   site: { platform: 'WordPress', name: 'example.com', status: 'active' },
   openDates: 0, plannedFuture: 4, reviewOverdue: 0, pushErrors: 0, imageErrors: 0, seoMetaLost: 0,
   ...over,
@@ -25,7 +25,6 @@ test('each problem raises its own issue', () => {
   assert.deepEqual(keys(ok({ pushErrors: 1 })), ['push_error'])
   assert.deepEqual(keys(ok({ imageErrors: 1 })), ['image_error'])
   assert.deepEqual(keys(ok({ seoMetaLost: 2 })), ['seo_meta'])
-  assert.deepEqual(keys(ok({ frequency: 'monthly', scheduleStartDate: null })), ['monthly_drift'])
   assert.deepEqual(keys(ok({ frequency: 'biweekly', scheduleStartDate: null })), ['biweekly_anchor'])
   for (const f of F.overviewFlags(ok({ openDates: 2, reviewOverdue: 1, site: null }))) {
     assert.equal(f.level, 'issue')
@@ -65,9 +64,8 @@ test('a read that failed raises nothing rather than a false alarm', () => {
   })), [])
 })
 
-test('monthly with a publish day or start date, and fixed-day monthly, do not drift', () => {
-  assert.deepEqual(keys(ok({ frequency: 'monthly', scheduleStartDate: null, monthlyPublishDay: 12 })), [])
-  assert.deepEqual(keys(ok({ frequency: 'monthly', scheduleStartDate: '2026-09-12' })), [])
+test('monthly needs no anchor: no start date is not a problem', () => {
+  assert.deepEqual(keys(ok({ frequency: 'monthly', scheduleStartDate: null })), [])
   assert.deepEqual(keys(ok({ frequency: 'monthly_mid', scheduleStartDate: null })), [])
 })
 
@@ -92,7 +90,8 @@ test('open dates: room left per date, suppressed dates never open', () => {
 
 test('schedule in words', () => {
   assert.equal(C.cadenceLabel({ schedule_frequency: 'weekly', schedule_day_of_week: 2 }), 'Weekly on Tuesdays')
-  assert.equal(C.cadenceLabel({ schedule_frequency: 'monthly', schedule_start_date: '2026-08-22', posts_per_run: 3 }), 'Monthly on the 22nd, 3 posts each date')
+  assert.equal(C.cadenceLabel({ schedule_frequency: 'monthly', schedule_day_of_week: 1, posts_per_run: 3 }), 'Monthly on the first Monday, 3 posts each date')
+  assert.equal(C.cadenceLabel({ schedule_frequency: 'monthly_mid' }), 'Monthly on the 15th')
   assert.equal(C.planningWindowLabel('weekly', 4), '4 weeks ahead')
   assert.equal(C.planningWindowLabel('biweekly', 2), '4 weeks ahead')
   assert.equal(C.planningWindowLabel('monthly', 1), '1 month ahead')

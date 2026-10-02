@@ -17,7 +17,9 @@
 // set first — the split the cron makes date by date. silo_id instead plans only that set's dates.
 //
 // While a plan runs, content_settings.plan_generation holds { started_at, dates } so the Pipeline
-// can show it after a refresh. GET ?client_id= returns it (null when none is running).
+// can show it after a refresh. GET ?client_id= returns it (null when none is running), and the
+// schedule hold (lib/content/scheduleHold): { since, stranded } when a schedule change has paused
+// the cron for this client, null otherwise. A real blog plan run lifts the hold.
 
 import { NextRequest, NextResponse }      from 'next/server'
 import { waitUntil }                      from '@vercel/functions'
@@ -27,8 +29,9 @@ import { unsuppressSlot } from '@/lib/content/slotSuppression'
 import { isAdminAuthed, getAdminSession } from '@/lib/auth'
 import { logActivity }                    from '@/lib/activity'
 import { generateTopicsForClient }        from '@/lib/content/generateTopics'
-import { windowSlots, alignToFortnight }  from '@/lib/content/scheduleSlots'
+import { windowSlots, alignToFortnight, firstWeekdayOfMonth } from '@/lib/content/scheduleSlots'
 import { waitingSets, splitSlotsBySets }  from '@/lib/content/siloQueue'
+import { readScheduleHold, setScheduleHold, plannedBlogDates, offScheduleDates, resolveCadence, globalCadence } from '@/lib/content/scheduleHold'
 
 export const maxDuration = 300
 
@@ -46,16 +49,31 @@ export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get('client_id')
   if (!clientId) return NextResponse.json({ error: 'client_id required' }, { status: 400 })
 
-  const { data, error } = await createAdminClient()
-    .from('content_settings').select('plan_generation').eq('client_id', clientId).maybeSingle()
+  const db = createAdminClient()
+  const [hold, { data, error }] = await Promise.all([
+    scheduleHoldFor(db, clientId),
+    db.from('content_settings').select('plan_generation').eq('client_id', clientId).maybeSingle(),
+  ])
   // Before migration 229 the column is missing: say nothing is running, as before.
-  if (error) return NextResponse.json({ running: null })
+  if (error) return NextResponse.json({ running: null, hold })
   const marker = (data as { plan_generation?: { started_at?: string; dates?: string[] } | null } | null)?.plan_generation
   const started = marker?.started_at ? Date.parse(marker.started_at) : NaN
   if (!marker || Number.isNaN(started) || Date.now() - started > PLAN_MARKER_TTL_MS) {
-    return NextResponse.json({ running: null })
+    return NextResponse.json({ running: null, hold })
   }
-  return NextResponse.json({ running: { started_at: marker.started_at, dates: Array.isArray(marker.dates) ? marker.dates : [] } })
+  return NextResponse.json({ running: { started_at: marker.started_at, dates: Array.isArray(marker.dates) ? marker.dates : [] }, hold })
+}
+
+/** The client's schedule hold, with the planned dates the current schedule no longer uses. */
+async function scheduleHoldFor(db: ReturnType<typeof createAdminClient>, clientId: string): Promise<{ since: string; stranded: string[] } | null> {
+  const since = await readScheduleHold(db, clientId)
+  if (!since) return null
+  const [own, global, planned] = await Promise.all([
+    db.from('content_settings').select('schedule_frequency, schedule_day_of_week, schedule_start_date').eq('client_id', clientId).maybeSingle().then(r => r.data),
+    globalCadence(db),
+    plannedBlogDates(db, clientId),
+  ])
+  return { since, stranded: planned ? offScheduleDates(planned, resolveCadence(own, global)) : [] }
 }
 
 export async function POST(request: NextRequest) {
@@ -96,7 +114,7 @@ export async function POST(request: NextRequest) {
   // the plan's too.
   const [own, global] = await Promise.all([
     db.from('content_settings')
-      .select('schedule_frequency, schedule_day_of_week, monthly_publish_day, weeks_ahead, schedule_start_date, posts_per_run')
+      .select('schedule_frequency, schedule_day_of_week, weeks_ahead, schedule_start_date, posts_per_run')
       .eq('client_id', client_id)
       .maybeSingle(),
     db.from('content_settings')
@@ -113,7 +131,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Could not read the schedule. Try again.' }, { status: 500 })
   }
   const schedule = own.data as {
-    schedule_frequency: string | null; schedule_day_of_week: number | null; monthly_publish_day: number | null
+    schedule_frequency: string | null; schedule_day_of_week: number | null
     weeks_ahead: number | null; schedule_start_date: string | null; posts_per_run: number | null
   } | null
   const g = (global.data ?? {}) as { schedule_frequency?: string | null; schedule_day_of_week?: number | null }
@@ -124,7 +142,6 @@ export async function POST(request: NextRequest) {
   // own CHECK allows 1..10 and this clamps to the same range so a bad value can't widen the plan.
   const postsPerRun = Math.min(10, Math.max(1, Number(schedule?.posts_per_run ?? 1) || 1))
   const scheduleStartDate = schedule?.schedule_start_date ?? null
-  const monthlyPublishDay = schedule?.monthly_publish_day ?? null
 
   // ── Compute publish slots synchronously ────────────────────────────────────
   // Without a start date the window runs from today, and the dates are the cron's own
@@ -138,11 +155,10 @@ export async function POST(request: NextRequest) {
   const slots: string[] = start_date
     ? computeSlots({
         anchor: new Date(start_date), weeksAhead: weeksAheadParam ?? schedule?.weeks_ahead ?? 6,
-        frequency, dayOfWeek, monthlyPublishDay, scheduleStartDate,
+        frequency, dayOfWeek, scheduleStartDate,
       })
     : windowSlots({
-        frequency, dayOfWeek, weeksAhead: weeksAheadParam ?? schedule?.weeks_ahead,
-        monthlyPublishDay, scheduleStartDate,
+        frequency, dayOfWeek, weeksAhead: weeksAheadParam ?? schedule?.weeks_ahead, scheduleStartDate,
       })
 
   if (slots.length === 0) {
@@ -246,6 +262,11 @@ export async function POST(request: NextRequest) {
       cleared: cleared.filter(d => dates.includes(d)), from_sets: setShares(plan),
     })
   }
+
+  // A person planning the client's blog dates is what the schedule hold waits for: from here the
+  // cron keeps the new schedule's dates filled again. A single priority set's plan, or service
+  // pages, is not a re-plan of the schedule and leaves the hold alone.
+  if (!silo_id && (!content_type || content_type === 'blog')) await setScheduleHold(db, client_id, false)
 
   if (plan.length === 0) {
     return NextResponse.json({
@@ -442,10 +463,9 @@ function computeSlotsRaw(params: {
   weeksAhead: number
   frequency:  string
   dayOfWeek:  number
-  monthlyPublishDay?: number | null
   scheduleStartDate?: string | null
 }): string[] {
-  const { anchor, weeksAhead, frequency, dayOfWeek, monthlyPublishDay = null, scheduleStartDate = null } = params
+  const { anchor, weeksAhead, frequency, dayOfWeek, scheduleStartDate = null } = params
   const end     = new Date(anchor.getTime() + weeksAhead * 7 * 86_400_000)
   const slots:  string[] = []
 
@@ -472,28 +492,17 @@ function computeSlotsRaw(params: {
   }
 
   if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
-    // Rolling monthly uses the configured publish day when there is one, and only
-    // falls back to the anchor's day otherwise. monthly_publish_day was already
-    // being loaded from content_settings here and then ignored, so a client with an
-    // explicit day still got slots on whatever day the caller happened to anchor to.
-    // monthly_end is 28 here to match the cron (content-topics computeFutureSlots).
-    // It was 31, so the two generators disagreed about what "end of month" means and
-    // produced different dates for the same client — 28 vs 30/31 in every month
-    // except the 31-day ones, and the cron never reconciles a stray date because its
-    // slot guard matches exactly. One definition, and 28 is the safe one: it exists
-    // in every month, so the series never shifts around February.
-    const targetDay = frequency === 'monthly_first' ? 1
-                    : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 28
-                    : (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31
-                        ? monthlyPublishDay
-                        : scheduleStartDate
-                          ? new Date(scheduleStartDate + 'T00:00:00Z').getUTCDate()
-                          : anchor.getDate())
-
+    // Monthly is the first of the publish weekday (scheduleSlots.firstWeekdayOfMonth), as the
+    // cron plans it. monthly_end is 28 here to match the cron too: it was 31, and the two
+    // generators then disagreed about the date for the same client, which the cron's exact-date
+    // slot guard never reconciles. 28 exists in every month, so the series never shifts.
     let year  = anchor.getFullYear()
     let month = anchor.getMonth() // 0-indexed
     while (true) {
+      const targetDay = frequency === 'monthly_first' ? 1
+                      : frequency === 'monthly_mid'   ? 15
+                      : frequency === 'monthly_end'   ? 28
+                      : firstWeekdayOfMonth(year, month, dayOfWeek)
       const candidate = new Date(year, month, Math.min(targetDay, daysInMonth(year, month)))
       if (candidate > end) break
       if (candidate >= anchor) slots.push(toIso(candidate))

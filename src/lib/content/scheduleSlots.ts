@@ -22,40 +22,18 @@ export function daysInMonth(year: number, month: number): number {
 }
 
 /**
- * The day-of-month a rolling-monthly schedule publishes on.
+ * The day of the month a Monthly schedule publishes on: the first of the client's publish weekday,
+ * so the first Monday, the first Thursday, whichever weekday the schedule names.
  *
- * This MUST be stable across runs. It used to be `now.getUTCDate()` — today's date —
- * and because the topic cron runs every day (every two hours), each day's runs anchored a brand-new monthly
- * series on a different day: run on the 25th and you get the 25th of each month,
- * run on the 26th and you get the 26th as well, and so on. After a week of runs a
- * "monthly" client had seven consecutive publish dates, repeating every month —
- * a week-long burst once a month instead of one post a month.
- *
- * Preference order: the explicitly configured monthly_publish_day, then the day
- * component of the schedule's start date (what the Start date field in the UI
- * means), and only then today — which is now merely a last resort for a client
- * with neither configured, rather than the normal path.
+ * Monthly used to mean "the same calendar day each month", taken from monthly_publish_day or the
+ * start date's day, and with neither set it fell back to today's date. The topic cron runs every
+ * two hours, so an anchorless client began a new monthly series every day and got a week of
+ * consecutive publish dates once a month. A weekday needs no anchor: every run finds the same
+ * date, so that burst cannot happen.
  */
-export function rollingMonthlyDay(monthlyPublishDay: number | null, startDate: string | null, now: Date): number {
-  if (monthlyPublishDay && monthlyPublishDay >= 1 && monthlyPublishDay <= 31) return monthlyPublishDay
-  if (startDate) {
-    const d = new Date(startDate + 'T00:00:00Z')
-    if (!Number.isNaN(d.getTime())) return d.getUTCDate()
-  }
-  // Last resort, and it is the ORIGINAL BUG: with no anchor the day-of-month is
-  // whatever today happens to be, and because this cron runs every two hours, each
-  // new calendar day starts a fresh monthly series — producing a run of consecutive
-  // publish dates that repeats every month. Nothing can be done about it here without
-  // an anchor, but it must not fail silently the way it did before: this is the one
-  // configuration that still reproduces the burst, so say so loudly enough to find
-  // in the logs. Fix by setting content_settings.monthly_publish_day (or a
-  // schedule_start_date) for the client.
-  console.warn(
-    `[content-topics cron] MONTHLY CLIENT HAS NO ANCHOR — neither monthly_publish_day nor ` +
-    `schedule_start_date is set, so the publish day falls back to today (${now.getUTCDate()}) ` +
-    `and WILL drift on every calendar day, recreating the burst. Set monthly_publish_day.`,
-  )
-  return now.getUTCDate()
+export function firstWeekdayOfMonth(year: number, month: number, dayOfWeek: number): number {
+  const firstOfMonth = new Date(Date.UTC(year, month, 1)).getUTCDay()
+  return 1 + ((dayOfWeek - firstOfMonth + 7) % 7)
 }
 
 const DAY_MS = 86_400_000
@@ -99,11 +77,10 @@ export function windowSlots(p: {
   frequency:         string
   dayOfWeek:         number
   weeksAhead:        number | null | undefined
-  monthlyPublishDay: number | null
   scheduleStartDate: string | null
 }): string[] {
   const lead = leadWindowDays(p.frequency, p.weeksAhead)
-  return computeFutureSlots(p.frequency, p.dayOfWeek, Math.ceil(lead / 7) + 1, p.monthlyPublishDay, p.scheduleStartDate)
+  return computeFutureSlots(p.frequency, p.dayOfWeek, Math.ceil(lead / 7) + 1, p.scheduleStartDate)
     .filter(slot => { const d = daysFromNow(slot); return d > 0 && d <= lead })
 }
 
@@ -111,7 +88,6 @@ export function computeFutureSlots(
   frequency: string,
   dayOfWeek: number,
   weeksLookahead: number,
-  monthlyPublishDay: number | null = null,
   scheduleStartDate: string | null = null,
 ): string[] {
   const now  = new Date()
@@ -135,12 +111,12 @@ export function computeFutureSlots(
   }
 
   if (frequency === 'monthly' || frequency === 'monthly_first' || frequency === 'monthly_mid' || frequency === 'monthly_end') {
-    const targetDay = frequency === 'monthly_first' ? 1
-                    : frequency === 'monthly_mid'   ? 15
-                    : frequency === 'monthly_end'   ? 28
-                    : rollingMonthlyDay(monthlyPublishDay, scheduleStartDate, now)
     let y = now.getUTCFullYear(), m = now.getUTCMonth()
     while (true) {
+      const targetDay = frequency === 'monthly_first' ? 1
+                      : frequency === 'monthly_mid'   ? 15
+                      : frequency === 'monthly_end'   ? 28
+                      : firstWeekdayOfMonth(y, m, dayOfWeek)
       const candidate = new Date(Date.UTC(y, m, Math.min(targetDay, daysInMonth(y, m))))
       if (candidate > end) break
       if (candidate > now) slots.push(candidate.toISOString().slice(0, 10))
@@ -179,7 +155,7 @@ export async function nextOpenSlot(
 ): Promise<NextOpenSlot | null> {
   const [own, global] = await Promise.all([
     db.from('content_settings')
-      .select('schedule_frequency, schedule_day_of_week, weeks_ahead, monthly_publish_day, schedule_start_date, posts_per_run, auto_generate')
+      .select('schedule_frequency, schedule_day_of_week, weeks_ahead, schedule_start_date, posts_per_run, auto_generate')
       .eq('client_id', clientId)
       .maybeSingle(),
     db.from('content_settings')
@@ -192,7 +168,7 @@ export async function nextOpenSlot(
   if (own.error || !own.data) return null
   const s = own.data as {
     schedule_frequency: string | null; schedule_day_of_week: number | null; weeks_ahead: number | null
-    monthly_publish_day: number | null; schedule_start_date: string | null; posts_per_run: number | null
+    schedule_start_date: string | null; posts_per_run: number | null
     auto_generate: boolean | null
   }
   const g = (global.data ?? {}) as { schedule_frequency?: string | null; schedule_day_of_week?: number | null }
@@ -205,7 +181,7 @@ export async function nextOpenSlot(
 
   // Past the window by a few cycles, so a full window still answers with the date after it.
   const horizon = leadWindow + cycle * 4
-  const slots = computeFutureSlots(frequency, dayOfWeek, Math.ceil(horizon / 7) + 1, s.monthly_publish_day, s.schedule_start_date)
+  const slots = computeFutureSlots(frequency, dayOfWeek, Math.ceil(horizon / 7) + 1, s.schedule_start_date)
     .filter(slot => daysFromNow(slot) > 0)
   if (slots.length === 0) return null
 

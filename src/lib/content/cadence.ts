@@ -8,19 +8,11 @@ const FREQ_LABEL: Record<string, string> = {
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
-  return n + (s[(v - 20) % 10] || s[v] || s[0])
-}
-
-/** "Weekly on Mondays", "Monthly on the 15th" — the schedule in Content settings, in words. */
+/** "Weekly on Mondays", "Monthly on the first Monday" — the schedule in Content settings, in words. */
 export function cadenceLabel(cs: Record<string, unknown>): string {
   const freq = (cs.schedule_frequency as string | null) ?? 'weekly'
   const day  = DAY_NAMES[(cs.schedule_day_of_week as number | null) ?? 1] ?? 'Monday'
   const perDate = Math.min(10, Math.max(1, Number(cs.posts_per_run ?? 1) || 1))
-  const start = cs.schedule_start_date as string | null
-  const monthlyDay = (cs.monthly_publish_day as number | null)
-    ?? (start ? new Date(start + 'T00:00:00Z').getUTCDate() : null)
   const base =
     freq === 'daily'         ? 'Every day'
     : freq === 'weekly'      ? `Weekly on ${day}s`
@@ -28,7 +20,7 @@ export function cadenceLabel(cs: Record<string, unknown>): string {
     : freq === 'monthly_first' ? 'Monthly on the 1st'
     : freq === 'monthly_mid'   ? 'Monthly on the 15th'
     : freq === 'monthly_end'   ? 'Monthly on the 28th'
-    : freq === 'monthly'       ? (monthlyDay ? `Monthly on the ${ordinal(monthlyDay)}` : 'Monthly')
+    : freq === 'monthly'       ? `Monthly on the first ${day}`
     : (FREQ_LABEL[freq] ?? freq)
   return perDate > 1 ? `${base}, ${perDate} posts each date` : base
 }
