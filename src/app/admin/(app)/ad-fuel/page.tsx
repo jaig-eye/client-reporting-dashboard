@@ -11,6 +11,7 @@ import Section from '@/components/ui/Section'
 import EmptyState from '@/components/ui/EmptyState'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 import { PillTabs } from '@/components/ui/PillTabs'
+import { SwitchRow } from '@/components/ui/Switch'
 import Dialog, { ConfirmDialog } from '@/components/ui/Dialog'
 import { Sk, SkTable, SkRows } from '@/components/ui/Skeleton'
 
@@ -1253,18 +1254,12 @@ export default function AdFuelPage() {
 
               {/* ── Alert mute ──────────────────────────────────────── */}
               <div className="af-group">
-                <label className="af-toggle">
-                  <input
-                    type="checkbox"
-                    className="af-checkbox"
-                    checked={clientEditForm.adFuelAlertMuted}
-                    onChange={e => setClientEditForm(f => ({ ...f, adFuelAlertMuted: e.target.checked }))}
-                  />
-                  <span className="af-toggle-text">
-                    Mute low-balance Discord alerts
-                    <span className="af-toggle-sub">No alerts are sent for this client, whatever the balance.</span>
-                  </span>
-                </label>
+                <SwitchRow
+                  title="Mute low-balance Discord alerts"
+                  description="No alerts are sent for this client, whatever the balance."
+                  checked={clientEditForm.adFuelAlertMuted}
+                  onChange={on => setClientEditForm(f => ({ ...f, adFuelAlertMuted: on }))}
+                />
               </div>
 
               {/* ── Auto-pause ──────────────────────────────────────── */}
@@ -1280,32 +1275,19 @@ export default function AdFuelPage() {
                   </div>
                 )}
 
-                <label className="af-toggle">
-                  <input
-                    type="checkbox"
-                    className="af-checkbox"
-                    checked={clientEditForm.autoPauseAds}
-                    onChange={e => setClientEditForm(f => ({ ...f, autoPauseAds: e.target.checked, autoResumeAds: e.target.checked ? f.autoResumeAds : false }))}
-                  />
-                  <span className="af-toggle-text">
-                    Pause campaigns when the balance goes below zero
-                    <span className="af-toggle-sub">Pauses every active Google and Meta campaign.</span>
-                  </span>
-                </label>
-
+                <SwitchRow
+                  title="Pause campaigns when the balance goes below zero"
+                  description="Pauses every active Google and Meta campaign."
+                  checked={clientEditForm.autoPauseAds}
+                  onChange={on => setClientEditForm(f => ({ ...f, autoPauseAds: on, autoResumeAds: on ? f.autoResumeAds : false }))}
+                />
                 {clientEditForm.autoPauseAds && (
-                  <label className="af-toggle af-toggle--nested">
-                    <input
-                      type="checkbox"
-                      className="af-checkbox"
-                      checked={clientEditForm.autoResumeAds}
-                      onChange={e => setClientEditForm(f => ({ ...f, autoResumeAds: e.target.checked }))}
-                    />
-                    <span className="af-toggle-text">
-                      Resume them when the balance is back above zero
-                      <span className="af-toggle-sub">Turns the paused campaigns back on automatically.</span>
-                    </span>
-                  </label>
+                  <SwitchRow
+                    title="Resume them when the balance is back above zero"
+                    description="Turns the paused campaigns back on automatically."
+                    checked={clientEditForm.autoResumeAds}
+                    onChange={on => setClientEditForm(f => ({ ...f, autoResumeAds: on }))}
+                  />
                 )}
               </div>
 

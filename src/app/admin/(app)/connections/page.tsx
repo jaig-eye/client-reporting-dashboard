@@ -116,7 +116,7 @@ export default async function ConnectionsPage({
           status={googleStatus}
           description="One sign-in covers Ads, Analytics, Search Console and Business Profile."
           actions={googleConns.length === 0
-            ? <Link href="/admin/connections/new?type=google" className="btn btn-primary btn-sm">Connect Google</Link>
+            ? <Link href="/admin/connections/new?type=google" className="btn btn-secondary btn-sm">Connect Google</Link>
             : <>
                 <GoogleRefreshButton />
                 <OAuthConnectButton href="/api/auth/google/start" label="Reconnect" variant="secondary" size="sm" provider="Google" />
@@ -154,7 +154,7 @@ export default async function ConnectionsPage({
                 <OAuthConnectButton href="/api/auth/meta/start" label="Reconnect" variant="secondary" size="sm" provider="Meta" />
                 <Link href={`/admin/connections/${meta.id}`} className="btn btn-ghost btn-sm">Manage</Link>
               </>
-            : <Link href="/admin/connections/new?type=meta_ads" className="btn btn-primary btn-sm">Connect Meta</Link>}
+            : <Link href="/admin/connections/new?type=meta_ads" className="btn btn-secondary btn-sm">Connect Meta</Link>}
         />
       </IntegrationGroup>
 

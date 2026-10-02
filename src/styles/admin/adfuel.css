@@ -182,12 +182,6 @@ button.af-list-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .af-group { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
 .af-group-title { margin: 0; font-size: 0.8125rem; font-weight: 650; color: var(--text-primary); }
 .af-group .ui-notice { margin-bottom: 0; }
-.af-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
-.af-toggle .af-checkbox { margin-top: 2px; }
-.af-toggle:has(input:focus-visible) .af-checkbox { outline: none; box-shadow: var(--ring); border-radius: 3px; }
-.af-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 0.8125rem; line-height: 1.4; color: var(--text-primary); }
-.af-toggle-sub { font-size: 0.75rem; color: var(--text-muted); }
-.af-toggle--nested { margin-left: 26px; }
 
 /* The two dialogs (client billing, add ledger entry) use the shared Dialog; .af-form lays out its body. */
 .ui-dialog-body.af-form .ui-notice { margin-bottom: 0; }

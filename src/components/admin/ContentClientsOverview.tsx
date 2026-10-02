@@ -72,13 +72,13 @@ function Row({ r }: { r: ClientOverviewRow }) {
       </th>
 
       {/* Next to the name, so a laptop shows every problem without scrolling sideways. */}
-      <td className="cco-issues">
+      <td className="cco-issues" data-label="Issues">
         {r.flags.length === 0
           ? <span className="cco-none">None</span>
           : <span className="cco-flags">{r.flags.map(f => <Flag key={f.key} flag={f} />)}</span>}
       </td>
 
-      <td>
+      <td data-label="Automation">
         <span className={`badge ${r.running ? 'badge-green' : 'badge-gray'}`}>{r.running ? 'Running' : 'Paused'}</span>
         {r.offSwitches.length > 0 && (
           <span className="cco-sub cco-warn cco-inline">
@@ -91,7 +91,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         )}
       </td>
 
-      <td className="cco-wide">
+      <td className="cco-wide" data-label="Schedule">
         <span className="cco-main">{r.cadence}</span>
         <span className="cco-sub cco-strong">{plural(r.postsPerDate, 'post')} each date</span>
         <span className="cco-sub">
@@ -101,7 +101,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         </span>
       </td>
 
-      <td>
+      <td data-label="Planned">
         {r.planned === null ? <Unknown /> : (
           <>
             {r.planned.through
@@ -121,7 +121,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         )}
       </td>
 
-      <td>
+      <td data-label="In review">
         {r.review === null ? <Unknown /> : r.review.count === 0 ? <span className="cco-none">None</span> : (
           <>
             <span className="cco-main">{r.review.count}</span>
@@ -130,7 +130,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         )}
       </td>
 
-      <td>
+      <td data-label="Last published">
         {r.lastPublished === null ? <Unknown /> : r.lastPublished.date ? (
           <>
             <span className="cco-main">{fmtDate(r.lastPublished.date)}</span>
@@ -139,9 +139,9 @@ function Row({ r }: { r: ClientOverviewRow }) {
         ) : <span className="cco-none">Never</span>}
       </td>
 
-      <td className="cco-num">{r.length ? `${r.length.toLocaleString('en-US')}` : <span title="No length set, so posts use the default">1,500 (default)</span>}</td>
+      <td className="cco-num" data-label="Length">{r.length ? `${r.length.toLocaleString('en-US')}` : <span title="No length set, so posts use the default">1,500 (default)</span>}</td>
 
-      <td>
+      <td data-label="DataForSEO">
         {r.dfs === null ? <Unknown /> : r.dfs.connected ? (
           <>
             <span className="cco-main">Connected</span>
@@ -150,7 +150,7 @@ function Row({ r }: { r: ClientOverviewRow }) {
         ) : <span className="cco-none">No</span>}
       </td>
 
-      <td>
+      <td data-label="Priority topics">
         {r.prioritySets === null ? <Unknown /> : r.prioritySets === 0
           ? <span className="cco-none">None</span>
           : <span className="cco-main">{plural(r.prioritySets, 'set')} waiting</span>}

@@ -173,9 +173,8 @@ export default function ClientRelationshipCard({
         </div>
         <p className="co-level-hint">{level ? level.hint : 'Not set yet. Pick a level.'}</p>
         <p className="co-hint">
-          For now this is a label: it flags the client here and puts high-attention accounts at the
-          top of the weekly check-in digest. It doesn’t change what’s monitored or when anything
-          alerts yet.
+          Sorts high-attention clients to the top of the weekly check-in digest. Monitoring and alerts
+          stay the same.
         </p>
       </div>
 

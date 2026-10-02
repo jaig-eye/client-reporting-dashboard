@@ -1248,9 +1248,9 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .cco-logo { width: 24px; height: 24px; flex-shrink: 0; border-radius: 6px; object-fit: contain; }
 .cco-logo--initial {
   display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff; font-size: 0.625rem; font-weight: 700;
+  background: var(--accent); color: var(--on-fill, #fff); font-size: 0.625rem; font-weight: 700;
 }
-.cco-client-issues { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 600; color: var(--red); }
+.cco-client-issues { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 600; color: var(--red-fg, var(--red)); }
 
 .cco-main { display: block; color: var(--text-primary); }
 
@@ -1309,19 +1309,45 @@ button.kw-sec-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px va
 .cco-sub.cco-strong { color: var(--text-secondary); font-weight: 500; }
 .cco-none { color: var(--text-faint); }
 .cco-unknown { color: var(--text-faint); cursor: help; }
-.cco-warn { color: var(--amber); font-weight: 500; }
-.cco-bad { color: var(--red); font-weight: 600; }
+.cco-warn { color: var(--amber-fg, var(--amber)); font-weight: 500; }
+.cco-bad { color: var(--red-fg, var(--red)); font-weight: 600; }
 
 .cco-flags { display: flex; flex-wrap: wrap; gap: 4px; }
 .cco-flag {
   display: inline-flex; align-items: center; gap: 5px; padding: 1px 4px 1px 8px; border-radius: 999px;
   font-size: 0.72rem; font-weight: 500; line-height: 1.5; white-space: nowrap; border: 1px solid transparent;
 }
-.cco-flag--issue { background: var(--red-subtle); color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
+.cco-flag--issue { background: var(--red-subtle); color: var(--red-fg, var(--red)); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
 .cco-flag--info { background: var(--bg-subtle); color: var(--text-secondary); border-color: var(--border); }
 .cco-flag .kw-help { width: 14px; height: 14px; }
 
 @container (max-width: 640px) {
   .cco-bar { align-items: flex-start; flex-direction: column; }
   .cco-table .cco-client { min-width: 128px; max-width: 150px; }
+}
+
+/* A phone: one card per client instead of a table squeezed sideways. The name and its issues run
+   across the top, the rest in two labelled columns (each cell's data-label). */
+@container (max-width: 560px) {
+  .cco .cco-card { background: none; border: 0; box-shadow: none; overflow: visible; }
+  .cco .cco-scroll { overflow: visible; }
+  .cco .cco-table, .cco .cco-table tbody { display: block; width: auto; }
+  .cco .cco-table thead { display: none; }
+  .cco .cco-table tbody tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-auto-flow: row dense; gap: 12px 16px;
+    margin-bottom: 10px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-md, 10px);
+    background: var(--bg-surface); box-shadow: var(--shadow-xs, none);
+  }
+  .cco .cco-table tbody tr.cco-row--issue { box-shadow: inset 3px 0 0 var(--red), var(--shadow-xs, 0 0 #0000); }
+  .cco .cco-table tbody th.cco-client {
+    position: static; grid-column: 1 / -1; min-width: 0; max-width: none; padding: 0; border: 0;
+    background: none; box-shadow: none; font-size: 0.875rem;
+  }
+  .cco .cco-table tbody tr:hover th.cco-client, .cco .cco-table tbody tr:hover td { background: none; }
+  .cco .cco-table tbody td { display: block; min-width: 0; max-width: none; padding: 0; border: 0; white-space: normal; text-align: left; }
+  .cco .cco-table tbody td.cco-issues, .cco .cco-table tbody td.cco-wide { grid-column: 1 / -1; }
+  .cco .cco-table tbody td::before {
+    content: attr(data-label); display: block; margin-bottom: 3px;
+    font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
+  }
 }

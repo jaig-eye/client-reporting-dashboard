@@ -62,22 +62,19 @@ export default function ClientRawData({ clientId }: { clientId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+        <span className="ui-picks ui-picks--sm" role="group" aria-label="Source">
           {(['google_ads', 'meta_ads'] as const).map(s => (
             <button
               key={s}
+              type="button"
+              className="ui-pick"
+              aria-pressed={source === s}
               onClick={() => { setSource(s); setLoaded(false); setRows([]) }}
-              className="text-xs px-3 py-1.5 font-medium"
-              style={{
-                background: source === s ? 'var(--blue)' : 'var(--bg-surface)',
-                color:      source === s ? 'white' : 'var(--text-muted)',
-                border:     'none', cursor: 'pointer',
-              }}
             >
               {s === 'google_ads' ? 'Google Ads' : 'Meta Ads'}
             </button>
           ))}
-        </div>
+        </span>
 
         <select
           value={limit}

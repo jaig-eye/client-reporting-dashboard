@@ -129,7 +129,7 @@ export default function ClientLogoUpload({
 
       {error && <div className="ui-notice ui-notice--danger" role="alert">{error}</div>}
       <p className="co-hint" style={{ marginTop: 0 }}>
-        JPG, PNG or SVG, up to 4 MB. Uploading a file needs Vercel Blob (BLOB_READ_WRITE_TOKEN); a pasted URL always works.
+        JPG, PNG or SVG, up to 4 MB. Or paste the address of an image that’s already online.
       </p>
     </div>
   )

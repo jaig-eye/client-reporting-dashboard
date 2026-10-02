@@ -724,7 +724,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
               {planError
                 ? <>{planError}{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={() => void openPlan(planMode)}>Try again</button></>
                 : !plan
-                  ? <span style={{ color: 'var(--text-faint)' }}>Working out the dates…</span>
+                  ? <span style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 3 }} aria-label="Working out the dates"><Sk w="85%" h={11} /><Sk w="55%" h={11} /></span>
                   : plan.dates.length === 0
                     ? (planMode === 'regenerate'
                       ? 'Every upcoming date already has a topic. Delete the ones you don’t want, then regenerate.'

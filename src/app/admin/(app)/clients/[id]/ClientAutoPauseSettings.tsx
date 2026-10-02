@@ -1,6 +1,12 @@
 'use client'
 
+// Client → Advanced → Ad Fuel auto-pause. The Section around it (on the client page) names it;
+// this is the two switches, the state they left the campaigns in, and the record of what happened.
+
 import { useState } from 'react'
+import { CheckCircle, PauseCircle } from '@phosphor-icons/react'
+import { SwitchRow } from '@/components/ui/Switch'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
 
 interface PauseLog {
   id:                        string
@@ -11,6 +17,18 @@ interface PauseLog {
   meta_campaigns_affected:   number
   error:                     string | null
   created_at:                string
+}
+
+const ACTION: Record<string, { label: string; tone: StatusTone }> = {
+  paused:        { label: 'Paused',        tone: 'danger' },
+  resumed:       { label: 'Resumed',       tone: 'success' },
+  pause_failed:  { label: 'Pause failed',  tone: 'warning' },
+  resume_failed: { label: 'Resume failed', tone: 'warning' },
+}
+
+/** "Oct 2, 2026, 4:12 PM": the date and clock time, as everything that happened is shown. */
+function when(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 export default function ClientAutoPauseSettings({
@@ -39,17 +57,16 @@ export default function ClientAutoPauseSettings({
       body: JSON.stringify({ auto_pause_ads: nextPause, auto_resume_ads: nextResume }),
     })
     setSaving(false)
-    if (!res.ok) { setError((await res.json()).error || 'Save failed'); return }
+    if (!res.ok) { setError((await res.json().catch(() => ({}))).error || 'Didn’t save. Try again.'); return }
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
 
   function handlePauseToggle(checked: boolean) {
-    const next = checked
-    const nextResume = next ? resumeEnabled : false
-    setPauseEnabled(next)
+    const nextResume = checked ? resumeEnabled : false
+    setPauseEnabled(checked)
     setResumeEnabled(nextResume)
-    save(next, nextResume)
+    save(checked, nextResume)
   }
 
   function handleResumeToggle(checked: boolean) {
@@ -57,114 +74,73 @@ export default function ClientAutoPauseSettings({
     save(pauseEnabled, checked)
   }
 
-  function actionLabel(action: string) {
-    switch (action) {
-      case 'paused':        return { label: 'Paused',        color: 'var(--red-fg)', bg: 'var(--red-subtle)' }
-      case 'resumed':       return { label: 'Resumed',       color: 'var(--green-fg)', bg: 'var(--green-subtle)' }
-      case 'pause_failed':  return { label: 'Pause failed',  color: 'var(--amber-fg)', bg: 'var(--amber-subtle)' }
-      case 'resume_failed': return { label: 'Resume failed', color: 'var(--amber-fg)', bg: 'var(--amber-subtle)' }
-      default:              return { label: action,          color: 'var(--text-muted)', bg: 'var(--bg-subtle)' }
-    }
-  }
-
   return (
-    <div className="space-y-5">
-      {/* Status banner */}
+    <div className="ui-stack">
       {campaignsPausedAt && (
-        <div style={{ padding: '0.75rem 1rem', borderRadius: 8, background: 'var(--red-subtle)', border: '1px solid var(--red-border)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '1rem' }}>⏸</span>
-          <div>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: 'var(--red-fg)' }}>Campaigns are paused</p>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--red-fg)' }}>
-              Auto-paused on {new Date(campaignsPausedAt).toLocaleString()} due to negative Ad Fuel balance.
-            </p>
-          </div>
+        <div className="ui-notice ui-notice--danger ap-paused" role="status">
+          <PauseCircle size={18} weight="fill" aria-hidden />
+          <span>
+            <strong>Campaigns are paused.</strong> Paused automatically on {when(campaignsPausedAt)}, when the Ad Fuel balance went below zero.
+          </span>
         </div>
       )}
 
-      {/* Toggles */}
-      <div className="card p-5 space-y-4">
-        <h2 className="section-title mb-0">Auto-Pause Settings</h2>
-        <p className="section-desc" style={{ marginTop: '0.125rem' }}>
-          Automatically pause all active campaigns when the Ad Fuel balance goes negative.
-          Requires Google Ads and/or Meta Ads connections to be active.
-        </p>
-
-        <div className="space-y-3">
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer' }}>
-            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginTop: 2 }}>
-              <input
-                type="checkbox" checked={pauseEnabled} onChange={e => handlePauseToggle(e.target.checked)}
-                style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--blue)' }}
-              />
-            </div>
-            <div>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem' }}>Auto-pause when balance goes negative</p>
-              <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-                Checks hourly. Pauses all active Google Ads and Meta Ads campaigns. Sends Discord notification if configured.
-              </p>
-            </div>
-          </label>
-
-          {pauseEnabled && (
-            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer', marginLeft: '1.75rem' }}>
-              <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', marginTop: 2 }}>
-                <input
-                  type="checkbox" checked={resumeEnabled} onChange={e => handleResumeToggle(e.target.checked)}
-                  style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--blue)' }}
-                />
-              </div>
-              <div>
-                <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem' }}>Auto-resume when balance is topped up</p>
-                <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-                  Re-enables exactly the campaigns that were paused. Leave off to resume manually after reviewing budget.
-                </p>
-              </div>
-            </label>
-          )}
-        </div>
-
-        {saving && <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)' }}>Saving…</p>}
-        {saved  && <p style={{ fontSize: '0.8rem', color: 'var(--green)' }}>Saved ✓</p>}
-        {error  && <p style={{ fontSize: '0.8rem', color: 'var(--red)' }}>{error}</p>}
+      <div>
+        <SwitchRow
+          title="Pause when the balance goes below zero"
+          description="Checked every hour. Pauses every active Google Ads and Meta Ads campaign, and posts to Discord when that's set up. Needs the client's Google Ads or Meta Ads connected."
+          checked={pauseEnabled}
+          onChange={handlePauseToggle}
+          disabled={saving}
+        />
+        {pauseEnabled && (
+          <SwitchRow
+            title="Resume when the balance is topped up"
+            description="Turns back on exactly the campaigns that were paused. Leave it off to review the budget and resume them by hand."
+            checked={resumeEnabled}
+            onChange={handleResumeToggle}
+            disabled={saving}
+          />
+        )}
       </div>
 
-      {/* Pause log */}
-      {pauseLog.length > 0 && (
-        <div className="card p-5">
-          <h2 className="section-title mb-3">Pause and resume log</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {pauseLog.map(entry => {
-              const { label, color, bg } = actionLabel(entry.action)
-              const total = entry.google_campaigns_affected + entry.meta_campaigns_affected
-              return (
-                <div key={entry.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.625rem 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                  <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: bg, color, whiteSpace: 'nowrap', marginTop: 1 }}>
-                    {label}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: '0.8125rem' }}>
-                      {total} campaign{total !== 1 ? 's' : ''} affected
-                      {entry.google_campaigns_affected > 0 && ` (${entry.google_campaigns_affected} Google)`}
-                      {entry.meta_campaigns_affected   > 0 && ` (${entry.meta_campaigns_affected} Meta)`}
-                      {entry.balance != null && ` · Balance: $${Number(entry.balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
-                    </p>
-                    {entry.error && <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--red)' }}>{entry.error}</p>}
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
-                    {new Date(entry.created_at).toLocaleDateString()} {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    {' · '}{entry.trigger}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
+      {(saved || error) && (
+        <div className="ui-saverow">
+          {saved && <span className="ui-saved" role="status"><CheckCircle size={14} weight="fill" aria-hidden />Saved</span>}
+          {error && <span className="ui-savefail" role="alert">{error}</span>}
         </div>
       )}
 
-      {pauseLog.length === 0 && (
-        <p style={{ fontSize: '0.8125rem', color: 'var(--text-faint)' }}>No pause events recorded yet.</p>
-      )}
+      <div>
+        <p className="ap-log-title">Pause and resume log</p>
+        {pauseLog.length === 0 ? (
+          <p className="ap-empty">Nothing paused or resumed yet.</p>
+        ) : (
+          <ul className="ap-log">
+            {pauseLog.map(entry => {
+              const action = ACTION[entry.action] ?? { label: entry.action, tone: 'neutral' as const }
+              const total = entry.google_campaigns_affected + entry.meta_campaigns_affected
+              const split = [
+                entry.google_campaigns_affected > 0 ? `${entry.google_campaigns_affected} Google` : null,
+                entry.meta_campaigns_affected   > 0 ? `${entry.meta_campaigns_affected} Meta` : null,
+              ].filter(Boolean).join(', ')
+              return (
+                <li key={entry.id} className="ap-log-row">
+                  <StatusBadge tone={action.tone} dot={false}>{action.label}</StatusBadge>
+                  <span className="ap-log-text">
+                    <span>
+                      {total} campaign{total === 1 ? '' : 's'}{split && ` (${split})`}
+                      {entry.balance != null && `, balance $${Number(entry.balance).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+                    </span>
+                    {entry.error && <span className="ap-log-error">{entry.error}</span>}
+                  </span>
+                  <time className="ap-log-when" dateTime={entry.created_at}>{when(entry.created_at)}, {entry.trigger}</time>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

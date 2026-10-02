@@ -41,7 +41,7 @@ export default function IntegrationCard({
       description={description}
       meta={isConnected && connectedLabel ? <code className="int-code">{connectedLabel}</code> : undefined}
       actions={
-        <button type="button" onClick={onConfigure} className={`btn btn-sm ${isConnected ? 'btn-secondary' : 'btn-primary'}`}>
+        <button type="button" onClick={onConfigure} className="btn btn-sm btn-secondary">
           {isConnected ? 'Manage' : 'Connect'}
         </button>
       }

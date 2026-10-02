@@ -1770,7 +1770,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               </div>
 
               {/* Focus Keyword + URL Slug */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
+              <div className="ui-grid-2 mb-4" style={{ gap: '0.75rem' }}>
                 <div>
                   <label style={labelStyle}>Focus keyword</label>
                   <input type="text" value={targetKeyword} onChange={e => { setTargetKeyword(e.target.value); markDirty() }} style={inputStyle} placeholder="Primary keyword" />
@@ -1954,9 +1954,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
               </div>
 
               {/* Author + publish status */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }} className="mb-4">
+              <div className="ui-grid-2 mb-4" style={{ gap: '0.75rem' }}>
                 <div>
-                  <label style={labelStyle}>{isBc ? 'Author name' : 'WP Author'}</label>
+                  <label style={labelStyle}>{isBc ? 'Author name' : 'WordPress author'}</label>
                   {isBc ? (
                     <input
                       type="text"
@@ -1995,9 +1995,9 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       type="button"
                       onClick={refreshCategories}
                       disabled={categoriesLoading}
-                      style={{ fontSize: '0.6875rem', padding: '0.125rem 0.5rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--surface)', cursor: categoriesLoading ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: categoriesLoading ? 0.6 : 1 }}
+                      style={{ fontSize: '0.6875rem', padding: '0.125rem 0.5rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: categoriesLoading ? 'default' : 'pointer', color: 'var(--text-muted)', opacity: categoriesLoading ? 0.6 : 1 }}
                     >
-                      {categoriesLoading ? '⟳ Refreshing…' : '↻ Refresh'}
+                      <ArrowClockwise size={11} weight="bold" aria-hidden style={{ marginRight: 4, verticalAlign: -1 }} />{categoriesLoading ? 'Refreshing…' : 'Refresh'}
                     </button>
                   </div>
 
@@ -2039,7 +2039,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                         <button
                           type="button"
                           onClick={() => { setCategoryIds([categorySuggestion.id!]); markDirty() }}
-                          style={{ marginLeft: 'auto', fontSize: '0.6875rem', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                          style={{ marginLeft: 'auto', fontSize: '0.6875rem', padding: '0.125rem 0.375rem', borderRadius: '0.25rem', border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer' }}
                         >
                           Apply
                         </button>

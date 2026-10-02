@@ -508,45 +508,43 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
           <p className="section-desc" style={{ marginTop: '0.125rem' }}>When posts publish and how much runs automatically. Each publishing window gets the number of posts set below.</p>
         </div>
 
-        <div>
-          <Label htmlFor="cs-cadence">Publishing cadence</Label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <select id="cs-cadence" className="input" style={{ width: 200 }} value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
+        {/* One labelled field each, so the row reads the same on a phone as on a desktop. It was a
+            sentence of inputs ("Weekly × 1 post on Monday at 09:00") that broke across four lines. */}
+        <div className="ccs-cadence">
+          <div className="ccs-cadence-freq">
+            <Label htmlFor="cs-cadence">Publishing cadence</Label>
+            <select id="cs-cadence" className="input" value={form.schedule_frequency ?? ''} onChange={e => set('schedule_frequency', e.target.value || null)}>
               <option value="">Use global default</option>
               {FREQ_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            {/* One phrase, so a wrap never strands the "×" on the end of a line. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>×</span>
-              <input
-                className="input"
-                type="number"
-                min={1}
-                max={10}
-                style={{ width: 72 }}
-                aria-label="Posts per publishing window"
-                value={form.posts_per_run ?? 1}
-                // Ceiling on change, floor on blur. Clamping the floor per keystroke made the
-                // field impossible to clear — delete it and Number('') || 1 wrote a 1 straight
-                // back — while correcting an empty field when focus leaves is expected.
-                onChange={e => set('posts_per_run', Math.min(10, Math.max(0, Number(e.target.value) || 0)))}
-                onBlur={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                {(form.posts_per_run ?? 1) === 1 ? 'post' : 'posts'}
-              </span>
-            </div>
-            {showDayPicker && (<>
-              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{form.schedule_frequency === 'monthly' ? 'on the first' : 'on'}</span>
-              <select className="input" aria-label="Publish day" style={{ width: 140 }} value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
+          </div>
+          {showDayPicker && (
+            <div>
+              <Label htmlFor="cs-day" hint={form.schedule_frequency === 'monthly' ? 'the first one each month' : undefined}>Publish day</Label>
+              <select id="cs-day" className="input" value={form.schedule_day_of_week ?? 1} onChange={e => set('schedule_day_of_week', Number(e.target.value))}>
                 {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
               </select>
-            </>)}
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>at</span>
-            {/* 120px fits "09:00 AM" but not the clock button Chrome draws inside the field on
-                top of it, so the two overlapped. Wide enough for both, and minWidth holds it
-                there when the row is tight. */}
-            <input className="input" type="time" aria-label="Publish time" style={{ width: 150, minWidth: 150 }} value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
+            </div>
+          )}
+          <div>
+            <Label htmlFor="cs-per-date">Posts each date</Label>
+            <input
+              id="cs-per-date"
+              className="input"
+              type="number"
+              min={1}
+              max={10}
+              value={form.posts_per_run ?? 1}
+              // Ceiling on change, floor on blur. Clamping the floor per keystroke made the
+              // field impossible to clear — delete it and Number('') || 1 wrote a 1 straight
+              // back — while correcting an empty field when focus leaves is expected.
+              onChange={e => set('posts_per_run', Math.min(10, Math.max(0, Number(e.target.value) || 0)))}
+              onBlur={e => set('posts_per_run', Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+            />
+          </div>
+          <div>
+            <Label htmlFor="cs-time">Publish time</Label>
+            <input id="cs-time" className="input" type="time" value={form.publish_time ?? '09:00'} onChange={e => set('publish_time', e.target.value || null)} />
           </div>
         </div>
 
