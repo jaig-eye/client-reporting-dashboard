@@ -12,11 +12,12 @@
 // passes it through) so the common path is: read code from email, type it, choose
 // a password.
 
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from '@phosphor-icons/react'
 import LoginCanvas from '@/components/admin/LoginCanvas'
+import AuthBrand from '@/components/admin/AuthBrand'
 
 function ResetPasswordForm() {
   const router       = useRouter()
@@ -29,24 +30,10 @@ function ResetPasswordForm() {
   const [loading,  setLoading]  = useState(false)
   const [success,  setSuccess]  = useState(false)
   const [error,    setError]    = useState('')
-  // agency_logo_url as well as the name. Fetching only the name meant this page always
-  // drew the initial-letter placeholder even when a real logo was configured — the
-  // sign-in page has rendered the logo all along, so the reset flow looked like a
-  // different, unbranded product at exactly the moment trust matters most.
-  const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
-    agency_name: 'Agency Dashboard', agency_logo_url: null,
-  })
 
   // Set when the user arrived here because sign-in required a rotation, so the
   // copy can explain why they are here rather than implying they asked for it.
   const forced = searchParams.get('forced') === '1'
-
-  useEffect(() => {
-    fetch('/api/settings/branding')
-      .then(r => r.json())
-      .then(d => setBranding(d))
-      .catch(() => {})
-  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -84,36 +71,18 @@ function ResetPasswordForm() {
       <LoginCanvas />
 
       <div className="au-card">
-        <div className="mb-6">
-          <div className="mb-3">
-            {branding.agency_logo_url ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={branding.agency_logo_url}
-                alt={branding.agency_name}
-                style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
-              />
-            ) : (
-              /* Reserve the same box so the header does not jump when the logo lands.
-                 Deliberately empty: the initial-letter fallback that used to sit here
-                 rendered on every first paint, before branding had loaded. */
-              <div className="h-9 w-9" aria-hidden="true" />
-            )}
-          </div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            {forced ? 'Update your password' : 'New password'}
-          </h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {success
-              /* No session is created here -- reset-password only changes the password, so
-                 "signing you in" promised something that never happens and reads as a
-                 failure when the login form appears. */
-              ? 'Password updated — taking you to sign in…'
-              : forced
-                ? 'Your password needs updating for security. Enter the code we emailed you and choose a new one.'
-                : 'Enter the code from your email and choose a new password.'}
-          </p>
-        </div>
+        <AuthBrand />
+        <h1 className="au-title">{forced ? 'Update your password' : 'New password'}</h1>
+        <p className="au-sub">
+          {success
+            /* No session is created here -- reset-password only changes the password, so
+               "signing you in" promised something that never happens and reads as a
+               failure when the login form appears. */
+            ? 'Password updated — taking you to sign in…'
+            : forced
+              ? 'Your password needs updating for security. Enter the code we emailed you and choose a new one.'
+              : 'Enter the code from your email and choose a new password.'}
+        </p>
 
         {!success && (
           <form onSubmit={handleSubmit} className="space-y-4">

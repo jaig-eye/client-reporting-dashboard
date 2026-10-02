@@ -1,9 +1,10 @@
 'use client'
 
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft } from '@phosphor-icons/react'
 import LoginCanvas from '@/components/admin/LoginCanvas'
+import AuthBrand from '@/components/admin/AuthBrand'
 
 function ForgotPasswordForm() {
   const [step,     setStep]     = useState<'email' | 'code'>('email')
@@ -14,18 +15,6 @@ function ForgotPasswordForm() {
   const [loading,  setLoading]  = useState(false)
   const [done,     setDone]     = useState(false)
   const [error,    setError]    = useState('')
-  // agency_logo_url as well as the name — fetching only the name meant this page always
-  // drew the initial-letter placeholder even with a real logo configured.
-  const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
-    agency_name: 'Agency Dashboard', agency_logo_url: null,
-  })
-
-  useEffect(() => {
-    fetch('/api/settings/branding')
-      .then(r => r.json())
-      .then(d => setBranding(d))
-      .catch(() => {})
-  }, [])
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault()
@@ -94,31 +83,15 @@ function ForgotPasswordForm() {
       <LoginCanvas />
 
       <div className="au-card">
-        <div className="mb-6">
-          <div className="mb-3">
-            {branding.agency_logo_url ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={branding.agency_logo_url}
-                alt={branding.agency_name}
-                style={{ height: '2.25rem', maxWidth: '10rem', objectFit: 'contain' }}
-              />
-            ) : (
-              /* Reserve the same box so the header does not jump when the logo lands.
-                 Deliberately empty: the initial-letter fallback that used to sit here
-                 rendered on every first paint, before branding had loaded. */
-              <div className="h-9 w-9" aria-hidden="true" />
-            )}
-          </div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Reset password</h1>
-          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {done
-              ? 'Password updated — you can sign in now.'
-              : step === 'code'
-                ? 'Enter the code we sent to your email.'
-                : "Enter your email and we'll send a reset code."}
-          </p>
-        </div>
+        <AuthBrand />
+        <h1 className="au-title">Reset password</h1>
+        <p className="au-sub">
+          {done
+            ? 'Password updated — you can sign in now.'
+            : step === 'code'
+              ? 'Enter the code we sent to your email.'
+              : "Enter your email and we'll send a reset code."}
+        </p>
 
         {done ? (
           <Link href="/admin" className="btn btn-primary w-full justify-center" style={{ padding: '0.625rem' }}>

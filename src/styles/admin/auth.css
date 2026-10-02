@@ -63,18 +63,22 @@
 .au-card[data-phase="success"] .au-progress::before { width: 100%; border-radius: 0; animation: none; }
 @keyframes au-sweep { from { transform: translateX(-100%); } to { transform: translateX(265%); } }
 
-.au-brand { display: flex; align-items: center; gap: 12px; min-height: 40px; margin-bottom: 22px; }
-.au-logo { height: 36px; max-width: 160px; object-fit: contain; }
-.au-mark {
-  display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 11px;
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--text-primary)));
-  color: var(--on-fill); font-weight: 700; font-size: 0.95rem;
-  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+/* The agency's logo leads the card, centred, with the heading under it. */
+.au-brand {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  min-height: 64px; margin: 6px 0 26px; text-align: center;
 }
-.au-agency { font-size: 0.875rem; font-weight: 600; color: var(--text-secondary); }
+.au-logo { display: block; width: auto; height: auto; max-height: 68px; max-width: min(268px, 100%); object-fit: contain; }
+.au-mark {
+  display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 15px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--text-primary)));
+  color: var(--on-fill); font-weight: 700; font-size: 1.3rem;
+  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.au-agency { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--text-primary); }
 
-.au-title { margin: 0; font-size: 1.625rem; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; color: var(--text-primary); }
-.au-sub { margin: 6px 0 24px; font-size: 0.9rem; line-height: 1.5; color: var(--text-muted); }
+.au-title { margin: 0; text-align: center; font-size: 1.5rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); }
+.au-sub { margin: 6px 0 24px; text-align: center; font-size: 0.9rem; line-height: 1.5; color: var(--text-muted); }
 
 /* ── Fields ─────────────────────────────────────────────────────────────── */
 
@@ -136,15 +140,15 @@
 }
 @keyframes au-spin { to { transform: rotate(360deg); } }
 
-.au-foot { margin: 20px 0 0; text-align: center; font-size: 0.78rem; color: var(--text-muted); }
-
 /* ── Phones ─────────────────────────────────────────────────────────────── */
 
 @media (max-width: 480px) {
   /* The card sits at the bottom, in thumb reach, and the mesh shows above it. */
   .au { place-items: end center; }
   .au-card { padding: 28px 20px 22px; border-radius: 20px; }
-  .au-title { font-size: 1.45rem; }
+  .au-brand { margin-bottom: 20px; }
+  .au-logo { max-height: 56px; }
+  .au-title { font-size: 1.375rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

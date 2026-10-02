@@ -11,11 +11,12 @@
 // until the dashboard has loaded; it used to unlock in a finally block while the page was still
 // navigating, so the button could be pressed again.
 
-import { Suspense, useState, useEffect, useRef } from 'react'
+import { Suspense, useState, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, WarningCircle } from '@phosphor-icons/react'
 import LoginCanvas from '@/components/admin/LoginCanvas'
+import AuthBrand from '@/components/admin/AuthBrand'
 
 type Phase = 'idle' | 'busy' | 'success' | 'error'
 
@@ -44,18 +45,7 @@ function AdminLoginForm() {
   const [phase,    setPhase]    = useState<Phase>('idle')
   // A second Enter can land before React re-renders the disabled button; this can't.
   const inFlight = useRef(false)
-  const [branding, setBranding] = useState<{ agency_name: string; agency_logo_url: string | null }>({
-    agency_name: 'LaunchLocal', agency_logo_url: null,
-  })
 
-  useEffect(() => {
-    fetch('/api/settings/branding')
-      .then(r => r.json())
-      .then(d => setBranding(d))
-      .catch(() => {})
-  }, [])
-
-  const isSuperAdmin = email.trim() === ''
   const locked = phase === 'busy' || phase === 'success'
 
   /** Typing after an error clears it, and the background calms back down. */
@@ -136,7 +126,7 @@ function AdminLoginForm() {
     }
   }
 
-  const busyLabel = step === 'code' ? 'Verifying' : isSuperAdmin ? 'Sending your code' : 'Signing in'
+  const busyLabel = step === 'code' ? 'Verifying' : 'Signing in'
   const doneLabel = 'Opening the dashboard'
 
   return (
@@ -146,21 +136,12 @@ function AdminLoginForm() {
       <section className="au-card" aria-labelledby="au-title" aria-busy={locked || undefined} data-phase={phase}>
         <div className="au-progress" aria-hidden />
 
-        <div className="au-brand">
-          {branding.agency_logo_url ? (
-            <img src={branding.agency_logo_url} alt={branding.agency_name} className="au-logo" />
-          ) : (
-            <>
-              <span className="au-mark" aria-hidden>{branding.agency_name.charAt(0).toUpperCase()}</span>
-              <span className="au-agency">{branding.agency_name}</span>
-            </>
-          )}
-        </div>
+        <AuthBrand />
 
         <h1 className="au-title" id="au-title">{step === 'code' ? 'Check your email' : 'Sign in'}</h1>
         <p className="au-sub">
           {step === 'code'
-            ? 'We sent a 6-digit code to support@golaunchlocal.com. It expires in 10 minutes.'
+            ? 'We emailed you a 6-digit code. It expires in 10 minutes.'
             : 'Every client’s reporting, content and spend, in one place.'}
         </p>
 
@@ -208,7 +189,7 @@ function AdminLoginForm() {
                 <div>
                   <div className="au-label-row">
                     <label className="au-label" htmlFor="au-password">Password</label>
-                    {!isSuperAdmin && <Link href="/admin/forgot-password" className="au-link">Forgot password?</Link>}
+                    <Link href="/admin/forgot-password" className="au-link">Forgot password?</Link>
                   </div>
                   <input
                     id="au-password"
@@ -218,7 +199,7 @@ function AdminLoginForm() {
                     required
                     autoComplete="current-password"
                     className="au-input"
-                    placeholder={isSuperAdmin ? 'Master password' : 'Your password'}
+                    placeholder="Your password"
                   />
                 </div>
               </>
@@ -253,14 +234,6 @@ function AdminLoginForm() {
             </button>
           )}
         </form>
-
-        <p className="au-foot">
-          {step === 'code'
-            ? 'Super admin: two-step verification'
-            : isSuperAdmin
-              ? 'Super admin: leave the email empty'
-              : 'Use your agency email and password'}
-        </p>
       </section>
     </main>
   )
