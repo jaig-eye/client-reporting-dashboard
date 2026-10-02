@@ -15,6 +15,9 @@ import EmptyState from '@/components/ui/EmptyState'
 import { PillTabs } from '@/components/ui/PillTabs'
 import { ConfirmDialog } from '@/components/ui/Dialog'
 
+/** "supporting_article" → "Supporting article": sentence case, not capitalize's Title Case. */
+const sentence = (v: string) => v.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -432,7 +435,7 @@ function PageRow({ page }: { page: SiloPage }) {
       <div className="ui-row-text">
         <div className="ui-row-title">{page.title}<StatusBadge tone={st.tone}>{st.label}</StatusBadge></div>
         <p className="ui-row-sub" style={{ margin: 0, textTransform: 'none' }}>
-          <span style={{ textTransform: 'capitalize' }}>{page.page_type.replace(/_/g, ' ')}</span> · {page.slug ? `/${page.slug}` : 'No address yet'}
+          <span>{sentence(page.page_type)}</span> · {page.slug ? `/${page.slug}` : 'No address yet'}
         </p>
         {post && <p className="ui-row-sub" style={{ margin: 0 }}>Written as “{String(post.title ?? 'Untitled post')}”</p>}
       </div>
@@ -488,7 +491,7 @@ function SiloMapTab({ pages, links, siloName, hubUrl }: { pages: SiloPage[]; lin
               {supports.map(p => (
                 <div key={p.id} className={`sd-node${nodeTone(p.status)}`}>
                   <p className="sd-node-title">{p.title}</p>
-                  <p className="sd-node-meta">{p.page_type.replace(/_/g, ' ')} · {pageStatus(p.status).label}</p>
+                  <p className="sd-node-meta">{sentence(p.page_type)} · {pageStatus(p.status).label}</p>
                 </div>
               ))}
             </div>

@@ -166,16 +166,13 @@ export function NoteSecretReveal({
           <>
             <code style={{ fontSize: '0.8rem', color: 'var(--text-faint)', letterSpacing: '0.12em' }}>••••••••••</code>
             <button
+              type="button"
               onClick={reveal}
               disabled={loading}
-              style={{
-                marginLeft: 'auto', padding: '2px 9px', borderRadius: 5, cursor: 'pointer',
-                fontSize: '0.7rem', fontWeight: 600,
-                background: '#f59e0b', color: '#fff', border: 'none',
-                opacity: loading ? 0.6 : 1,
-              }}
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: 'auto' }}
             >
-              {loading ? 'Unlocking...' : 'Unlock'}
+              {loading ? 'Unlocking…' : 'Unlock'}
             </button>
           </>
         ) : (

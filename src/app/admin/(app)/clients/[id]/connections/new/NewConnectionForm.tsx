@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { ConnectorType } from '@/lib/types'
+import Link from 'next/link'
+import { ArrowLeft } from '@phosphor-icons/react'
 
 interface Props {
   clientId: string
@@ -140,7 +142,7 @@ export default function NewConnectionForm({
           <button type="submit" className="btn btn-primary" disabled={status === 'saving' || !externalId.trim()}>
             {status === 'saving' ? 'Connecting…' : 'Connect the domain'}
           </button>
-          <a href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</a>
+          <Link href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</Link>
         </div>
       </form>
     )
@@ -195,10 +197,10 @@ export default function NewConnectionForm({
             <button
               type="button"
               className="text-xs"
-              style={{ color: 'var(--blue)' }}
+              style={{ color: 'var(--accent-fg)', display: 'inline-flex', alignItems: 'center', gap: 5 }}
               onClick={() => setUseManual(false)}
             >
-              ← Select from discovered accounts
+              <ArrowLeft size={12} weight="bold" aria-hidden />Select from discovered accounts
             </button>
           )}
         </>
@@ -208,7 +210,7 @@ export default function NewConnectionForm({
         <button type="submit" className="btn btn-primary" disabled={status === 'saving'}>
           {status === 'saving' ? 'Connecting…' : 'Connect the account'}
         </button>
-        <a href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</a>
+        <Link href={`/admin/clients/${clientId}`} className="btn btn-secondary">Cancel</Link>
       </div>
     </form>
   )

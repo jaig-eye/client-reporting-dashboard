@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation'
 import { PencilSimple, Plus, Trash, ArrowSquareOut } from '@phosphor-icons/react'
 import Section from '@/components/ui/Section'
 import StatusBadge from '@/components/ui/StatusBadge'
+import { ConfirmDialog } from '@/components/ui/Dialog'
 import ClientLogoUpload from './ClientLogoUpload'
 import { CONTACT_ROLE, initials, normalizeUrl, type AdminUser, type Contact } from './people'
 
@@ -132,17 +133,29 @@ export default function ProfileTab({
     }
   }
 
+  // Removing asks first (ConfirmDialog). It used to remove on one click and swallow a failure.
+  const [removing, setRemoving] = useState<Contact | null>(null)
+
   async function deleteContact(contactId: string) {
-    try {
-      const res = await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' })
-      if (res.ok) { setContacts(prev => prev.filter(c => c.id !== contactId)); router.refresh() }
-    } catch {
-      // leave contact in list on network failure
-    }
+    const res = await fetch(`/api/admin/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' }).catch(() => null)
+    if (!res?.ok) throw new Error('The contact wasn’t removed. Try again.')
+    setContacts(prev => prev.filter(c => c.id !== contactId))
+    router.refresh()
   }
 
   return (
     <div className="co-profile co-scope">
+      <ConfirmDialog
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title={removing ? `Remove ${removing.name}?` : 'Remove contact?'}
+        confirmLabel="Remove contact"
+        busyLabel="Removing…"
+        tone="danger"
+        onConfirm={async () => { if (removing) await deleteContact(removing.id) }}
+      >
+        They come off this client’s contacts. Notes and emails that mention them stay as they are.
+      </ConfirmDialog>
       <Section
         title="Business info"
         description="The name, address and links the client’s dashboard and reports show."
@@ -251,7 +264,7 @@ export default function ProfileTab({
                 <span className="ui-row-actions">
                   <button
                     type="button"
-                    onClick={() => deleteContact(contact.id)}
+                    onClick={() => setRemoving(contact)}
                     className="co-iconbtn co-iconbtn--danger"
                     aria-label={`Remove ${contact.name}`}
                     title="Remove contact"

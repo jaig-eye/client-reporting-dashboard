@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { CaretDown, Check } from '@phosphor-icons/react'
 
 interface ClientOption {
   id: string
@@ -51,76 +52,45 @@ export default function PreviewClientSwitcher({
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      {/* Trigger button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-          borderRadius: 6, padding: '4px 10px 4px 8px', cursor: 'pointer',
-          color: '#e2e8f0', fontSize: '0.78rem', fontWeight: 500, whiteSpace: 'nowrap',
-        }}
-      >
-        {currentClient.logo_url && (
-          <img src={currentClient.logo_url} alt="" style={{ height: 16, width: 16, objectFit: 'contain', borderRadius: 2, flexShrink: 0 }} />
-        )}
+    <div ref={ref} className="pv-switch">
+      <button type="button" className="pv-trigger" onClick={() => setOpen(o => !o)} aria-haspopup="listbox" aria-expanded={open}>
+        {currentClient.logo_url && <img src={currentClient.logo_url} alt="" className="pv-logo" />}
         <span>{currentClient.name}</span>
-        <span style={{ opacity: 0.5, fontSize: '0.65rem', marginLeft: 2 }}>▾</span>
+        <CaretDown size={12} weight="bold" aria-hidden />
       </button>
 
-      {/* Dropdown */}
       {open && (
-        <div
-          style={{
-            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 999,
-            background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-            width: 260, maxHeight: 360, display: 'flex', flexDirection: 'column',
-          }}
-        >
-          {/* Search */}
-          <div style={{ padding: '8px 10px', borderBottom: '1px solid #334155' }}>
+        <div className="pv-menu">
+          <div className="pv-search">
             <input
               ref={inputRef}
+              className="input"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search clients…"
-              style={{
-                width: '100%', background: 'rgba(255,255,255,0.07)',
-                border: '1px solid #475569', borderRadius: 5, padding: '5px 9px',
-                color: '#e2e8f0', fontSize: '0.78rem', outline: 'none',
-              }}
+              placeholder="Search clients"
+              aria-label="Search clients"
+              onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
             />
           </div>
-
-          {/* List */}
-          <div style={{ overflowY: 'auto', flex: 1 }}>
+          <div className="pv-list" role="listbox" aria-label="Clients">
             {filtered.length === 0 ? (
-              <p style={{ padding: '12px 12px', color: '#64748b', fontSize: '0.75rem' }}>No clients found</p>
+              <p className="pv-empty">No clients match.</p>
             ) : (
               filtered.map(c => (
                 <button
                   key={c.id}
+                  type="button"
+                  role="option"
+                  aria-selected={c.id === currentClient.id}
+                  aria-current={c.id === currentClient.id || undefined}
+                  className="pv-item"
                   onClick={() => select(c.id)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px', background: c.id === currentClient.id ? 'rgba(255,255,255,0.08)' : 'transparent',
-                    border: 'none', cursor: 'pointer', color: '#cbd5e1', fontSize: '0.8rem',
-                    textAlign: 'left',
-                  }}
-                  onMouseEnter={e => { if (c.id !== currentClient.id) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                  onMouseLeave={e => { if (c.id !== currentClient.id) e.currentTarget.style.background = 'transparent' }}
                 >
-                  {c.logo_url ? (
-                    <img src={c.logo_url} alt="" style={{ height: 18, width: 18, objectFit: 'contain', borderRadius: 2, flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ height: 18, width: 18, background: '#3b82f6', borderRadius: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.6rem', fontWeight: 700 }}>
-                      {c.name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                  {c.id === currentClient.id && <span style={{ color: '#3b82f6', fontSize: '0.7rem' }}>✓</span>}
+                  {c.logo_url
+                    ? <img src={c.logo_url} alt="" className="pv-logo" />
+                    : <span className="pv-initial" aria-hidden>{c.name.slice(0, 1).toUpperCase()}</span>}
+                  <span className="pv-item-name">{c.name}</span>
+                  {c.id === currentClient.id && <Check size={13} weight="bold" className="pv-check" aria-hidden />}
                 </button>
               ))
             )}

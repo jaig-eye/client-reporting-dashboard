@@ -389,13 +389,19 @@ export default function AdFuelPage() {
       auto_pause_ads:          clientEditForm.autoPauseAds,
       auto_resume_ads:         clientEditForm.autoResumeAds,
     }
-    const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    })
-    setClientEditSaving(false)
-    if (!res.ok) { setClientEditError((await res.json()).error || 'Save failed'); return }
-    setClientEditModal(null)
-    fetchDashboard()
+    try {
+      const res = await fetch(`/api/admin/clients/${clientEditModal.clientId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      if (!res.ok) { setClientEditError((await res.json().catch(() => ({}))).error || 'Didn’t save. Try again.'); return }
+      setClientEditModal(null)
+      fetchDashboard()
+    } catch {
+      setClientEditError('Couldn’t reach the server. Check your connection and try again.')
+    } finally {
+      // A busy Dialog blocks every way out, so this must clear whatever happened.
+      setClientEditSaving(false)
+    }
   }
 
   // Ledger state

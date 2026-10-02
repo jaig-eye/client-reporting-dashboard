@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { CheckCircle, XCircle, Circle } from '@phosphor-icons/react'
 
 type SyncJob = { jobType: 'manual' | 'backfill'; days?: number; label: string; adsOnly?: boolean }
 
@@ -112,10 +113,10 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
   }
 
   function statusIcon(s: string) {
-    if (s === 'success') return <span style={{ color: 'var(--green-fg)' }}>✓</span>
-    if (s === 'error')   return <span style={{ color: 'var(--red)' }}>✗</span>
-    if (s === 'running') return <span style={{ color: 'var(--blue)' }}>⏳</span>
-    return <span style={{ color: 'var(--text-faint)' }}>⬜</span>
+    if (s === 'success') return <CheckCircle size={15} weight="fill" style={{ color: 'var(--green-fg)' }} aria-label="Done" />
+    if (s === 'error')   return <XCircle size={15} weight="fill" style={{ color: 'var(--red-fg)' }} aria-label="Failed" />
+    if (s === 'running') return <span className="ui-dot-busy" aria-label="Running" />
+    return <Circle size={15} style={{ color: 'var(--text-faint)' }} aria-label="Waiting" />
   }
 
   return (
@@ -236,8 +237,8 @@ export default function ClientManualSync({ clientId }: { clientId: string }) {
 
       {/* Final status */}
       {status === 'done' && records !== null && (
-        <p className="text-xs" style={{ color: 'var(--green)' }}>
-          ✓ Done — {records.toLocaleString()} rows synced
+        <p className="ui-saved" role="status">
+          <CheckCircle size={14} weight="fill" aria-hidden />Done: {records.toLocaleString()} rows synced
         </p>
       )}
       {status === 'error' && (

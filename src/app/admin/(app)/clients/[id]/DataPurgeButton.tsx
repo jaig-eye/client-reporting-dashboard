@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { CheckCircle } from '@phosphor-icons/react'
 
 const SOURCE_OPTIONS = [
   { value: 'all',                    label: 'All sources'          },
@@ -119,7 +120,7 @@ export default function DataPurgeButton({ clientId, clientName }: { clientId: st
               {purgeStatus === 'loading' ? 'Purging…' : 'Purge data'}
             </button>
             {purgeStatus === 'done' && (
-              <span className="text-xs" style={{ color: 'var(--green)' }}>✓ {purgeMsg}</span>
+              <span className="ui-saved" role="status"><CheckCircle size={14} weight="fill" aria-hidden />{purgeMsg}</span>
             )}
             {purgeStatus === 'error' && (
               <span className="text-xs" style={{ color: 'var(--red)' }}>{purgeMsg}</span>

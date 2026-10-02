@@ -9,7 +9,7 @@ import '@/styles/admin/emails.css'
 import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, Trash, ArrowSquareOut, PencilSimple, EnvelopeSimple } from '@phosphor-icons/react'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
-import Dialog from '@/components/ui/Dialog'
+import Dialog, { ConfirmDialog } from '@/components/ui/Dialog'
 
 interface EmailCampaign {
   id:                string
@@ -182,10 +182,18 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
     }
   }
 
+  // Throws so the ConfirmDialog shows the error and stays open. It used to report success
+  // whatever happened (.catch(() => {}) then onDeleted()).
   async function deleteEmail() {
     setDeleting(true)
-    await fetch(`/api/admin/emails/${email.id}`, { method: 'DELETE' }).catch(() => {})
-    onDeleted()
+    try {
+      const res = await fetch(`/api/admin/emails/${email.id}`, { method: 'DELETE' }).catch(() => null)
+      if (!res?.ok) throw new Error('The email wasn’t deleted. Try again.')
+      setConfirmDelete(false)
+      onDeleted()
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const meta = [
@@ -356,20 +364,21 @@ export default function EmailDetailModal({ email: initial, onClose, onUpdated, o
 
             {/* Delete */}
             <div className="em-delete">
-              {!confirmDelete ? (
-                <button type="button" className="btn btn-ghost btn-sm em-danger-text" onClick={() => setConfirmDelete(true)}>
-                  <Trash size={14} aria-hidden />Delete email
-                </button>
-              ) : (
-                <>
-                  <span className="em-delete-q" role="alert">Delete this email for good?</span>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(false)} autoFocus>Keep it</button>
-                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void deleteEmail()} disabled={deleting}>
-                    {deleting ? 'Deleting…' : 'Delete'}
-                  </button>
-                </>
-              )}
+              <button type="button" className="btn btn-ghost btn-sm em-danger-text" onClick={() => setConfirmDelete(true)} disabled={deleting}>
+                <Trash size={14} aria-hidden />Delete email
+              </button>
             </div>
+            <ConfirmDialog
+              open={confirmDelete}
+              onClose={() => setConfirmDelete(false)}
+              title="Delete this email?"
+              confirmLabel="Delete email"
+              busyLabel="Deleting…"
+              tone="danger"
+              onConfirm={deleteEmail}
+            >
+              It comes off the client’s email list for good, with its results. This can’t be undone.
+            </ConfirmDialog>
           </div>
     </Dialog>
   )

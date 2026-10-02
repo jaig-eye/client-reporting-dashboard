@@ -302,11 +302,13 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   // Direct-from-card full-regenerate — opens confirm modal first
   const handleCardRegenerate = useCallback((postId: string) => {
+    // Already regenerating: nothing to ask. (An approved card can still show the button.)
+    if (regeneratingIds.has(postId)) return
     // A live post needs the replace-or-publish-separately decision; an unpublished one has
     // nothing to decide, so it keeps the lighter dialog.
     if (isLivePost(postId)) setLiveRegenModal({ postId })
     else setRegenModal({ postId })
-  }, [isLivePost])
+  }, [isLivePost, regeneratingIds])
 
   // Editor-initiated actions (monthly review mode)
   const handleEditorApprove = useCallback(() => {
@@ -323,12 +325,13 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     if (!editorPostId) return
     const postId = editorPostId
     setEditorPostId(null)
+    if (regeneratingIds.has(postId)) return
     // Same branch the card takes. This went straight to RegenerateDialog regardless, so
     // regenerating a LIVE article from the drawer never asked what should happen to the copy
     // on the client's site — the one question that matters once something is published.
     if (isLivePost(postId)) setLiveRegenModal({ postId })
     else setRegenModal({ postId })
-  }, [editorPostId, isLivePost])
+  }, [editorPostId, isLivePost, regeneratingIds])
 
   const startRegenerate = useCallback(async (
     postId: string,
@@ -550,7 +553,6 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           mode="regenerate"
           platform={p.wp_post_id && p.bc_post_id ? 'both' : p.bc_post_id ? 'bigcommerce' : 'wordpress'}
           postTitle={p.title}
-          busy={regeneratingIds.has(liveRegenModal.postId)}
           onCancel={() => setLiveRegenModal(null)}
           onConfirm={({ cms, liveMode, notes, scope, steerKeyword }) =>
             void startRegenerate(liveRegenModal.postId, { notes, liveMode, cms, scope, steerKeyword })}
@@ -561,7 +563,6 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     {regenModal && (
       <RegenerateDialog
         postTitle={initialPosts.find(p => p.id === regenModal.postId)?.title ?? null}
-        busy={regeneratingIds.has(regenModal.postId)}
         onCancel={() => { setRegenModal(null); setRegenModalNotes('') }}
         onConfirm={handleRegenModalConfirm}
       />

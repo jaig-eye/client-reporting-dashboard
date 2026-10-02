@@ -52,14 +52,20 @@ export default function ClientAutoPauseSettings({
 
   async function save(nextPause: boolean, nextResume: boolean) {
     setSaving(true); setError(''); setSaved(false)
-    const res = await fetch(`/api/admin/clients/${clientId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auto_pause_ads: nextPause, auto_resume_ads: nextResume }),
-    })
-    setSaving(false)
-    if (!res.ok) { setError((await res.json().catch(() => ({}))).error || 'Didn’t save. Try again.'); return }
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+    try {
+      const res = await fetch(`/api/admin/clients/${clientId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_pause_ads: nextPause, auto_resume_ads: nextResume }),
+      })
+      if (!res.ok) { setError((await res.json().catch(() => ({}))).error || 'Didn’t save. Try again.'); return }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch {
+      setError('Couldn’t reach the server. Check your connection and try again.')
+    } finally {
+      // The switches are disabled while saving; a network failure must not leave them so.
+      setSaving(false)
+    }
   }
 
   function handlePauseToggle(checked: boolean) {

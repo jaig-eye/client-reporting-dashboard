@@ -485,6 +485,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   const [authorId,      setAuthorId]      = useState<number | null>(null)
   const [bcAuthorName,  setBcAuthorName]  = useState('')
   const [connectionId,  setConnectionId]  = useState<string>(defaultConnectionId ?? '')
+  // Whether someone picked the site in this drawer. The list holds only the client's ACTIVE sites,
+  // so a post whose site is paused seeds to nothing (or to the client's only other site); a plain
+  // Save sending that seed would unlink the post or move it. Only a picked site is saved, except
+  // by Approve and Retry, which publish to the site shown and check it is the client's own first.
+  const [siteTouched,   setSiteTouched]   = useState(false)
 
   // Featured image
   const [featuredImageUrl, setFeaturedImageUrl] = useState('')
@@ -526,6 +531,28 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
 
   // Preview
   const [showPreview, setShowPreview] = useState(false)
+
+  // The drawer behaves as a modal: the page behind doesn't scroll, and Escape backs out, first of
+  // the full preview, then of the drawer itself, but never past unsaved edits (the Close button
+  // asks about those) and never from under one of its own dialogs, which handle Escape themselves.
+  const escapeRef = useRef<() => void>(() => {})
+  escapeRef.current = () => {
+    if (showPreview) { setShowPreview(false); return }
+    if (!isDirty) onClose()
+  }
+  useEffect(() => {
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || document.querySelector('.ui-dialog')) return
+      escapeRef.current()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previous
+    }
+  }, [])
 
   // Current keyword rank (DataForSEO datastream) — null until loaded, then possibly still null.
   const [keywordRank, setKeywordRank] = useState<{ current_position: number | null; previous_position: number | null; position_delta: number | null; movement?: string } | null>(null)
@@ -607,6 +634,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         const own   = sites.filter(s => s.clientId === data.clientId)
         const owned = (cid: string | null | undefined) => (cid && own.some(s => s.connectionId === cid) ? cid : null)
         setConnectionId(owned(data.postConnectionId) ?? owned(defaultConnectionId) ?? (own.length === 1 ? own[0].connectionId : ''))
+        setSiteTouched(false)
 
         // Default publish status: draft_only mode always overrides; otherwise use target date
         if (data.schedulePublishMode === 'draft_only') {
@@ -865,7 +893,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
           featuredImageUrl: featuredImageUrl || null,
           wpStatus, authorId, categoryIds: categoryIds.length > 0 ? categoryIds : null,
           bcAuthorName: bcAuthorName || null,
-          connectionId: connectionId || null,
+          ...(siteTouched ? { connectionId: connectionId || null } : {}),
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to save')
@@ -1031,6 +1059,13 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       setError('Choose a site connection under Publish below first.')
       return
     }
+    // The client's own active site, checked BEFORE anything is saved: the save below writes it.
+    const activeSite = ownSites.find(s => s.connectionId === connectionId)
+    if (!activeSite) {
+      openSection('publish')
+      setError(ownSites.length === 0 ? 'This client has no site connected yet.' : 'Choose a site under Publish below first.')
+      return
+    }
     setRetrying(true); setError('')
     try {
       // Save all editor state (including connectionId) before pushing — same as handleApprove
@@ -1045,9 +1080,6 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
         }),
       })
       if (!saveRes.ok) throw new Error((await saveRes.json().catch(() => ({}))).error || 'Failed to save')
-
-      const activeSite = ownSites.find(s => s.connectionId === connectionId)
-      if (!activeSite) throw new Error(ownSites.length === 0 ? 'This client has no site connected yet.' : 'Choose a site under Publish first.')
 
       const isBigCommerce = activeSite.connectorType === 'bigcommerce'
       const route = isBigCommerce
@@ -1394,7 +1426,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
   return (
     <>
       {/* Backdrop */}
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 50 }} />
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 50 }} />
 
       {/* Preview overlay */}
       {showPreview && (
@@ -1410,11 +1442,11 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
       )}
 
       {/* Drawer */}
-      <div style={{
+      <div role="dialog" aria-modal="true" aria-label="Review post" style={{
         position: 'fixed', top: 0, right: 0, bottom: 0,
         width: 'min(1120px, 100vw)',
         background: 'var(--bg-surface)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
+        boxShadow: 'var(--shadow-lg)',
         zIndex: 51, display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
 
@@ -1527,7 +1559,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
             {/* Right: single-scroll collapsible edit column */}
             <div style={{ flex: isNarrow ? '1 1 100%' : '1 1 45%', overflowY: 'auto', padding: '1.25rem', minWidth: 0 }}>
             {error && (
-              <p className="text-xs mb-3" style={{ color: 'var(--red)', background: 'rgba(220,38,38,0.06)', padding: '0.5rem 0.75rem', borderRadius: 6 }}>
+              <p className="ui-notice ui-notice--danger" role="alert" style={{ margin: '0 0 12px' }}>
                 {error}
               </p>
             )}
@@ -1946,7 +1978,7 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                     {post && <Link href={`/admin/clients/${post.clientId}?tab=sources`} style={{ color: 'var(--accent-fg)' }}>Connect a site</Link>}
                   </p>
                 ) : (
-                  <select id="pe-site" value={connectionId} onChange={e => { setConnectionId(e.target.value); markDirty() }} style={inputStyle}>
+                  <select id="pe-site" value={connectionId} onChange={e => { setConnectionId(e.target.value); setSiteTouched(true); markDirty() }} style={inputStyle}>
                     <option value="">Choose a site</option>
                     {ownSites.map(s => <option key={s.connectionId} value={s.connectionId}>{siteLabel(s)}</option>)}
                   </select>
@@ -1966,22 +1998,24 @@ export default function ContentPostEditor({ postId, defaultConnectionId, sites, 
                       style={inputStyle}
                     />
                   ) : (
-                    <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle} disabled={authorsLoading}>
-                      <option value="">{authorsLoading ? 'Loading…' : '— Default —'}</option>
+                    authorsLoading ? <Sk h={36} r={8} /> : (
+                    <select value={authorId ?? ''} onChange={e => { setAuthorId(e.target.value ? Number(e.target.value) : null); markDirty() }} style={inputStyle}>
+                      <option value="">Site default</option>
                       {authors.map(a => (
                         <option key={a.id} value={a.id}>
                           {a.name}{a.id === defaultAuthorId ? ' (Default)' : ''}
                         </option>
                       ))}
                     </select>
+                    )
                   )}
                 </div>
                 <div>
                   <label style={labelStyle}>Publish as</label>
                   <select value={wpStatus} onChange={e => { setWpStatus(e.target.value as WpPublishStatus); markDirty() }} style={inputStyle}>
-                    <option value="future">Scheduled Published - Draft</option>
+                    <option value="future">Scheduled for its date</option>
                     <option value="draft">Draft</option>
-                    <option value="publish">Published</option>
+                    <option value="publish">Published now</option>
                   </select>
                 </div>
               </div>

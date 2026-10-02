@@ -81,11 +81,11 @@ export default function ClientCampaignManager({ clientId }: { clientId: string }
       </p>
 
       {[
-        { label: 'Google Ads', rows: googleCampaigns, color: '#4285F4' },
-        { label: 'Meta Ads',   rows: metaCampaigns,   color: '#0081FB' },
+        { label: 'Google Ads', rows: googleCampaigns },
+        { label: 'Meta Ads',   rows: metaCampaigns },
       ].map(group => group.rows.length > 0 && (
         <div key={group.label}>
-          <p className="text-xs font-semibold mb-2" style={{ color: group.color }}>{group.label}</p>
+          <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{group.label}</p>
           <div className="overflow-x-auto">
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { CheckCircle } from '@phosphor-icons/react'
 
 interface Props {
   clientId:           string
@@ -127,7 +128,7 @@ export default function ClientConversionMapping({
           {saving ? 'Saving…' : 'Save the mapping'}
         </button>
         {saved && (
-          <span className="text-xs" style={{ color: 'var(--green)' }}>✓ Saved</span>
+          <span className="ui-saved" role="status"><CheckCircle size={14} weight="fill" aria-hidden />Saved</span>
         )}
         {error && (
           <span className="text-xs" style={{ color: 'var(--red)' }}>{error}</span>

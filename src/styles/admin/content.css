@@ -85,12 +85,11 @@
 .mr-actions { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
 .mr-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; padding: 0 !important; }
 .mr-icon--danger { color: var(--red); }
-.mr-live { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--link, var(--accent)); text-decoration: none; }
+.mr-live { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--accent-fg); text-decoration: none; }
 .mr-live:hover { text-decoration: underline; }
 .mr-status-fail { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mr-pushing .ui-status-dot { animation: mr-breathe 1.1s ease-in-out infinite; }
+.mr-pushing .ui-status-dot { animation: ui-breathe 1.1s ease-in-out infinite; }
 .mr-landed { animation: mr-pop 0.32s var(--ease-out); }
-@keyframes mr-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @keyframes mr-pop { 0% { transform: scale(0.7); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: none; } }
 @media (max-width: 639px) {
   .mr-card { flex-wrap: wrap; align-items: flex-start; }
@@ -175,7 +174,7 @@ button.cal-title:focus-visible { outline: none; box-shadow: var(--ring); }
 button.cal-title::after { content: ''; position: absolute; inset: 0; border-radius: var(--radius); }
 .cal-card:has(button.cal-title):hover { box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--border-strong, var(--border)); }
 .cal-card-link, .cal-card-top > * { position: relative; z-index: 1; }
-.cal-generating .ui-status-dot { animation: mr-breathe 1.1s ease-in-out infinite; }
+.cal-generating .ui-status-dot { animation: ui-breathe 1.1s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   .cal-month-head svg { transition: none; }
@@ -211,7 +210,7 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 /* The table scrolls sideways on a phone; the keyword keeps a readable width instead of one word a line. */
 .sd-table td.ui-strong { min-width: 160px; }
 .sd-table select.input { width: auto; min-height: 32px; padding: 4px 28px 4px 8px; font-size: 0.78rem; }
-.sd-url { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; color: var(--link, var(--accent)); }
+.sd-url { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; color: var(--accent-fg); }
 .sd-score-good { color: var(--green-fg); font-weight: 650; }
 .sd-score-ok   { color: var(--amber-fg); font-weight: 650; }
 
@@ -222,7 +221,7 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .sd-node--published { box-shadow: inset 0 0 0 1.5px var(--green); }
 .sd-node--progress  { box-shadow: inset 0 0 0 1.5px var(--amber); }
 .sd-node-title { margin: 0; font-size: 0.8125rem; font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
-.sd-node-meta { margin: 3px 0 0; font-size: 0.72rem; color: var(--text-muted); text-transform: capitalize; }
+.sd-node-meta { margin: 3px 0 0; font-size: 0.72rem; color: var(--text-muted); }
 .sd-stem { width: 1px; height: 22px; background: var(--border); }
 .sd-node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; width: 100%; }
 .sd-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; font-size: 0.75rem; color: var(--text-muted); }
@@ -230,7 +229,7 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .sd-legend i { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1.5px var(--sw); }
 
 .sd-link-path { font-size: 0.8125rem; overflow-wrap: anywhere; }
-.sd-link-path a { color: var(--link, var(--accent)); }
+.sd-link-path a { color: var(--accent-fg); }
 .sd-link-path .sd-missing { color: var(--text-faint); }
 .sd-links-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; font-size: 0.8125rem; color: var(--text-muted); }
 
@@ -276,7 +275,7 @@ button.cal-title::after { content: ''; position: absolute; inset: 0; border-radi
 .ra-list--plain { color: var(--text-secondary); }
 .ra-note { margin: 0; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text-primary); }
 .ra-urls { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; overflow-wrap: anywhere; }
-.ra-urls a { color: var(--link, var(--accent)); }
+.ra-urls a { color: var(--accent-fg); }
 .ra-score { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .ra-score-num {
   flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 50%;

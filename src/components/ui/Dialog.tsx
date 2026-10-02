@@ -17,6 +17,9 @@ import { X } from '@phosphor-icons/react'
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 let locks = 0
+/** Open dialogs, oldest first: the last one is on top and the only one the keyboard reaches. */
+const openDialogs: symbol[] = []
+
 function lockScroll() {
   if (locks++ === 0) {
     const gap = window.innerWidth - document.documentElement.clientWidth
@@ -76,6 +79,8 @@ export default function Dialog({
     // Waits for the portal: a dialog rendered already open has no panel on its first pass.
     if (!open || !mounted) return
     const returnTo = document.activeElement as HTMLElement | null
+    const me = Symbol('dialog')
+    openDialogs.push(me)
     lockScroll()
     const raf = requestAnimationFrame(() => {
       const panel = panelRef.current
@@ -93,9 +98,11 @@ export default function Dialog({
     function onKey(e: KeyboardEvent) {
       const panel = panelRef.current
       if (!panel) return
+      // Only the dialog on top answers the keyboard. Telling it apart by focus failed when the
+      // top dialog's focused button disabled itself (a busy confirm): focus fell to <body> and
+      // the dialog underneath took the Escape and closed.
+      if (openDialogs[openDialogs.length - 1] !== me) return
       if (e.key === 'Escape') {
-        // A dialog stacked on top handles its own Escape.
-        if (!panel.contains(document.activeElement) && document.activeElement !== document.body) return
         e.stopPropagation()
         if (!busyRef.current) (escapeRef.current ?? closeRef.current)()
         return
@@ -111,6 +118,8 @@ export default function Dialog({
     return () => {
       cancelAnimationFrame(raf)
       document.removeEventListener('keydown', onKey)
+      const at = openDialogs.indexOf(me)
+      if (at !== -1) openDialogs.splice(at, 1)
       unlockScroll()
       // Back to where the person was, if it is still on the page.
       if (returnTo && document.contains(returnTo)) returnTo.focus()

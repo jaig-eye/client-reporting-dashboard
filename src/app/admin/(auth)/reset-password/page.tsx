@@ -14,6 +14,8 @@
 
 import { Suspense, useState, useEffect, lazy } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeft } from '@phosphor-icons/react'
 
 const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
 
@@ -181,14 +183,14 @@ function ResetPasswordForm() {
 
         <div className="text-center mt-4 space-y-1">
           <div>
-            <a href="/admin/forgot-password" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
+            <Link href="/admin/forgot-password" className="au-link">
               Need a new code?
-            </a>
+            </Link>
           </div>
           <div>
-            <a href="/admin" className="text-xs" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-              ← Back to sign in
-            </a>
+            <Link href="/admin" className="au-link" style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <ArrowLeft size={13} weight="bold" aria-hidden />Back to sign in
+            </Link>
           </div>
         </div>
       </div>

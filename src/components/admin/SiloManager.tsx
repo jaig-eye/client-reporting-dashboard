@@ -381,7 +381,7 @@ export default function SiloManager({ clientId, onGenerated }: {
         </p>
       </ConfirmDialog>
 
-      {toast && <div id="content-toast-container"><div className={`content-toast content-toast--${toast.type}`} role="status">{toast.msg}</div></div>}
+      {toast && <div className="content-toast-host"><div className={`content-toast content-toast--${toast.type}`} role="status">{toast.msg}</div></div>}
     </section>
   )
 }

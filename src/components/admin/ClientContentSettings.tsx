@@ -319,8 +319,8 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
       .cc-set-rail { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 16px; }
       .cc-set-navitem { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; background: transparent; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
       .cc-set-navitem:hover:not(.cc-set-navitem--active) { background: var(--bg-subtle); }
-      .cc-set-navitem--active { background: var(--bg-surface); border-color: var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-      .cc-set-navitem:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+      .cc-set-navitem--active { background: var(--bg-surface); border-color: var(--border); box-shadow: var(--shadow-xs); }
+      .cc-set-navitem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       @media (max-width: 720px) {
         .cc-set-grid { grid-template-columns: 1fr; }
         .cc-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }

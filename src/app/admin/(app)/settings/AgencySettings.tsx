@@ -333,6 +333,12 @@ export default function AgencySettings() {
     // from here as well would make every save on this page depend on migration 227: one unknown
     // column fails the whole PATCH, so saving an agency name would break until the column exists.
     delete saveForm.image_model
+    // The writing AI (provider, model and both keys) moved to Integrations too. Sent from here, a
+    // tab left open on this page put the old provider and model back over a change made there.
+    delete saveForm.ai_provider
+    delete saveForm.ai_model
+    delete saveForm.ai_api_key
+    delete saveForm.openai_api_key
     try {
       const res = await fetch('/api/admin/settings', {
         method: 'PUT',

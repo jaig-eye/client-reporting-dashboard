@@ -64,7 +64,7 @@ function ReconnectSection({ connector }: { connector: Connector }) {
     return (
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-          Reconnect Facebook Account
+          Reconnect the Facebook account
         </h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Re-authorize if the 60-day token has expired or you want to switch accounts.
@@ -105,7 +105,7 @@ function AhrefsStatusSection({ connector }: { connector: Connector }) {
     <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
       <div className="flex items-center gap-3 mb-3">
         <h3 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-          Connection Status
+          Connection status
         </h3>
         {isActive && <StatusBadge tone="success">Connected</StatusBadge>}
         {isError && <StatusBadge tone="danger">Error</StatusBadge>}
@@ -326,7 +326,7 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
       {/* Refresh discovered accounts — not applicable for domain-based connectors like Ahrefs */}
       {connector.type !== 'ahrefs' && <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-          Discovered Accounts
+          Discovered accounts
         </h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Refresh the list of ad accounts available under this connection. Used for the account
@@ -352,14 +352,14 @@ export default function EditConnectorForm({ connector }: { connector: Connector 
 
       <div className="pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
         <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-          Danger Zone
+          Danger zone
         </h3>
         <p className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
           Deleting this connector will disconnect all client accounts using it. Metrics data is preserved.
         </p>
         {!showDelete ? (
           <button onClick={() => setShowDelete(true)} className="btn btn-danger">
-            Delete Connector
+            Delete connector
           </button>
         ) : (
           <div className="flex items-center gap-3">

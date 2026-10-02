@@ -766,7 +766,7 @@ export default function ClientPipeline({ clientId, clientName, sites, aiConfigur
 
       {/* ── Toast ──────────────────────────────────────────────────────────── */}
       {toast && (
-        <div id="content-toast-container"><div className={`content-toast content-toast--${toast.type}`}>{toast.msg}</div></div>
+        <div className="content-toast-host"><div className={`content-toast content-toast--${toast.type}`}>{toast.msg}</div></div>
       )}
 
       {/* ── Post review editor (two-pane) ──────────────────────────────────── */}

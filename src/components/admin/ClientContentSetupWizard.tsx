@@ -1057,7 +1057,7 @@ function StepWpConnect({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <polyline points="5,13 9,17 19,7" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points="5,13 9,17 19,7" style={{ stroke: 'var(--on-fill)' }} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <div>
@@ -1098,13 +1098,12 @@ function StepWpConnect({
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                 <polyline
                   points="5,13 9,17 19,7"
-                  stroke="white"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeDasharray="50"
                   strokeDashoffset="0"
-                  style={{ animation: 'check-draw 0.4s ease 0.15s both' }}
+                  style={{ stroke: 'var(--on-fill)', animation: 'check-draw 0.4s ease 0.15s both' }}
                 />
               </svg>
             </div>

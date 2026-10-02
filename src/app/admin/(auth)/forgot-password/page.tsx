@@ -1,6 +1,8 @@
 'use client'
 
 import { Suspense, useState, useEffect, lazy } from 'react'
+import Link from 'next/link'
+import { ArrowLeft } from '@phosphor-icons/react'
 
 const LoginCanvas = lazy(() => import('@/components/admin/LoginCanvas'))
 
@@ -120,9 +122,9 @@ function ForgotPasswordForm() {
         </div>
 
         {done ? (
-          <a href="/admin" className="btn btn-primary w-full justify-center" style={{ padding: '0.625rem' }}>
+          <Link href="/admin" className="btn btn-primary w-full justify-center" style={{ padding: '0.625rem' }}>
             Sign in
-          </a>
+          </Link>
         ) : step === 'code' ? (
           <form onSubmit={handleReset} className="space-y-4">
             <div>
@@ -184,7 +186,7 @@ function ForgotPasswordForm() {
             </button>
 
             <button type="button" onClick={() => { setStep('email'); setCode(''); setError('') }} className="btn btn-secondary w-full justify-center" style={{ padding: '0.625rem' }}>
-              ← Back
+              <ArrowLeft size={14} weight="bold" aria-hidden style={{ marginRight: 6 }} />Back
             </button>
           </form>
         ) : (
@@ -216,9 +218,9 @@ function ForgotPasswordForm() {
 
         {!done && (
           <div className="text-center mt-4">
-            <a href="/admin" className="text-xs" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
-              ← Back to sign in
-            </a>
+            <Link href="/admin" className="au-link" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <ArrowLeft size={13} weight="bold" aria-hidden />Back to sign in
+            </Link>
           </div>
         )}
       </div>

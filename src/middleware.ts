@@ -23,8 +23,9 @@ function isGuardedApiPath(pathname: string): boolean {
 }
 
 /**
- * The only changes a read-only viewer may make: their own profile and password, and the post
- * editor's link check, which reads the links and writes nothing. Everything else that isn't a
+ * The only changes a read-only viewer may make: their own profile and password, the post editor's
+ * link check (it reads the links and writes nothing), and switching which client's dashboard they
+ * preview (it sets the preview cookie; looking at a dashboard is a read). Everything else that isn't a
  * read is refused below, at one call site, because most routes gate on isAdminAuthed() alone
  * (a signature check that never looks at the role) and only a handful used requireWriteAdmin():
  * a viewer could edit, approve and publish posts, change schedules and run AI generation.
@@ -32,6 +33,7 @@ function isGuardedApiPath(pathname: string): boolean {
 const VIEWER_WRITABLE = [
   /^\/api\/admin\/users\/me(\/password)?$/,
   /^\/api\/admin\/content\/posts\/[^/]+\/scan-links$/,
+  /^\/api\/admin\/preview\/[^/]+$/,
 ]
 
 /**

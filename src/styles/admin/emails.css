@@ -120,7 +120,6 @@
 .em-review-actions .btn { justify-content: center; }
 .em-reviewed { display: block; margin-top: 2px; font-size: 0.75rem; color: var(--text-faint); }
 .em-delete { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.em-delete-q { font-size: 0.8125rem; color: var(--text-secondary); margin-right: auto; }
 .em-danger-text, .em-danger-text:hover:not(:disabled) { color: var(--red-fg); }
 .em-danger-text:hover:not(:disabled) { background: var(--red-subtle); }
 .em-linkbtn {
@@ -145,30 +144,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) { .em-steps span { transition: none; } }
-
-/* ── Schedule panel ──────────────────────────────────────────────────────── */
-
-.em-sched { display: flex; flex-direction: column; gap: 14px; }
-.em-sched-head { display: flex; align-items: center; gap: 8px; }
-.em-sched-title { margin: 0; flex: 1; display: inline-flex; align-items: center; gap: 8px; font-size: 0.875rem; font-weight: 650; color: var(--text-primary); }
-.em-sched-title svg { color: var(--accent-fg); }
-.em-sched .input[type="number"] { width: 96px; font-variant-numeric: tabular-nums; }
-.em-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text-secondary); cursor: pointer; }
-.em-switch-track {
-  position: relative; display: inline-block; width: 34px; height: 20px; flex-shrink: 0; border-radius: var(--radius-pill);
-  background: var(--bg-muted); box-shadow: inset 0 0 0 1px var(--border); transition: background 0.15s;
-}
-.em-switch-track::after {
-  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--bg-surface); box-shadow: var(--shadow-xs); transition: transform 0.15s var(--ease-out);
-}
-.em-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.em-switch input:checked + .em-switch-track { background: var(--accent); box-shadow: none; }
-.em-switch input:checked + .em-switch-track::after { transform: translateX(14px); }
-.em-switch input:focus-visible + .em-switch-track { box-shadow: var(--ring); }
-@media (prefers-reduced-motion: reduce) { .em-switch-track, .em-switch-track::after { transition: none; } }
-.em-sched-save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.em-ok  { font-size: 0.78rem; font-weight: 500; color: var(--green-fg); display: inline-flex; align-items: center; gap: 4px; }
 
 /* ── Fixes over shared styles, scoped to this page ───────────────────────── */
 
