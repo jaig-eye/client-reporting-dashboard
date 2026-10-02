@@ -1,10 +1,12 @@
-// /admin/content/settings — global content settings, opened from the ⚙ Settings
-// action on the main content page. Renders the existing ContentSettingsPanel.
+// /admin/content/settings — global content settings, opened from Settings on the main content
+// page. Renders ContentSettingsPanel.
 
+import '@/styles/admin/content.css'
 import { cookies }             from 'next/headers'
 import { redirect }            from 'next/navigation'
 import { isAdminAuthed }       from '@/lib/auth'
 import { createAdminClient }   from '@/lib/supabase/server'
+import PageHeader              from '@/components/ui/PageHeader'
 import GlobalContentSettings   from '../ContentSettingsPanel'
 
 export const dynamic = 'force-dynamic'
@@ -19,10 +21,11 @@ export default async function ContentSettingsPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <a href="/admin/content" style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', textDecoration: 'none' }}>← Back to Content</a>
-        <h1 className="page-title" style={{ margin: 0 }}>Content Settings</h1>
-      </div>
+      <PageHeader
+        back={{ href: '/admin/content', label: 'Content' }}
+        title="Content settings"
+        description="For every client: how posts are written, and how the team hears about them."
+      />
       <GlobalContentSettings clients={allClients} />
     </div>
   )

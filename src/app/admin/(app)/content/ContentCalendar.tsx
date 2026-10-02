@@ -1,11 +1,19 @@
 'use client'
 
+// The content calendar: four months at a time, every client's posts and topics grouped by month
+// and then by client. A card shows its date, its status and its title; when it has a rationale,
+// the title opens it. Topics still being written refresh the page every 10 seconds.
+
 import { useState, useEffect } from 'react'
 import { useRouter }           from 'next/navigation'
 import Link                    from 'next/link'
+import { ArrowSquareOut, CaretDown, CaretLeft, CaretRight, CalendarBlank, GearSix, Plus } from '@phosphor-icons/react'
 import RationaleModal          from '@/components/admin/RationaleModal'
 import NewPostModal            from '@/components/admin/NewPostModal'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import EmptyState              from '@/components/ui/EmptyState'
+import { PillTabs }            from '@/components/ui/PillTabs'
 
 export type CalendarItem = {
   id:               string
@@ -34,57 +42,31 @@ export type CalendarItem = {
   clusterGroup:       string | null
 }
 
-const MONTH_NAMES  = ['January','February','March','April','May','June','July','August','September','October','November','December']
-const MONTH_ABBREV = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
-const MONTH_PILL_COLORS = [
-  '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#14b8a6', '#f97316', '#ef4444',
+// One word per state, the same in the filter and on the card. Amber needs someone, blue is on its
+// way, green is on the client's site, red was turned down.
+const STATUS: Record<string, { label: string; tone: StatusTone }> = {
+  pending:     { label: 'Pending',    tone: 'warning' },
+  scheduled:   { label: 'Approved',   tone: 'info'    },
+  approved:    { label: 'Approved',   tone: 'info'    },
+  generating:  { label: 'Generating', tone: 'info'    },
+  generated:   { label: 'For review', tone: 'warning' },
+  for_review:  { label: 'For review', tone: 'warning' },
+  draft_saved: { label: 'On site',    tone: 'success' },
+  published:   { label: 'Published',  tone: 'success' },
+  rejected:    { label: 'Rejected',   tone: 'danger'  },
+}
+const statusOf = (s: string) => STATUS[s] ?? { label: s.replace(/_/g, ' '), tone: 'neutral' as StatusTone }
+
+const FILTERS = [
+  { id: 'all',         label: 'All'        },
+  { id: 'approved',    label: 'Approved'   },
+  { id: 'for_review',  label: 'For review' },
+  { id: 'draft_saved', label: 'On site'    },
+  { id: 'rejected',    label: 'Rejected'   },
 ]
-
-const BADGE_PALETTE = [
-  { bg: 'rgba(59,130,246,0.12)',  text: '#3b82f6' },
-  { bg: 'rgba(16,185,129,0.12)', text: '#10b981' },
-  { bg: 'rgba(245,158,11,0.12)', text: '#f59e0b' },
-  { bg: 'rgba(139,92,246,0.12)', text: '#8b5cf6' },
-  { bg: 'rgba(20,184,166,0.12)', text: '#14b8a6' },
-  { bg: 'rgba(249,115,22,0.12)', text: '#f97316' },
-  { bg: 'rgba(239,68,68,0.12)',  text: '#ef4444' },
-]
-
-const STATUS_CONFIG: Record<string, { label: string; dot: string; color: string; bg: string; border: string }> = {
-  pending:     { label: 'Pending',    dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  scheduled:   { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
-  approved:    { label: 'Approved',  dot: '#3b82f6', color: '#1d4ed8', bg: '#dbeafe', border: '#3b82f6' },
-  generating:  { label: 'Generating',dot: '#f97316', color: '#c2410c', bg: '#ffedd5', border: '#f97316' },
-  generated:   { label: 'For Review', dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  for_review:  { label: 'For Review', dot: '#f59e0b', color: '#b45309', bg: '#fef3c7', border: '#f59e0b' },
-  draft_saved: { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
-  published:   { label: 'Published', dot: '#059669', color: '#065f46', bg: '#d1fae5', border: '#059669' },
-  rejected:    { label: 'Rejected',  dot: '#ef4444', color: '#991b1b', bg: '#fee2e2', border: '#ef4444' },
-}
-
-function getStatusCfg(status: string) {
-  return STATUS_CONFIG[status] ?? { label: status, dot: '#9ca3af', color: '#374151' }
-}
-
-function clusterColor(label: string) {
-  let h = 0
-  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) & 0xff
-  return BADGE_PALETTE[h % BADGE_PALETTE.length]
-}
-
-function getBadge(item: CalendarItem): { label: string; bg: string; text: string; dot: string } {
-  if (item.clusterGroup) {
-    const c = clusterColor(item.clusterGroup)
-    return { label: item.clusterGroup, bg: c.bg, text: c.text, dot: c.text }
-  }
-  const cfg = getStatusCfg(item.status)
-  return { label: cfg.label, bg: cfg.bg, text: cfg.color, dot: cfg.dot }
-}
-
-function getStatusBorder(status: string): string {
-  return STATUS_CONFIG[status]?.border ?? '#e5e7eb'
-}
 
 function shortDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
@@ -95,12 +77,7 @@ function isPast(dateStr: string): boolean {
   return new Date(dateStr + 'T00:00:00') < new Date(new Date().toDateString())
 }
 
-function previewText(item: CalendarItem): string {
-  const raw = item.type === 'topic'
-    ? (item.rationale ?? item.keywordOpportunity ?? '')
-    : (item.rationale ?? '')
-  return raw.length > 120 ? raw.slice(0, 118) + '…' : raw
-}
+const isOnSite = (i: CalendarItem) => i.status === 'draft_saved' || i.status === 'published'
 
 // Group calendar items by client, ordered by client name — used to sub-group
 // each month section so the timeline is easier to scan per client.
@@ -116,36 +93,45 @@ function groupByClient(items: CalendarItem[]): [string, CalendarItem[]][] {
   )
 }
 
-function ClientGroupHeader({ clientId, clientName, count }: { clientId: string; clientName: string; count: number }) {
+// A month's cards, in a group per client.
+function ClientGroupedCards({ items, onViewRationale }: { items: CalendarItem[]; onViewRationale: (i: CalendarItem) => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-      <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-secondary)' }}>{clientName}</span>
-      <Link
-        href={`/admin/clients/${clientId}?tab=content&subtab=settings`}
-        title={`${clientName} content settings`}
-        aria-label={`${clientName} content settings`}
-        style={{ fontSize: 13, color: 'var(--text-faint)', textDecoration: 'none', lineHeight: 1 }}
-      >⚙</Link>
-      <span style={{ fontSize: '0.6875rem', color: 'var(--text-faint)' }}>{count}</span>
-      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+    <div className="cal-clients">
+      {groupByClient(items).map(([cid, clientItems]) => {
+        const name = clientItems[0]?.clientName ?? 'Unknown client'
+        return (
+          <div key={cid}>
+            <div className="cal-client-head">
+              <Link href={`/admin/clients/${cid}?tab=content`} className="cal-client-name">{name}</Link>
+              <Link href={`/admin/clients/${cid}?tab=content&subtab=settings`} className="cal-client-gear" title={`${name}’s content settings`} aria-label={`${name}’s content settings`}>
+                <GearSix size={13} aria-hidden />
+              </Link>
+              <span className="cal-client-count">{clientItems.length}</span>
+            </div>
+            <div className="cal-grid">
+              {clientItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={onViewRationale} />)}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-// Renders a month's cards grouped into per-client subsections.
-function ClientGroupedCards({ items, onViewRationale }: { items: CalendarItem[]; onViewRationale: (i: CalendarItem) => void }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {groupByClient(items).map(([cid, clientItems]) => (
-        <div key={cid}>
-          <ClientGroupHeader clientId={cid} clientName={clientItems[0]?.clientName ?? 'Unknown'} count={clientItems.length} />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-            {clientItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={onViewRationale} />)}
-          </div>
-        </div>
-      ))}
-    </div>
+function MonthHeading({ name, count, unit, open, onToggle, controls }: {
+  name: string; count: string; unit?: string; open: boolean; onToggle?: () => void; controls?: string
+}) {
+  const inner = (
+    <>
+      {onToggle && <CaretDown size={14} weight="bold" aria-hidden />}
+      <span className="cal-month-name">{name}</span>
+      <span className="cal-month-rule" aria-hidden />
+      <span className="cal-month-count">{count}{unit ? ` ${unit}` : ''}</span>
+    </>
   )
+  return onToggle
+    ? <button type="button" className="cal-month-head" aria-expanded={open} aria-controls={controls} onClick={onToggle}>{inner}</button>
+    : <div className="cal-month-head" style={{ cursor: 'default' }}>{inner}</div>
 }
 
 export default function ContentCalendar({
@@ -178,8 +164,7 @@ export default function ContentCalendar({
     }
     for (const [key, monthItems] of Array.from(byKey)) {
       if (key >= nowKey) continue // only collapse past months
-      const allPublished = monthItems.every(i => i.status === 'draft_saved' || i.status === 'published')
-      if (allPublished) collapsed.add(key)
+      if (monthItems.every(isOnSite)) collapsed.add(key)
     }
     return collapsed
   })
@@ -213,6 +198,7 @@ export default function ContentCalendar({
       : { year: w.year, month: w.month + 1 })
   }
   const resetToday = () => setWindowStart({ year: today.getFullYear(), month: today.getMonth() })
+  const atToday = windowStart.year === today.getFullYear() && windowStart.month === today.getMonth()
 
   // Build 4-month window keys
   const windowMonths: { year: number; month: number; key: string }[] = []
@@ -223,6 +209,18 @@ export default function ContentCalendar({
     windowMonths.push({ year: y, month: m, key: `${y}-${String(m).padStart(2, '0')}` })
   }
   const windowKeys = new Set(windowMonths.map(w => w.key))
+  const last = windowMonths[3]
+  const windowLabel = windowStart.year === last.year
+    ? `${MONTH_SHORT[windowStart.month]} – ${MONTH_SHORT[last.month]} ${last.year}`
+    : `${MONTH_SHORT[windowStart.month]} ${windowStart.year} – ${MONTH_SHORT[last.month]} ${last.year}`
+
+  function matchesStatus(item: CalendarItem): boolean {
+    if (statusFilter === 'approved')    return ['approved', 'generating', 'generated'].includes(item.status)
+    if (statusFilter === 'for_review')  return item.status === 'for_review'
+    if (statusFilter === 'draft_saved') return isOnSite(item)
+    if (statusFilter === 'rejected')    return item.status === 'rejected'
+    return item.status !== 'rejected'   // 'all' hides rejected ones
+  }
 
   // Filter items
   const filtered = items.filter(item => {
@@ -231,26 +229,14 @@ export default function ContentCalendar({
     const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
     if (!windowKeys.has(key)) return false
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
-    if (statusFilter === 'approved'    && !['approved','generating','generated'].includes(item.status)) return false
-    if (statusFilter === 'for_review'  && item.status !== 'for_review') return false
-    if (statusFilter === 'draft_saved' && !['draft_saved','published'].includes(item.status)) return false
-    if (statusFilter === 'rejected'    && item.status !== 'rejected') return false
-    if (statusFilter === 'all'         && item.status === 'rejected') return false
-    return true
+    return matchesStatus(item)
   })
 
   // Unscheduled items (no date)
   const unscheduled = items.filter(item => {
     if (item.targetPublishDate) return false
     if (clientFilter !== 'all' && item.clientId !== clientFilter) return false
-    if (statusFilter === 'all' && item.status === 'rejected') return false
-    if (statusFilter !== 'all') {
-      if (statusFilter === 'approved'   && !['approved','generating','generated'].includes(item.status)) return false
-      if (statusFilter === 'for_review' && item.status !== 'for_review') return false
-      if (statusFilter === 'draft_saved'&& !['draft_saved','published'].includes(item.status)) return false
-      if (statusFilter === 'rejected'   && item.status !== 'rejected') return false
-    }
-    return true
+    return matchesStatus(item)
   })
 
   // Stats
@@ -258,10 +244,11 @@ export default function ContentCalendar({
     const d = new Date(i.targetPublishDate! + 'T00:00:00')
     return `${d.getFullYear()}-${d.getMonth()}`
   })).size
-  const uniqueClients = new Set(filtered.map(i => i.clientId)).size
+  const uniqueClients = new Set([...filtered, ...unscheduled].map(i => i.clientId)).size
   // Split by contentType
   const blogFiltered = filtered.filter(i => !i.contentType || i.contentType === 'blog')
   const saFiltered   = filtered.filter(i => i.contentType === 'service_area')
+  const total        = filtered.length + unscheduled.length
 
   // Group by month — sorted by date within each month
   function groupByMonth(items: CalendarItem[]) {
@@ -284,241 +271,140 @@ export default function ContentCalendar({
   const byMonth   = groupByMonth(blogFiltered)
   const saByMonth = groupByMonth(saFiltered)
 
-  const filterTabStyle = (active: boolean): React.CSSProperties => ({
-    fontSize: '0.75rem', fontWeight: active ? 600 : 400, padding: '0.25rem 0.75rem',
-    borderRadius: 20, border: 'none', cursor: 'pointer',
-    background: active ? 'var(--blue)' : 'transparent',
-    color: active ? '#fff' : 'var(--text-muted)',
-    transition: 'background 0.15s, color 0.15s',
-  })
+  const needReview = items.filter(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')).length
+  const unscheduledBlog = unscheduled.filter(i => !i.contentType || i.contentType === 'blog')
+  const unscheduledSa   = unscheduled.filter(i => i.contentType === 'service_area')
+  const showTypeSwitch  = SHOW_NON_BLOG_CONTENT_TYPES && (saFiltered.length > 0 || unscheduledSa.length > 0)
+  const filterName      = FILTERS.find(f => f.id === statusFilter)?.label.toLowerCase()
 
   return (
     <div>
-      {/* ── Stats bar ──────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        {[
-          { value: blogFiltered.length + saFiltered.length + unscheduled.length, label: 'total items' },
-          { value: activeMonths,  label: 'months' },
-          { value: uniqueClients, label: 'clients' },
-        ].map(stat => (
-          <div key={stat.label} style={{
-            display: 'flex', alignItems: 'baseline', gap: 6,
-            padding: '8px 16px', borderRadius: 8,
-            background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          }}>
-            <span style={{ fontSize: '1.375rem', fontWeight: 700, color: 'var(--blue)', lineHeight: 1 }}>
-              {stat.value}
-            </span>
-            <span style={{ fontSize: '0.6875rem', fontWeight: 500, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              {stat.label}
-            </span>
-          </div>
-        ))}
-      </div>
-
       {/* ── Controls ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
-        {/* Month window nav */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button onClick={prevWindow} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>‹</button>
-          <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-            {MONTH_NAMES[windowStart.month]} {windowStart.year}
-            {' – '}
-            {MONTH_NAMES[windowMonths[3].month]} {windowMonths[3].year}
-          </span>
-          <button onClick={nextWindow} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>›</button>
-          <button onClick={resetToday} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '4px 8px', marginLeft: 4 }}>Today</button>
+      <div className="cal-bar">
+        <div className="cal-window">
+          <button type="button" onClick={prevWindow} className="mr-nav" aria-label="Earlier months"><CaretLeft size={16} weight="bold" /></button>
+          <span className="cal-window-label" aria-live="polite">{windowLabel}</span>
+          <button type="button" onClick={nextWindow} className="mr-nav" aria-label="Later months"><CaretRight size={16} weight="bold" /></button>
+          {!atToday && <button type="button" onClick={resetToday} className="btn btn-secondary btn-sm" style={{ marginLeft: 4 }}>This month</button>}
         </div>
 
-        {/* Client filter */}
-        <select
-          value={clientFilter}
-          onChange={e => setClientFilter(e.target.value)}
-          style={{ fontSize: '0.8125rem', padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
-        >
-          <option value="all">All Clients</option>
+        <select className="input" value={clientFilter} onChange={e => setClientFilter(e.target.value)} aria-label="Client">
+          <option value="all">All clients</option>
           {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
 
-        {/* Status filter */}
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-muted)', borderRadius: 24, padding: 3 }}>
-          {[
-            { id: 'all',        label: 'All'        },
-            { id: 'approved',   label: 'Approved'   },
-            { id: 'for_review', label: 'For Review' },
-            { id: 'draft_saved',label: 'On Site'    },
-            { id: 'rejected',   label: 'Rejected'   },
-          ].map(t => (
-            <button key={t.id} style={filterTabStyle(statusFilter === t.id)} onClick={() => setStatusFilter(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <PillTabs items={FILTERS} activeId={statusFilter} onSelect={setStatusFilter} label="Status" />
 
-        <div style={{ flex: 1 }} />
+        <span className="cal-spacer" />
 
         {/* Manual "pick a day + prompt" single-post generation */}
-        <button onClick={() => setShowNewPost(true)} className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '5px 12px', whiteSpace: 'nowrap' }}>
-          + New Post
+        <button type="button" onClick={() => setShowNewPost(true)} className="btn btn-primary">
+          <Plus size={15} weight="bold" aria-hidden />New post
         </button>
       </div>
 
-      {/* ── View switcher pill (only when SA content exists and non-blog types enabled) ── */}
-      {SHOW_NON_BLOG_CONTENT_TYPES && (saFiltered.length > 0 || unscheduled.filter(i => i.contentType === 'service_area').length > 0) && (
-        <div style={{ display: 'flex', gap: 4, padding: '3px', background: 'var(--bg-subtle)', borderRadius: 8, alignSelf: 'flex-start', border: '1px solid var(--border)', marginBottom: 20 }}>
-          {(['blog', 'service'] as const).map(view => {
-            const count = view === 'blog'
-              ? blogFiltered.length + unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length
-              : saFiltered.length + unscheduled.filter(i => i.contentType === 'service_area').length
-            return (
-              <button
-                key={view}
-                onClick={() => setActiveCalView(view)}
-                style={{
-                  padding: '0.3125rem 0.875rem', fontSize: '0.8125rem',
-                  fontWeight: activeCalView === view ? 600 : 400,
-                  borderRadius: 6, border: 'none', cursor: 'pointer',
-                  background: activeCalView === view ? 'var(--bg-surface, #fff)' : 'transparent',
-                  color: activeCalView === view ? 'var(--text-primary)' : 'var(--text-muted)',
-                  boxShadow: activeCalView === view ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                  transition: 'all 0.15s', whiteSpace: 'nowrap',
-                }}
-              >
-                {view === 'blog' ? 'Blog Posts' : 'Service Area'} ({count})
-              </button>
-            )
-          })}
+      <p className="cal-summary">
+        {total === 0 ? 'Nothing matches these filters.' : <>
+          {total} post{total === 1 ? '' : 's'} and topic{total === 1 ? '' : 's'}
+          {activeMonths > 0 && <> across {activeMonths} month{activeMonths === 1 ? '' : 's'}</>}, for {uniqueClients} client{uniqueClients === 1 ? '' : 's'}.
+        </>}
+      </p>
+
+      {/* ── View switcher (only when SA content exists and non-blog types are on) ── */}
+      {showTypeSwitch && (
+        <div style={{ marginBottom: 18 }}>
+          <PillTabs
+            label="Content type"
+            activeId={activeCalView}
+            onSelect={id => setActiveCalView(id as 'blog' | 'service')}
+            items={[
+              { id: 'blog',    label: 'Blog posts',         count: blogFiltered.length + unscheduledBlog.length },
+              { id: 'service', label: 'Service area pages', count: saFiltered.length + unscheduledSa.length },
+            ]}
+          />
         </div>
       )}
 
       {/* ── "Needs review" callout ───────────────────────────────────────────── */}
-      {statusFilter === 'all' && items.some(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')) && (
-        <div style={{
-          display:      'flex',
-          alignItems:   'center',
-          gap:          10,
-          padding:      '10px 14px',
-          marginBottom: 16,
-          background:   '#fef3c7',
-          border:       '1px solid #f59e0b',
-          borderRadius: 8,
-        }}>
-          <span style={{ fontSize: 13, color: '#92400e', flex: 1 }}>
-            {items.filter(i => i.status === 'for_review' || (i.type === 'post' && i.status === 'pending')).length} posts need approval
-          </span>
-          <button
-            onClick={() => setStatusFilter('for_review')}
-            style={{ fontSize: 12, color: '#92400e', fontWeight: 600, background: 'none', border: '1px solid #f59e0b', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}
-          >
-            Show pending only
-          </button>
+      {statusFilter === 'all' && needReview > 0 && (
+        <div className="ui-notice ui-notice--warning">
+          <span>{needReview} post{needReview === 1 ? ' needs' : 's need'} approval.</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setStatusFilter('for_review')}>Show posts for review</button>
         </div>
       )}
 
       {/* ── Month sections ───────────────────────────────────────────────────── */}
-      {filtered.length === 0 && unscheduled.length === 0 ? (
-        <div className="card p-8" style={{ textAlign: 'center' }}>
-          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-            No items in this window{statusFilter !== 'all' ? ` with filter "${statusFilter}"` : ''}.
-          </p>
+      {total === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={<CalendarBlank size={22} weight="duotone" />}
+            title={statusFilter === 'all' && clientFilter === 'all' ? 'Nothing scheduled in these months' : 'Nothing matches these filters'}
+            actions={statusFilter !== 'all' || clientFilter !== 'all'
+              ? <button type="button" className="btn btn-secondary" onClick={() => { setStatusFilter('all'); setClientFilter('all') }}>Show everything</button>
+              : undefined}
+          >
+            {statusFilter !== 'all'
+              ? `No ${filterName} posts or topics between ${windowLabel}.`
+              : 'Try later months, or add a post by hand with New post.'}
+          </EmptyState>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+        <div className="cal-months">
 
-          {/* ── Blog Posts (active when blog pill selected) ── */}
-          {activeCalView === 'blog' && blogFiltered.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-                {windowMonths.map(({ year, month, key }) => {
-                  const monthItems  = byMonth.get(key) ?? []
-                  if (monthItems.length === 0) return null
-                  const pillColor   = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
-                  const isCollapsed = collapsedMonths.has(key)
-                  const publishedCount = monthItems.filter(i => i.status === 'draft_saved' || i.status === 'published').length
-                  return (
-                    <div key={key}>
-                      <button
-                        onClick={() => toggleMonthCollapse(key)}
-                        style={{ width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: isCollapsed ? 0 : 14 }}>
-                          <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
-                            {MONTH_ABBREV[month]}
-                          </span>
-                          <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
-                          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                          {isCollapsed ? (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
-                              {publishedCount} published [show ▼]
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>
-                              {monthItems.length} {monthItems.length === 1 ? 'post' : 'posts'} [▲]
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      {!isCollapsed && (
-                        <ClientGroupedCards items={monthItems} onViewRationale={setRationaleFor} />
-                      )}
-                    </div>
-                  )
-                })}
-                {/* Unscheduled blog items */}
-                {activeCalView === 'blog' && unscheduled.filter(i => !i.contentType || i.contentType === 'blog').length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
-                      <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled</span>
-                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                    </div>
-                    <ClientGroupedCards items={unscheduled.filter(i => !i.contentType || i.contentType === 'blog')} onViewRationale={setRationaleFor} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          {/* ── Blog posts ── */}
+          {activeCalView === 'blog' && <>
+            {windowMonths.map(({ year, month, key }) => {
+              const monthItems  = byMonth.get(key) ?? []
+              if (monthItems.length === 0) return null
+              const isCollapsed = collapsedMonths.has(key)
+              const onSite      = monthItems.filter(isOnSite).length
+              return (
+                <section key={key} aria-label={`${MONTH_NAMES[month]} ${year}`}>
+                  <MonthHeading
+                    name={`${MONTH_NAMES[month]} ${year}`}
+                    count={isCollapsed ? `${onSite} on site` : `${monthItems.length}`}
+                    unit={isCollapsed ? undefined : monthItems.length === 1 ? 'post' : 'posts'}
+                    open={!isCollapsed}
+                    onToggle={() => toggleMonthCollapse(key)}
+                    controls={`cal-${key}`}
+                  />
+                  {!isCollapsed && (
+                    <div id={`cal-${key}`}><ClientGroupedCards items={monthItems} onViewRationale={setRationaleFor} /></div>
+                  )}
+                </section>
+              )
+            })}
+            {unscheduledBlog.length > 0 && (
+              <section aria-label="Not scheduled" className="cal-month--quiet">
+                <MonthHeading name="Not scheduled" count={`${unscheduledBlog.length}`} open />
+                <ClientGroupedCards items={unscheduledBlog} onViewRationale={setRationaleFor} />
+              </section>
+            )}
+          </>}
 
-          {/* ── Service Area Pages (active when service pill selected) ── */}
-          {activeCalView === 'service' && saFiltered.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-                {windowMonths.map(({ year, month, key }) => {
-                  const monthItems = saByMonth.get(key) ?? []
-                  if (monthItems.length === 0) return null
-                  const pillColor = MONTH_PILL_COLORS[month % MONTH_PILL_COLORS.length]
-                  return (
-                    <div key={key}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                        <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: pillColor + '20', color: pillColor, letterSpacing: '0.08em', flexShrink: 0 }}>
-                          {MONTH_ABBREV[month]}
-                        </span>
-                        <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-primary)' }}>{MONTH_NAMES[month]} {year}</span>
-                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', flexShrink: 0 }}>{monthItems.length} page{monthItems.length !== 1 ? 's' : ''}</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                        {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                      </div>
-                    </div>
-                  )
-                })}
-                {/* Unscheduled SA items */}
-                {activeCalView === 'service' && unscheduled.filter(i => i.contentType === 'service_area').length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: 'rgba(156,163,175,0.15)', color: '#9ca3af', letterSpacing: '0.08em', flexShrink: 0 }}>—</span>
-                      <span style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--text-muted)' }}>Unscheduled Pages</span>
-                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                      {unscheduled.filter(i => i.contentType === 'service_area').map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} />)}
-                    </div>
+          {/* ── Service area pages ── */}
+          {activeCalView === 'service' && <>
+            {windowMonths.map(({ year, month, key }) => {
+              const monthItems = saByMonth.get(key) ?? []
+              if (monthItems.length === 0) return null
+              return (
+                <section key={key} aria-label={`${MONTH_NAMES[month]} ${year}`}>
+                  <MonthHeading name={`${MONTH_NAMES[month]} ${year}`} count={`${monthItems.length}`} unit={monthItems.length === 1 ? 'page' : 'pages'} open />
+                  <div className="cal-grid">
+                    {monthItems.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} showClient />)}
                   </div>
-                )}
-              </div>
-            </div>
-          )}
+                </section>
+              )
+            })}
+            {unscheduledSa.length > 0 && (
+              <section aria-label="Pages not scheduled" className="cal-month--quiet">
+                <MonthHeading name="Pages not scheduled" count={`${unscheduledSa.length}`} open />
+                <div className="cal-grid">
+                  {unscheduledSa.map(item => <ContentCard key={item.id} item={item} onViewRationale={setRationaleFor} showClient />)}
+                </div>
+              </section>
+            )}
+          </>}
 
         </div>
       )}
@@ -541,109 +427,42 @@ export default function ContentCalendar({
 function ContentCard({
   item,
   onViewRationale,
+  showClient,
 }: {
   item:            CalendarItem
   onViewRationale: (item: CalendarItem) => void
+  /** Service area pages aren't grouped by client, so their cards name it. */
+  showClient?:     boolean
 }) {
-  const statusCfg    = getStatusCfg(item.status)
+  const status       = statusOf(item.status)
   const past         = item.targetPublishDate ? isPast(item.targetPublishDate) : false
   const title        = item.type === 'post'
-    ? (item.title ?? item.targetKeyword ?? 'Untitled Post')
-    : (item.topicText ?? item.targetKeyword ?? 'Untitled Topic')
+    ? (item.title ?? item.targetKeyword ?? 'Untitled post')
+    : (item.topicText ?? item.targetKeyword ?? 'Untitled topic')
   const hasRationale = !!(item.rationale || item.keywordOpportunity)
   const isSA         = item.contentType === 'service_area'
 
   return (
-    <div
-      onClick={() => hasRationale && onViewRationale(item)}
-      style={{
-        borderRadius: 10,
-        border: '1px solid var(--border)',
-        borderLeft: `4px solid ${getStatusBorder(item.status)}`,
-        background: 'var(--bg-surface)',
-        padding: '12px 14px',
-        display: 'flex', flexDirection: 'column', gap: 6,
-        cursor: hasRationale ? 'pointer' : 'default',
-        opacity: past ? 0.65 : 1,
-        transition: 'box-shadow 0.15s, opacity 0.15s',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-      }}
-      onMouseEnter={e => { if (hasRationale) (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)' }}
-    >
-      {/* Top row: date + status pill + type tag + actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        {item.targetPublishDate && (
-          <span style={{
-            fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-            background: 'var(--bg-muted)', color: 'var(--text-muted)', flexShrink: 0,
-          }}>
-            {shortDate(item.targetPublishDate)}
-          </span>
+    <article className={`cal-card${past ? ' cal-card--past' : ''}`}>
+      <div className="cal-card-top">
+        {item.targetPublishDate && <span className="cal-date">{shortDate(item.targetPublishDate)}</span>}
+        <span className={item.status === 'generating' ? 'cal-generating' : undefined}>
+          <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+        </span>
+        {SHOW_NON_BLOG_CONTENT_TYPES && <StatusBadge tone="neutral" dot={false}>{isSA ? 'Page' : 'Blog'}</StatusBadge>}
+        {item.type === 'post' && item.publishedUrl && (
+          <a href={item.publishedUrl} target="_blank" rel="noopener noreferrer" className="cal-card-link" title="View it on the site" aria-label={`View “${title}” on the site`}>
+            <ArrowSquareOut size={14} weight="bold" aria-hidden />
+          </a>
         )}
-
-        {/* Status pill — always uses status config, never cluster group */}
-        <span style={{
-          fontSize: '0.6875rem', fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-          background: statusCfg.bg, color: statusCfg.color,
-          display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-        }}>
-          <span style={{
-            width: 5, height: 5, borderRadius: '50%', background: statusCfg.dot, flexShrink: 0,
-            animation: item.status === 'generating' ? 'pulse 1.5s ease-in-out infinite' : 'none',
-          }} />
-          {statusCfg.label}
-        </span>
-
-        {/* Content type tag */}
-        <span style={{
-          fontSize: '0.6rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-          background: isSA ? 'rgba(99,102,241,0.12)' : 'rgba(107,114,128,0.1)',
-          color: isSA ? '#6366f1' : '#6b7280',
-          letterSpacing: '0.04em', flexShrink: 0, textTransform: 'uppercase',
-        }}>
-          {isSA ? 'Page' : 'Blog'}
-        </span>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-          {hasRationale && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--blue)', lineHeight: 1 }} title="View rationale">→</span>
-          )}
-          {item.type === 'post' && item.publishedUrl && (
-            <a
-              href={item.publishedUrl}
-              target="_blank" rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              style={{ fontSize: '0.75rem', color: 'var(--blue)', textDecoration: 'none', lineHeight: 1 }}
-              title="View published post"
-            >
-              ↗
-            </a>
-          )}
-        </div>
       </div>
 
-      {/* Client name */}
-      <a
-        href={`/admin/clients/${item.clientId}?tab=content`}
-        onClick={e => e.stopPropagation()}
-        style={{ fontSize: '0.72rem', color: 'var(--blue)', textDecoration: 'none', fontWeight: 500, lineHeight: 1 }}
-      >
-        {item.clientName}
-      </a>
+      {showClient && <Link href={`/admin/clients/${item.clientId}?tab=content`} className="cal-client-name" style={{ position: 'relative', zIndex: 1 }}>{item.clientName}</Link>}
 
-      {/* Title only — no preview text excerpt */}
-      <p style={{
-        margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)',
-        lineHeight: 1.35,
-        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-      }}>
-        {title}
-      </p>
-
-    </div>
+      {/* The title is the control when there's a rationale to read; the whole card is its target. */}
+      {hasRationale
+        ? <button type="button" className="cal-title" onClick={() => onViewRationale(item)} title="Why this topic">{title}</button>
+        : <p className="cal-title">{title}</p>}
+    </article>
   )
 }

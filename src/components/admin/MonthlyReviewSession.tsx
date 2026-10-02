@@ -5,6 +5,8 @@ import type { CmsAction } from '@/lib/content/cmsLifecycle'
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { CalendarCheck, CheckCircle, WarningCircle, X } from '@phosphor-icons/react'
+import EmptyState from '@/components/ui/EmptyState'
 import MonthlyReviewProgress   from './MonthlyReviewProgress'
 import MonthlyReviewClientSection from './MonthlyReviewClientSection'
 import RegenerateDialog from './RegenerateDialog'
@@ -28,14 +30,15 @@ interface Props {
   month:     string
   prevUrl?:  string | null
   nextUrl?:  string | null
-  embedded?: boolean   // rendered inside the content page (softer chrome, no takeover)
+  /** Accepted for compatibility: the review only renders inside the content page now. */
+  embedded?: boolean
 }
 
 function getMonth(): string {
   return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl, embedded }: Props) {
+export default function MonthlyReviewSession({ posts: initialPosts, allSites, month, prevUrl, nextUrl }: Props) {
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(() => {
     const pre = new Set<string>()
     for (const p of initialPosts) {
@@ -197,7 +200,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } catch (e) {
       console.error('Reject failed:', e)
       setToastError(true)
-      setToastMsg('Failed to reject post. Please try again.')
+      setToastMsg('The post wasn’t rejected. Try again.')
     } finally {
       setLoadingId(null)
     }
@@ -224,7 +227,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       router.refresh()
     } catch (e) {
       console.error('Delete failed:', e)
-      alert(e instanceof Error ? e.message : 'Failed to delete post. Please try again.')
+      setToastError(true)
+      setToastMsg(e instanceof Error ? e.message : 'The post wasn’t deleted. Try again.')
     } finally {
       setLoadingId(null)
     }
@@ -263,7 +267,8 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       setDiscardedIds(prev => { const next = new Set(prev); next.delete(postId); return next })
     } catch (e) {
       console.error('Restore failed:', e)
-      alert('Failed to restore post. Please try again.')
+      setToastError(true)
+      setToastMsg('The post wasn’t restored. Try again.')
     } finally {
       setLoadingId(null)
     }
@@ -284,7 +289,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(editorPostId); return next })
     }
     setToastError(false)
-    setToastMsg(`Post regenerated: ${updatedPost?.title ?? 'Done'} — ready for review`)
+    setToastMsg(`Regenerated and ready to review: ${updatedPost?.title ?? 'the post'}`)
     setEditorPostId(null)
   }, [editorPostId])
 
@@ -364,7 +369,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
         setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
         setToastError(true)
         const msg = await res.json().catch(() => ({})) as { error?: string }
-        setToastMsg(msg.error ?? 'Failed to start regeneration — please try again')
+        setToastMsg(msg.error ?? 'Regenerating didn’t start. Try again.')
       } else {
         // What happens to the live article is the surprising part of this action,
         // so the toast states it explicitly rather than saying "done".
@@ -384,7 +389,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
     } catch {
       setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
       setToastError(true)
-      setToastMsg('Failed to start regeneration — please try again')
+      setToastMsg('Regenerating didn’t start. Try again.')
     }
   }, [])
 
@@ -417,7 +422,7 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           if (updated.status !== 'generating') {
             setRegeneratingIds(prev => { const next = new Set(prev); next.delete(postId); return next })
             setToastError(false)
-            setToastMsg(`Post regenerated: ${updated.title ?? 'Done'} — ready for review`)
+            setToastMsg(`Regenerated and ready to review: ${updated.title ?? 'the post'}`)
             router.refresh()
           }
         } catch { /* retry next tick */ }
@@ -432,15 +437,15 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
 
   return (
     <>
-    <div style={embedded ? undefined : { minHeight: '100vh', background: 'var(--bg-base)' }}>
+    <div className="mr">
       <MonthlyReviewProgress
         approvedCount={approvedCount}
         totalPosts={totalPosts}
         clientsTotal={clientIds.length}
         clientsDone={clientsDone}
-        onExit={() => window.location.href = '/admin/content'}
         month={displayMonth}
-        embedded={embedded}
+        prevUrl={prevUrl}
+        nextUrl={nextUrl}
       />
 
       {isComplete ? (
@@ -448,64 +453,44 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
           totalPosts={approvedCount}
           clientsTotal={clientIds.length}
           month={displayMonth}
-          onExit={() => { window.location.href = '/admin/content' }}
+          nextUrl={nextUrl}
         />
-      ) : (
-        <div style={{ maxWidth: 860, margin: '0 auto', padding: '24px 20px 60px' }}>
-          {/* Month navigation */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 24 }}>
-            {prevUrl ? (
-              <Link href={prevUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>← Prev Month</Link>
-            ) : (
-              <span style={{ display: 'inline-block', width: 100 }} />
-            )}
-            <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>{displayMonth}</span>
-            {nextUrl ? (
-              <Link href={nextUrl} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>Next Month →</Link>
-            ) : (
-              <span style={{ display: 'inline-block', width: 100 }} />
-            )}
-          </div>
-
-          {totalPosts === 0 ? (
-            <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--text-muted)' }}>
-              <div style={{ fontSize: 40, marginBottom: 16 }}>🎉</div>
-              <p style={{ fontSize: 16 }}>No posts need review for {displayMonth}.</p>
-              <p style={{ fontSize: 14, marginTop: 8 }}>
-                Posts will appear here once topics auto-approve (~35 days ahead).
-              </p>
-              <a href="/admin/content" className="btn btn-secondary" style={{ display: 'inline-flex', marginTop: 20 }}>
-                Back to Content
-              </a>
-            </div>
-          ) : (
-            clientIds.map(clientId => {
-              const posts = (postsByClient.get(clientId) ?? []).filter(p => !deletedIds.has(p.id))
-              if (posts.length === 0) return null
-              return (
-                <MonthlyReviewClientSection
-                  key={clientId}
-                  clientId={clientId}
-                  clientName={posts[0]?.clientName ?? clientId}
-                  posts={posts}
-                  approvedIds={approvedIds}
-                  rejectedIds={rejectedIds}
-                  discardedIds={discardedIds}
-                  regeneratingIds={regeneratingIds}
-                  loadingId={loadingId}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onOpenEditor={handleOpenEditor}
-                  onRestore={handleRestore}
-                  onRegenerate={handleCardRegenerate}
-                  onDelete={handleDelete}
-                  pushStates={pushStates}
-                  onRetryPush={handleApprove}
-                />
-              )
-            })
-          )}
+      ) : totalPosts === 0 ? (
+        <div className="card">
+          <EmptyState
+            icon={<CalendarCheck size={22} weight="duotone" />}
+            title={`Nothing to review in ${displayMonth}`}
+            actions={<Link href="/admin/content?view=calendar" className="btn btn-secondary">Open the calendar</Link>}
+          >
+            Posts arrive here once their topics are approved, about 35 days before they publish.
+          </EmptyState>
         </div>
+      ) : (
+        clientIds.map(clientId => {
+          const posts = (postsByClient.get(clientId) ?? []).filter(p => !deletedIds.has(p.id))
+          if (posts.length === 0) return null
+          return (
+            <MonthlyReviewClientSection
+              key={clientId}
+              clientId={clientId}
+              clientName={posts[0]?.clientName ?? clientId}
+              posts={posts}
+              approvedIds={approvedIds}
+              rejectedIds={rejectedIds}
+              discardedIds={discardedIds}
+              regeneratingIds={regeneratingIds}
+              loadingId={loadingId}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onOpenEditor={handleOpenEditor}
+              onRestore={handleRestore}
+              onRegenerate={handleCardRegenerate}
+              onDelete={handleDelete}
+              pushStates={pushStates}
+              onRetryPush={handleApprove}
+            />
+          )
+        })
       )}
     </div>
     {editorPostId && editorPost && (
@@ -526,9 +511,12 @@ export default function MonthlyReviewSession({ posts: initialPosts, allSites, mo
       />
     )}
     {toastMsg && (
-      <div style={{ position: 'fixed', bottom: 24, right: 24, background: toastError ? '#dc2626' : '#15803d', color: '#fff', padding: '12px 20px', borderRadius: 8, zIndex: 9999, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        {toastError ? '✗' : '✓'} {toastMsg}
-        <button onClick={() => { setToastMsg(null); setToastError(false) }} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+      <div className={`ui-toast ui-toast--${toastError ? 'danger' : 'success'}`} role={toastError ? 'alert' : 'status'}>
+        {toastError ? <WarningCircle size={18} weight="fill" aria-hidden /> : <CheckCircle size={18} weight="fill" aria-hidden />}
+        <span className="ui-toast-text">{toastMsg}</span>
+        <button type="button" className="ui-toast-x" aria-label="Dismiss" onClick={() => { setToastMsg(null); setToastError(false) }}>
+          <X size={14} weight="bold" aria-hidden />
+        </button>
       </div>
     )}
     {/* Rejecting a LIVE post — asks what happens to the article on the site. */}

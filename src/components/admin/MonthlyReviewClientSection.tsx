@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { ArrowSquareOut } from '@phosphor-icons/react'
+import { useEffect, useId, useRef, useState } from 'react'
+import Link from 'next/link'
+import { CaretDown, GearSix } from '@phosphor-icons/react'
+import StatusBadge from '@/components/ui/StatusBadge'
 import MonthlyReviewPostCard, { type MonthlyReviewPost } from './MonthlyReviewPostCard'
 
 interface Props {
@@ -119,58 +121,45 @@ export default function MonthlyReviewClientSection({
     }
   }
 
+  const listId = useId()
   return (
-    <div style={{ marginBottom: 16 }}>
-      {/* Client header (accordion toggle) */}
-      <button
-        onClick={() => setUserCollapsed(!effectivelyCollapsed)}
-        style={{
-          width:        '100%',
-          display:      'flex',
-          alignItems:   'center',
-          gap:          8,
-          padding:      '10px 14px',
-          background:   isComplete ? '#f0fdf4' : 'var(--bg-subtle)',
-          border:       `1px solid ${isComplete ? '#bbf7d0' : 'var(--border)'}`,
-          borderRadius: 8,
-          cursor:       'pointer',
-          textAlign:    'left',
-          marginBottom: effectivelyCollapsed ? 0 : 8,
-        }}
-      >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: 13, fontWeight: 600, color: isComplete ? '#15803d' : 'var(--text-primary)' }}>
-          {isComplete ? '✓ ' : ''}{clientName}
-          <span
-            role="link"
-            tabIndex={0}
-            title={`Open ${clientName} content settings`}
-            aria-label={`Open ${clientName} content settings`}
-            onClick={e => { e.stopPropagation(); window.open(`/admin/clients/${clientId}?tab=content&subtab=settings`, '_blank', 'noopener') }}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); window.open(`/admin/clients/${clientId}?tab=content&subtab=settings`, '_blank', 'noopener') } }}
-            style={{ display: 'inline-flex', color: 'var(--text-faint)', cursor: 'pointer' }}
-          >
-            <ArrowSquareOut size={13} weight="bold" aria-hidden />
-          </span>
-        </span>
-        {/* No link-health chip on the client header.
-            A per-CLIENT roll-up answers a question nobody asks — "are these four posts'
-            links collectively fine" — while sitting beside the approval counter as though it
-            were part of the progress readout, and a green "Links OK" there is the least
-            useful place to say it. The scan still runs, because its per-post counts feed the
-            broken-link badge on the individual cards, and the review drawer does its own
-            scan with the detail. That is where a link problem is actionable. */}
-
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {approvedCount}/{posts.length} approved
-        </span>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>
-          {effectivelyCollapsed ? '▶' : '▼'}
-        </span>
-      </button>
+    <section className="mr-client" aria-label={clientName}>
+      {/* The toggle and the settings link are siblings: a link inside the toggle button was a
+          control inside a control, which a keyboard or screen reader can't reach properly. */}
+      <div className="mr-client-head">
+        <button
+          type="button"
+          className="mr-client-toggle"
+          aria-expanded={!effectivelyCollapsed}
+          aria-controls={listId}
+          onClick={() => setUserCollapsed(!effectivelyCollapsed)}
+        >
+          <CaretDown size={14} weight="bold" aria-hidden />
+          <span className="mr-client-name">{clientName}</span>
+          {isComplete && <StatusBadge tone="success">Done</StatusBadge>}
+          {/* No link-health chip on the client header.
+              A per-CLIENT roll-up answers a question nobody asks — "are these four posts'
+              links collectively fine" — while sitting beside the approval counter as though it
+              were part of the progress readout, and a green "Links OK" there is the least
+              useful place to say it. The scan still runs, because its per-post counts feed the
+              broken-link badge on the individual cards, and the review drawer does its own
+              scan with the detail. That is where a link problem is actionable. */}
+          <span className="mr-client-count">{approvedCount} of {posts.length} approved</span>
+        </button>
+        <Link
+          href={`/admin/clients/${clientId}?tab=content&subtab=settings`}
+          target="_blank"
+          className="mr-client-link"
+          title={`${clientName}’s content settings (opens in a new tab)`}
+          aria-label={`${clientName}’s content settings, opens in a new tab`}
+        >
+          <GearSix size={16} aria-hidden />
+        </Link>
+      </div>
 
       {/* Posts list */}
       {!effectivelyCollapsed && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="mr-posts" id={listId}>
           {posts.map(post => (
             <MonthlyReviewPostCard
               key={post.id}
@@ -196,6 +185,6 @@ export default function MonthlyReviewClientSection({
           ))}
         </div>
       )}
-    </div>
+    </section>
   )
 }

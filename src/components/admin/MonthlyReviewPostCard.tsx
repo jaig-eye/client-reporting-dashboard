@@ -1,10 +1,13 @@
 'use client'
 
-import { ArrowClockwise, ArrowRight, Trash } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { ArrowClockwise, ArrowSquareOut, Article, CheckCircle, LinkBreak, Trash } from '@phosphor-icons/react'
 import { SHOW_NON_BLOG_CONTENT_TYPES } from '@/lib/content/featureFlags'
 import PostSiteLinks from '@/components/admin/PostSiteLinks'
 import ClientImage from '@/components/admin/ClientImage'
 import PriorityTag from '@/components/admin/PriorityTag'
+import StatusBadge from '@/components/ui/StatusBadge'
+import { ConfirmDialog } from '@/components/ui/Dialog'
 import type { QualityReport } from '@/lib/content/qualityGate'
 
 
@@ -86,11 +89,14 @@ function fmtDate(iso: string): string {
   })
 }
 
+const TYPE_LABEL: Record<string, string> = { blog: 'Blog', service_area: 'Service area page', service_page: 'Service page' }
+
 export default function MonthlyReviewPostCard({
-  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
+  post, isApproved, isRejected, isDiscarded, isRegenerating, isLoading, isCollapsed, brokenLinkCount, onApprove: _onApprove, onReject, onOpenEditor, onRestore, onRegenerate, onDelete,
   pushState, pushedUrl, pushError, onRetryPush,
 }: Props) {
-  const isDone = isApproved || isRejected || isDiscarded || isRegenerating
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const name = post.title ?? 'this post'
 
   // "Live, but the client's site is serving an older copy." Derived rather than
   // stored, so it is correct the moment content changes. See migration 200.
@@ -105,310 +111,184 @@ export default function MonthlyReviewPostCard({
     return null
   }
 
-  return (
-    <div
-      style={{
-        // The border carries the state with the background, rather than leaving a
-        // green-tinted card inside a neutral grey outline — which read as though the tint
-        // were a hover effect rather than a decision the reviewer had made. Regenerating
-        // already did this; approved did not.
-        border:     `1px solid ${
-          isRegenerating ? '#fca5a5'
-          : isApproved   ? '#86efac'
-          : 'var(--border)'
-        }`,
-        borderRadius: 8,
-        overflow:   'hidden',
-        background: isRegenerating ? '#fff1f2' : 'var(--bg-surface)',
-        animation:  isApproved ? 'monthly-approve-flash 0.6s ease forwards' : undefined,
-        opacity:    isRejected || isDiscarded ? 0.55 : 1,
-        transition: 'opacity 0.3s, background 0.3s',
-      }}
+  // The border and tint carry the state with the pill, rather than leaving a tinted card inside
+  // a neutral outline — which read as though the tint were a hover effect rather than a decision
+  // the reviewer had made. Regenerating is work in progress, so it takes the accent tint, not red.
+  const tone = isRegenerating ? ' mr-card--working' : isApproved ? ' mr-card--approved' : isRejected || isDiscarded ? ' mr-card--out' : ''
+
+  const regenerateButton = (
+    <button
+      type="button"
+      className="btn btn-secondary btn-sm mr-icon"
+      disabled={isLoading}
+      title={isLive
+        ? 'Regenerate: write a brand-new topic and article. The live copy stays up until you push the replacement.'
+        : 'Regenerate: write a brand-new topic and article for this slot'}
+      aria-label={`Regenerate ${name}`}
+      onClick={() => onRegenerate(post.id)}
     >
-      {/* Card row */}
-      <div
-        style={{
-          display:    'flex',
-          alignItems: 'center',
-          gap:        12,
-          padding:    '10px 14px',
-        }}
-      >
-        {/* Thumbnail */}
-        {post.featured_image_url ? (
-          // Through the proxy: when the picture came from the client's own media library the
-          // URL points at their server, and their host is entitled to refuse us.
-          <ClientImage
-            src={post.featured_image_url}
-            alt=""
-            connectionId={post.connection_id}
-            style={{ width: 48, height: 36, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
-          />
-        ) : (
-          <div style={{ width: 48, height: 36, background: 'var(--bg-subtle)', borderRadius: 4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'var(--text-faint)' }}>
-            📝
+      <ArrowClockwise size={15} weight="bold" aria-hidden />
+    </button>
+  )
+
+  return (
+    <article className={`mr-card${tone}`} aria-label={post.title ?? 'Untitled post'}>
+      {/* Thumbnail */}
+      {post.featured_image_url ? (
+        // Through the proxy: when the picture came from the client's own media library the
+        // URL points at their server, and their host is entitled to refuse us.
+        <ClientImage src={post.featured_image_url} alt="" connectionId={post.connection_id} className="mr-thumb" />
+      ) : (
+        <span className="mr-thumb" aria-hidden><Article size={18} /></span>
+      )}
+
+      {/* Title + meta */}
+      <div className="mr-body">
+        <button type="button" className="mr-title" onClick={() => onOpenEditor(post.id)} title="Open the review panel">
+          {post.title ?? 'Untitled post'}
+        </button>
+        <div className="mr-meta">
+          {isApproved && (
+            /* Sits with the meta rather than in the action row. As a pill on the right it
+               competed with the controls and squeezed the title into an ellipsis; the
+               approval is a property of the post, so it reads with the post's other
+               properties. */
+            <span className="mr-approved"><CheckCircle size={13} weight="fill" aria-hidden />Approved</span>
+          )}
+          <span className="mr-fact">{post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}</span>
+          {post.content && <span className="mr-fact">{wordCount(post.content).toLocaleString()} words</span>}
+          <span className="mr-fact">{post.isBc ? 'BigCommerce' : 'WordPress'}</span>
+          {SHOW_NON_BLOG_CONTENT_TYPES && post.content_type && (
+            <StatusBadge tone={post.content_type === 'blog' ? 'neutral' : 'info'} dot={false}>{TYPE_LABEL[post.content_type] ?? 'Page'}</StatusBadge>
+          )}
+          {brokenLinkCount != null && brokenLinkCount > 0 && (
+            <StatusBadge tone="danger" dot={false}>
+              <LinkBreak size={12} weight="bold" aria-hidden />{brokenLinkCount} broken link{brokenLinkCount === 1 ? '' : 's'}
+            </StatusBadge>
+          )}
+        </div>
+        {/* Provenance — a post someone asked for through Priority topics, and the keyword it
+            was written for. Otherwise it is indistinguishable from an automatic pick by the
+            time it reaches review. */}
+        {post.silo && (
+          <div className="mr-extra">
+            <PriorityTag setName={post.silo.name} keyword={post.silo_keyword?.keyword} />
           </div>
         )}
+        {/* Live-post links — shown once the post is on-site. ONE viewing link, chosen by state:
+            "Preview draft" on a published post previews a draft that no longer exists, and
+            "View live" on a scheduled one points at a page that is not up yet. */}
+        {(post.status === 'draft_saved' || post.status === 'published') && (
+          <div className="mr-extra"><PostSiteLinks post={post} fontSize={11.5} /></div>
+        )}
 
-        {/* Title + meta */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <button
-            type="button"
-            onClick={() => onOpenEditor(post.id)}
-            title="Open the review panel"
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: 0,
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontWeight: 500, fontSize: 14, color: 'var(--text-primary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}
-          >
-            {post.title ?? '(untitled)'}
-          </button>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-            {isApproved && (
-              /* Sits with the meta rather than in the action row. As a pill on the right it
-                 competed with the controls and squeezed the title into an ellipsis; the
-                 approval is a property of the post, so it reads with the post's other
-                 properties. */
-              <span style={{ color: '#16a34a', fontWeight: 700, marginRight: 6 }}>
-                ✓ Approved ·
-              </span>
-            )}
-            {post.target_publish_date ? fmtDate(post.target_publish_date) : 'No date'}
-            {post.content ? ` · ${wordCount(post.content).toLocaleString()}w` : ''}
-            {post.isBc ? ' · BC' : ' · WP'}
-            {SHOW_NON_BLOG_CONTENT_TYPES && post.content_type && (
-              <span style={{
-                marginLeft: 6,
-                fontSize: 10,
-                fontWeight: 700,
-                padding: '1px 6px',
-                borderRadius: 999,
-                background: post.content_type === 'blog' ? '#dbeafe' : post.content_type === 'service_area' ? '#dcfce7' : post.content_type === 'service_page' ? '#ede9fe' : '#f3f4f6',
-                color:      post.content_type === 'blog' ? '#1d4ed8' : post.content_type === 'service_area' ? '#15803d' : post.content_type === 'service_page' ? '#7c3aed' : '#374151',
-              }}>
-                {post.content_type === 'blog' ? 'Blog' : post.content_type === 'service_area' ? 'SA Page' : post.content_type === 'service_page' ? 'Service Page' : 'Page'}
-              </span>
-            )}
-            {brokenLinkCount != null && brokenLinkCount > 0 && (
-              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#fee2e2', color: '#dc2626' }}>
-                🔗 {brokenLinkCount} broken
-              </span>
-            )}
-          </div>
-          {/* Provenance — a post someone asked for through Priority topics, and the keyword it
-              was written for. Otherwise it is indistinguishable from an automatic pick by the
-              time it reaches review. */}
-          {post.silo && (
-            <div style={{ marginTop: 4 }}>
-              <PriorityTag setName={post.silo.name} keyword={post.silo_keyword?.keyword} />
-            </div>
-          )}
-          {/* Live-post links — shown once the post is on-site */}
-          {(post.status === 'draft_saved' || post.status === 'published') && (() => {
-            return (
-              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 11 }}>
-                {/* ONE viewing link, chosen by state. All three used to render together the
-                    moment a post was on-site, but each is only meaningful in one state:
-                    "Preview draft" on a published post previews a draft that no longer
-                    exists, and "View live" on a scheduled one points at a page that is not
-                    up yet. Whichever applies is shown; the other was never useful. */}
-                <PostSiteLinks post={post} fontSize={11} />
-              </div>
-            )
-          })()}
-
-          {isStaleLive && (
-            <div style={{
-              marginTop: 6, padding: '4px 8px', borderRadius: 5,
-              background: '#fef3c7', border: '1px solid #fcd34d',
-              fontSize: 11.5, color: '#92400e', fontWeight: 600,
-            }}>
-              Live copy is out of date — the site still shows the previous version. Push to update it.
-            </div>
-          )}
-
-          {/* The human check that the spam-update reporting singled out as
-              protective. Shown before approval, with the reason, not just a score. */}
-        </div>
-
-        {/* Status / actions */}
-        {isApproved ? (
-          // Regenerate stays available AFTER approval on purpose: changing your
-          // mind about a post you just approved is the common case, and the
-          // button being absent here is why it looked like the feature was missing.
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-            {/* The badge reports the PUSH, not the approval.
-                Approval is a settled property of the post and reads in the meta line under
-                the title; repeating it here as a pill was what crowded the action row and
-                squeezed titles into an ellipsis in the first place. What belongs in the
-                action row is the transient part — whether the article has actually reached
-                the client's site yet — so nothing renders here once it has. */}
-            {pushState === 'pushing' ? (
-              <span
-                className="monthly-pushing"
-                aria-live="polite"
-                style={{
-                  fontSize: 12, fontWeight: 700, color: '#1d4ed8', background: '#dbeafe',
-                  padding: '3px 10px', borderRadius: 999,
-                  animation: 'monthly-push-pulse 1.1s ease-in-out infinite',
-                }}
-              >
-                Pushing to site…
-              </span>
-            ) : pushState === 'failed' ? (
-              <>
-                <span
-                  title={pushError ?? undefined}
-                  aria-live="polite"
-                  style={{
-                    fontSize: 12, fontWeight: 700, color: '#b91c1c', background: '#fee2e2',
-                    padding: '3px 10px', borderRadius: 999, maxWidth: 260,
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}
-                >
-                  {pushError ? 'Push failed — ' + pushError : 'Push failed'}
-                </span>
-                {onRetryPush && (
-                  <button className="btn btn-sm" disabled={isLoading} onClick={() => onRetryPush(post.id)}>
-                    Retry
-                  </button>
-                )}
-              </>
-            ) : pushState === 'live' ? (
-              <span
-                className="monthly-live"
-                aria-live="polite"
-                style={{
-                  fontSize: 12, fontWeight: 700, color: '#16a34a', background: '#dcfce7',
-                  padding: '3px 10px', borderRadius: 999,
-                  animation: 'monthly-live-pop 0.32s ease-out',
-                }}
-              >
-                ● Live
-              </span>
-            ) : null}
-
-            {/* Appears the moment the push returns a permalink, so the article can be checked
-                without leaving the list or reloading. */}
-            {pushState === 'live' && pushedUrl && (
-              <a
-                href={pushedUrl} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 12, fontWeight: 600, color: 'var(--blue)', textDecoration: 'none' }}
-              >
-                View live ↗
-              </a>
-            )}
-            {/* Same icon row as an unreviewed card, so the controls do not move or change
-                shape when a post crosses into approved — only what they do changes. Approval
-                is not the end of the reviewer's relationship with a post: the common next
-                actions are re-reading it, replacing it, or taking it back down. */}
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              title={isLive
-                ? 'Regenerate — write a brand-new topic and article. The live copy stays up until you push the replacement.'
-                : 'Regenerate — write a brand-new topic and article for this slot'}
-              aria-label={`Regenerate ${post.title ?? 'this post'}`}
-              onClick={() => onRegenerate(post.id)}
-              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
-            >
-              <ArrowClockwise size={15} weight="bold" />
-            </button>
-
-            {/* Take it back down. Routed through onReject with discard, NOT onDelete: this
-                post is on the client's site, so the question is what happens to the live
-                article — which is what LivePostActionModal exists to ask. A plain delete
-                here would drop our record and leave the article published. */}
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              title={isLive
-                ? 'Take down — remove this post from the site, or leave the article up'
-                : 'Discard — take this post out of the plan'}
-              aria-label={`Take down ${post.title ?? 'this post'}`}
-              onClick={() => onReject(post.id, true)}
-              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: 'var(--red)' }}
-            >
-              <Trash size={15} weight="bold" />
-            </button>
-
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              title="Review — read the content, SEO and strategy behind this post"
-              aria-label={`Review ${post.title ?? 'this post'}`}
-              onClick={() => onOpenEditor(post.id)}
-              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
-            >
-              <ArrowRight size={15} weight="bold" />
-            </button>
-          </div>
-        ) : isRejected ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
-            Rejected
-          </span>
-        ) : isDiscarded ? (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-subtle)', padding: '3px 10px', borderRadius: 999 }}>
-              Discarded
-            </span>
-            <button className="btn btn-sm" disabled={isLoading} onClick={() => onRestore(post.id)}>
-              Restore
-            </button>
-          </div>
-        ) : isRegenerating ? (
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '3px 10px', borderRadius: 999, flexShrink: 0 }}>
-            ⟳ Regenerating…
-          </span>
-        ) : (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-            {/* Icon-only, with the meaning in the tooltip and aria-label. Three text
-                buttons plus "Review →" crowded the row and pushed the card wider than
-                its content needed. */}
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              title="Regenerate — write a brand-new topic and article for this slot"
-              aria-label={`Regenerate ${post.title ?? 'this post'}`}
-              onClick={() => onRegenerate(post.id)}
-              style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem' }}
-            >
-              <ArrowClockwise size={15} weight="bold" />
-            </button>
-
-            {/* Delete is distinct from Reject. Reject keeps the post as an editorial
-                signal so the topic is never suggested again; Delete removes the post
-                and its topic so the subject becomes eligible again — for duplicates and
-                mis-generations, where nothing about the subject was wrong. Unrecoverable,
-                hence the confirm. */}
-            {onDelete && (
-              <button
-                className="btn btn-sm"
-                disabled={isLoading}
-                title="Delete permanently — frees the topic to be generated again"
-                aria-label={`Delete ${post.title ?? 'post'} permanently`}
-                onClick={() => {
-                  if (confirm(`Delete "${post.title ?? 'this post'}" and its topic permanently?\n\nThe subject becomes available to generate again.\n\nUse Reject instead if you do not want it suggested again.`)) {
-                    onDelete(post.id)
-                  }
-                }}
-                style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.5rem', color: '#dc2626' }}
-              >
-                <Trash size={15} weight="bold" />
-              </button>
-            )}
-            <button
-              className="btn btn-sm"
-              disabled={isLoading}
-              onClick={() => onOpenEditor(post.id)}
-            >
-              Review →
-            </button>
-          </div>
+        {isStaleLive && (
+          <p className="mr-stale">The site still shows the previous version. Push to update it.</p>
         )}
       </div>
-    </div>
+
+      {/* Status / actions */}
+      {isApproved ? (
+        // Regenerate stays available AFTER approval on purpose: changing your
+        // mind about a post you just approved is the common case, and the
+        // button being absent here is why it looked like the feature was missing.
+        <div className="mr-actions">
+          {/* The badge reports the PUSH, not the approval. Approval reads in the meta line; what
+              belongs here is the transient part — whether the article has reached the client's
+              site yet — so nothing renders here once it has, apart from the link to it. */}
+          {pushState === 'pushing' ? (
+            <span className="mr-pushing" aria-live="polite"><StatusBadge tone="info">Pushing to site…</StatusBadge></span>
+          ) : pushState === 'failed' ? (
+            <>
+              <span className="mr-status-fail" aria-live="polite">
+                <StatusBadge tone="danger" title={pushError ?? undefined}>{pushError ? `Push failed: ${pushError}` : 'Push failed'}</StatusBadge>
+              </span>
+              {onRetryPush && (
+                <button type="button" className="btn btn-secondary btn-sm" disabled={isLoading} onClick={() => onRetryPush(post.id)}>Retry</button>
+              )}
+            </>
+          ) : pushState === 'live' ? (
+            <span className="mr-landed" aria-live="polite"><StatusBadge tone="success">Live</StatusBadge></span>
+          ) : null}
+
+          {/* Appears the moment the push returns a permalink, so the article can be checked
+              without leaving the list or reloading. */}
+          {pushState === 'live' && pushedUrl && (
+            <a href={pushedUrl} target="_blank" rel="noopener noreferrer" className="mr-live">
+              View live<ArrowSquareOut size={12} weight="bold" aria-hidden />
+            </a>
+          )}
+          {/* Same icon row as an unreviewed card, so the controls do not move or change shape
+              when a post crosses into approved — only what they do changes. */}
+          {regenerateButton}
+
+          {/* Take it back down. Routed through onReject with discard, NOT onDelete: this post is
+              on the client's site, so the question is what happens to the live article — which
+              is what LivePostActionModal exists to ask. A plain delete here would drop our record
+              and leave the article published. */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm mr-icon mr-icon--danger"
+            disabled={isLoading}
+            title={isLive ? 'Take down: remove this post from the site, or leave the article up' : 'Discard: take this post out of the plan'}
+            aria-label={`Take down ${name}`}
+            onClick={() => onReject(post.id, true)}
+          >
+            <Trash size={15} weight="bold" aria-hidden />
+          </button>
+
+          <button type="button" className="btn btn-secondary btn-sm" disabled={isLoading} onClick={() => onOpenEditor(post.id)}>
+            Review
+          </button>
+        </div>
+      ) : isRejected ? (
+        <div className="mr-actions"><StatusBadge tone="danger">Rejected</StatusBadge></div>
+      ) : isDiscarded ? (
+        <div className="mr-actions">
+          <StatusBadge tone="neutral">Discarded</StatusBadge>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={isLoading} onClick={() => onRestore(post.id)}>Restore</button>
+        </div>
+      ) : isRegenerating ? (
+        <div className="mr-actions mr-pushing"><StatusBadge tone="info">Regenerating…</StatusBadge></div>
+      ) : (
+        <div className="mr-actions">
+          {regenerateButton}
+
+          {/* Delete is distinct from Reject. Reject keeps the post as an editorial signal so the
+              topic is never suggested again; Delete removes the post and its topic so the subject
+              becomes eligible again — for duplicates and mis-generations, where nothing about the
+              subject was wrong. Unrecoverable, hence the confirm. */}
+          {onDelete && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm mr-icon mr-icon--danger"
+              disabled={isLoading}
+              title="Delete permanently: frees the topic to be generated again"
+              aria-label={`Delete ${name} permanently`}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash size={15} weight="bold" aria-hidden />
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary btn-sm" disabled={isLoading} onClick={() => onOpenEditor(post.id)}>
+            Review
+          </button>
+        </div>
+      )}
+
+      {onDelete && (
+        <ConfirmDialog
+          open={confirmDelete}
+          onClose={() => setConfirmDelete(false)}
+          title="Delete this post and its topic?"
+          confirmLabel="Delete permanently"
+          tone="danger"
+          onConfirm={() => { setConfirmDelete(false); onDelete(post.id) }}
+        >
+          <p>“{post.title ?? 'Untitled post'}” goes, and its subject can be generated again.</p>
+          <p>To keep it from being suggested again, close this and reject the post instead.</p>
+        </ConfirmDialog>
+      )}
+    </article>
   )
 }

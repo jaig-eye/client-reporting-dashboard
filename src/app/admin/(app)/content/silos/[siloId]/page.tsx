@@ -1,3 +1,4 @@
+import '@/styles/admin/content.css'
 import { createAdminClient } from '@/lib/supabase/server'
 import { isAdminAuthed }    from '@/lib/auth'
 import { cookies }          from 'next/headers'

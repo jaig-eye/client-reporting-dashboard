@@ -9,7 +9,10 @@
 // The authority planner stays reachable as a quiet link.
 
 import Link from 'next/link'
+import { Flag } from '@phosphor-icons/react/dist/ssr'
 import { fmtPublishDay } from '@/components/admin/priorityTopics'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import EmptyState from '@/components/ui/EmptyState'
 
 export interface OverviewSet {
   id:          string
@@ -46,16 +49,18 @@ function nextUp(sets: OverviewSet[]): OverviewSet | null {
 export default function PriorityTopicsOverview({ clients }: { clients: OverviewClient[] }) {
   if (clients.length === 0) {
     return (
-      <div className="pto-empty">
-        <p className="pto-empty-title">No priority topics yet.</p>
-        <p className="pto-empty-text">
-          They’re added per client: open a client, go to <strong>Content → Pipeline</strong>, and use{' '}
-          <strong>Add priority topics</strong>. Each keyword becomes a post that goes next in the queue.
-        </p>
+      <div className="card">
         {/* /admin/clients only redirects to /admin/dashboard, where the client list lives. A plain
             link to it loaded the page and was then redirected mid-render, which threw in the
             browser ("Rendered more hooks than during the previous render") before landing. */}
-        <Link className="btn btn-secondary btn-sm" href="/admin/dashboard">Go to clients</Link>
+        <EmptyState
+          icon={<Flag size={22} weight="duotone" />}
+          title="No priority topics yet"
+          actions={<Link className="btn btn-secondary" href="/admin/dashboard">Go to clients</Link>}
+        >
+          They’re added per client: open a client, go to Content, then Pipeline, and use Add priority topics.
+          Each keyword becomes a post that goes next in the queue.
+        </EmptyState>
       </div>
     )
   }
@@ -118,12 +123,12 @@ function SetCard({ set, clientId, isNext, next, slot }: {
   const done = !pages && !!st && st.total > 0 && left === 0
   const empty = !pages && !!st && st.total === 0
 
-  const badge =
-    pages  ? { label: 'Service pages', tone: 'badge-gray' }
-    : empty ? { label: 'No keywords yet', tone: 'badge-amber' }
-    : done ? (st!.picked === 0 ? { label: 'All written', tone: 'badge-green' } : { label: 'All picked', tone: 'badge-gray' })
-    : isNext ? { label: 'Next up', tone: 'badge-blue' }
-    : { label: 'Queued', tone: 'badge-gray' }
+  const badge: { label: string; tone: StatusTone } =
+    pages  ? { label: 'Service pages', tone: 'neutral' }
+    : empty ? { label: 'No keywords yet', tone: 'warning' }
+    : done ? (st!.picked === 0 ? { label: 'All written', tone: 'success' } : { label: 'All picked', tone: 'neutral' })
+    : isNext ? { label: 'Next up', tone: 'info' }
+    : { label: 'Queued', tone: 'neutral' }
 
   let line: string
   if (!st) line = 'Its keywords couldn’t be read just now.'
@@ -139,7 +144,7 @@ function SetCard({ set, clientId, isNext, next, slot }: {
     <article className={`pt-set pto-set${isNext ? ' pt-set--next' : ''}${done ? ' pt-set--done' : ''}`}>
       <div className="pt-set-title-row">
         <Link className="pt-set-name pto-set-name" href={pipelineHref(clientId)}>{set.name}</Link>
-        <span className={`badge ${badge.tone}`}>{badge.label}</span>
+        <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
       </div>
       {st && !pages && st.total > 0 && (
         <div className="pt-progress-row">

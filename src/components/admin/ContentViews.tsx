@@ -1,13 +1,16 @@
 'use client'
 
-// The Content page's view switcher. Switching used to be a plain link, so every click reloaded the
-// whole app and skipped the router cache (30s, next.config staleTimes). Now it navigates in place:
-// a view seen in the last 30 seconds comes back at once, and a fresh one shows its own skeleton
-// straight away instead of the old view sitting there until the server answers.
+// The Content page's header and view switcher. The views are URL pill tabs (RouteTabs): they
+// navigate in place, so a view seen in the last 30 seconds comes back at once (next.config
+// staleTimes), and a fresh one shows its own skeleton straight away instead of the old view
+// sitting there until the server answers.
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useState, useTransition, type MouseEvent, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { GearSix } from '@phosphor-icons/react'
+import PageHeader from '@/components/ui/PageHeader'
+import { RouteTabs } from '@/components/ui/PillTabs'
+import { Sk } from '@/components/ui/Skeleton'
 
 export type ContentView = 'overview' | 'review' | 'calendar' | 'silos'
 
@@ -18,45 +21,34 @@ const VIEWS: { id: ContentView; label: string }[] = [
   { id: 'silos',    label: 'Priority topics' },
 ]
 
+/** The page's header: title, Settings, and the views as URL pill tabs. */
+export function ContentHeader() {
+  return (
+    <PageHeader
+      title="Content"
+      description="Review what’s due, see what’s scheduled, and choose what gets written next."
+      actions={<Link href="/admin/content/settings" className="btn btn-secondary"><GearSix size={15} aria-hidden />Settings</Link>}
+    />
+  )
+}
+
 export default function ContentViews({ active, children }: { active: ContentView; children: ReactNode }) {
-  const router = useRouter()
-  const [pending, startTransition] = useTransition()
-  const [target, setTarget] = useState<ContentView | null>(null)
-  const loading = pending && target !== null && target !== active
-  const shown: ContentView = loading && target ? target : active
-
-  function go(e: MouseEvent<HTMLAnchorElement>, id: ContentView) {
-    // New tab, new window and the like keep the browser's own behaviour.
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
-    e.preventDefault()
-    if (id === active && !pending) return
-    setTarget(id)
-    startTransition(() => router.push(`/admin/content?view=${id}`))
-  }
-
   return (
     <>
-      <div className="page-header cv-header">
-        <h1 className="page-title" style={{ margin: 0 }}>Content</h1>
-        <Link href="/admin/content/settings" title="Content settings" className="cv-settings">⚙ Settings</Link>
-        <div style={{ flex: 1 }} />
-        {/* Labels stay on one line; on a phone the row scrolls rather than wraps. */}
-        <nav className="cv-switch" aria-label="Content views">
-          {VIEWS.map(v => (
-            <Link
-              key={v.id}
-              href={`/admin/content?view=${v.id}`}
-              onClick={e => go(e, v.id)}
-              className={`cv-tab${shown === v.id ? ' cv-tab--on' : ''}`}
-              aria-current={shown === v.id ? 'page' : undefined}
-            >
-              {v.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
-
-      {loading && target ? <ContentViewSkeleton view={target} /> : children}
+      <ContentHeader />
+      <RouteTabs
+        items={VIEWS.map(v => ({ id: v.id, label: v.label, href: `/admin/content?view=${v.id}` }))}
+        activeId={active}
+        label="Content views"
+        pending={{
+          overview: <ContentViewSkeleton view="overview" />,
+          review:   <ContentViewSkeleton view="review" />,
+          calendar: <ContentViewSkeleton view="calendar" />,
+          silos:    <ContentViewSkeleton view="silos" />,
+        }}
+      >
+        {children}
+      </RouteTabs>
     </>
   )
 }
@@ -90,38 +82,41 @@ export function ContentViewSkeleton({ view }: { view: ContentView }) {
       )}
 
       {view === 'review' && (
-        <>
-          <div className="cv-skel-bar"><Bar w={200} h={20} /><Bar w={120} h={28} /></div>
-          {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="card cv-skel-post">
-              <span className="skeleton" style={{ width: 96, height: 64, borderRadius: 6, flexShrink: 0 }} />
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <Bar w={`${70 - (i % 3) * 12}%`} h={14} />
-                <Bar w="40%" />
-                <Bar w="85%" h={10} />
+        <div className="mr">
+          <div className="mr-bar"><Sk w={190} h={22} /><Sk h={8} r={999} style={{ flex: '1 1 160px' }} /><Sk w={210} h={12} /></div>
+          {[3, 2].map((n, g) => (
+            <div key={g} className="mr-client">
+              <div className="mr-client-head"><Sk w={180} h={16} /><Sk w={90} h={11} style={{ marginLeft: 'auto' }} /></div>
+              <div className="mr-posts">
+                {Array.from({ length: n }, (_, i) => (
+                  <div key={i} className="mr-card">
+                    <Sk w={52} h={38} r={4} />
+                    <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 7 }}><Sk w={`${72 - i * 14}%`} h={13} /><Sk w="34%" h={10} /></span>
+                    <Sk w={32} h={32} r={6} /><Sk w={68} h={32} r={6} />
+                  </div>
+                ))}
               </div>
-              <Bar w={84} h={30} style={{ borderRadius: 6, alignSelf: 'center' }} />
             </div>
           ))}
-        </>
+        </div>
       )}
 
       {view === 'calendar' && (
-        <>
-          <div className="cv-skel-bar">{[112, 112, 96, 96].map((w, i) => <Bar key={i} w={w} h={30} style={{ borderRadius: 6 }} />)}</div>
-          {Array.from({ length: 3 }, (_, g) => (
-            <div key={g} style={{ marginBottom: 22 }}>
-              <Bar w={80} h={14} style={{ marginBottom: 10 }} />
-              {Array.from({ length: 2 }, (_, i) => (
-                <div key={i} className="cv-skel-row">
-                  <Bar w={64} />
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><Bar w="50%" h={14} /><Bar w="30%" /></div>
-                  <Bar w={80} h={20} style={{ borderRadius: 999 }} />
-                </div>
-              ))}
+        <div>
+          <div className="cal-bar"><Sk w={250} h={32} r={8} /><Sk w={170} h={38} r={8} /><Sk w={360} h={38} r={999} /><span className="cal-spacer" /><Sk w={110} h={38} r={8} /></div>
+          <Sk w={300} h={12} style={{ marginBottom: 22 }} />
+          {[3, 2].map((n, g) => (
+            <div key={g} style={{ marginBottom: 26 }}>
+              <div className="cal-month-head" style={{ cursor: 'default' }}><Sk w={150} h={18} /><span className="cal-month-rule" /><Sk w={50} h={11} /></div>
+              <Sk w={140} h={12} style={{ marginBottom: 10 }} />
+              <div className="cal-grid">
+                {Array.from({ length: n }, (_, i) => (
+                  <div key={i} className="cal-card"><span style={{ display: 'flex', gap: 6 }}><Sk w={46} h={20} r={4} /><Sk w={80} h={20} r={999} /></span><Sk w="88%" h={13} /><Sk w="60%" h={13} /></div>
+                ))}
+              </div>
             </div>
           ))}
-        </>
+        </div>
       )}
 
       {view === 'silos' && (

@@ -7,6 +7,8 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { Article, WarningCircle } from '@phosphor-icons/react'
+import EmptyState from '@/components/ui/EmptyState'
 import { Explained, HelpTip } from '@/components/admin/KeywordUi'
 import { issueCount, type ClientOverviewRow, type OverviewFlag } from '@/lib/content/clientOverviewFlags'
 
@@ -157,21 +159,24 @@ export default function ContentClientsOverview({ rows, error }: { rows: ClientOv
 
   if (error) {
     return (
-      <div className="pto-empty">
-        <p className="pto-empty-title">The clients overview couldn’t load.</p>
-        <p className="pto-empty-text">{error} Reload the page to try again.</p>
+      <div className="card">
+        <EmptyState icon={<WarningCircle size={22} weight="duotone" />} tone="red" title="The clients overview didn’t load">
+          {error} Reload the page to try again.
+        </EmptyState>
       </div>
     )
   }
 
   if (rows.length === 0) {
     return (
-      <div className="pto-empty">
-        <p className="pto-empty-title">No clients have content set up yet.</p>
-        <p className="pto-empty-text">
-          A client appears here once its content is set up: open the client, go to <strong>Content</strong>, and run the setup.
-        </p>
-        <Link className="btn btn-secondary btn-sm" href="/admin/dashboard">Go to clients</Link>
+      <div className="card">
+        <EmptyState
+          icon={<Article size={22} weight="duotone" />}
+          title="No clients have content set up yet"
+          actions={<Link className="btn btn-secondary" href="/admin/dashboard">Go to clients</Link>}
+        >
+          A client appears here once its content is set up: open the client, go to Content, and run the setup.
+        </EmptyState>
       </div>
     )
   }

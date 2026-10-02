@@ -480,6 +480,32 @@
 .adm .btn-danger-solid { background: var(--red); border-color: var(--red); color: var(--on-fill); }
 .adm .btn-danger-solid:hover:not(:disabled) { filter: brightness(0.92); }
 
+/* ── Toast: a passing message about something that just happened ───────────── */
+
+.ui-toast {
+  position: fixed; right: 24px; bottom: 24px; z-index: 120; display: flex; align-items: flex-start; gap: 10px;
+  max-width: min(440px, calc(100vw - 32px)); padding: 12px 10px 12px 14px; border-radius: var(--radius);
+  font-size: 0.8125rem; font-weight: 500; line-height: 1.45;
+  background: var(--bg-elevated); color: var(--text-primary); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--border);
+  animation: ui-sheet-up 0.2s var(--ease-out);
+}
+.ui-toast > svg { flex-shrink: 0; margin-top: 1px; }
+.ui-toast--success > svg { color: var(--green); }
+.ui-toast--danger { box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--red-border); }
+.ui-toast--danger > svg { color: var(--red); }
+.ui-toast-text { flex: 1; min-width: 0; }
+.ui-toast-x { flex-shrink: 0; display: inline-flex; padding: 2px; border: none; border-radius: var(--radius-xs); background: none; color: var(--text-muted); cursor: pointer; }
+.ui-toast-x:hover { color: var(--text-primary); }
+.ui-toast-x:focus-visible { outline: none; box-shadow: var(--ring); }
+@media (max-width: 639px) { .ui-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }
+@media (prefers-reduced-motion: reduce) { .ui-toast { animation: none; } }
+
+/* Links inside descriptive text (section and page descriptions, field hints, notices) look like links. */
+.ui-section-desc a, .ui-ph-desc a, .ui-field-hint a, .ui-setting-desc a, .ui-empty-text a, .ui-notice a {
+  color: var(--link, var(--accent)); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px;
+}
+.ui-section-desc a:hover, .ui-ph-desc a:hover, .ui-field-hint a:hover, .ui-setting-desc a:hover, .ui-empty-text a:hover, .ui-notice a:hover { text-decoration-thickness: 2px; }
+
 /* ── Layout helpers ───────────────────────────────────────────────────────── */
 
 .ui-stack { display: flex; flex-direction: column; gap: 16px; }

@@ -2,6 +2,7 @@
 // Global calendar view, the agency-wide Clients and Priority topics overviews, and global settings.
 // Per-client workflows live on the client tab.
 
+import '@/styles/admin/content.css'
 import { createAdminClient }   from '@/lib/supabase/server'
 import { isAdminAuthed }       from '@/lib/auth'
 import { cookies }             from 'next/headers'

@@ -1,7 +1,19 @@
 'use client'
 
+// The authority planner for one keyword set (silo): its keyword map, the content plan, a map of
+// the main page and its supporting pages, suggested internal links, and an optimization brief.
+// Five pill tabs that follow ?tab=, so a link can open any of them.
+
 import { useState, useCallback, useMemo } from 'react'
+import { ArrowSquareOut, Lightning, Plus, X } from '@phosphor-icons/react'
 import type { SiloKeyword, SiloPage, SiloInternalLink, KeywordType, InternalLinkStatus } from '@/lib/types'
+import PageHeader from '@/components/ui/PageHeader'
+import Section from '@/components/ui/Section'
+import Field from '@/components/ui/Field'
+import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge'
+import EmptyState from '@/components/ui/EmptyState'
+import { PillTabs } from '@/components/ui/PillTabs'
+import { ConfirmDialog } from '@/components/ui/Dialog'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -15,53 +27,73 @@ interface Props {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const KEYWORD_TYPE_COLORS: Record<KeywordType, { bg: string; color: string; label: string }> = {
-  top_level:           { bg: 'var(--green-subtle)',  color: 'var(--green)',  label: 'Top Level' },
-  secondary_top_level: { bg: 'var(--blue-subtle)',   color: 'var(--blue)',   label: 'Secondary' },
-  supporting:          { bg: 'var(--border)',        color: 'var(--text-muted)', label: 'Supporting' },
+const KEYWORD_TYPE_LABEL: Record<KeywordType, string> = {
+  top_level:           'Top level',
+  secondary_top_level: 'Secondary',
+  supporting:          'Supporting',
 }
 
-const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
-  planned:    { bg: 'var(--border)',       color: 'var(--text-muted)' },
-  generated:  { bg: 'var(--amber-subtle)', color: 'var(--amber)' },
-  for_review: { bg: 'var(--amber-subtle)', color: 'var(--amber)' },
-  published:  { bg: 'var(--green-subtle)', color: 'var(--green)' },
+// Amber is waiting for someone, green is on the site.
+const PAGE_STATUS: Record<string, { label: string; tone: StatusTone }> = {
+  planned:    { label: 'Planned',    tone: 'neutral' },
+  generated:  { label: 'Written',    tone: 'warning' },
+  for_review: { label: 'For review', tone: 'warning' },
+  published:  { label: 'Published',  tone: 'success' },
+}
+const pageStatus = (s: string) => PAGE_STATUS[s] ?? { label: s.replace(/_/g, ' '), tone: 'neutral' as StatusTone }
+
+const LINK_STATUS: Record<InternalLinkStatus, { label: string; tone: StatusTone }> = {
+  recommended: { label: 'Suggested', tone: 'info'    },
+  inserted:    { label: 'Added',     tone: 'success' },
+  failed:      { label: 'Failed',    tone: 'danger'  },
+  ignored:     { label: 'Ignored',   tone: 'neutral' },
 }
 
-const LINK_STATUS_COLORS: Record<InternalLinkStatus, { bg: string; color: string }> = {
-  recommended: { bg: 'var(--blue-subtle)',  color: 'var(--blue)' },
-  inserted:    { bg: 'var(--green-subtle)', color: 'var(--green)' },
-  failed:      { bg: 'var(--red-subtle)',   color: 'var(--red)' },
-  ignored:     { bg: 'var(--border)',       color: 'var(--text-faint)' },
+const LINK_TYPE_LABEL: Record<string, string> = {
+  hub_to_supporting:        'Main page to supporting page',
+  supporting_to_hub:        'Supporting page to main page',
+  supporting_to_supporting: 'Between supporting pages',
+  supporting_to_related:    'To a related page',
+  manual:                   'Added by hand',
 }
 
 // ─── Tab nav ──────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'keywords',  label: 'Keyword Map' },
-  { id: 'pages',     label: 'Content Plan' },
-  { id: 'map',       label: 'Silo Map' },
-  { id: 'links',     label: 'Internal Links' },
+  { id: 'keywords',  label: 'Keyword map' },
+  { id: 'pages',     label: 'Content plan' },
+  { id: 'map',       label: 'Silo map' },
+  { id: 'links',     label: 'Internal links' },
   { id: 'optimize',  label: 'Optimization' },
 ]
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SiloDetailClient({ silo, initialKeywords, initialPages, initialLinks, activeTab: initialTab }: Props) {
-  const [activeTab, setActiveTab]   = useState(initialTab)
+  const [activeTab, setActiveTab]   = useState(TABS.some(t => t.id === initialTab) ? initialTab : 'keywords')
   const [keywords,  setKeywords]    = useState<SiloKeyword[]>(initialKeywords as unknown as SiloKeyword[])
   const [pages,     setPages]       = useState<SiloPage[]>(initialPages as unknown as SiloPage[])
   const [links,     setLinks]       = useState<SiloInternalLink[]>(initialLinks as unknown as SiloInternalLink[])
   const [building,  setBuilding]    = useState(false)
-  const [buildMsg,  setBuildMsg]    = useState<string | null>(null)
+  const [confirmBuild, setConfirmBuild] = useState(false)
+  const [buildMsg,  setBuildMsg]    = useState<{ ok: boolean; text: string } | null>(null)
   const [recommending, setRecommending] = useState(false)
+  const [recMsg,    setRecMsg]      = useState<{ ok: boolean; text: string } | null>(null)
 
   const siloId   = String(silo.id)
   const siloName = String(silo.name)
+  const hubUrl   = silo.hub_page_url ? String(silo.hub_page_url) : null
+
+  function selectTab(id: string) {
+    setActiveTab(id)
+    const url = new URL(window.location.href)
+    url.searchParams.set('tab', id)
+    window.history.replaceState(window.history.state, '', url)
+  }
 
   // ── Build plan ────────────────────────────────────────────────────────────
   const handleBuildPlan = useCallback(async () => {
-    if (!confirm('This will generate a full keyword map and content plan using AI. Existing keywords and planned pages will be kept. Continue?')) return
+    setConfirmBuild(false)
     setBuilding(true)
     setBuildMsg(null)
     try {
@@ -71,8 +103,8 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
         body: JSON.stringify({}),
       })
       const data = await res.json() as { ok?: boolean; keywordsCreated?: number; pagesCreated?: number; linksCreated?: number; error?: string }
-      if (!res.ok) { setBuildMsg(`Error: ${data.error ?? 'Unknown error'}`); return }
-      setBuildMsg(`Created ${data.keywordsCreated} keywords, ${data.pagesCreated} pages, ${data.linksCreated} link recommendations.`)
+      if (!res.ok) { setBuildMsg({ ok: false, text: `The plan wasn’t built: ${data.error ?? 'no reason given'}` }); return }
+      setBuildMsg({ ok: true, text: `Added ${data.keywordsCreated} keywords, ${data.pagesCreated} pages and ${data.linksCreated} link suggestions.` })
       // Refresh keywords and pages
       const [kwRes, pgRes, lkRes] = await Promise.all([
         fetch(`/api/admin/content/silos/${siloId}/keywords`).then(r => r.json()),
@@ -83,7 +115,7 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
       if (pgRes.pages)    setPages(pgRes.pages as SiloPage[])
       if (lkRes.links)    setLinks(lkRes.links as SiloInternalLink[])
     } catch (e) {
-      setBuildMsg(`Error: ${String(e)}`)
+      setBuildMsg({ ok: false, text: `The plan wasn’t built: ${String(e)}` })
     } finally {
       setBuilding(false)
     }
@@ -92,14 +124,17 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
   // ── Recommend links ───────────────────────────────────────────────────────
   const handleRecommendLinks = useCallback(async () => {
     setRecommending(true)
+    setRecMsg(null)
     try {
       const res  = await fetch(`/api/admin/content/silos/${siloId}/internal-links/recommend`, { method: 'POST' })
       const data = await res.json() as { created?: number; error?: string }
       const lkRes = await fetch(`/api/admin/content/silos/${siloId}/internal-links`).then(r => r.json()) as { links?: SiloInternalLink[] }
       if (lkRes.links) setLinks(lkRes.links)
-      alert(res.ok ? `Created ${data.created ?? 0} new link recommendations.` : `Error: ${data.error}`)
+      setRecMsg(res.ok
+        ? { ok: true, text: `${data.created ?? 0} new link suggestion${data.created === 1 ? '' : 's'}.` }
+        : { ok: false, text: `No links were suggested: ${data.error ?? 'no reason given'}` })
     } catch (e) {
-      alert(`Error: ${String(e)}`)
+      setRecMsg({ ok: false, text: `No links were suggested: ${String(e)}` })
     } finally {
       setRecommending(false)
     }
@@ -156,112 +191,68 @@ export default function SiloDetailClient({ silo, initialKeywords, initialPages, 
 
   return (
     <div>
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <a href="/admin/content?tab=silos" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textDecoration: 'none' }}>← Silos</a>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div>
-            <h1 className="page-title" style={{ marginBottom: 4 }}>{siloName}</h1>
-            {silo.hub_page_url ? (
-              <a href={String(silo.hub_page_url)} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem', color: 'var(--blue)' }}>
-                {String(silo.hub_page_url)}
-              </a>
-            ) : null}
-          </div>
-          <button
-            onClick={handleBuildPlan}
-            disabled={building}
-            className="btn btn-primary btn-sm"
-            style={{ flexShrink: 0 }}
-          >
-            {building ? 'Building plan…' : '⚡ Build Silo Plan'}
+      <PageHeader
+        back={{ href: '/admin/content?view=silos', label: 'Priority topics' }}
+        title={siloName}
+        description={hubUrl
+          ? <>Main page: <a href={hubUrl} target="_blank" rel="noreferrer" className="sd-url" style={{ maxWidth: 'min(420px, 70vw)' }}>{hubUrl}</a></>
+          : 'No main page yet.'}
+        actions={
+          <button type="button" onClick={() => setConfirmBuild(true)} disabled={building} className="btn btn-primary">
+            <Lightning size={15} weight="fill" aria-hidden />{building ? 'Building the plan…' : 'Build plan'}
           </button>
-        </div>
-        {buildMsg && (
-          <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 4, background: buildMsg.startsWith('Error') ? 'var(--red-subtle)' : 'var(--green-subtle)', color: buildMsg.startsWith('Error') ? 'var(--red)' : 'var(--green)', fontSize: '0.8rem' }}>
-            {buildMsg}
-          </div>
-        )}
-      </div>
+        }
+      />
+      {buildMsg && <div className={`ui-notice ui-notice--${buildMsg.ok ? 'success' : 'danger'}`} role="status">{buildMsg.text}</div>}
 
-      {/* Stats bar */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+      <div className="sd-stats">
         {[
-          { label: 'Top-level KW', value: kwCounts.top_level },
-          { label: 'Secondary KWs', value: kwCounts.secondary_top_level },
-          { label: 'Supporting KWs', value: kwCounts.supporting },
+          { label: 'Top-level keywords', value: kwCounts.top_level },
+          { label: 'Secondary keywords', value: kwCounts.secondary_top_level },
+          { label: 'Supporting keywords', value: kwCounts.supporting },
           { label: 'Planned pages', value: pageCounts.planned },
           { label: 'In progress', value: pageCounts.generated },
           { label: 'Published', value: pageCounts.published },
         ].map(stat => (
-          <div key={stat.label} className="card" style={{ padding: '8px 14px', minWidth: 90, textAlign: 'center' }}>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{stat.value}</div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 1 }}>{stat.label}</div>
+          <div key={stat.label} className="sd-stat">
+            <span className="sd-stat-value">{stat.value}</span>
+            <span className="sd-stat-label">{stat.label}</span>
           </div>
         ))}
       </div>
 
-      {/* Tab nav */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '0.5rem 1rem',
-              fontSize: '0.875rem',
-              fontWeight: activeTab === tab.id ? 600 : 400,
-              color: activeTab === tab.id ? 'var(--blue)' : 'var(--text-muted)',
-              background: 'none',
-              border: 'none',
-              borderBottom: `2px solid ${activeTab === tab.id ? 'var(--blue)' : 'transparent'}`,
-              cursor: 'pointer',
-              marginBottom: -1,
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div style={{ marginBottom: 20 }}>
+        <PillTabs items={TABS} activeId={activeTab} onSelect={selectTab} label="Planner sections" idPrefix="sd" />
       </div>
 
-      {/* ── Keywords tab ── */}
-      {activeTab === 'keywords' && (
-        <KeywordsTab
-          keywords={keywords}
-          onTypeChange={handleKeywordTypeChange}
-          onSelect={handleKeywordSelect}
-          onDelete={handleDeleteKeyword}
-          siloId={siloId}
-          onAdded={kw => setKeywords(prev => [...prev, kw])}
-        />
-      )}
+      <div role="tabpanel" id={`sd-panel-${activeTab}`} aria-labelledby={`sd-tab-${activeTab}`}>
+        {activeTab === 'keywords' && (
+          <KeywordsTab
+            keywords={keywords}
+            onTypeChange={handleKeywordTypeChange}
+            onSelect={handleKeywordSelect}
+            onDelete={handleDeleteKeyword}
+            siloId={siloId}
+            onAdded={kw => setKeywords(prev => [...prev, kw])}
+          />
+        )}
+        {activeTab === 'pages' && <PagesTab pages={pages} />}
+        {activeTab === 'map' && <SiloMapTab pages={pages} links={links} siloName={siloName} hubUrl={hubUrl} />}
+        {activeTab === 'links' && (
+          <LinksTab links={links} onStatusChange={handleLinkStatus} onRecommend={handleRecommendLinks} recommending={recommending} message={recMsg} />
+        )}
+        {activeTab === 'optimize' && <OptimizationTab siloId={siloId} silo={silo} />}
+      </div>
 
-      {/* ── Content Plan tab ── */}
-      {activeTab === 'pages' && (
-        <PagesTab pages={pages} />
-      )}
-
-      {/* ── Silo Map tab ── */}
-      {activeTab === 'map' && (
-        <SiloMapTab pages={pages} links={links} siloName={siloName} hubUrl={silo.hub_page_url ? String(silo.hub_page_url) : null} />
-      )}
-
-      {/* ── Internal Links tab ── */}
-      {activeTab === 'links' && (
-        <LinksTab
-          links={links}
-          onStatusChange={handleLinkStatus}
-          onRecommend={handleRecommendLinks}
-          recommending={recommending}
-        />
-      )}
-
-      {/* ── Optimization tab ── */}
-      {activeTab === 'optimize' && (
-        <OptimizationTab siloId={siloId} silo={silo} />
-      )}
+      <ConfirmDialog
+        open={confirmBuild}
+        onClose={() => setConfirmBuild(false)}
+        title="Build a plan for this set?"
+        confirmLabel="Build plan"
+        onConfirm={handleBuildPlan}
+      >
+        <p>AI writes a full keyword map and content plan. The keywords and planned pages already here are kept.</p>
+      </ConfirmDialog>
     </div>
   )
 }
@@ -285,6 +276,7 @@ function KeywordsTab({
 }) {
   const [newKw, setNewKw] = useState('')
   const [adding, setAdding] = useState(false)
+  const [deleting, setDeleting] = useState<SiloKeyword | null>(null)
 
   const grouped = useMemo(() => ({
     top_level:           keywords.filter(k => k.keyword_type === 'top_level'),
@@ -292,7 +284,8 @@ function KeywordsTab({
     supporting:          keywords.filter(k => k.keyword_type === 'supporting'),
   }), [keywords])
 
-  const handleAdd = async () => {
+  const handleAdd = async (e?: React.FormEvent) => {
+    e?.preventDefault()
     if (!newKw.trim()) return
     setAdding(true)
     try {
@@ -309,98 +302,71 @@ function KeywordsTab({
   }
 
   const sections: Array<{ type: KeywordType; label: string }> = [
-    { type: 'top_level', label: 'Top-Level Keyword (Hub)' },
-    { type: 'secondary_top_level', label: 'Secondary Top-Level Keywords' },
-    { type: 'supporting', label: 'Supporting Keywords' },
+    { type: 'top_level', label: 'Top-level keyword (the main page)' },
+    { type: 'secondary_top_level', label: 'Secondary keywords' },
+    { type: 'supporting', label: 'Supporting keywords' },
   ]
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
-        <input
-          value={newKw}
-          onChange={e => setNewKw(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
-          placeholder="Add keyword…"
-          style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem', flex: 1, maxWidth: 300 }}
-        />
-        <button onClick={handleAdd} disabled={adding || !newKw.trim()} className="btn btn-secondary btn-sm">
-          {adding ? 'Adding…' : 'Add'}
+      <form className="sd-add" onSubmit={handleAdd}>
+        <input className="input" value={newKw} onChange={e => setNewKw(e.target.value)} placeholder="Add a keyword" aria-label="New keyword" />
+        <button type="submit" disabled={adding || !newKw.trim()} className="btn btn-secondary">
+          <Plus size={14} weight="bold" aria-hidden />{adding ? 'Adding…' : 'Add'}
         </button>
-      </div>
+      </form>
 
       {sections.map(({ type, label }) => {
         const group = grouped[type]
-        const meta  = KEYWORD_TYPE_COLORS[type]
         return (
-          <div key={type} style={{ marginBottom: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{label}</span>
-              <span style={{ fontSize: '0.7rem', padding: '1px 7px', borderRadius: 10, background: meta.bg, color: meta.color }}>{group.length}</span>
-            </div>
+          <div key={type} className="sd-group">
+            <h2 className="sd-group-head">{label}<StatusBadge tone="neutral" dot={false}>{group.length}</StatusBadge></h2>
             {group.length === 0 ? (
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-faint)' }}>None yet — build a silo plan or add manually above.</p>
+              <p className="sd-empty">None yet. Build a plan, or add one above.</p>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <div className="card ui-scroll-x" style={{ padding: 0 }}>
+                <table className="ui-table sd-table">
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: '0.72rem' }}>
-                      <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Selected</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Keyword</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Type</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Intent</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 500 }}>Searches</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 500 }}>Score</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Ranking URL</th>
-                      <th style={{ padding: '6px 8px', fontWeight: 500 }}></th>
+                    <tr>
+                      <th>In queue</th>
+                      <th>Keyword</th>
+                      <th>Type</th>
+                      <th>Intent</th>
+                      <th className="ui-r">Searches a month</th>
+                      <th className="ui-r">Score</th>
+                      <th>Ranking page</th>
+                      <th><span className="sr-only">Delete</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {group.map(kw => (
-                      <tr key={kw.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '6px 8px' }}>
-                          <input
-                            type="checkbox"
-                            checked={kw.selected}
-                            onChange={e => onSelect(kw.id, e.target.checked)}
-                          />
+                      <tr key={kw.id}>
+                        <td>
+                          <input type="checkbox" checked={kw.selected} onChange={e => onSelect(kw.id, e.target.checked)} aria-label={`Queue “${kw.keyword}”`} />
                         </td>
-                        <td style={{ padding: '6px 8px', fontWeight: 500 }}>{kw.keyword}</td>
-                        <td style={{ padding: '6px 8px' }}>
-                          <select
-                            value={kw.keyword_type}
-                            onChange={e => onTypeChange(kw.id, e.target.value as KeywordType)}
-                            style={{ fontSize: '0.75rem', padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 3 }}
-                          >
-                            <option value="top_level">Top Level</option>
-                            <option value="secondary_top_level">Secondary</option>
-                            <option value="supporting">Supporting</option>
+                        <td className="ui-strong">{kw.keyword}</td>
+                        <td>
+                          <select className="input" value={kw.keyword_type} onChange={e => onTypeChange(kw.id, e.target.value as KeywordType)} aria-label={`Type of “${kw.keyword}”`}>
+                            {(Object.keys(KEYWORD_TYPE_LABEL) as KeywordType[]).map(t => <option key={t} value={t}>{KEYWORD_TYPE_LABEL[t]}</option>)}
                           </select>
                         </td>
-                        <td style={{ padding: '6px 8px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{kw.intent ?? '—'}</td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--text-muted)' }}>
-                          {kw.monthly_searches_low != null ? `${kw.monthly_searches_low}–${kw.monthly_searches_high ?? '?'}` : '—'}
+                        <td style={{ textTransform: 'capitalize' }}>{kw.intent ?? '–'}</td>
+                        <td className="ui-r">
+                          {kw.monthly_searches_low != null ? `${kw.monthly_searches_low.toLocaleString()}–${kw.monthly_searches_high?.toLocaleString() ?? '?'}` : '–'}
                         </td>
-                        <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                          {kw.keyword_score != null ? (
-                            <span style={{ fontWeight: 600, color: kw.keyword_score >= 50 ? 'var(--green)' : kw.keyword_score >= 30 ? 'var(--amber)' : 'var(--text-muted)' }}>
-                              {kw.keyword_score}
-                            </span>
-                          ) : '—'}
+                        <td className="ui-r">
+                          {kw.keyword_score != null
+                            ? <span className={kw.keyword_score >= 50 ? 'sd-score-good' : kw.keyword_score >= 30 ? 'sd-score-ok' : undefined}>{kw.keyword_score}</span>
+                            : '–'}
                         </td>
-                        <td style={{ padding: '6px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {kw.current_ranking_url ? (
-                            <a href={kw.current_ranking_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: '0.75rem' }}>
-                              {kw.current_ranking_url}
-                            </a>
-                          ) : '—'}
+                        <td>
+                          {kw.current_ranking_url
+                            ? <a href={kw.current_ranking_url} target="_blank" rel="noreferrer" className="sd-url" title={kw.current_ranking_url}>{kw.current_ranking_url.replace(/^https?:\/\//, '')}</a>
+                            : '–'}
                         </td>
-                        <td style={{ padding: '6px 8px' }}>
-                          <button
-                            onClick={() => { if (confirm(`Delete "${kw.keyword}"?`)) onDelete(kw.id) }}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.75rem' }}
-                          >
-                            ✕
+                        <td>
+                          <button type="button" className="sd-x" onClick={() => setDeleting(kw)} aria-label={`Delete “${kw.keyword}”`} title="Delete">
+                            <X size={14} weight="bold" aria-hidden />
                           </button>
                         </td>
                       </tr>
@@ -412,6 +378,17 @@ function KeywordsTab({
           </div>
         )
       })}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title={`Delete “${deleting?.keyword ?? ''}”?`}
+        confirmLabel="Delete keyword"
+        tone="danger"
+        onConfirm={() => { if (deleting) onDelete(deleting.id); setDeleting(null) }}
+      >
+        <p>It comes out of this set’s keyword map.</p>
+      </ConfirmDialog>
     </div>
   )
 }
@@ -423,8 +400,10 @@ function PagesTab({ pages }: { pages: SiloPage[] }) {
 
   if (sorted.length === 0) {
     return (
-      <div style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-        No planned pages yet. Use the ⚡ Build Silo Plan button to generate a full content plan.
+      <div className="card">
+        <EmptyState icon={<Lightning size={22} weight="duotone" />} title="No pages planned yet">
+          Build plan, at the top of the page, writes a full content plan for this set.
+        </EmptyState>
       </div>
     )
   }
@@ -433,45 +412,36 @@ function PagesTab({ pages }: { pages: SiloPage[] }) {
   const others  = sorted.filter(p => p.page_type !== 'hub')
 
   return (
-    <div>
+    <div className="ui-stack">
       {hubPage && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Hub Page</div>
-          <PageRow page={hubPage} />
-        </div>
+        <Section title="Main page" flush><PageRow page={hubPage} /></Section>
       )}
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
-        Supporting Pages ({others.length})
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {others.map(p => <PageRow key={p.id} page={p} />)}
-      </div>
+      <Section title={`Supporting pages (${others.length})`} flush={others.length > 0}>
+        {others.length === 0 ? <p className="sd-empty">None yet.</p> : others.map(p => <PageRow key={p.id} page={p} />)}
+      </Section>
     </div>
   )
 }
 
 function PageRow({ page }: { page: SiloPage }) {
-  const sc = STATUS_COLORS[page.status] ?? { bg: 'var(--border)', color: 'var(--text-muted)' }
+  const st = pageStatus(page.status)
   const post = (page as unknown as Record<string, unknown>).content_post as Record<string, unknown> | null
 
   return (
-    <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: 2 }}>{page.title}</div>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-faint)' }}>
-          {page.page_type.replace(/_/g, ' ')} · {page.slug ?? 'no slug'}
-        </div>
-        {post && (
-          <div style={{ fontSize: '0.72rem', color: 'var(--blue)', marginTop: 2 }}>
-            Linked post: {String(post.title ?? '(untitled)')}
-          </div>
-        )}
+    <div className="ui-row">
+      <div className="ui-row-text">
+        <div className="ui-row-title">{page.title}<StatusBadge tone={st.tone}>{st.label}</StatusBadge></div>
+        <p className="ui-row-sub" style={{ margin: 0, textTransform: 'none' }}>
+          <span style={{ textTransform: 'capitalize' }}>{page.page_type.replace(/_/g, ' ')}</span> · {page.slug ? `/${page.slug}` : 'No address yet'}
+        </p>
+        {post && <p className="ui-row-sub" style={{ margin: 0 }}>Written as “{String(post.title ?? 'Untitled post')}”</p>}
       </div>
-      <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 10, background: sc.bg, color: sc.color, flexShrink: 0 }}>
-        {page.status.replace(/_/g, ' ')}
-      </span>
       {page.target_url && (
-        <a href={page.target_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.75rem', color: 'var(--blue)', flexShrink: 0 }}>↗</a>
+        <div className="ui-row-actions">
+          <a href={page.target_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" aria-label={`Open “${page.title}” on the site`}>
+            <ArrowSquareOut size={14} aria-hidden />View
+          </a>
+        </div>
       )}
     </div>
   )
@@ -483,88 +453,55 @@ function SiloMapTab({ pages, links, siloName, hubUrl }: { pages: SiloPage[]; lin
   const hub       = pages.find(p => p.page_type === 'hub')
   const supports  = pages.filter(p => p.page_type !== 'hub')
 
-  const statusColor = (s: string) => {
-    if (s === 'published')  return 'var(--green)'
-    if (s === 'for_review' || s === 'generated') return 'var(--amber)'
-    return 'var(--border)'
+  const nodeTone = (s: string) =>
+    s === 'published' ? ' sd-node--published' : s === 'for_review' || s === 'generated' ? ' sd-node--progress' : ''
+
+  if (pages.length === 0) {
+    return (
+      <div className="card">
+        <EmptyState icon={<Lightning size={22} weight="duotone" />} title="Nothing to map yet">
+          Build a plan and its main page and supporting pages appear here.
+        </EmptyState>
+      </div>
+    )
   }
 
   return (
     <div>
-      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 16 }}>
-        Visual map of hub and supporting pages. Arrows represent recommended internal links. Colors indicate status.
-      </p>
-
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-        {[['var(--green)', 'Published'], ['var(--amber)', 'In Progress'], ['var(--border)', 'Planned']].map(([c, l]) => (
-          <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: c }} />
-            {l}
-          </div>
-        ))}
+      <div className="sd-legend" aria-label="Key">
+        <span><i style={{ '--sw': 'var(--green)' } as React.CSSProperties} />Published</span>
+        <span><i style={{ '--sw': 'var(--amber)' } as React.CSSProperties} />In progress</span>
+        <span><i style={{ '--sw': 'var(--border)' } as React.CSSProperties} />Planned</span>
       </div>
 
-      {/* Hub node */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div style={{
-          padding: '12px 20px',
-          borderRadius: 8,
-          border: `2px solid ${hub ? statusColor(hub.status) : 'var(--blue)'}`,
-          background: 'var(--bg-surface)',
-          textAlign: 'center',
-          minWidth: 200,
-          maxWidth: 280,
-        }}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Hub Page</div>
-          <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>{hub?.title ?? siloName}</div>
-          {hubUrl && (
-            <a href={hubUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: 'var(--blue)', display: 'block', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {hubUrl}
-            </a>
-          )}
+      <div className="sd-map">
+        <div className={`sd-node sd-node--hub${hub ? nodeTone(hub.status) : ''}`}>
+          <p className="sd-node-meta" style={{ margin: '0 0 3px' }}>Main page</p>
+          <p className="sd-node-title">{hub?.title ?? siloName}</p>
+          {hubUrl && <a href={hubUrl} target="_blank" rel="noreferrer" className="sd-url" style={{ fontSize: '0.72rem', maxWidth: '100%', marginTop: 4 }}>{hubUrl}</a>}
         </div>
 
         {supports.length > 0 && (
           <>
-            {/* Arrow line down */}
-            <div style={{ width: 1, height: 24, background: 'var(--border)' }} />
-            {/* Supporting pages grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, width: '100%' }}>
+            <div className="sd-stem" aria-hidden />
+            <div className="sd-node-grid">
               {supports.map(p => (
-                <div key={p.id} style={{
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: `1.5px solid ${statusColor(p.status)}`,
-                  background: 'var(--bg-surface)',
-                  fontSize: '0.8rem',
-                }}>
-                  <div style={{ fontWeight: 600, marginBottom: 2, fontSize: '0.8125rem' }}>{p.title}</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>{p.page_type.replace(/_/g, ' ')}</div>
-                  <div style={{ fontSize: '0.65rem', marginTop: 4, color: statusColor(p.status), textTransform: 'capitalize' }}>{p.status.replace(/_/g, ' ')}</div>
+                <div key={p.id} className={`sd-node${nodeTone(p.status)}`}>
+                  <p className="sd-node-title">{p.title}</p>
+                  <p className="sd-node-meta">{p.page_type.replace(/_/g, ' ')} · {pageStatus(p.status).label}</p>
                 </div>
               ))}
             </div>
           </>
         )}
-
-        {supports.length === 0 && pages.length === 0 && (
-          <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-            No pages planned yet. Build a silo plan to generate a visual map.
-          </p>
-        )}
       </div>
 
-      {/* Link summary */}
       {links.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: 8 }}>Link Recommendations ({links.filter(l => l.status === 'recommended').length})</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-            {links.filter(l => l.link_type === 'hub_to_supporting').length} hub→supporting ·&nbsp;
-            {links.filter(l => l.link_type === 'supporting_to_hub').length} supporting→hub ·&nbsp;
-            {links.filter(l => l.link_type === 'supporting_to_supporting').length} cross-links
-          </div>
-        </div>
+        <Section title={`Link suggestions (${links.filter(l => l.status === 'recommended').length} open)`} description={
+          `${links.filter(l => l.link_type === 'hub_to_supporting').length} from the main page, ` +
+          `${links.filter(l => l.link_type === 'supporting_to_hub').length} back to it, ` +
+          `${links.filter(l => l.link_type === 'supporting_to_supporting').length} between supporting pages.`
+        } />
       )}
     </div>
   )
@@ -577,11 +514,13 @@ function LinksTab({
   onStatusChange,
   onRecommend,
   recommending,
+  message,
 }: {
   links:          SiloInternalLink[]
   onStatusChange: (id: string, status: InternalLinkStatus) => void
   onRecommend:    () => void
   recommending:   boolean
+  message:        { ok: boolean; text: string } | null
 }) {
   const byStatus = useMemo(() => ({
     recommended: links.filter(l => l.status === 'recommended'),
@@ -592,50 +531,46 @@ function LinksTab({
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          {byStatus.recommended.length} recommended · {byStatus.inserted.length} inserted · {byStatus.ignored.length} ignored
-        </div>
-        <button onClick={onRecommend} disabled={recommending} className="btn btn-secondary btn-sm">
-          {recommending ? 'Scanning…' : '+ Recommend links'}
+      <div className="sd-links-head">
+        <span>{byStatus.recommended.length} suggested · {byStatus.inserted.length} added · {byStatus.ignored.length} ignored</span>
+        <button type="button" onClick={onRecommend} disabled={recommending} className="btn btn-secondary btn-sm">
+          <Plus size={14} weight="bold" aria-hidden />{recommending ? 'Looking for links…' : 'Suggest links'}
         </button>
       </div>
+      {message && <div className={`ui-notice ui-notice--${message.ok ? 'success' : 'danger'}`} role="status">{message.text}</div>}
 
       {links.length === 0 ? (
-        <p style={{ color: 'var(--text-faint)', fontSize: '0.875rem' }}>
-          No link recommendations yet. Click &quot;Recommend links&quot; to scan published silo pages.
-        </p>
+        <div className="card">
+          <EmptyState icon={<Plus size={22} weight="bold" />} title="No link suggestions yet">
+            Suggest links looks through the set’s published pages for places they should link to each other.
+          </EmptyState>
+        </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {links.map(link => {
-            const sc = LINK_STATUS_COLORS[link.status] ?? LINK_STATUS_COLORS.recommended
+            const st = LINK_STATUS[link.status] ?? LINK_STATUS.recommended
             return (
-              <div key={link.id} className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginBottom: 2 }}>
-                    <span style={{ color: 'var(--text-faint)' }}>{link.link_type.replace(/_/g, ' ')}</span>
+              <div key={link.id} className="ui-row" style={{ alignItems: 'flex-start' }}>
+                <div className="ui-row-text">
+                  <div className="ui-row-title" style={{ fontWeight: 500 }}>
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{LINK_TYPE_LABEL[link.link_type] ?? link.link_type.replace(/_/g, ' ')}</span>
+                    <StatusBadge tone={st.tone}>{st.label}</StatusBadge>
                   </div>
-                  <div style={{ fontSize: '0.8rem' }}>
-                    {link.source_url ? <a href={link.source_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{link.source_url}</a> : <span style={{ color: 'var(--text-faint)' }}>(source not live)</span>}
-                    {' → '}
-                    {link.target_url ? <a href={link.target_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>{link.target_url}</a> : <span style={{ color: 'var(--text-faint)' }}>(target not live)</span>}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                    Anchor: &quot;{link.anchor_text}&quot;
-                    {link.reason && <span style={{ marginLeft: 8 }}>— {link.reason}</span>}
-                  </div>
+                  <p className="sd-link-path" style={{ margin: '2px 0 0' }}>
+                    {link.source_url ? <a href={link.source_url} target="_blank" rel="noreferrer">{link.source_url}</a> : <span className="sd-missing">Source page isn’t live yet</span>}
+                    {' to '}
+                    {link.target_url ? <a href={link.target_url} target="_blank" rel="noreferrer">{link.target_url}</a> : <span className="sd-missing">target page isn’t live yet</span>}
+                  </p>
+                  <p className="ui-row-sub" style={{ margin: 0 }}>
+                    Link text: “{link.anchor_text}”{link.reason && <>. {link.reason}</>}
+                  </p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: 10, background: sc.bg, color: sc.color }}>
-                    {link.status}
-                  </span>
-                  {link.status === 'recommended' && (
-                    <>
-                      <button onClick={() => onStatusChange(link.id, 'inserted')} className="btn btn-sm" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>Mark inserted</button>
-                      <button onClick={() => onStatusChange(link.id, 'ignored')}  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: '0.75rem' }}>Ignore</button>
-                    </>
-                  )}
-                </div>
+                {link.status === 'recommended' && (
+                  <div className="ui-row-actions">
+                    <button type="button" onClick={() => onStatusChange(link.id, 'ignored')} className="btn btn-ghost btn-sm">Ignore</button>
+                    <button type="button" onClick={() => onStatusChange(link.id, 'inserted')} className="btn btn-secondary btn-sm">Mark as added</button>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -647,6 +582,8 @@ function LinksTab({
 
 // ─── Optimization Tab ─────────────────────────────────────────────────────────
 
+const toneOf = (v: number) => v >= 75 ? 'sd-tone-good' : v >= 50 ? 'sd-tone-ok' : 'sd-tone-bad'
+
 function OptimizationTab({ siloId, silo }: { siloId: string; silo: Record<string, unknown> }) {
   const [keyword, setKeyword]       = useState(String(silo.name ?? ''))
   const [targetUrl, setTargetUrl]   = useState(String(silo.hub_page_url ?? ''))
@@ -654,13 +591,14 @@ function OptimizationTab({ siloId, silo }: { siloId: string; silo: Record<string
   const [building, setBuilding]     = useState(false)
   const [briefId, setBriefId]       = useState<string | null>(null)
   const [brief, setBrief]           = useState<Record<string, unknown> | null>(null)
-  const [auditId, setAuditId]       = useState<string | null>(null)
+  const [, setAuditId]              = useState<string | null>(null)
   const [audit, setAudit]           = useState<Record<string, unknown> | null>(null)
   const [auditing, setAuditing]     = useState(false)
-  const [msg, setMsg]               = useState<string | null>(null)
+  const [msg, setMsg]               = useState<{ ok: boolean; text: string } | null>(null)
 
-  const handleBuildBrief = async () => {
-    if (!keyword.trim()) { setMsg('Enter a primary keyword.'); return }
+  const handleBuildBrief = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!keyword.trim()) { setMsg({ ok: false, text: 'Enter the keyword the page should rank for.' }); return }
     setBuilding(true); setMsg(null)
     try {
       const competitorUrls = competitors.split('\n').map(s => s.trim()).filter(s => s.startsWith('http'))
@@ -676,22 +614,22 @@ function OptimizationTab({ siloId, silo }: { siloId: string; silo: Record<string
         }),
       })
       const data = await res.json() as { brief_id?: string; error?: string }
-      if (!res.ok) { setMsg(`Error: ${data.error}`); return }
+      if (!res.ok) { setMsg({ ok: false, text: `The brief wasn’t built: ${data.error ?? 'no reason given'}` }); return }
       setBriefId(data.brief_id ?? null)
       // Fetch the brief
       const briefRes = await fetch(`/api/admin/content/optimization/briefs/${data.brief_id}`).then(r => r.json()) as { brief?: Record<string, unknown> }
       if (briefRes.brief) setBrief(briefRes.brief)
-      setMsg('Brief generated successfully.')
+      setMsg({ ok: true, text: 'Brief built.' })
     } catch (e) {
-      setMsg(`Error: ${String(e)}`)
+      setMsg({ ok: false, text: `The brief wasn’t built: ${String(e)}` })
     } finally {
       setBuilding(false)
     }
   }
 
   const handleAudit = async () => {
-    if (!briefId) { setMsg('Build a brief first.'); return }
-    if (!targetUrl.trim()) { setMsg('Enter a target URL to audit.'); return }
+    if (!briefId) { setMsg({ ok: false, text: 'Build a brief first.' }); return }
+    if (!targetUrl.trim()) { setMsg({ ok: false, text: 'Enter the address of the page to score.' }); return }
     setAuditing(true); setMsg(null)
     try {
       const res = await fetch('/api/admin/content/optimization/audit', {
@@ -705,75 +643,52 @@ function OptimizationTab({ siloId, silo }: { siloId: string; silo: Record<string
         }),
       })
       const data = await res.json() as { audit_id?: string; error?: string }
-      if (!res.ok) { setMsg(`Error: ${data.error}`); return }
+      if (!res.ok) { setMsg({ ok: false, text: `The page wasn’t scored: ${data.error ?? 'no reason given'}` }); return }
       setAuditId(data.audit_id ?? null)
       const auditRes = await fetch(`/api/admin/content/optimization/audits/${data.audit_id}`).then(r => r.json()) as { audit?: Record<string, unknown> }
       if (auditRes.audit) setAudit(auditRes.audit)
-      setMsg('Audit complete.')
+      setMsg({ ok: true, text: 'Page scored.' })
     } catch (e) {
-      setMsg(`Error: ${String(e)}`)
+      setMsg({ ok: false, text: `The page wasn’t scored: ${String(e)}` })
     } finally {
       setAuditing(false)
     }
   }
 
   return (
-    <div style={{ maxWidth: 800 }}>
-      <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: 20 }}>
-        Build an optimization brief for the hub page or any supporting page, then score existing content against it.
-      </p>
+    <div className="ui-stack" style={{ maxWidth: 820 }}>
+      <Section title="Build a brief" description="What a page needs to rank for its keyword: length, headings, terms and schema.">
+        <form onSubmit={handleBuildBrief} className="ui-fields">
+          <div className="ui-grid-2">
+            <Field label="Keyword" id="sd-kw">
+              <input id="sd-kw" className="input" value={keyword} onChange={e => setKeyword(e.target.value)} />
+            </Field>
+            <Field label="Page address" id="sd-url" hint="Optional. Needed to score the page afterwards.">
+              <input id="sd-url" className="input" value={targetUrl} onChange={e => setTargetUrl(e.target.value)} placeholder="https://" aria-describedby="sd-url-hint" />
+            </Field>
+          </div>
+          <Field label="Competitor pages" id="sd-comp" hint="Optional. One address per line.">
+            <textarea id="sd-comp" className="input" rows={3} value={competitors} onChange={e => setCompetitors(e.target.value)} placeholder="https://competitor.example/page" aria-describedby="sd-comp-hint" style={{ resize: 'vertical' }} />
+          </Field>
+          <div>
+            <button type="submit" disabled={building} className="btn btn-primary">
+              <Lightning size={15} weight="fill" aria-hidden />{building ? 'Building the brief…' : 'Build brief'}
+            </button>
+          </div>
+        </form>
+      </Section>
 
-      {/* Brief builder form */}
-      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 14 }}>1. Build Optimization Brief</h3>
-        <div style={{ display: 'grid', gap: 10 }}>
-          <div>
-            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Primary keyword</label>
-            <input value={keyword} onChange={e => setKeyword(e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Target page URL (optional)</label>
-            <input value={targetUrl} onChange={e => setTargetUrl(e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.875rem', boxSizing: 'border-box' }} />
-          </div>
-          <div>
-            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Competitor URLs (one per line, optional)</label>
-            <textarea
-              value={competitors}
-              onChange={e => setCompetitors(e.target.value)}
-              rows={3}
-              placeholder="https://competitor.com/page"
-              style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.8rem', resize: 'vertical', boxSizing: 'border-box' }}
-            />
-          </div>
-          <button onClick={handleBuildBrief} disabled={building} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
-            {building ? 'Analyzing…' : '⚡ Build Brief'}
-          </button>
-        </div>
-      </div>
-
-      {/* Audit trigger */}
       {briefId && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 10 }}>2. Audit Page Content</h3>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-            We&apos;ll fetch the target URL and score it against the brief.
-          </p>
-          <button onClick={handleAudit} disabled={auditing || !targetUrl} className="btn btn-secondary">
-            {auditing ? 'Auditing…' : 'Score page against brief'}
-          </button>
-        </div>
+        <Section
+          title="Score the page against it"
+          description="Fetches the page address above and checks it against the brief."
+          actions={<button type="button" onClick={handleAudit} disabled={auditing || !targetUrl} className="btn btn-secondary btn-sm">{auditing ? 'Scoring…' : 'Score page'}</button>}
+        />
       )}
 
-      {msg && (
-        <div style={{ padding: '8px 12px', borderRadius: 4, marginBottom: 16, background: msg.startsWith('Error') ? 'var(--red-subtle)' : 'var(--green-subtle)', color: msg.startsWith('Error') ? 'var(--red)' : 'var(--green)', fontSize: '0.8rem' }}>
-          {msg}
-        </div>
-      )}
+      {msg && <div className={`ui-notice ui-notice--${msg.ok ? 'success' : 'danger'}`} role="status" style={{ margin: 0 }}>{msg.text}</div>}
 
-      {/* Audit results */}
       {audit && <AuditResults audit={audit} />}
-
-      {/* Brief preview */}
       {brief && !audit && <BriefPreview brief={brief} />}
     </div>
   )
@@ -781,93 +696,78 @@ function OptimizationTab({ siloId, silo }: { siloId: string; silo: Record<string
 
 function AuditResults({ audit }: { audit: Record<string, unknown> }) {
   const score = Number(audit.score_total ?? 0)
-  const scoreColor = score >= 75 ? 'var(--green)' : score >= 50 ? 'var(--amber)' : 'var(--red)'
 
   const dimensions = [
     { label: 'Exact keyword',  key: 'exact_keyword_score' },
     { label: 'Variations',     key: 'variation_score' },
-    { label: 'LSI terms',      key: 'lsi_score' },
+    { label: 'Related terms',  key: 'lsi_score' },
     { label: 'Entities',       key: 'entity_score' },
     { label: 'Word count',     key: 'word_count_score' },
     { label: 'Page structure', key: 'page_structure_score' },
     { label: 'Schema',         key: 'schema_score' },
-    { label: 'EEAT signals',   key: 'eeat_score' },
+    { label: 'E-E-A-T',        key: 'eeat_score' },
     { label: 'Internal links', key: 'internal_link_score' },
   ]
 
   const findings = (audit.findings ?? []) as Array<{ category: string; severity: string; message: string; recommendation?: string }>
   const termUsage = (audit.term_usage ?? []) as Array<{ term: string; current_count: number; target_min: number; target_max: number; status: string; importance: string }>
+  const TERM_TONE: Record<string, string> = { missing: 'sd-tone-bad', low: 'sd-tone-ok', good: 'sd-tone-good', high: 'sd-tone-ok', overused: 'sd-tone-bad' }
 
   return (
-    <div>
-      {/* Score dial */}
-      <div className="card" style={{ padding: 20, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 24 }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '2.5rem', fontWeight: 800, color: scoreColor }}>{score}</div>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Authority Score</div>
-        </div>
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-          {dimensions.map(d => {
-            const v = audit[d.key] as number | null
-            if (v == null) return null
-            const c = v >= 75 ? 'var(--green)' : v >= 50 ? 'var(--amber)' : 'var(--red)'
-            return (
-              <div key={d.key} style={{ textAlign: 'center', padding: '6px 4px', borderRadius: 4, background: 'var(--bg-subtle)' }}>
-                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: c }}>{v}</div>
-                <div style={{ fontSize: '0.65rem', color: 'var(--text-faint)' }}>{d.label}</div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Findings */}
-      {findings.length > 0 && (
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 10 }}>Issues Found</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {findings.map((f, i) => (
-              <div key={i} style={{ fontSize: '0.8rem', padding: '6px 10px', borderRadius: 4, borderLeft: `3px solid ${f.severity === 'critical' ? 'var(--red)' : f.severity === 'high' ? 'var(--amber)' : 'var(--border)'}`, background: 'var(--bg-subtle)' }}>
-                <div style={{ fontWeight: 500 }}>{f.message}</div>
-                {f.recommendation && <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>{f.recommendation}</div>}
-              </div>
-            ))}
+    <>
+      <Section title="Score">
+        <div className="sd-score">
+          <div className="sd-score-big">
+            <div className={`sd-score-num ${toneOf(score)}`}>{score}</div>
+            <div className="sd-score-label">Authority score</div>
+          </div>
+          <div className="sd-dims">
+            {dimensions.map(d => {
+              const v = audit[d.key] as number | null
+              if (v == null) return null
+              return (
+                <div key={d.key} className="sd-dim">
+                  <div className={`sd-dim-num ${toneOf(v)}`}>{v}</div>
+                  <div className="sd-dim-label">{d.label}</div>
+                </div>
+              )
+            })}
           </div>
         </div>
+      </Section>
+
+      {findings.length > 0 && (
+        <Section title="What to fix">
+          {findings.map((f, i) => (
+            <div key={i} className="sd-finding" style={{ '--sev': f.severity === 'critical' ? 'var(--red)' : f.severity === 'high' ? 'var(--amber)' : 'var(--border)' } as React.CSSProperties}>
+              <p style={{ fontWeight: 500 }}>{f.message}</p>
+              {f.recommendation && <p>{f.recommendation}</p>}
+            </div>
+          ))}
+        </Section>
       )}
 
-      {/* Term usage table */}
       {termUsage.length > 0 && (
-        <div className="card" style={{ padding: 16 }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 10 }}>Term Coverage</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: '0.72rem' }}>
-                  {['Term', 'Importance', 'Target', 'Current', 'Status'].map(h => (
-                    <th key={h} style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 500 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
+        <Section title="Term coverage" flush>
+          <div className="ui-scroll-x">
+            <table className="ui-table">
+              <thead><tr><th>Term</th><th>Importance</th><th className="ui-r">Target</th><th className="ui-r">Now</th><th>Status</th></tr></thead>
               <tbody>
-                {termUsage.map((t, i) => {
-                  const sc = { missing: 'var(--red)', low: 'var(--amber)', good: 'var(--green)', high: 'var(--amber)', overused: 'var(--red)' }[t.status] ?? 'var(--text-muted)'
-                  return (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '5px 8px', fontWeight: 500 }}>{t.term}</td>
-                      <td style={{ padding: '5px 8px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{t.importance}</td>
-                      <td style={{ padding: '5px 8px', color: 'var(--text-muted)' }}>{t.target_min}–{t.target_max}</td>
-                      <td style={{ padding: '5px 8px', fontWeight: 600 }}>{t.current_count}</td>
-                      <td style={{ padding: '5px 8px', color: sc, textTransform: 'capitalize' }}>{t.status}</td>
-                    </tr>
-                  )
-                })}
+                {termUsage.map((t, i) => (
+                  <tr key={i}>
+                    <td className="ui-strong">{t.term}</td>
+                    <td style={{ textTransform: 'capitalize' }}>{t.importance}</td>
+                    <td className="ui-r">{t.target_min}–{t.target_max}</td>
+                    <td className="ui-r ui-strong">{t.current_count}</td>
+                    <td className={TERM_TONE[t.status]} style={{ textTransform: 'capitalize', fontWeight: 600 }}>{t.status}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </Section>
       )}
-    </div>
+    </>
   )
 }
 
@@ -877,42 +777,42 @@ function BriefPreview({ brief }: { brief: Record<string, unknown> }) {
   const schemas   = (brief.schema_recommendations ?? []) as Array<{ schema_type: string; priority: string; reason: string }>
 
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <h3 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: 16 }}>Brief Preview</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: 6, color: 'var(--text-muted)' }}>Word Count Target</div>
-          <div style={{ fontSize: '0.875rem' }}>
-            {String(brief.recommended_word_count_min ?? '—')} – {String(brief.recommended_word_count_target ?? '—')} – {String(brief.recommended_word_count_max ?? '—')}
+    <Section title="The brief">
+      <div className="ui-fields">
+        <div className="ui-grid-2">
+          <div className="ui-field">
+            <span className="ui-field-label">Words</span>
+            <span style={{ fontSize: '0.875rem' }}>
+              {String(brief.recommended_word_count_min ?? '–')} to {String(brief.recommended_word_count_max ?? '–')}, ideally {String(brief.recommended_word_count_target ?? '–')}
+            </span>
+          </div>
+          <div className="ui-field">
+            <span className="ui-field-label">Schema</span>
+            <span style={{ fontSize: '0.8125rem' }}>{schemas.map(s => s.schema_type).join(', ') || 'None suggested'}</span>
           </div>
         </div>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: 6, color: 'var(--text-muted)' }}>Recommended Schema</div>
-          <div style={{ fontSize: '0.8rem' }}>{schemas.map(s => s.schema_type).join(', ') || '—'}</div>
-        </div>
         {headings.length > 0 && (
-          <div style={{ gridColumn: '1 / -1' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: 6, color: 'var(--text-muted)' }}>Recommended Headings</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <div className="ui-field">
+            <span className="ui-field-label">Headings</span>
+            <div className="sd-heads">
               {headings.map((h, i) => (
-                <div key={i} style={{ fontSize: '0.8rem', paddingLeft: h.level === 'h3' ? 16 : 0, color: h.required ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  <span style={{ fontWeight: 500, color: 'var(--text-faint)', marginRight: 6 }}>{h.level.toUpperCase()}</span>
-                  {h.text}
-                  {h.required && <span style={{ fontSize: '0.65rem', color: 'var(--blue)', marginLeft: 4 }}>required</span>}
+                <div key={i} className={h.level === 'h3' ? 'sd-h3' : undefined} style={{ color: h.required ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  <b>{h.level.toUpperCase()}</b>{h.text}
+                  {h.required && <StatusBadge tone="info" dot={false}>Required</StatusBadge>}
                 </div>
               ))}
             </div>
           </div>
         )}
         {questions.length > 0 && (
-          <div style={{ gridColumn: '1 / -1' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.8rem', marginBottom: 6, color: 'var(--text-muted)' }}>Related Questions</div>
-            <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <div className="ui-field">
+            <span className="ui-field-label">Questions people ask</span>
+            <ul style={{ margin: 0, padding: '0 0 0 18px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
               {questions.slice(0, 6).map((q, i) => <li key={i}>{q}</li>)}
             </ul>
           </div>
         )}
       </div>
-    </div>
+    </Section>
   )
 }
