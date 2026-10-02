@@ -16,8 +16,11 @@ the shared components, and where styles live. Colour tokens and the client dashb
 
 - **Theme tokens only, no hex.** `var(--accent)`, `--accent-soft`, `--bg-surface`, `--bg-subtle`,
   `--text-muted`, `--border`, `--green-fg` / `--red-fg` / `--amber-fg` for status text, `--on-fill`
-  for text on a solid button. The exceptions are things shown as they really look: the post
-  preview's iframe stylesheet and the email preview's light canvas.
+  for text on a solid button, `--accent-fg` for text set in the accent (readable in dark mode,
+  where plain `--accent` text is not). Inside `.adm`, `--text-faint` is darkened to pass 3:1 on
+  admin surfaces; keep it for quiet text, never for anything someone has to read to act. The
+  exceptions are things shown as they really look: the post preview's iframe stylesheet and the
+  email preview's light canvas.
 - **Sentence case** for headings, labels, buttons and tabs.
 - **Skeletons, not "Loading…".** Use the `Sk*` pieces, and give each route a `loading.tsx`. A busy
   button can still say "Saving…".
@@ -29,6 +32,10 @@ the shared components, and where styles live. Colour tokens and the client dashb
 - **Phosphor icons**, not emoji or text arrows.
 - **Deletes ask first** in a `ConfirmDialog`, never `window.confirm`. A failed delete throws from
   `onConfirm`, and the dialog shows the message and stays open.
+- **One client's data at a time.** A screen about one client offers only that client's sites,
+  contacts and settings, and never guesses one when there is none: it says so ("No site
+  connected") and links to where to add it. The API checks the same thing on save
+  (`lib/content/postConnection`).
 
 ## Settings
 
