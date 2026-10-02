@@ -557,7 +557,7 @@ export default function ClientContentSettings({ clientId, clientName, sites, sec
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label htmlFor="cs-weeks-ahead" hint="how many publish dates to plan ahead">Weeks ahead</Label>
+            <Label htmlFor="cs-weeks-ahead" hint="how many upcoming publish dates to keep planned; 4 on a monthly schedule is four months">Publish dates ahead</Label>
             <input id="cs-weeks-ahead" className="input" type="number" min={1} max={24} value={form.weeks_ahead ?? 6} onChange={e => set('weeks_ahead', Number(e.target.value))} />
           </div>
           <div>
