@@ -120,11 +120,6 @@
   padding: 1px 6px; border-radius: var(--radius-pill); font-size: 0.65rem; font-weight: 600;
   background: var(--accent-soft); color: var(--accent);
 }
-.adm-nav-caret { color: var(--text-faint); transition: transform 0.18s var(--ease-out); }
-.adm-nav-item[aria-expanded="true"] .adm-nav-caret { transform: rotate(90deg); }
-.adm-nav-sub { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px 19px; padding-left: 10px; }
-.adm-nav-sub::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 1px; background: var(--border); }
-.adm-nav-sub .adm-nav-item { min-height: 32px; font-size: 0.8125rem; }
 
 .adm-account { padding: 10px; border-top: 1px solid var(--border-subtle); }
 
@@ -164,6 +159,11 @@
 .adm-iconbtn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .adm-iconbtn:focus-visible { outline: none; box-shadow: var(--ring); }
 .adm-iconbtn .adm-nav-count { position: absolute; top: 4px; right: 2px; min-width: 17px; height: 17px; font-size: 0.6rem; padding: 0 4px; }
+
+/* The hidden attribute always hides. Preflight's [hidden] rule is no more specific than a class
+   like .ui-stack (display: flex), which comes later and won: a visited settings section stayed on
+   screen under the next one. */
+.adm [hidden] { display: none !important; }
 
 /* ── Shared classes, refined inside the admin only ────────────────────────── */
 
@@ -423,6 +423,55 @@
 .ui-swatch-value { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 /* A colour shown, not chosen: the dot before a category name. */
 .ui-dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--sw); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 12%, transparent); }
+
+/* ── Settings menu (components/admin/SettingsShell) ─────────────────────────────
+   A column beside every settings page on a wide screen; below that, a "Settings › Branding"
+   button that opens the same list in a sheet. Items look like the sidebar's, one size down. */
+
+.sx-shell { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 0 36px; align-items: start; }
+.sx-content { min-width: 0; }
+.sx-nav { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 18px; padding-top: 2px; }
+.sx-group-title { margin: 0 0 4px 10px; font-size: 0.75rem; font-weight: 600; color: var(--text-faint); }
+.sx-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.sx-item {
+  display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); text-decoration: none;
+  transition: background 0.12s, color 0.12s;
+}
+.sx-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sx-item:focus-visible { outline: none; box-shadow: var(--ring); }
+.sx-item[aria-current="page"] {
+  background: var(--bg-surface); color: var(--text-primary); font-weight: 600;
+  box-shadow: var(--shadow-xs), 0 0 0 1px var(--border);
+}
+.sx-check { margin-left: auto; color: var(--accent); }
+
+.sx-picker { display: none; }
+.sx-picker-btn {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 40px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); box-shadow: var(--shadow-xs);
+  font: inherit; font-size: 0.875rem; color: var(--text-primary); cursor: pointer;
+}
+.sx-picker-btn:hover { background: var(--bg-hover); }
+.sx-picker-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.sx-picker-root { color: var(--text-muted); }
+.sx-picker-sep { color: var(--text-faint); }
+.sx-picker-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sx-picker-caret { margin-left: 4px; color: var(--text-muted); }
+.sx-sheet .sx-group + .sx-group { margin-top: 16px; }
+.sx-sheet .sx-group-title { margin-left: 12px; }
+.sx-sheet .sx-item { min-height: 40px; padding: 0 12px; font-size: 0.875rem; }
+
+@media (max-width: 1179px) {
+  .sx-shell { display: block; }
+  .sx-nav { display: none; }
+  .sx-picker { display: block; margin-bottom: 18px; }
+}
+@media (max-width: 639px) {
+  .sx-picker-btn { width: 100%; }
+  .sx-picker-caret { margin-left: auto; }
+  .sx-sheet .sx-item { min-height: 44px; }
+}
 
 /* ── Dialog (components/ui/Dialog) ─────────────────────────────────────────── */
 

@@ -27,6 +27,19 @@ the shared components, and where styles live. Colour tokens and the client dashb
 - **Deletes ask first** in a `ConfirmDialog`, never `window.confirm`. A failed delete throws from
   `onConfirm`, and the dialog shows the message and stays open.
 
+## Settings
+
+Everything you configure sits behind one sidebar item, **Settings**. `SettingsShell`
+(`src/components/admin/SettingsShell.tsx`) puts the same grouped menu (Agency, Workspace,
+Personal) beside every settings page. On a wide screen it's a column; below 1180px it's a
+"Settings › Branding" button that opens the list in a sheet. AdminShell adds it to any path
+`isSettingsPath` matches, so pages keep their own URLs.
+
+- A new settings page: add it to `SETTINGS_GROUPS` and its path to `isSettingsPath` / `activeId`.
+- Agency settings' sections are `?tab=` values (`settings/tabs.ts`). On `/admin/settings` the
+  menu switches them in place with `history.pushState` (no request, edits survive, Back works),
+  and `AgencySettings` reads the section from `useSearchParams`.
+
 ## Shared components (`src/components/ui`)
 
 | Component | Use it for |
@@ -82,7 +95,7 @@ with stacked full-width buttons. Options:
 
 | Prefix | Where |
 |---|---|
-| `adm-`, `ui-` | Shell; shared pieces (`admin.css`) |
+| `adm-`, `ui-`, `sx-` | Shell; shared pieces; the Settings menu (`admin.css`) |
 | `cl-`, `int-`, `nc-`, `cc-` | Clients, integrations, new connection, client content sub-tabs (`admin.css`) |
 | `us-` | Usage (`admin.css`) and Users (`users.css`). The names don't overlap yet, so check both |
 | `se-`, `nt-` | Settings hub, notification table (`settings.css`) |
@@ -104,5 +117,7 @@ with stacked full-width buttons. Options:
 - `.ui-only-sm` reverts `display`, which leaves a `<span>` inline, and an inline element can't
   clip with an ellipsis. Use a `<div>` when it must.
 - `useState(initialProps)` goes stale after `router.refresh()`. Derive the list from props instead.
+- The `hidden` attribute loses to any class that sets `display`, because preflight's `[hidden]`
+  rule is no more specific. `admin.css` makes it win inside `.adm`.
 - `--accent-subtle` is a fixed light tint and turns into a white patch in dark mode. Use
   `--accent-soft`.

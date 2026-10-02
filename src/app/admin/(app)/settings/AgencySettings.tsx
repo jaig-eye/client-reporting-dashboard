@@ -1,12 +1,14 @@
 'use client'
 
-// Agency settings — /admin/settings. Seven pill tabs that follow ?tab= (replaceState, so switching
-// tabs never asks the server for anything), each a column of Sections, and one save bar for the
+// Agency settings — /admin/settings. Seven sections picked from the Settings menu (SettingsShell),
+// which sets ?tab= in place: this reads it, so switching never asks the server for anything and
+// half-made edits survive. Each section is a column of Sections, with one save bar for the
 // fields that wait for Save. Things that save the moment they change say so: uploads, the theme,
 // the sync switch, the AI keys (their dialogs) and the notification channels (their own bar).
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { CheckCircle, Clock, ImageSquare, Play, Sparkle, SpeakerHigh, Trash, UploadSimple, WarningCircle } from '@phosphor-icons/react'
 import MetricLayoutEditor, { LayoutSection } from '@/components/admin/MetricLayoutEditor'
 import IntegrationCard from '@/components/admin/IntegrationCard'
@@ -17,14 +19,13 @@ import PageHeader from '@/components/ui/PageHeader'
 import Section from '@/components/ui/Section'
 import Field from '@/components/ui/Field'
 import { SwitchRow } from '@/components/ui/Switch'
-import { PillTabs } from '@/components/ui/PillTabs'
 import EmptyState from '@/components/ui/EmptyState'
 import { useTheme } from '@/components/ThemeProvider'
 import { IMAGE_MODELS, DEFAULT_IMAGE_MODEL, resolveImageModel } from '@/lib/content/imageModels'
 import type { ThemeMode } from '@/components/ThemeProvider'
 import type { MetricLayouts } from '@/lib/metric-layouts'
 import { SettingsSkeleton } from './SettingsSkeleton'
-import { SETTINGS_TABS, type SettingsTab } from './tabs'
+import { isSettingsTab, type SettingsTab } from './tabs'
 
 const OVERVIEW_COLUMN_KEYS = ['spend', 'roas_cpl', 'conversions', 'ctr', 'clicks', 'impressions', 'sync_status', 'ad_fuel'] as const
 const OVERVIEW_COLUMN_LABELS: Record<string, string> = {
@@ -179,10 +180,14 @@ function scheduleInWords(frequency: string, hour: number, day: number | null): s
   }
 }
 
-export default function AgencySettings({ initialTab }: { initialTab: SettingsTab }) {
-  const [activeTab,   setActiveTab]   = useState<SettingsTab>(initialTab)
-  // Tabs mount on first visit and then stay mounted, so a half-edited tab keeps its state.
-  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set([initialTab]))
+export default function AgencySettings() {
+  const tabParam = useSearchParams().get('tab')
+  const activeTab: SettingsTab = isSettingsTab(tabParam) ? tabParam : 'branding'
+  // Sections mount on first visit and then stay mounted, so a half-edited one keeps its state.
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set([activeTab]))
+  useEffect(() => {
+    setVisitedTabs(p => p.has(activeTab) ? p : new Set(p).add(activeTab))
+  }, [activeTab])
   const [form,       setForm]       = useState<Settings>(DEFAULT)
   const [loading,    setLoading]    = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -212,15 +217,6 @@ export default function AgencySettings({ initialTab }: { initialTab: SettingsTab
   const [imgJustSaved,       setImgJustSaved]       = useState(false)
   // The server's note when the key saved but the model could not (migration 227 not applied).
   const [imgWarning,         setImgWarning]         = useState('')
-
-  function selectTab(id: string) {
-    const tab = id as SettingsTab
-    setActiveTab(tab)
-    setVisitedTabs(p => new Set(p).add(tab))
-    const url = new URL(window.location.href)
-    url.searchParams.set('tab', tab)
-    window.history.replaceState(window.history.state, '', url)
-  }
 
   function openAiModal()      { setAiModalProvider(form.ai_provider); setAiModalModel(form.ai_model); setAiModalKey(form.ai_api_key);    setAiModalOpen(true) }
   function openImgModal()     { setImgModalKey(form.openai_api_key); setImgModalModel(resolveImageModel(form.image_model));             setImgModalOpen(true) }
@@ -471,16 +467,9 @@ export default function AgencySettings({ initialTab }: { initialTab: SettingsTab
   }
 
   function panel(id: SettingsTab, children: React.ReactNode) {
-    if (!visitedTabs.has(id)) return null
+    if (!visitedTabs.has(id) && id !== activeTab) return null
     return (
-      <div
-        role="tabpanel"
-        id={`se-panel-${id}`}
-        aria-labelledby={`se-tab-${id}`}
-        hidden={activeTab !== id}
-        tabIndex={0}
-        className="se-panel ui-stack"
-      >
+      <div id={`se-panel-${id}`} hidden={activeTab !== id} className="se-panel ui-stack">
         {children}
       </div>
     )
@@ -489,16 +478,6 @@ export default function AgencySettings({ initialTab }: { initialTab: SettingsTab
   return (
     <div className="se-page">
       {header}
-
-      <div className="se-tabs">
-        <PillTabs
-          items={SETTINGS_TABS.map(t => ({ id: t.id, label: t.label }))}
-          activeId={activeTab}
-          onSelect={selectTab}
-          label="Settings sections"
-          idPrefix="se"
-        />
-      </div>
 
       <form onSubmit={handleSave}>
 

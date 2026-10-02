@@ -1,8 +1,8 @@
-/* Agency settings (/admin/settings): one readable column of sections under pill tabs, and a save
-   bar that stays at the bottom of the window. Prefix: .se- (page), .nt- (notification channels). */
+/* Agency settings (/admin/settings): one readable column of sections (the Settings menu picks
+   which), and a save bar that stays at the bottom of the window. Prefix: .se- (page), .nt-
+   (notification channels). */
 
 .se-page { max-width: 820px; }
-.se-tabs { margin-bottom: 20px; }
 .se-panel:focus-visible { outline: none; }
 
 /* Uploads: a preview, then the actions. */

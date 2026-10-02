@@ -1,12 +1,13 @@
-// Agency settings — /admin/settings?tab=… The tab comes from the URL so a link (or the old
-// /admin/settings/notifications redirect) opens the right one; the page itself is AgencySettings.
+// Agency settings — /admin/settings?tab=… AgencySettings reads the section from the URL, so a link
+// (or the old /admin/settings/notifications redirect) opens the right one and the Settings menu
+// can switch it in place.
 
 import '@/styles/admin/settings.css'
 import AgencySettings from './AgencySettings'
-import { SETTINGS_TABS, type SettingsTab } from './tabs'
 
-export default function AgencySettingsPage({ searchParams }: { searchParams: { tab?: string | string[] } }) {
-  const asked = Array.isArray(searchParams.tab) ? searchParams.tab[0] : searchParams.tab
-  const tab = SETTINGS_TABS.some(t => t.id === asked) ? asked as SettingsTab : 'branding'
-  return <AgencySettings initialTab={tab} />
+// Rendered per request: AgencySettings reads ?tab= while it renders on the server.
+export const dynamic = 'force-dynamic'
+
+export default function AgencySettingsPage() {
+  return <AgencySettings />
 }

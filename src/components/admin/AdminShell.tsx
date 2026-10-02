@@ -9,6 +9,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { List, Bell } from '@phosphor-icons/react'
 import Sidebar, { type SidebarProps } from './Sidebar'
+import SettingsShell, { isSettingsPath } from './SettingsShell'
 
 export default function AdminShell({ children, flush = false, ...nav }: SidebarProps & { children: ReactNode; /** No padding or width cap: the client-dashboard preview fills the page. */ flush?: boolean }) {
   const [open, setOpen] = useState(false)
@@ -76,7 +77,9 @@ export default function AdminShell({ children, flush = false, ...nav }: SidebarP
           </Link>
         </header>
 
-        <main className={`adm-content${flush ? ' adm-content--flush' : ''}`} id="main">{children}</main>
+        <main className={`adm-content${flush ? ' adm-content--flush' : ''}`} id="main">
+          {isSettingsPath(pathname ?? '') ? <SettingsShell>{children}</SettingsShell> : children}
+        </main>
       </div>
     </div>
   )
