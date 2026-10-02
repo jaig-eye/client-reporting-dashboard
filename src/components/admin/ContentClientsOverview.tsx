@@ -29,13 +29,19 @@ function ago(days: number): string {
 
 const plural = (n: number, one: string, many = one + 's') => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
 
+/** "Dec 7, Jan 4, 2027", and how many more past the third. */
+function dateList(dates: string[]): string {
+  const shown = dates.slice(0, 3).map(fmtDate).join(', ')
+  return dates.length > 3 ? `${shown} and ${dates.length - 3} more` : shown
+}
+
 /** A read that failed: say nothing rather than something false. The cause is in the server log. */
 const Unknown = () => <span className="cco-unknown" title="Couldn’t load this">—</span>
 
 const HELP = {
   automation: 'Running: the planner picks topics, writes the posts and publishes them on their dates. Paused: nothing happens until someone does it by hand.',
   schedule:   'How often this client publishes, how many posts go out on each date, how far ahead the planner fills dates, and the date the schedule counts from.',
-  planned:    'The furthest date that has a topic, and how many publish dates after it, inside the planning window, still have room for one. Automation only plans forward, so empty dates it skips (before the furthest one, or too close after it) are listed apart, as are dates someone cleared by deleting their topics: Regenerate plan fills both.',
+  planned:    'The furthest date that has a topic, and the publish dates after it, inside the planning window, that still have room for one: open when the planner has had a run to fill them, "next run" when they are new since its last run. Automation only plans forward, so empty dates it skips (before the furthest one, or too close after it) are listed apart, as are dates someone cleared by deleting their topics: Regenerate plan fills both.',
   review:     'Posts written and waiting for someone to review them, and how many of those have a publish date that has already gone by.',
   published:  'The newest post that is live on the client’s site.',
   length:     'The length posts are written to, in words.',
@@ -105,10 +111,18 @@ function Row({ r }: { r: ClientOverviewRow }) {
             {r.planned.through
               ? <span className="cco-main">Through {fmtDate(r.planned.through)}</span>
               : <span className="cco-none">Nothing planned</span>}
-            {r.planned.open !== null && (r.planned.open > 0 || !r.planned.cleared) && (
-              <span className={`cco-sub${r.planned.open > 0 && r.running ? ' cco-warn' : ''}`}>
-                {r.planned.open > 0 ? `${plural(r.planned.open, 'open date')} in window` : 'Window full'}
+            {(r.planned.open ?? 0) > 0 && (
+              <span className={`cco-sub${r.running ? ' cco-warn' : ''}`}>
+                {plural(r.planned.open!, 'open date')}: {dateList(r.planned.openDates)}
               </span>
+            )}
+            {(r.planned.waiting ?? 0) > 0 && (
+              <span className="cco-sub" title="New since the planner’s last run (it runs every two hours): a schedule saved since, or a date that just came into the window.">
+                Next run plans {dateList(r.planned.waitingDates)}
+              </span>
+            )}
+            {r.planned.open === 0 && !r.planned.waiting && !r.planned.cleared && (
+              <span className="cco-sub">Window full</span>
             )}
             {(r.planned.cleared ?? 0) > 0 && (
               <span className="cco-sub" title="Topics deleted by hand. Automation leaves these dates empty; Regenerate plan fills them.">
