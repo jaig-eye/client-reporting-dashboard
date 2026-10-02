@@ -6,7 +6,7 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { cadenceLabel, planningWindowLabel } from '@/lib/content/cadence'
-import { windowSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
+import { windowSlots, forwardSlots, SLOT_STATUSES } from '@/lib/content/scheduleSlots'
 import {
   overviewFlags, sortOverviewRows, countOpenDates,
   type ClientOverviewRow, type OverviewFacts,
@@ -73,7 +73,7 @@ type ConnRow = {
   id: string; client_id: string; external_id: string | null; external_name: string | null; status: string | null
   connector: Embedded<{ type: string; status: string | null; role: string | null }>
 }
-type TopicRow = { client_id: string; target_publish_date: string; status: string }
+type TopicRow = { client_id: string; target_publish_date: string; status: string; content_type: string | null }
 type SuppressionRow = { client_id: string; target_publish_date: string }
 type PostRow = {
   id: string; client_id: string; status: string | null; wp_status: string | null; archived_at: string | null
@@ -113,7 +113,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       .order('id', { ascending: true }).range(f, t))),
     // The statuses that hold a date, as the planner counts them; rejected ones are set aside below.
     safe('topics', () => readAll<TopicRow>('topics', (f, t) => db.from('content_topics')
-      .select('client_id, target_publish_date, status')
+      .select('client_id, target_publish_date, status, content_type')
       .gt('target_publish_date', today)
       .in('status', SLOT_STATUSES)
       .order('id', { ascending: true }).range(f, t))),
@@ -238,13 +238,21 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       plannedFuture = live.length
       const through = live.reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
       let open: number | null = null
+      let gaps: number | null = null
       if (suppressedBy) {
         const slots = windowSlots({
           frequency, dayOfWeek, weeksAhead: cs.weeks_ahead, scheduleStartDate: cs.schedule_start_date,
         })
-        open = countOpenDates(slots, mine.map(t => t.target_publish_date), (suppressedBy.get(id) ?? []).map(s => s.target_publish_date), cs.posts_per_run ?? 1)
+        // The cron fills from the plan's frontier on (scheduleSlots.forwardSlots): open dates are the
+        // ones it is behind on; empty dates before the frontier wait for Regenerate plan.
+        const frontier = mine.filter(t => t.content_type !== 'service_area')
+          .reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
+        const dates = mine.map(t => t.target_publish_date)
+        const off = (suppressedBy.get(id) ?? []).map(s => s.target_publish_date)
+        open = countOpenDates(forwardSlots(slots, frontier), dates, off, cs.posts_per_run ?? 1)
+        gaps = countOpenDates(frontier ? slots.filter(s => s < frontier) : [], dates, off, cs.posts_per_run ?? 1)
       }
-      planned = { through, open }
+      planned = { through, open, gaps }
     }
 
     // ── Posts ──
