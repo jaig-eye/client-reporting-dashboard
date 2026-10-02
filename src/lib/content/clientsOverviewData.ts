@@ -239,6 +239,7 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
       const through = live.reduce<string | null>((max, t) => (!max || t.target_publish_date > max ? t.target_publish_date : max), null)
       let open: number | null = null
       let gaps: number | null = null
+      let cleared: number | null = null
       if (suppressedBy) {
         const slots = windowSlots({
           frequency, dayOfWeek, weeksAhead: cs.weeks_ahead, scheduleStartDate: cs.schedule_start_date,
@@ -253,8 +254,11 @@ export async function getClientsOverview(db: Db, clientNames: Map<string, string
         const ahead = forwardSlots(slots, frontier, frequency)
         open = countOpenDates(ahead, dates, off, cs.posts_per_run ?? 1)
         gaps = countOpenDates(slots.filter(s => !ahead.includes(s)), dates, off, cs.posts_per_run ?? 1)
+        // Dates in the window someone emptied by deleting their topics. Neither open (automation
+        // leaves them alone) nor full: without this a window of deleted dates read "Window full".
+        cleared = countOpenDates(slots.filter(s => off.includes(s)), dates, [], cs.posts_per_run ?? 1)
       }
-      planned = { through, open, gaps }
+      planned = { through, open, gaps, cleared }
     }
 
     // ── Posts ──

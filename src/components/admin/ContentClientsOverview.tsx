@@ -35,7 +35,7 @@ const Unknown = () => <span className="cco-unknown" title="Couldn’t load this"
 const HELP = {
   automation: 'Running: the planner picks topics, writes the posts and publishes them on their dates. Paused: nothing happens until someone does it by hand.',
   schedule:   'How often this client publishes, how many posts go out on each date, how far ahead the planner fills dates, and the date the schedule counts from.',
-  planned:    'The furthest date that has a topic, and how many publish dates after it, inside the planning window, still have room for one. Automation only plans forward, so empty dates it skips (before the furthest one, or too close after it) are listed apart: Regenerate plan fills them.',
+  planned:    'The furthest date that has a topic, and how many publish dates after it, inside the planning window, still have room for one. Automation only plans forward, so empty dates it skips (before the furthest one, or too close after it) are listed apart, as are dates someone cleared by deleting their topics: Regenerate plan fills both.',
   review:     'Posts written and waiting for someone to review them, and how many of those have a publish date that has already gone by.',
   published:  'The newest post that is live on the client’s site.',
   length:     'The length posts are written to, in words.',
@@ -105,9 +105,14 @@ function Row({ r }: { r: ClientOverviewRow }) {
             {r.planned.through
               ? <span className="cco-main">Through {fmtDate(r.planned.through)}</span>
               : <span className="cco-none">Nothing planned</span>}
-            {r.planned.open !== null && (
+            {r.planned.open !== null && (r.planned.open > 0 || !r.planned.cleared) && (
               <span className={`cco-sub${r.planned.open > 0 && r.running ? ' cco-warn' : ''}`}>
                 {r.planned.open > 0 ? `${plural(r.planned.open, 'open date')} in window` : 'Window full'}
+              </span>
+            )}
+            {(r.planned.cleared ?? 0) > 0 && (
+              <span className="cco-sub" title="Topics deleted by hand. Automation leaves these dates empty; Regenerate plan fills them.">
+                {plural(r.planned.cleared!, 'date')} cleared
               </span>
             )}
             {(r.planned.gaps ?? 0) > 0 && (

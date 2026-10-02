@@ -54,8 +54,11 @@ export interface ClientOverviewRow {
   window:      string
   startDate:   string | null
   site:        { platform: string; name: string; status: string; mode: string | null } | 'none' | null
-  /** open: dates automation will fill, from the plan's frontier on; gaps: empty dates it skips, left for Regenerate plan. */
-  planned:     { through: string | null; open: number | null; gaps: number | null } | null
+  /**
+   * open: dates automation will fill, from the plan's frontier on; gaps: empty dates it skips;
+   * cleared: dates emptied by deleting their topics. Gaps and cleared dates wait for Regenerate plan.
+   */
+  planned:     { through: string | null; open: number | null; gaps: number | null; cleared: number | null } | null
   review:      { count: number; overdue: number } | null
   lastPublished: { date: string | null; daysAgo: number | null } | null
   length:      number | null
